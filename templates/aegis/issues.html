@@ -20,25 +20,46 @@
             hx-trigger="keyup changed delay:300ms"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
         <select 
             class="filter-select"
             name="status"
             hx-get="/aegis/issues"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
             <option value="">All statuses</option>
             <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
             <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
             <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+        </select>
+        <select 
+            class="filter-select"
+            name="sort"
+            hx-get="/aegis/issues"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
+            <option value="created_at" {% if sort == 'created_at' or not sort %}selected{% endif %}>Sort: Created</option>
+            <option value="title" {% if sort == 'title' %}selected{% endif %}>Sort: Title</option>
+            <option value="status" {% if sort == 'status' %}selected{% endif %}>Sort: Status</option>
+        </select>
+        <select 
+            class="filter-select"
+            name="order"
+            hx-get="/aegis/issues"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
+            <option value="desc" {% if order == 'desc' or not order %}selected{% endif %}>Desc</option>
+            <option value="asc" {% if order == 'asc' %}selected{% endif %}>Asc</option>
         </select>
         <button 
             class="button secondary"
             hx-get="/aegis/issues"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
             Refresh
         </button>
     </div>

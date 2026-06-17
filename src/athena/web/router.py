@@ -71,6 +71,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     status_filter = request.query_params.get("status")
     search = (request.query_params.get("search") or "").strip().lower()
+    sort = request.query_params.get("sort", "created_at")
+    order = request.query_params.get("order", "desc")
 
     all_issues = issues.list_issues(conn)
     filtered = all_issues
@@ -83,6 +85,13 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             if search in i["title"].lower() or search in (i.get("body") or "").lower()
         ]
 
+    # Sort in web layer (presentation concern) – safe since we don't own data
+    reverse = order == "desc"
+    try:
+        filtered = sorted(filtered, key=lambda x: x.get(sort) or "", reverse=reverse)
+    except Exception:
+        pass  # fallback if sort key bad
+
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
         request=request,
@@ -91,6 +100,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "issues": filtered,
             "status_filter": status_filter or "",
             "search": search,
+            "sort": sort,
+            "order": order,
         },
     )
 

@@ -6,6 +6,7 @@
             <th>#</th>
             <th>Title</th>
             <th>Status</th>
+            <th>Created By</th>
             <th>Created</th>
         </tr>
     </thead>
@@ -19,6 +20,7 @@
             <td>
                 <span class="status {{ issue.status }}">{{ issue.status }}</span>
             </td>
+            <td class="muted">{{ issue.created_by }}</td>
             <td class="muted">{{ issue.created_at }}</td>
         </tr>
     {% endfor %}
