@@ -15,18 +15,21 @@
 
 <div class="issue-detail">
     <div class="meta">
+        <div><strong>ID:</strong> #{{ issue.id }}</div>
         <div><strong>Created:</strong> {{ issue.created_at }}</div>
-        <div><strong>Status:</strong> {{ issue.status }}</div>
+        <div><strong>Created By:</strong> {{ issue.created_by }}</div>
+        <div><strong>Status:</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
     </div>
 
     <div class="body">
         <h3>Description</h3>
-        <p>{{ issue.body or "No description provided." }}</p>
+        <pre>{{ issue.body or "No description provided." }}</pre>
     </div>
 
     <div class="actions">
         <a href="/aegis/issues" class="button secondary">Back to list</a>
-        <span class="pill">Edit / comment via API</span>
+        <a href="/aegis/issues?status={{ issue.status }}" class="button">View similar status</a>
+        <span class="pill">Edit / comment / status change via API (coming)</span>
     </div>
 </div>
 

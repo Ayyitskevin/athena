@@ -156,16 +156,36 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
 
 @router.get("/aegis/boards", response_class=HTMLResponse)
 def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Boards view (Aegis) using real list_issues."""
+    """Boards view (Aegis) using real list_issues with search/filter."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+
+    search = (request.query_params.get("search") or "").strip().lower()
+    status_filter = request.query_params.get("status")
+
     all_issues = issues.list_issues(conn)
+    filtered = all_issues
+    if status_filter:
+        filtered = [i for i in filtered if i.get("status") == status_filter]
+    if search:
+        filtered = [
+            i for i in filtered
+            if search in i.get("title", "").lower() or search in (i.get("body") or "").lower()
+        ]
+
     from collections import defaultdict
     columns = defaultdict(list)
-    for issue in all_issues:
+    for issue in filtered:
         columns[issue.get("status", "open")].append(issue)
+
+    template = "aegis/partials/boards_content.html" if request.headers.get("HX-Request") else "aegis/boards.html"
     return _templates.TemplateResponse(
         request=request,
-        name="aegis/boards.html",
-        context={"columns": dict(columns)},
+        name=template,
+        context={
+            "columns": dict(columns),
+            "search": search,
+            "status_filter": status_filter or "",
+            "all_issues": all_issues,  # for counts if wanted
+        },
     )

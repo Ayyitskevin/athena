@@ -9,29 +9,42 @@
         <h1>Boards</h1>
         <p class="subtitle">Kanban workflow</p>
     </div>
+    <div class="header-actions">
+        <input 
+            type="text" 
+            name="search" 
+            placeholder="Search boards..." 
+            value="{{ search }}"
+            class="search-input"
+            hx-get="/aegis/boards"
+            hx-trigger="keyup changed delay:300ms"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search']">
+        <select 
+            class="filter-select"
+            name="status"
+            hx-get="/aegis/boards"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search']">
+            <option value="">All statuses</option>
+            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+            <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+            <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+        </select>
+        <button 
+            class="button secondary"
+            hx-get="/aegis/boards"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search']">
+            Refresh
+        </button>
+    </div>
 </div>
 
-<div class="board">
-    {% for col, label in [("open", "Open"), ("in_progress", "In Progress"), ("done", "Done")] %}
-    {% set col_issues = columns.get(col, []) %}
-    <div class="board-column">
-        <h3>{{ label }} <span class="count">({{ col_issues | length }})</span></h3>
-        <div class="board-cards">
-            {% for issue in col_issues %}
-            <div class="board-card">
-                <a href="/aegis/issues/{{ issue.id }}">#{{ issue.id }} {{ issue.title }}</a>
-                {% if issue.body %}
-                <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
-                {% endif %}
-                <div class="meta small">{{ issue.created_at }}</div>
-            </div>
-            {% else %}
-            <div class="empty small">No issues</div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endfor %}
-</div>
+{% include "aegis/partials/boards_content.html" %}
 
 <p class="note">Kanban view over real issues data from the API.</p>
 {% endblock %}
