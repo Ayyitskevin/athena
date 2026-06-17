@@ -5,6 +5,7 @@ description = "Self-hosted project management (Aegis) + knowledge base (Mentor)"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",
+    "jinja2",
     "uvicorn[standard]",
 ]
 

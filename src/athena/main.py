@@ -10,9 +10,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.core import db
+from athena.web import init_templates, router as web_router
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
@@ -30,6 +33,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         # Shutdown: nothing to clean up yet.
 
     app = FastAPI(title="Athena", lifespan=lifespan)
+
+    # Mount web foundation (static + Jinja templates + page router).
+    # This is the only place the web layer is wired. Do not change /healthz or lifespan.
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+    templates = Jinja2Templates(directory="templates")
+    init_templates(templates)
+    app.include_router(web_router)
 
     @app.get("/healthz")
     def healthz():
