@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}New Issue — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/issues" class="muted">← Back to issues</a>
+        <h1>New Issue</h1>
+    </div>
+</div>
+
+<div class="form-container">
+    <form 
+        hx-post="/aegis/issues" 
+        hx-target="#create-result"
+        hx-swap="innerHTML"
+        class="issue-form">
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <div class="form-group">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required placeholder="What needs to be done?">
+        </div>
+
+        <div class="form-group">
+            <label for="body">Description</label>
+            <textarea id="body" name="body" rows="5" placeholder="Details, steps to reproduce, acceptance criteria..."></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="status">Initial Status</label>
+            <select id="status" name="status">
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="done">Done</option>
+            </select>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="button">Create Issue</button>
+            <a href="/aegis/issues" class="button secondary">Cancel</a>
+        </div>
+    </form>
+
+    <div id="create-result"></div>
+</div>
+
+<p class="note">This form submits via HTMX. In production it will hit the real REST API and redirect or update the list.</p>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Aegis — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Aegis</h1>
+    <p class="subtitle">Work tracking for humans and agents.</p>
+</div>
+
+<div class="aegis-grid">
+    <div class="card">
+        <h3>Issues</h3>
+        <p>Track tasks, bugs, and work items.</p>
+        <a href="/aegis/issues" class="button">View all issues →</a>
+        <a href="/aegis/issues/new" class="button secondary small">+ New</a>
+    </div>
+
+    <div class="card">
+        <h3>Boards</h3>
+        <p>Visualize workflow and progress.</p>
+        <a href="/aegis/boards" class="button">View boards →</a>
+    </div>
+
+    <div class="card">
+        <h3>Quick actions</h3>
+        <ul class="quick-actions">
+            <li><a href="/aegis/issues">Browse issues</a></li>
+            <li><a href="/aegis/issues/new">Create new issue</a></li>
+            <li><a href="/aegis/boards">Open boards</a></li>
+        </ul>
+    </div>
+</div>
+{% endblock %}
