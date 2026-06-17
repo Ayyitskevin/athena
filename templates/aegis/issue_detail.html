@@ -14,23 +14,33 @@
 </div>
 
 <div class="issue-detail">
-    <div class="meta">
-        <div><strong>ID:</strong> #{{ issue.id }}</div>
-        <div><strong>Created:</strong> {{ issue.created_at }}</div>
-        <div><strong>Created By:</strong> {{ issue.created_by }}</div>
-        <div><strong>Status:</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+    <div class="meta-sidebar">
+        <div class="meta-item"><strong>ID</strong> #{{ issue.id }}</div>
+        <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+        <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
+        <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
     </div>
 
-    <div class="body">
-        <h3>Description</h3>
-        <pre>{{ issue.body or "No description provided." }}</pre>
-    </div>
+    <div class="main-content">
+        <div class="body">
+            <h3>Description</h3>
+            <div class="body-text">{{ (issue.body or "No description provided.") | replace('\n', '<br>') | safe }}</div>
+        </div>
 
-    <div class="actions">
-        <a href="/aegis/issues" class="button secondary">Back to list</a>
-        <a href="/aegis/issues?status={{ issue.status }}" class="button">View similar status</a>
-        <span class="pill">Edit / comment / status change via API (coming)</span>
+        <div class="quick-actions">
+            <h4>Quick Actions</h4>
+            <div class="action-buttons">
+                <button class="button small" disabled title="Requires update endpoint in backend">Change Status</button>
+                <button class="button small" disabled title="Requires comments backend">Add Comment</button>
+                <a href="/aegis/issues?status={{ issue.status }}" class="button small secondary">View same status</a>
+            </div>
+            <p class="note-small">Actions will be enabled when backend supports updates/comments.</p>
+        </div>
     </div>
+</div>
+
+<div class="actions">
+    <a href="/aegis/issues" class="button secondary">Back to list</a>
 </div>
 
 <p class="note">Issue details from the API.</p>

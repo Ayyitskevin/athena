@@ -3,11 +3,32 @@
 <table class="issues-table">
     <thead>
         <tr>
-            <th>#</th>
-            <th>Title</th>
-            <th>Status</th>
+            <th>
+                <a href="#" 
+                   hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort=id&order={% if sort == 'id' and order == 'desc' %}asc{% else %}desc{% endif %}&page=1&per_page={{ per_page }}"
+                   hx-target="#issues-table"
+                   hx-swap="outerHTML"
+                   hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']"> # </a>
+            </th>
+            <th>
+                <a href="#" 
+                   hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort=title&order={% if sort == 'title' and order == 'desc' %}asc{% else %}desc{% endif %}&page=1&per_page={{ per_page }}"
+                   hx-target="#issues-table"
+                   hx-swap="outerHTML">Title{% if sort == 'title' %} {{ '↓' if order == 'desc' else '↑' }}{% endif %}</a>
+            </th>
+            <th>
+                <a href="#" 
+                   hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort=status&order={% if sort == 'status' and order == 'desc' %}asc{% else %}desc{% endif %}&page=1&per_page={{ per_page }}"
+                   hx-target="#issues-table"
+                   hx-swap="outerHTML">Status{% if sort == 'status' %} {{ '↓' if order == 'desc' else '↑' }}{% endif %}</a>
+            </th>
             <th>Created By</th>
-            <th>Created</th>
+            <th>
+                <a href="#" 
+                   hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort=created_at&order={% if sort == 'created_at' and order == 'desc' %}asc{% else %}desc{% endif %}&page=1&per_page={{ per_page }}"
+                   hx-target="#issues-table"
+                   hx-swap="outerHTML">Created{% if sort == 'created_at' %} {{ '↓' if order == 'desc' else '↑' }}{% endif %}</a>
+            </th>
         </tr>
     </thead>
     <tbody>
