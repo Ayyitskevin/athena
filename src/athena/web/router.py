@@ -39,13 +39,27 @@ def home(request: Request):
 
 
 @router.get("/aegis", response_class=HTMLResponse)
-def aegis(request: Request):
-    """Aegis module landing / dashboard stub."""
+def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Aegis dashboard using real data from list_issues."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+
+    all_issues = issues.list_issues(conn)
+    from collections import Counter
+    status_counts = Counter(issue["status"] for issue in all_issues)
+    # Recent issues (newest first)
+    recent_issues = sorted(
+        all_issues, key=lambda x: x.get("created_at", ""), reverse=True
+    )[:5]
+
     return _templates.TemplateResponse(
         request=request,
         name="aegis.html",
+        context={
+            "status_counts": dict(status_counts),
+            "recent_issues": recent_issues,
+            "total_issues": len(all_issues),
+        },
     )
 
 
@@ -135,8 +149,12 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     all_issues = issues.list_issues(conn)
+    from collections import defaultdict
+    columns = defaultdict(list)
+    for issue in all_issues:
+        columns[issue.get("status", "open")].append(issue)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/boards.html",
-        context={"issues": all_issues},
+        context={"columns": dict(columns)},
     )

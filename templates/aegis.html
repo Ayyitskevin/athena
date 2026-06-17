@@ -10,8 +10,12 @@
 
 <div class="aegis-grid">
     <div class="card">
-        <h3>Issues</h3>
-        <p>Track tasks, bugs, and work items.</p>
+        <h3>Issues ({{ total_issues or 0 }})</h3>
+        <p>
+            Open: {{ status_counts.get('open', 0) }} &nbsp;
+            In Progress: {{ status_counts.get('in_progress', 0) }} &nbsp;
+            Done: {{ status_counts.get('done', 0) }}
+        </p>
         <a href="/aegis/issues" class="button">View all issues →</a>
         <a href="/aegis/issues/new" class="button secondary small">+ New</a>
     </div>
@@ -31,4 +35,19 @@
         </ul>
     </div>
 </div>
+
+{% if recent_issues %}
+<div class="recent-issues">
+    <h3>Recent Issues</h3>
+    <ul>
+    {% for issue in recent_issues %}
+        <li>
+            <a href="/aegis/issues/{{ issue.id }}">#{{ issue.id }} {{ issue.title }}</a>
+            <span class="status {{ issue.status }}">{{ issue.status }}</span>
+            <span class="muted small">{{ issue.created_at }}</span>
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
 {% endblock %}

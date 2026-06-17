@@ -21,13 +21,18 @@ def test_home_returns_200_and_contains_athena(tmp_path):
 
 
 def test_aegis_dashboard_renders(tmp_path):
-    app = create_app(tmp_path / "web.db")
+    db_file = tmp_path / "web.db"
+    app = create_app(db_file)
     with TestClient(app) as client:
+        _seed_user(db_file)
+        client.post("/issues", json={"title": "Dashboard test issue", "created_by": 1})
         response = client.get("/aegis")
     assert response.status_code == 200
     assert "Aegis" in response.text
     assert "Issues" in response.text
     assert "/aegis/issues" in response.text
+    assert "Dashboard test issue" in response.text or "Recent Issues" in response.text
+    assert "Issues (" in response.text  # count from status
 
 
 def _seed_user(db_file):
