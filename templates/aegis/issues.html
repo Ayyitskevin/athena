@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}Issues — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Issues</h1>
+        <p class="subtitle">Aegis work items</p>
+    </div>
+    <div class="header-actions">
+        <a href="/aegis/issues/new" class="button">+ New Issue</a>
+        <select 
+            class="filter-select"
+            name="status"
+            hx-get="/aegis/issues"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="this">
+            <option value="">All statuses</option>
+            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+            <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+            <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+        </select>
+        <button 
+            class="button secondary"
+            hx-get="/aegis/issues"
+            hx-target="#issues-table"
+            hx-swap="outerHTML">
+            Refresh
+        </button>
+    </div>
+</div>
+
+<div id="issues-table">
+{% if issues %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Created</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for issue in issues %}
+        <tr>
+            <td class="issue-id">#{{ issue.id }}</td>
+            <td class="issue-title">
+                <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
+            </td>
+            <td>
+                <span class="status {{ issue.status }}">{{ issue.status }}</span>
+            </td>
+            <td class="muted">{{ issue.created_at }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No issues match the current filter.</p>
+{% endif %}
+</div>
+
+<p class="note">This is a web UI stub. Real data will come from the REST API (built by the backend team).</p>
+{% endblock %}

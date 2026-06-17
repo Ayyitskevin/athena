@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Boards — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis" class="muted">← Back to Aegis</a>
+        <h1>Boards</h1>
+        <p class="subtitle">Kanban workflow (stub)</p>
+    </div>
+</div>
+
+<div class="board">
+    {% for col, label in [("open", "Open"), ("in_progress", "In Progress"), ("done", "Done")] %}
+    <div class="board-column">
+        <h3>{{ label }}</h3>
+        <div class="board-cards">
+            {% for issue in issues if issue.status == col %}
+            <div class="board-card">
+                <a href="/aegis/issues/{{ issue.id }}">#{{ issue.id }} {{ issue.title }}</a>
+                <div class="meta small">{{ issue.created_at }}</div>
+            </div>
+            {% else %}
+            <div class="empty small">No issues</div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<p class="note">This is a static Kanban stub. Drag-and-drop and live updates will be added once real issue data and the API are available.</p>
+{% endblock %}

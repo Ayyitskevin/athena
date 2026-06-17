@@ -1,0 +1,57 @@
+"""The Aegis REST API: issue endpoints.
+
+Pydantic models validate the request body before our code runs (bad input ->
+422 automatically). The router is mounted by main.py.
+"""
+from __future__ import annotations
+
+import sqlite3
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+from athena.aegis import issues
+from athena.core import db
+
+router = APIRouter(prefix="/issues", tags=["aegis"])
+
+
+class IssueCreate(BaseModel):
+    title: str
+    body: str = ""
+    created_by: int
+
+
+class IssueOut(BaseModel):
+    id: int
+    title: str
+    body: str
+    status: str
+    created_by: int
+    created_at: str
+
+
+def get_conn(request: Request):
+    """Per-request DB connection, opened from the path the app booted with.
+    A FastAPI dependency: it runs before the handler and cleans up after."""
+    conn = db.connect(request.app.state.db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@router.post("", response_model=IssueOut, status_code=201)
+def create(payload: IssueCreate, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    try:
+        return issues.create_issue(
+            conn, title=payload.title, body=payload.body, created_by=payload.created_by
+        )
+    except sqlite3.IntegrityError:
+        # created_by points at no real user — reject at the boundary.
+        raise HTTPException(status_code=400, detail="created_by must be an existing user id")
+
+
+@router.get("", response_model=list[IssueOut])
+def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    return issues.list_issues(conn)

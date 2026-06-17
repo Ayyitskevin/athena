@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Athena{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>Athena</h1>
+    <p class="tagline">
+        A self-hosted workspace for your work and your knowledge.
+    </p>
+    <p>
+        <strong>Aegis</strong> tracks the work. <strong>Mentor</strong> holds what you know.
+    </p>
+</div>
+
+<nav class="quick-nav" aria-label="Primary sections">
+    <a href="/aegis" class="card">Aegis — Issues &amp; Boards</a>
+    <a href="/mentor" class="card">Mentor — Docs &amp; Spaces</a>
+</nav>
+{% endblock %}
