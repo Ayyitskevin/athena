@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import issues
-from athena.aegis.api import get_conn
+from athena.core.deps import get_conn
 
 router = APIRouter()
 

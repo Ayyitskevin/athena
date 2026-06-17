@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import issues
-from athena.core import db
+from athena.core.deps import get_conn
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 
@@ -29,16 +29,6 @@ class IssueOut(BaseModel):
     status: str
     created_by: int
     created_at: str
-
-
-def get_conn(request: Request):
-    """Per-request DB connection, opened from the path the app booted with.
-    A FastAPI dependency: it runs before the handler and cleans up after."""
-    conn = db.connect(request.app.state.db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 @router.post("", response_model=IssueOut, status_code=201)
