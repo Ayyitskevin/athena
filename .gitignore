@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets & local config — NEVER commit these
+.env
+*.env
+
+# Local data (SQLite db + write-ahead-log files)
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# OS / editor noise
+.DS_Store
+*.swp
