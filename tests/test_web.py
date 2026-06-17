@@ -43,8 +43,12 @@ def test_issues_list_renders_real_data(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
-        # seed one real issue via the API
-        client.post("/issues", json={"title": "Real issue from API", "body": "test", "created_by": 1})
+        # seed one real issue via the API (actor identifies the creator)
+        client.post(
+            "/issues",
+            json={"title": "Real issue from API", "body": "test"},
+            headers={"X-Athena-Actor": "1"},
+        )
 
         response = client.get("/aegis/issues")
     assert response.status_code == 200
@@ -58,7 +62,9 @@ def test_issue_detail_renders_real_data(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
-        created = client.post("/issues", json={"title": "Detail test issue", "created_by": 1})
+        created = client.post(
+            "/issues", json={"title": "Detail test issue"}, headers={"X-Athena-Actor": "1"}
+        )
         issue_id = created.json()["id"]
 
         response = client.get(f"/aegis/issues/{issue_id}")
@@ -106,7 +112,11 @@ def test_issues_list_htmx_fragment_vs_full_page(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
-        client.post("/issues", json={"title": "Searchable real issue", "body": "test", "created_by": 1})
+        client.post(
+            "/issues",
+            json={"title": "Searchable real issue", "body": "test"},
+            headers={"X-Athena-Actor": "1"},
+        )
 
         # HTMX request (fragment only)
         response = client.get(
