@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import api as aegis_api
-from athena.core import db
+from athena.core import db, users_api
 from athena.web import init_templates, router as web_router
 
 
@@ -41,6 +41,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     templates = Jinja2Templates(directory="templates")
     init_templates(templates)
     app.include_router(web_router)
+
+    # Core REST API (users).
+    app.include_router(users_api.router)
 
     # Aegis REST API (issues).
     app.include_router(aegis_api.router)
