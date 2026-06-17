@@ -54,8 +54,12 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 - **Branch per agent:** `claude/<topic>`, `grok/<topic>`, `codex/<topic>`,
   `kevin/<topic>`. One logical change per branch, kebab-case topic.
 - **Work in your own checkout/worktree.** Never edit another agent's working dir.
-- **`main` is protected and is the truth.** Open a PR; the review tail looks at
-  it; **Kevin merges.** Agents never self-merge and never push to `main`.
+- **`main` is the truth.** Open a PR so the change has a record and the review
+  tail can look at it. In Athena, **agents may merge their own PR** once it's
+  green — this is a dev project, not a live service, so we optimize for flow.
+  (This deliberately diverges from the fleet-wide "Kevin merges" rule, which
+  still holds for live services like Mise.) Still **never push directly to
+  `main`** — the PR is the gate, even when an agent merges it.
 - Rebase on `main` before opening the PR (linear history). Never force-push
   `main`; force-with-lease on your *own* feature branch after a rebase is fine.
 
