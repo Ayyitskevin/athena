@@ -8,7 +8,20 @@
         <h1>Issues</h1>
         <p class="subtitle">Aegis work items</p>
     </div>
-    <div>
+    <div class="header-actions">
+        <a href="/aegis/issues/new" class="button">+ New Issue</a>
+        <select 
+            class="filter-select"
+            name="status"
+            hx-get="/aegis/issues"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="this">
+            <option value="">All statuses</option>
+            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+            <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+            <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+        </select>
         <button 
             class="button secondary"
             hx-get="/aegis/issues"
@@ -16,7 +29,6 @@
             hx-swap="outerHTML">
             Refresh
         </button>
-        <span class="pill">Create via API</span>
     </div>
 </div>
 
@@ -35,7 +47,9 @@
     {% for issue in issues %}
         <tr>
             <td class="issue-id">#{{ issue.id }}</td>
-            <td class="issue-title">{{ issue.title }}</td>
+            <td class="issue-title">
+                <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
+            </td>
             <td>
                 <span class="status {{ issue.status }}">{{ issue.status }}</span>
             </td>
@@ -45,7 +59,7 @@
     </tbody>
 </table>
 {% else %}
-<p class="empty-state">No issues yet. The fleet will create them via the API.</p>
+<p class="empty-state">No issues match the current filter.</p>
 {% endif %}
 </div>
 

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}#{{ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/issues" class="muted">← Back to issues</a>
+        <h1>#{{ issue.id }} {{ issue.title }}</h1>
+    </div>
+    <div>
+        <span class="status {{ issue.status }} large">{{ issue.status }}</span>
+    </div>
+</div>
+
+<div class="issue-detail">
+    <div class="meta">
+        <div><strong>Created:</strong> {{ issue.created_at }}</div>
+        <div><strong>Status:</strong> {{ issue.status }}</div>
+    </div>
+
+    <div class="body">
+        <h3>Description</h3>
+        <p>{{ issue.body or "No description provided." }}</p>
+    </div>
+
+    <div class="actions">
+        <a href="/aegis/issues" class="button secondary">Back to list</a>
+        <span class="pill">Edit / comment via API</span>
+    </div>
+</div>
+
+<p class="note">Stub view. Full issue data and comments will come from the backend REST API.</p>
+{% endblock %}

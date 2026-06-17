@@ -1,0 +1,17 @@
+<div class="success-banner">
+    <strong>✓ Issue created (demo)</strong>
+    <p>
+        <a href="/aegis/issues/{{ issue.id }}">#{{ issue.id }} {{ issue.title }}</a>
+        has been added to the stub list.
+    </p>
+    <div>
+        <a href="/aegis/issues" class="button">View issues list</a>
+        <button 
+            class="button secondary"
+            hx-get="/aegis/issues/new"
+            hx-target=".form-container"
+            hx-swap="outerHTML">
+            Create another
+        </button>
+    </div>
+</div>
