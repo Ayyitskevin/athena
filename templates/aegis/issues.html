@@ -10,13 +10,24 @@
     </div>
     <div class="header-actions">
         <a href="/aegis/issues/new" class="button">+ New Issue</a>
+        <input 
+            type="text" 
+            name="search" 
+            placeholder="Search issues..." 
+            value="{{ search }}"
+            class="search-input"
+            hx-get="/aegis/issues"
+            hx-trigger="keyup changed delay:300ms"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search']">
         <select 
             class="filter-select"
             name="status"
             hx-get="/aegis/issues"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="this">
+            hx-include="[name='status'],[name='search']">
             <option value="">All statuses</option>
             <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
             <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
@@ -26,7 +37,8 @@
             class="button secondary"
             hx-get="/aegis/issues"
             hx-target="#issues-table"
-            hx-swap="outerHTML">
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='search']">
             Refresh
         </button>
     </div>

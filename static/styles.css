@@ -413,6 +413,14 @@ footer {
     align-items: center;
 }
 
+.search-input {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    width: 160px;
+}
+
 .filter-select {
     padding: 0.3rem 0.5rem;
     border: 1px solid #ccc;
