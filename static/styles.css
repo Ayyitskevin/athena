@@ -107,3 +107,161 @@ footer {
     color: #666;
     font-size: 0.8rem;
 }
+
+/* Aegis pages */
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.page-header h1 {
+    margin: 0 0 0.25rem;
+    font-size: 1.75rem;
+}
+
+.page-header .subtitle {
+    margin: 0;
+    color: #555;
+    font-size: 0.95rem;
+}
+
+.aegis-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.aegis-grid .card {
+    padding: 1rem;
+}
+
+.aegis-grid h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+}
+
+.aegis-grid p {
+    margin: 0 0 0.75rem;
+    color: #555;
+    font-size: 0.9rem;
+}
+
+.quick-actions {
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.9rem;
+}
+
+.button {
+    display: inline-block;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.875rem;
+    border: 1px solid #333;
+    border-radius: 4px;
+    text-decoration: none;
+    color: #fff;
+    background: #333;
+    cursor: pointer;
+}
+
+.button:hover {
+    background: #111;
+}
+
+.button.secondary {
+    background: #fff;
+    color: #333;
+    border-color: #ccc;
+}
+
+.button.secondary:hover {
+    background: #f5f5f5;
+}
+
+/* Issues table */
+.issues-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    font-size: 0.925rem;
+}
+
+.issues-table th,
+.issues-table td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+.issues-table th {
+    font-weight: 600;
+    color: #444;
+    background: #fafafa;
+}
+
+.issue-id {
+    font-family: ui-monospace, monospace;
+    color: #666;
+    width: 3.5rem;
+}
+
+.issue-title {
+    font-weight: 500;
+}
+
+.status {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    text-transform: capitalize;
+    font-weight: 500;
+}
+
+.status.open {
+    background: #e6f4ea;
+    color: #1e7e34;
+}
+
+.status.in_progress {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.status.done {
+    background: #d4edda;
+    color: #155724;
+}
+
+.muted {
+    color: #666;
+    font-size: 0.85rem;
+}
+
+.empty-state {
+    padding: 2rem;
+    text-align: center;
+    color: #666;
+    border: 1px dashed #ddd;
+    border-radius: 6px;
+}
+
+.pill {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 0.1rem 0.5rem;
+    background: #f0f0f0;
+    color: #555;
+    border-radius: 999px;
+    vertical-align: middle;
+}
+
+.note {
+    margin-top: 1.5rem;
+    font-size: 0.8rem;
+    color: #777;
+}

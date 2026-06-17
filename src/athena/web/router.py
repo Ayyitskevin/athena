@@ -31,3 +31,53 @@ def home(request: Request):
         request=request,
         name="home.html",
     )
+
+
+@router.get("/aegis", response_class=HTMLResponse)
+def aegis(request: Request):
+    """Aegis module landing / dashboard stub."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis.html",
+    )
+
+
+# Temporary stub data. Will be replaced by real data from the API layer.
+SAMPLE_ISSUES = [
+    {
+        "id": 1,
+        "title": "Bootstrap the web foundation",
+        "status": "done",
+        "created_at": "2026-06-17",
+    },
+    {
+        "id": 2,
+        "title": "Define initial issue statuses and workflow",
+        "status": "open",
+        "created_at": "2026-06-17",
+    },
+    {
+        "id": 3,
+        "title": "Add first board view (Aegis)",
+        "status": "in_progress",
+        "created_at": "2026-06-16",
+    },
+]
+
+
+@router.get("/aegis/issues", response_class=HTMLResponse)
+def issues_list(request: Request):
+    """Issues list view (Aegis). Currently renders stub data.
+
+    When the REST API is ready this can be swapped to fetch from the backend
+    or use HTMX to load fragments.
+    """
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/issues.html",
+        context={"issues": SAMPLE_ISSUES},
+    )
