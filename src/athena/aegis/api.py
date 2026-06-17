@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from athena.aegis import issues
 from athena.core.deps import get_conn
+from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 
@@ -19,7 +20,6 @@ router = APIRouter(prefix="/issues", tags=["aegis"])
 class IssueCreate(BaseModel):
     title: str
     body: str = ""
-    created_by: int
 
 
 class IssueOut(BaseModel):
@@ -32,14 +32,15 @@ class IssueOut(BaseModel):
 
 
 @router.post("", response_model=IssueOut, status_code=201)
-def create(payload: IssueCreate, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    try:
-        return issues.create_issue(
-            conn, title=payload.title, body=payload.body, created_by=payload.created_by
-        )
-    except sqlite3.IntegrityError:
-        # created_by points at no real user — reject at the boundary.
-        raise HTTPException(status_code=400, detail="created_by must be an existing user id")
+def create(
+    payload: IssueCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # created_by is the authenticated actor, never a value the caller supplied.
+    return issues.create_issue(
+        conn, title=payload.title, body=payload.body, created_by=actor["id"]
+    )
 
 
 @router.get("", response_model=list[IssueOut])
