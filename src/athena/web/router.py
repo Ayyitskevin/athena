@@ -5,9 +5,14 @@ is configured in main.py (per wiring contract) and injected via init_templates.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+import sqlite3
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+
+from athena.aegis import issues
+from athena.aegis.api import get_conn
 
 router = APIRouter()
 
@@ -44,56 +49,33 @@ def aegis(request: Request):
     )
 
 
-# Temporary in-memory stub data for UI development only.
-# Will be replaced by real data fetched from the backend REST API.
-_next_issue_id = 4
-SAMPLE_ISSUES = [
-    {
-        "id": 1,
-        "title": "Bootstrap the web foundation",
-        "status": "done",
-        "created_at": "2026-06-17",
-        "body": "Set up Jinja2, HTMX, base templates, and static assets for the web layer.",
-    },
-    {
-        "id": 2,
-        "title": "Define initial issue statuses and workflow",
-        "status": "open",
-        "created_at": "2026-06-17",
-        "body": "",
-    },
-    {
-        "id": 3,
-        "title": "Add first board view (Aegis)",
-        "status": "in_progress",
-        "created_at": "2026-06-16",
-        "body": "Visual board with columns for open / in progress / done.",
-    },
-]
-
-
 @router.get("/aegis/issues", response_class=HTMLResponse)
-def issues_list(request: Request):
-    """Issues list view (Aegis). Currently renders stub data.
-
-    When the REST API is ready this can be swapped to fetch from the backend
-    or use HTMX to load fragments.
-    """
+def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Issues list view (Aegis) wired to real DB via data-access layer (list_issues)."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     status_filter = request.query_params.get("status")
-    issues = SAMPLE_ISSUES
+    search = (request.query_params.get("search") or "").strip().lower()
+
+    all_issues = issues.list_issues(conn)
+    filtered = all_issues
     if status_filter:
-        issues = [i for i in SAMPLE_ISSUES if i["status"] == status_filter]
+        filtered = [i for i in filtered if i["status"] == status_filter]
+    if search:
+        filtered = [
+            i
+            for i in filtered
+            if search in i["title"].lower() or search in (i.get("body") or "").lower()
+        ]
 
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issues.html",
         context={
-            "issues": issues,
+            "issues": filtered,
             "status_filter": status_filter or "",
-            "all_issues": SAMPLE_ISSUES,
+            "search": search,
         },
     )
 
@@ -111,58 +93,32 @@ def new_issue_form(request: Request):
 
 @router.post("/aegis/issues", response_class=HTMLResponse)
 async def create_issue(request: Request):
-    """Handle create issue form submission (HTMX).
+    """Create is currently blocked: requires user accounts (auth in core).
 
-    For now this is a demo that 'creates' the issue in the stub store
-    and returns a success fragment. When the real API exists, this
-    route can either proxy or be removed in favor of direct API calls from the form.
+    See AGENTS.md cardinal rule and this task's blocker note.
     """
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    form = await request.form()
-    title = form.get("title", "").strip()
-    body = form.get("body", "").strip()
-    status = form.get("status", "open")
-
-    if not title:
-        return _templates.TemplateResponse(
-            request=request,
-            name="aegis/issue_form.html",
-            context={"error": "Title is required"},
-        )
-
-    global _next_issue_id
-    new_issue = {
-        "id": _next_issue_id,
-        "title": title,
-        "status": status,
-        "created_at": "2026-06-17",  # demo
-        "body": body,
-    }
-    SAMPLE_ISSUES.append(new_issue)
-    _next_issue_id += 1
-
-    # Return success fragment (HTMX will swap it in)
-    return _templates.TemplateResponse(
-        request=request,
-        name="partials/create_success.html",
-        context={"issue": new_issue},
+    # Return blocked state into the form's result target. Do not write.
+    return HTMLResponse(
+        "<div class=\"blocked\">issue creation needs user accounts (coming in core/auth)</div>"
     )
 
 
 @router.get("/aegis/issues/{issue_id}", response_class=HTMLResponse)
-def issue_detail(request: Request, issue_id: int):
-    """Show a single issue (stub)."""
+def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+    """Show a single issue from real DB via get_issue."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    issue = next((i for i in SAMPLE_ISSUES if i["id"] == issue_id), None)
+    issue = issues.get_issue(conn, issue_id)
     if not issue:
+        # not-found state: render empty list page with error (minimal)
         return _templates.TemplateResponse(
             request=request,
             name="aegis/issues.html",
-            context={"issues": SAMPLE_ISSUES, "error": f"Issue #{issue_id} not found"},
+            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue #{issue_id} not found"},
         )
 
     return _templates.TemplateResponse(
@@ -173,12 +129,13 @@ def issue_detail(request: Request, issue_id: int):
 
 
 @router.get("/aegis/boards", response_class=HTMLResponse)
-def boards(request: Request):
-    """Boards view stub (Kanban style placeholder)."""
+def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Boards view (Aegis) using real list_issues."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    all_issues = issues.list_issues(conn)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/boards.html",
-        context={"issues": SAMPLE_ISSUES},
+        context={"issues": all_issues},
     )
