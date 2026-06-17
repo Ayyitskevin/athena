@@ -99,3 +99,30 @@ def test_boards_page_renders(tmp_path):
     assert "Boards" in response.text
     assert "Kanban" in response.text or "board" in response.text.lower()
     assert "Open" in response.text
+
+
+def test_issues_list_htmx_fragment_vs_full_page(tmp_path):
+    db_file = tmp_path / "web.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        client.post("/issues", json={"title": "Searchable real issue", "body": "test", "created_by": 1})
+
+        # HTMX request (fragment only)
+        response = client.get(
+            "/aegis/issues?search=Searchable",
+            headers={"HX-Request": "true"},
+        )
+        assert response.status_code == 200
+        assert "Searchable real issue" in response.text
+        # Fragment: has table content but NOT page chrome (search input, header, nav etc.)
+        assert "search-input" not in response.text
+        assert "page-header" not in response.text.lower()
+        assert '<div id="issues-table">' in response.text
+
+        # Non-HTMX: full page
+        response = client.get("/aegis/issues?search=Searchable")
+        assert response.status_code == 200
+        assert "Searchable real issue" in response.text
+        assert "search-input" in response.text  # page chrome present
+        assert "Issues" in response.text  # from <h1> or title in full page

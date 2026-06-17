@@ -69,9 +69,10 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             if search in i["title"].lower() or search in (i.get("body") or "").lower()
         ]
 
+    template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
         request=request,
-        name="aegis/issues.html",
+        name=template,
         context={
             "issues": filtered,
             "status_filter": status_filter or "",

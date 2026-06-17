@@ -44,36 +44,7 @@
     </div>
 </div>
 
-<div id="issues-table">
-{% if issues %}
-<table class="issues-table">
-    <thead>
-        <tr>
-            <th>#</th>
-            <th>Title</th>
-            <th>Status</th>
-            <th>Created</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for issue in issues %}
-        <tr>
-            <td class="issue-id">#{{ issue.id }}</td>
-            <td class="issue-title">
-                <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
-            </td>
-            <td>
-                <span class="status {{ issue.status }}">{{ issue.status }}</span>
-            </td>
-            <td class="muted">{{ issue.created_at }}</td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p class="empty-state">No issues match the current filter.</p>
-{% endif %}
-</div>
+{% include "aegis/partials/issues_table.html" %}
 
 <p class="note">Data from the Aegis issues API.</p>
 {% endblock %}
