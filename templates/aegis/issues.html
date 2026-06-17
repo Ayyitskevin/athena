@@ -16,7 +16,7 @@
             placeholder="Search issues..." 
             value="{{ search }}"
             class="search-input"
-            hx-get="/aegis/issues"
+            hx-get="/aegis/issues?page=1&per_page=20"
             hx-trigger="keyup changed delay:300ms"
             hx-target="#issues-table"
             hx-swap="outerHTML"
@@ -24,7 +24,7 @@
         <select 
             class="filter-select"
             name="status"
-            hx-get="/aegis/issues"
+            hx-get="/aegis/issues?page=1&per_page=20"
             hx-target="#issues-table"
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
@@ -36,7 +36,7 @@
         <select 
             class="filter-select"
             name="sort"
-            hx-get="/aegis/issues"
+            hx-get="/aegis/issues?page=1&per_page=20"
             hx-target="#issues-table"
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
@@ -47,7 +47,7 @@
         <select 
             class="filter-select"
             name="order"
-            hx-get="/aegis/issues"
+            hx-get="/aegis/issues?page=1&per_page=20"
             hx-target="#issues-table"
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">
@@ -56,7 +56,7 @@
         </select>
         <button 
             class="button secondary"
-            hx-get="/aegis/issues"
+            hx-get="/aegis/issues?page=1&per_page=20"
             hx-target="#issues-table"
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='search'],[name='sort'],[name='order']">

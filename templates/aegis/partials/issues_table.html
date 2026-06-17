@@ -29,4 +29,23 @@
 {% else %}
 <p class="empty-state">No issues match the current filter.</p>
 {% endif %}
+
+{% if total is defined and total > 0 %}
+<div class="pagination">
+  {% set total_pages = (total / per_page) | int + (1 if total % per_page else 0) %}
+  {% if page > 1 %}
+  <button class="button secondary small"
+          hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort={{ sort }}&order={{ order }}&page={{ page-1 }}&per_page={{ per_page }}"
+          hx-target="#issues-table"
+          hx-swap="outerHTML">← Prev</button>
+  {% endif %}
+  <span>Page {{ page }} of {{ total_pages }} ({{ total }} total)</span>
+  {% if page < total_pages %}
+  <button class="button secondary small"
+          hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort={{ sort }}&order={{ order }}&page={{ page+1 }}&per_page={{ per_page }}"
+          hx-target="#issues-table"
+          hx-swap="outerHTML">Next →</button>
+  {% endif %}
+</div>
+{% endif %}
 </div>

@@ -92,16 +92,30 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     except Exception:
         pass  # fallback if sort key bad
 
+    # Simple pagination (server-side slice)
+    try:
+        page = max(1, int(request.query_params.get("page", 1)))
+        per_page = max(5, min(50, int(request.query_params.get("per_page", 20))))
+    except:
+        page, per_page = 1, 20
+
+    total = len(filtered)
+    start = (page - 1) * per_page
+    paged = filtered[start : start + per_page]
+
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
         request=request,
         name=template,
         context={
-            "issues": filtered,
+            "issues": paged,
             "status_filter": status_filter or "",
             "search": search,
             "sort": sort,
             "order": order,
+            "page": page,
+            "per_page": per_page,
+            "total": total,
         },
     )
 
