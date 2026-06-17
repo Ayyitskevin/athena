@@ -59,7 +59,7 @@ def test_issues_list_renders_real_data(tmp_path):
     assert response.status_code == 200
     assert "Issues" in response.text
     assert "Real issue from API" in response.text
-    assert 'hx-get="/aegis/issues"' in response.text
+    assert 'hx-get="/aegis/issues?page=1' in response.text
 
 
 def test_issue_detail_renders_real_data(tmp_path):
