@@ -30,7 +30,11 @@ class IssueCreate(BaseModel):
 
 
 class IssueUpdate(BaseModel):
-    status: Status
+    # A partial edit: send any subset. Unset fields are left unchanged. status
+    # is still constrained to the lifecycle when present.
+    title: str | None = None
+    body: str | None = None
+    status: Status | None = None
 
 
 class AssigneeUpdate(BaseModel):
@@ -90,8 +94,17 @@ def update(
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Any authenticated actor may move any issue (no per-issue ownership yet).
-    updated = issues.update_status(conn, issue_id, payload.status)
+    # Any authenticated actor may edit any issue (no per-issue ownership yet).
+    # Only the fields the client actually sent are touched (exclude_unset).
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    title = payload.title.strip() if payload.title is not None else None
+    if title is not None and not title:
+        raise HTTPException(status_code=422, detail="title cannot be empty")
+    updated = issues.update_issue(
+        conn, issue_id, title=title, body=payload.body, status=payload.status
+    )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return updated

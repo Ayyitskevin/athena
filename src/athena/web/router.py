@@ -175,6 +175,58 @@ def create_issue(
     )
 
 
+@router.get("/aegis/issues/{issue_id}/edit", response_class=HTMLResponse)
+def edit_issue_form(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Render the edit form for an issue, prefilled with its current title/body.
+    Gated on the session user — editing is a write, so logged-out callers get a
+    sign-in prompt rather than a form they can't submit."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    issue = issues.get_issue(conn, issue_id)
+    if not issue:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/issue_edit.html",
+        context={"issue": issue},
+    )
+
+
+@router.post("/aegis/issues/{issue_id}/edit")
+def edit_issue(
+    request: Request,
+    issue_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Save edits to an issue's title and body from the edit form. Gated on the
+    session user (same actor rule as every write), rejects an empty title, then
+    303-redirects back to the issue so it reloads with the new content."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    title = title.strip()
+    if not title:
+        return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
+
+    updated = issues.update_issue(conn, issue_id, title=title, body=body.strip())
+    if updated is None:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
 @router.post("/aegis/issues/{issue_id}/status")
 def change_issue_status(
     request: Request,

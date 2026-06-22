@@ -24,7 +24,11 @@
 
     <div class="main-content">
         <div class="body">
-            <h3>Description</h3>
+            <h3>Description
+            {% if request.state.user %}
+                <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>
+            {% endif %}
+            </h3>
             <div class="body-text">{{ (issue.body or "No description provided.") | replace('\n', '<br>') | safe }}</div>
         </div>
 
