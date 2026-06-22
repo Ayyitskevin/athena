@@ -40,19 +40,46 @@ def create_issue(
     return get_issue(conn, cur.lastrowid)
 
 
-def update_status(
-    conn: sqlite3.Connection, issue_id: int, status: str
+def update_issue(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    *,
+    title: str | None = None,
+    body: str | None = None,
+    status: str | None = None,
 ) -> dict | None:
-    """Move an issue to a new status. Returns the updated issue, or None if no
-    issue has that id (so the caller can answer 404). Validating the status
-    against STATUSES is the boundary's job, not this function's."""
+    """Partial update: only the fields passed as non-None change. Returns the
+    updated issue, or None if no issue has that id (so the caller can 404).
+    Field validation (status in STATUSES, non-empty title) is the boundary's job.
+
+    The column names below are hardcoded literals, never caller input, so the
+    f-string assembles a safe SET clause; the values stay parameterized."""
+    fields = {
+        col: val
+        for col, val in (("title", title), ("body", body), ("status", status))
+        if val is not None
+    }
+    if not fields:
+        # Nothing to change — still distinguish "no such issue" (None) from a
+        # real but unchanged issue, so the boundary's 404 stays correct.
+        return get_issue(conn, issue_id)
+    assignments = ", ".join(f"{col} = ?" for col in fields)
     cur = conn.execute(
-        "UPDATE issues SET status = ? WHERE id = ?", (status, issue_id)
+        f"UPDATE issues SET {assignments} WHERE id = ?",
+        (*fields.values(), issue_id),
     )
     conn.commit()
     if cur.rowcount == 0:
         return None
     return get_issue(conn, issue_id)
+
+
+def update_status(
+    conn: sqlite3.Connection, issue_id: int, status: str
+) -> dict | None:
+    """Move an issue to a new status. Thin wrapper over update_issue, kept as a
+    named operation for the status-change call sites (web route + API)."""
+    return update_issue(conn, issue_id, status=status)
 
 
 def set_assignee(
