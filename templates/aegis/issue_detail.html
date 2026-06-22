@@ -25,7 +25,7 @@
     <div class="main-content">
         <div class="body">
             <h3>Description
-            {% if request.state.user %}
+            {% if can_modify %}
                 <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>
             {% endif %}
             </h3>
@@ -79,7 +79,7 @@
 
         <div class="quick-actions">
             <h4>Quick Actions</h4>
-            {% if request.state.user %}
+            {% if can_modify %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="status-form">
                 <label for="status-select">Status</label>
                 <select id="status-select" name="status">
@@ -99,6 +99,8 @@
                 </select>
                 <button type="submit" class="button small">Assign</button>
             </form>
+            {% elif request.state.user %}
+            <p class="note-small">Only the issue creator or assignee can change status or assignment.</p>
             {% else %}
             <p class="note-small"><a href="/login">Sign in</a> to change status.</p>
             {% endif %}
