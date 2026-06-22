@@ -98,6 +98,15 @@ def set_assignee(
     return get_issue(conn, issue_id)
 
 
+def can_modify(issue: dict, actor_id: int) -> bool:
+    """Whether an actor may modify this issue (change status, edit, assign).
+    The rule: the issue's creator OR its current assignee. An unassigned issue
+    (assignee_id is None) can only be modified by its creator until someone is
+    assigned. Reads and commenting are open to all authenticated actors and do
+    NOT pass through here — this gate is for writes only."""
+    return actor_id == issue["created_by"] or actor_id == issue["assignee_id"]
+
+
 def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE i.id = ?", (issue_id,)).fetchone()
     return dict(row) if row else None

@@ -175,6 +175,23 @@ def create_issue(
     )
 
 
+def _authorize_issue_write(conn, issue_id, user):
+    """Return (issue, None) if the session user may modify this issue, else
+    (None, HTMLResponse) with the right status. 404 if no such issue, 403 if the
+    user is neither its creator nor its current assignee. Mirrors the API's
+    _issue_for_write so the browser paths enforce the same creator-or-assignee
+    rule. The 401 (logged-out) check stays at each call site, before this."""
+    issue = issues.get_issue(conn, issue_id)
+    if not issue:
+        return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    if not issues.can_modify(issue, user["id"]):
+        return None, HTMLResponse(
+            '<div class="error">Only the issue creator or assignee may modify it.</div>',
+            status_code=403,
+        )
+    return issue, None
+
+
 @router.get("/aegis/issues/{issue_id}/edit", response_class=HTMLResponse)
 def edit_issue_form(
     request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
@@ -190,9 +207,9 @@ def edit_issue_form(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    issue = issues.get_issue(conn, issue_id)
-    if not issue:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
@@ -217,13 +234,14 @@ def edit_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
 
-    updated = issues.update_issue(conn, issue_id, title=title, body=body.strip())
-    if updated is None:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    issues.update_issue(conn, issue_id, title=title, body=body.strip())
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -243,12 +261,13 @@ def change_issue_status(
             '<div class="blocked">Please <a href="/login">sign in</a> to change status.</div>',
             status_code=401,
         )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
     if status not in issues.STATUSES:
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
 
-    updated = issues.update_status(conn, issue_id, status)
-    if updated is None:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    issues.update_status(conn, issue_id, status)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -267,6 +286,8 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
             context={"issues": [], "status_filter": "", "search": "", "error": f"Issue #{issue_id} not found"},
         )
 
+    user = getattr(request.state, "user", None)
+    can_modify = bool(user) and issues.can_modify(issue, user["id"])
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_detail.html",
@@ -274,6 +295,7 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
             "issue": issue,
             "comments": comments.list_comments(conn, issue_id),
             "users": users.list_users(conn),
+            "can_modify": can_modify,
         },
     )
 
@@ -294,6 +316,9 @@ def change_issue_assignee(
             '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
             status_code=401,
         )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
 
     assignee_id = assignee_id.strip()
     if assignee_id == "":
@@ -306,9 +331,7 @@ def change_issue_assignee(
         if users.get_user(conn, target) is None:
             return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
 
-    updated = issues.set_assignee(conn, issue_id, target)
-    if updated is None:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    issues.set_assignee(conn, issue_id, target)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

@@ -87,6 +87,25 @@ def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     return issues.list_issues(conn)
 
 
+def _issue_for_write(
+    conn: sqlite3.Connection, issue_id: int, actor: dict
+) -> dict:
+    """Fetch an issue the actor is allowed to MODIFY, or raise: 404 if no such
+    issue, 403 if the actor is neither its creator nor its current assignee.
+    Centralizes the issue write-authorization rule (issues.can_modify) so every
+    write path (status/edit/assign) enforces it identically. Reads and comments
+    do not go through here."""
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    if not issues.can_modify(issue, actor["id"]):
+        raise HTTPException(
+            status_code=403,
+            detail="only the issue creator or assignee may modify it",
+        )
+    return issue
+
+
 @router.patch("/{issue_id}", response_model=IssueOut)
 def update(
     issue_id: int,
@@ -94,7 +113,8 @@ def update(
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Any authenticated actor may edit any issue (no per-issue ownership yet).
+    # Creator or assignee only (404 if missing, 403 if not permitted).
+    _issue_for_write(conn, issue_id, actor)
     # Only the fields the client actually sent are touched (exclude_unset).
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
@@ -117,16 +137,17 @@ def set_assignee(
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    # Creator or assignee only (404 if missing, 403 if not permitted). Checked
+    # against the CURRENT assignee — so an unassigned issue can only be assigned
+    # by its creator, and an assignee may reassign or unassign themselves.
+    _issue_for_write(conn, issue_id, actor)
     # Reject an unknown user here (422) rather than letting the FK raise a 500.
     # None is always valid — it means "unassign".
     if payload.assignee_id is not None and users.get_user(
         conn, payload.assignee_id
     ) is None:
         raise HTTPException(status_code=422, detail="no such user")
-    updated = issues.set_assignee(conn, issue_id, payload.assignee_id)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such issue")
-    return updated
+    return issues.set_assignee(conn, issue_id, payload.assignee_id)
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
