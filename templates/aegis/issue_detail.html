@@ -43,6 +43,21 @@
                         <span class="muted">{{ c.created_at }}</span>
                     </div>
                     <div class="comment-body">{{ c.body | replace('\n', '<br>') | safe }}</div>
+                    {% if request.state.user and c.author_id == request.state.user.id %}
+                    <div class="comment-actions">
+                        <details class="comment-edit">
+                            <summary class="muted">Edit</summary>
+                            <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/edit">
+                                <textarea name="body" rows="2" required>{{ c.body }}</textarea>
+                                <button type="submit" class="button small">Save</button>
+                            </form>
+                        </details>
+                        <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/delete"
+                              onsubmit="return confirm('Delete this comment?');">
+                            <button type="submit" class="button small secondary">Delete</button>
+                        </form>
+                    </div>
+                    {% endif %}
                 </li>
                 {% endfor %}
             </ul>

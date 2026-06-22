@@ -34,6 +34,29 @@ def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def update_comment(
+    conn: sqlite3.Connection, comment_id: int, *, body: str
+) -> dict | None:
+    """Replace a comment's body and return it, or None if no comment has that id.
+    Author-ownership (only the author may edit) is enforced at the boundary, not
+    here — this function just writes."""
+    cur = conn.execute(
+        "UPDATE comments SET body = ? WHERE id = ?", (body, comment_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_comment(conn, comment_id)
+
+
+def delete_comment(conn: sqlite3.Connection, comment_id: int) -> bool:
+    """Delete a comment. Returns True if a row was removed, False if no comment
+    had that id (so the caller can answer 404)."""
+    cur = conn.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def list_comments(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
     """An issue's comments, oldest first (id order = chronological)."""
     rows = conn.execute(
