@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from athena.aegis import comments, issues, labels
+from athena.aegis import comments, issues, labels, projects
 from athena.core import users
 from athena.core.deps import get_conn
 
@@ -87,6 +87,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     status_filter = request.query_params.get("status")
     label_filter = (request.query_params.get("label") or "").strip()
+    project_raw = (request.query_params.get("project") or "").strip()
+    project_id = int(project_raw) if project_raw.isdigit() else None
     search = (request.query_params.get("search") or "").strip().lower()
     sort = request.query_params.get("sort", "created_at")
     order = request.query_params.get("order", "desc")
@@ -95,7 +97,9 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # so the list and the API never disagree on what matches. The web layer then
     # only does the presentation concerns — sort + pagination — on the result.
     ids = labels.issue_ids_for_label(conn, label_filter) if label_filter else None
-    filtered = issues.list_issues(conn, status=status_filter, search=search, ids=ids)
+    filtered = issues.list_issues(
+        conn, status=status_filter, search=search, project_id=project_id, ids=ids
+    )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
 
     # Sort in web layer (presentation concern) – safe since we don't own data
@@ -125,6 +129,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "status_filter": status_filter or "",
             "label_filter": label_filter,
             "all_labels": labels.list_labels(conn),
+            "project_filter": project_raw,
+            "all_projects": projects.list_projects(conn),
             "search": search,
             "sort": sort,
             "order": order,
@@ -136,13 +142,14 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
 
 @router.get("/aegis/issues/new", response_class=HTMLResponse)
-def new_issue_form(request: Request):
+def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Render the new issue creation form."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
+        context={"all_projects": projects.list_projects(conn)},
     )
 
 
@@ -153,6 +160,7 @@ def create_issue(
     body: str = Form(""),
     status: str = Form("open"),
     priority: str = Form("medium"),
+    project_id: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Create an issue as the logged-in user. The actor is the browser session
@@ -175,11 +183,19 @@ def create_issue(
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
     if priority not in issues.PRIORITIES:
         return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
+    # Project is optional ("" = no project); if given it must be a real project.
+    project_id = project_id.strip()
+    if project_id == "":
+        project: int | None = None
+    else:
+        if not project_id.isdigit() or projects.get_project(conn, int(project_id)) is None:
+            return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
+        project = int(project_id)
     body = body.strip()
 
     issue = issues.create_issue(
         conn, title=title, body=body, status=status, priority=priority,
-        created_by=user["id"],
+        project_id=project, created_by=user["id"],
     )
     # HTMX swaps this into #create-result; nudge the browser to the new issue.
     return HTMLResponse(
@@ -336,6 +352,7 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
             "users": users.list_users(conn),
             "issue_labels": labels.labels_for_issue(conn, issue_id),
             "all_labels": labels.list_labels(conn),
+            "all_projects": projects.list_projects(conn),
             "can_modify": can_modify,
         },
     )
@@ -373,6 +390,38 @@ def change_issue_assignee(
             return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
 
     issues.set_assignee(conn, issue_id, target)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/project")
+def change_issue_project(
+    request: Request,
+    issue_id: int,
+    project_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Move an issue into a project, or remove it, from the detail page. Same gate
+    as status/assign (a write). An empty form value means "no project" (None);
+    otherwise the value must be a real project id."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+
+    project_id = project_id.strip()
+    if project_id == "":
+        target: int | None = None
+    else:
+        if not project_id.isdigit() or projects.get_project(conn, int(project_id)) is None:
+            return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
+        target = int(project_id)
+
+    issues.set_project(conn, issue_id, target)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -547,3 +596,50 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "all_issues": all_issues,  # for counts if wanted
         },
     )
+
+
+@router.get("/aegis/projects", response_class=HTMLResponse)
+def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """List all projects, each with a count of its issues and a link to the issue
+    list filtered to it. Reading is open; the create form below is gated."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    all_projects = projects.list_projects(conn)
+    # One count per project, cheap on the small lists we have. NULL-project issues
+    # (the backlog) are simply not counted under any project.
+    counts = {
+        p["id"]: len(issues.list_issues(conn, project_id=p["id"]))
+        for p in all_projects
+    }
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/projects.html",
+        context={"projects": all_projects, "counts": counts},
+    )
+
+
+@router.post("/aegis/projects", response_class=HTMLResponse)
+def create_project(
+    request: Request,
+    name: str = Form(""),
+    description: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Create a project as the logged-in user (the actor is the session, never a
+    form field — same rule as the REST API). Empty name → 400, duplicate → 409;
+    otherwise 303 back to the projects list."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to create projects.</div>',
+            status_code=401,
+        )
+    name = name.strip()
+    if not name:
+        return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+    if projects.get_project_by_name(conn, name) is not None:
+        return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+    projects.create_project(
+        conn, name=name, description=description.strip(), created_by=user["id"]
+    )
+    return RedirectResponse("/aegis/projects", status_code=303)

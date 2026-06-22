@@ -325,3 +325,103 @@ def test_project_filter_composes_with_status(tmp_path):
             for i in client.get(f"/issues?project={core['id']}&status=done").json()
         ]
         assert titles == ["done in core"]
+
+
+# --- web layer ------------------------------------------------------------
+
+
+def _login(client, email, name):
+    client.post("/users", json={"email": email, "name": name, "password": "secret"})
+    client.post("/login", data={"email": email, "password": "secret"})
+
+
+def test_web_create_project(tmp_path):
+    # WHY: a project is deliberately created (not find-or-create like labels), so
+    # the web has a real create form; the actor is the session user, not a field.
+    app = create_app(tmp_path / "wc.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")  # user 1
+        r = client.post(
+            "/aegis/projects",
+            data={"name": "Website", "description": "redesign"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        made = client.get("/projects").json()
+        assert [p["name"] for p in made] == ["Website"]
+        assert made[0]["created_by"] == 1
+        # and it renders on the projects page
+        assert "Website" in client.get("/aegis/projects").text
+
+
+def test_web_create_project_requires_login(tmp_path):
+    app = create_app(tmp_path / "wl.db")
+    with TestClient(app) as client:
+        r = client.post("/aegis/projects", data={"name": "Anon"})
+        assert r.status_code == 401
+
+
+def test_web_empty_project_name_is_400(tmp_path):
+    app = create_app(tmp_path / "we.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        r = client.post("/aegis/projects", data={"name": "   "})
+        assert r.status_code == 400
+
+
+def test_web_duplicate_project_name_is_409(tmp_path):
+    app = create_app(tmp_path / "wd.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        client.post("/aegis/projects", data={"name": "Atlas"})
+        r = client.post("/aegis/projects", data={"name": "atlas"})
+        assert r.status_code == 409
+
+
+def test_web_set_project_on_issue(tmp_path):
+    app = create_app(tmp_path / "ws.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")  # user 1 = creator
+        client.post("/aegis/projects", data={"name": "Core"})
+        proj = client.get("/projects").json()[0]
+        issue = _make_issue(client, actor="1", title="t")
+        r = client.post(
+            f"/aegis/issues/{issue['id']}/project",
+            data={"project_id": str(proj["id"])},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue['id']}").text
+        assert "Core" in page  # project name renders in the sidebar
+
+
+def test_web_bystander_cannot_set_project(tmp_path):
+    # WHY: setting a project is a write — the web path enforces the same
+    # creator-or-assignee gate as the API (bystander -> 403).
+    app = create_app(tmp_path / "wb.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")  # user 1 — creator
+        client.post("/aegis/projects", data={"name": "Core"})
+        proj = client.get("/projects").json()[0]
+        issue = _make_issue(client, actor="1", title="t")
+        _login(client, "bob@e.com", "Bob")  # user 2 now the session — bystander
+        r = client.post(
+            f"/aegis/issues/{issue['id']}/project",
+            data={"project_id": str(proj["id"])},
+        )
+        assert r.status_code == 403
+
+
+def test_web_list_filters_by_project(tmp_path):
+    # WHY: the ?project= filter on the web list goes through the same shared
+    # list_issues path as the API — match shows, non-match hidden.
+    app = create_app(tmp_path / "wf.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        client.post("/aegis/projects", data={"name": "Core"})
+        proj = client.get("/projects").json()[0]
+        _make_issue(client, actor="1", title="in core", project_id=proj["id"])
+        _make_issue(client, actor="1", title="loose one")
+        page = client.get(f"/aegis/issues?project={proj['id']}").text
+        assert "in core" in page
+        assert "loose one" not in page

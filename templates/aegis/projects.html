@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Projects — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Projects</h1>
+        <p class="subtitle">Group related issues under a project</p>
+    </div>
+</div>
+
+{% if projects %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>Description</th>
+            <th>Issues</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for p in projects %}
+        <tr>
+            <td class="issue-title">
+                <a href="/aegis/issues?project={{ p.id }}">{{ p.name }}</a>
+            </td>
+            <td class="muted">{{ p.description or "—" }}</td>
+            <td class="muted">{{ counts[p.id] }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No projects yet.</p>
+{% endif %}
+
+<div class="form-container">
+    {% if request.state.user %}
+    <h3>New Project</h3>
+    <form method="post" action="/aegis/projects" class="issue-form">
+        <div class="form-group">
+            <label for="project-name">Name</label>
+            <input type="text" id="project-name" name="name" required placeholder="e.g. Website Redesign">
+        </div>
+        <div class="form-group">
+            <label for="project-description">Description</label>
+            <textarea id="project-description" name="description" rows="2" placeholder="What is this project for?"></textarea>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create Project</button>
+        </div>
+    </form>
+    {% else %}
+    <p class="note-small"><a href="/login">Sign in</a> to create a project.</p>
+    {% endif %}
+</div>
+
+<p class="note">Data from the Aegis projects API.</p>
+{% endblock %}
