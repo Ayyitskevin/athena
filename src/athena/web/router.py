@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, issues
+from athena.core import users
 from athena.core.deps import get_conn
 
 router = APIRouter()
@@ -217,8 +218,46 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_detail.html",
-        context={"issue": issue, "comments": comments.list_comments(conn, issue_id)},
+        context={
+            "issue": issue,
+            "comments": comments.list_comments(conn, issue_id),
+            "users": users.list_users(conn),
+        },
     )
+
+
+@router.post("/aegis/issues/{issue_id}/assignee")
+def change_issue_assignee(
+    request: Request,
+    issue_id: int,
+    assignee_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Assign or unassign an issue from the detail page. Gated on the session
+    user (same actor rule as status/comments). An empty form value means
+    "Unassigned" (None); otherwise the value must be a real user id."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
+            status_code=401,
+        )
+
+    assignee_id = assignee_id.strip()
+    if assignee_id == "":
+        target: int | None = None
+    else:
+        try:
+            target = int(assignee_id)
+        except ValueError:
+            return HTMLResponse('<div class="error">Invalid user.</div>', status_code=400)
+        if users.get_user(conn, target) is None:
+            return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+
+    updated = issues.set_assignee(conn, issue_id, target)
+    if updated is None:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
 @router.post("/aegis/issues/{issue_id}/comments")

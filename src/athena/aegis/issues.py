@@ -13,6 +13,14 @@ import sqlite3
 # (matches the schema). Keep this in sync with templates' status <option>s.
 STATUSES = ("open", "in_progress", "done")
 
+# Every read returns the assignee's display name alongside the row (NULL when
+# unassigned), so callers never resolve assignee_id -> name themselves. LEFT
+# JOIN, not JOIN: an unassigned issue must still come back.
+_SELECT = (
+    "SELECT i.*, u.name AS assignee_name "
+    "FROM issues i LEFT JOIN users u ON u.id = i.assignee_id"
+)
+
 
 def create_issue(
     conn: sqlite3.Connection,
@@ -47,11 +55,27 @@ def update_status(
     return get_issue(conn, issue_id)
 
 
+def set_assignee(
+    conn: sqlite3.Connection, issue_id: int, assignee_id: int | None
+) -> dict | None:
+    """Assign the issue to a user, or clear it (assignee_id=None -> Unassigned).
+    Returns the updated issue, or None if no issue has that id. Checking that
+    assignee_id is a real user is the boundary's job; the DB's foreign key is
+    the backstop (raises sqlite3.IntegrityError on an unknown non-NULL id)."""
+    cur = conn.execute(
+        "UPDATE issues SET assignee_id = ? WHERE id = ?", (assignee_id, issue_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_issue(conn, issue_id)
+
+
 def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM issues WHERE id = ?", (issue_id,)).fetchone()
+    row = conn.execute(f"{_SELECT} WHERE i.id = ?", (issue_id,)).fetchone()
     return dict(row) if row else None
 
 
 def list_issues(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM issues ORDER BY id").fetchall()
+    rows = conn.execute(f"{_SELECT} ORDER BY i.id").fetchall()
     return [dict(row) for row in rows]
