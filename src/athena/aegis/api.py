@@ -21,20 +21,23 @@ router = APIRouter(prefix="/issues", tags=["aegis"])
 # Reject any status outside the lifecycle at the boundary (422), so bad input
 # never reaches the DB. Built from the one canonical list in issues.py.
 Status = Literal[issues.STATUSES]
+Priority = Literal[issues.PRIORITIES]
 
 
 class IssueCreate(BaseModel):
     title: str
     body: str = ""
     status: Status = "open"
+    priority: Priority = "medium"
 
 
 class IssueUpdate(BaseModel):
     # A partial edit: send any subset. Unset fields are left unchanged. status
-    # is still constrained to the lifecycle when present.
+    # and priority are still constrained to their lifecycles when present.
     title: str | None = None
     body: str | None = None
     status: Status | None = None
+    priority: Priority | None = None
 
 
 class AssigneeUpdate(BaseModel):
@@ -47,6 +50,7 @@ class IssueOut(BaseModel):
     title: str
     body: str
     status: str
+    priority: str
     created_by: int
     created_at: str
     assignee_id: int | None = None
@@ -78,6 +82,7 @@ def create(
         title=payload.title,
         body=payload.body,
         status=payload.status,
+        priority=payload.priority,
         created_by=actor["id"],
     )
 
@@ -123,7 +128,12 @@ def update(
     if title is not None and not title:
         raise HTTPException(status_code=422, detail="title cannot be empty")
     updated = issues.update_issue(
-        conn, issue_id, title=title, body=payload.body, status=payload.status
+        conn,
+        issue_id,
+        title=title,
+        body=payload.body,
+        status=payload.status,
+        priority=payload.priority,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")

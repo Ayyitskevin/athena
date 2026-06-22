@@ -237,6 +237,35 @@ footer {
     color: #155724;
 }
 
+.priority {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    text-transform: capitalize;
+    font-weight: 500;
+}
+
+.priority.low {
+    background: #eef1f4;
+    color: #5a6570;
+}
+
+.priority.medium {
+    background: #e7f0fb;
+    color: #1f5fa8;
+}
+
+.priority.high {
+    background: #fff0e0;
+    color: #b1560f;
+}
+
+.priority.urgent {
+    background: #fde2e1;
+    color: #b02a25;
+}
+
 .muted {
     color: #666;
     font-size: 0.85rem;

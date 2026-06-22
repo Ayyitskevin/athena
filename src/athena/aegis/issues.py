@@ -13,6 +13,11 @@ import sqlite3
 # (matches the schema). Keep this in sync with templates' status <option>s.
 STATUSES = ("open", "in_progress", "done")
 
+# How urgent an issue is, lowest → highest. 'medium' is the create default and
+# the value existing rows backfilled to (migration 0006). Like STATUSES, this is
+# the one canonical set the REST API and the web forms both validate against.
+PRIORITIES = ("low", "medium", "high", "urgent")
+
 # Every read returns the assignee's display name alongside the row (NULL when
 # unassigned), so callers never resolve assignee_id -> name themselves. LEFT
 # JOIN, not JOIN: an unassigned issue must still come back.
@@ -29,12 +34,14 @@ def create_issue(
     body: str,
     created_by: int,
     status: str = "open",
+    priority: str = "medium",
 ) -> dict:
     """Insert an issue and return it. Raises sqlite3.IntegrityError if
     created_by isn't a real user (the foreign key refuses the orphan)."""
     cur = conn.execute(
-        "INSERT INTO issues (title, body, status, created_by) VALUES (?, ?, ?, ?)",
-        (title, body, status, created_by),
+        "INSERT INTO issues (title, body, status, priority, created_by) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (title, body, status, priority, created_by),
     )
     conn.commit()
     return get_issue(conn, cur.lastrowid)
@@ -47,16 +54,23 @@ def update_issue(
     title: str | None = None,
     body: str | None = None,
     status: str | None = None,
+    priority: str | None = None,
 ) -> dict | None:
     """Partial update: only the fields passed as non-None change. Returns the
     updated issue, or None if no issue has that id (so the caller can 404).
-    Field validation (status in STATUSES, non-empty title) is the boundary's job.
+    Field validation (status in STATUSES, priority in PRIORITIES, non-empty
+    title) is the boundary's job.
 
     The column names below are hardcoded literals, never caller input, so the
     f-string assembles a safe SET clause; the values stay parameterized."""
     fields = {
         col: val
-        for col, val in (("title", title), ("body", body), ("status", status))
+        for col, val in (
+            ("title", title),
+            ("body", body),
+            ("status", status),
+            ("priority", priority),
+        )
         if val is not None
     }
     if not fields:
