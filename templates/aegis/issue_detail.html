@@ -27,6 +27,36 @@
             <div class="body-text">{{ (issue.body or "No description provided.") | replace('\n', '<br>') | safe }}</div>
         </div>
 
+        <div class="comments">
+            <h3>Comments</h3>
+            {% if comments %}
+            <ul class="comment-list">
+                {% for c in comments %}
+                <li class="comment">
+                    <div class="comment-meta">
+                        <strong>{{ c.author_name }}</strong>
+                        <span class="muted">{{ c.created_at }}</span>
+                    </div>
+                    <div class="comment-body">{{ c.body | replace('\n', '<br>') | safe }}</div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No comments yet.</p>
+            {% endif %}
+
+            {% if request.state.user %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/comments" class="comment-form">
+                <label for="comment-body">Add a comment</label>
+                <textarea id="comment-body" name="body" rows="3" required
+                          placeholder="Leave a comment…"></textarea>
+                <button type="submit" class="button small">Comment</button>
+            </form>
+            {% else %}
+            <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
+            {% endif %}
+        </div>
+
         <div class="quick-actions">
             <h4>Quick Actions</h4>
             {% if request.state.user %}
@@ -43,10 +73,8 @@
             <p class="note-small"><a href="/login">Sign in</a> to change status.</p>
             {% endif %}
             <div class="action-buttons">
-                <button class="button small" disabled title="Requires comments backend">Add Comment</button>
                 <a href="/aegis/issues?status={{ issue.status }}" class="button small secondary">View same status</a>
             </div>
-            <p class="note-small">Comments will be enabled when the backend supports them.</p>
         </div>
     </div>
 </div>
