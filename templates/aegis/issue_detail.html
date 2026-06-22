@@ -29,12 +29,24 @@
 
         <div class="quick-actions">
             <h4>Quick Actions</h4>
+            {% if request.state.user %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="status-form">
+                <label for="status-select">Status</label>
+                <select id="status-select" name="status">
+                    {% for val, label in [("open", "Open"), ("in_progress", "In Progress"), ("done", "Done")] %}
+                    <option value="{{ val }}" {% if val == issue.status %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="button small">Change Status</button>
+            </form>
+            {% else %}
+            <p class="note-small"><a href="/login">Sign in</a> to change status.</p>
+            {% endif %}
             <div class="action-buttons">
-                <button class="button small" disabled title="Requires update endpoint in backend">Change Status</button>
                 <button class="button small" disabled title="Requires comments backend">Add Comment</button>
                 <a href="/aegis/issues?status={{ issue.status }}" class="button small secondary">View same status</a>
             </div>
-            <p class="note-small">Actions will be enabled when backend supports updates/comments.</p>
+            <p class="note-small">Comments will be enabled when the backend supports them.</p>
         </div>
     </div>
 </div>

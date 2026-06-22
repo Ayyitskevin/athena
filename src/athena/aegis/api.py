@@ -6,8 +6,9 @@ Pydantic models validate the request body before our code runs (bad input ->
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import issues
@@ -16,10 +17,19 @@ from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 
+# Reject any status outside the lifecycle at the boundary (422), so bad input
+# never reaches the DB. Built from the one canonical list in issues.py.
+Status = Literal[issues.STATUSES]
+
 
 class IssueCreate(BaseModel):
     title: str
     body: str = ""
+    status: Status = "open"
+
+
+class IssueUpdate(BaseModel):
+    status: Status
 
 
 class IssueOut(BaseModel):
@@ -39,10 +49,28 @@ def create(
 ) -> dict:
     # created_by is the authenticated actor, never a value the caller supplied.
     return issues.create_issue(
-        conn, title=payload.title, body=payload.body, created_by=actor["id"]
+        conn,
+        title=payload.title,
+        body=payload.body,
+        status=payload.status,
+        created_by=actor["id"],
     )
 
 
 @router.get("", response_model=list[IssueOut])
 def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     return issues.list_issues(conn)
+
+
+@router.patch("/{issue_id}", response_model=IssueOut)
+def update(
+    issue_id: int,
+    payload: IssueUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Any authenticated actor may move any issue (no per-issue ownership yet).
+    updated = issues.update_status(conn, issue_id, payload.status)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return updated

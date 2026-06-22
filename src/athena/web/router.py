@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import issues
@@ -141,6 +141,7 @@ def create_issue(
     request: Request,
     title: str = Form(""),
     body: str = Form(""),
+    status: str = Form("open"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Create an issue as the logged-in user. The actor is the browser session
@@ -159,14 +160,43 @@ def create_issue(
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
+    if status not in issues.STATUSES:
+        return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
     body = body.strip()
 
-    issue = issues.create_issue(conn, title=title, body=body, created_by=user["id"])
+    issue = issues.create_issue(
+        conn, title=title, body=body, status=status, created_by=user["id"]
+    )
     # HTMX swaps this into #create-result; nudge the browser to the new issue.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>'
         f'<script>window.location.href="/aegis/issues/{issue["id"]}";</script>'
     )
+
+
+@router.post("/aegis/issues/{issue_id}/status")
+def change_issue_status(
+    request: Request,
+    issue_id: int,
+    status: str = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Move an issue to a new status from the detail page. Gated on the session
+    user (same actor rule as create), validates against the lifecycle, then
+    303-redirects back to the issue so the page reloads with the new state."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to change status.</div>',
+            status_code=401,
+        )
+    if status not in issues.STATUSES:
+        return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
+
+    updated = issues.update_status(conn, issue_id, status)
+    if updated is None:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
 @router.get("/aegis/issues/{issue_id}", response_class=HTMLResponse)
