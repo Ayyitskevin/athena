@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from athena.aegis import comments, issues
+from athena.aegis import comments, issues, labels
 from athena.core import users
 from athena.core.deps import get_conn
 
@@ -30,6 +30,16 @@ def init_templates(templates: Jinja2Templates) -> None:
 def get_templates() -> Jinja2Templates | None:
     """The configured templates instance, for other web routers (e.g. auth)."""
     return _templates
+
+
+def _attach_labels(conn, rows: list[dict]) -> list[dict]:
+    """Merge each issue's labels onto it under a "labels" key, in one bulk query
+    (no N+1). Mirrors the API's _with_labels_many so list/board cards can render
+    their label chips. Issues with no labels get an empty list."""
+    by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
+    for r in rows:
+        r["labels"] = by_issue.get(r["id"], [])
+    return rows
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -108,6 +118,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     total = len(filtered)
     start = (page - 1) * per_page
     paged = filtered[start : start + per_page]
+    _attach_labels(conn, paged)
 
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
@@ -325,6 +336,8 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
             "issue": issue,
             "comments": comments.list_comments(conn, issue_id),
             "users": users.list_users(conn),
+            "issue_labels": labels.labels_for_issue(conn, issue_id),
+            "all_labels": labels.list_labels(conn),
             "can_modify": can_modify,
         },
     )
@@ -362,6 +375,55 @@ def change_issue_assignee(
             return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
 
     issues.set_assignee(conn, issue_id, target)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/labels")
+def add_issue_label(
+    request: Request,
+    issue_id: int,
+    name: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Attach a label to an issue by typing its name. Find-or-create so the user
+    doesn't manage a separate vocabulary first. Same gate as status/assign — a
+    label change is a write. Empty name → 400."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    name = name.strip()
+    if not name:
+        return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
+    label = labels.get_or_create_label(conn, name=name)
+    labels.add_label_to_issue(conn, issue_id, label["id"])  # idempotent
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/labels/{label_id}/delete")
+def remove_issue_label(
+    request: Request,
+    issue_id: int,
+    label_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Detach a label from an issue. Same write gate. POST (not DELETE) because
+    HTML forms can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    labels.remove_label_from_issue(conn, issue_id, label_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -470,6 +532,7 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             if search in i.get("title", "").lower() or search in (i.get("body") or "").lower()
         ]
 
+    _attach_labels(conn, filtered)
     from collections import defaultdict
     columns = defaultdict(list)
     for issue in filtered:
