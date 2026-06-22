@@ -107,3 +107,107 @@ def test_get_missing_issue_is_404(tmp_path):
         _seed_user(db_file)
         r = client.get("/issues/999")
         assert r.status_code == 404
+
+
+# --- list filtering via query params --------------------------------------
+#
+# These let a programmatic actor (the AI fleet) query the issue list the same
+# way the web UI filters it — one shared path in issues.list_issues, so the API
+# and the browser never disagree on what matches.
+
+
+def _mk(client, title, **body):
+    return client.post(
+        "/issues", json={"title": title, **body}, headers={"X-Athena-Actor": "1"}
+    ).json()
+
+
+def test_list_filters_by_status(tmp_path):
+    db_file = tmp_path / "fs.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _mk(client, "open one")
+        _mk(client, "done one", status="done")
+        titles = [i["title"] for i in client.get("/issues?status=done").json()]
+        assert titles == ["done one"]
+
+
+def test_list_search_matches_title_or_body_case_insensitively(tmp_path):
+    # WHY: search is a substring on title OR body, case-insensitive — the same
+    # contract the web search box has.
+    db_file = tmp_path / "se.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _mk(client, "Login bug", body="crashes on submit")
+        _mk(client, "Dashboard", body="add a Widget")
+        _mk(client, "Unrelated", body="nothing here")
+        by_title = {i["title"] for i in client.get("/issues?search=login").json()}
+        assert by_title == {"Login bug"}
+        by_body = {i["title"] for i in client.get("/issues?search=WIDGET").json()}
+        assert by_body == {"Dashboard"}
+
+
+def test_list_filters_by_label(tmp_path):
+    # WHY: label filtering is resolved through labels.py (name -> issue ids) so
+    # issues.py never imports labels; the API still filters by it end to end.
+    db_file = tmp_path / "fl.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        bug = _mk(client, "has bug label")
+        _mk(client, "no label")
+        lab = client.post(
+            "/labels", json={"name": "bug"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        client.post(
+            f"/issues/{bug['id']}/labels",
+            json={"label_id": lab["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        titles = [i["title"] for i in client.get("/issues?label=bug").json()]
+        assert titles == ["has bug label"]
+
+
+def test_list_unknown_label_matches_nothing(tmp_path):
+    # WHY: an empty id set must yield no rows (and never a malformed "IN ()").
+    db_file = tmp_path / "ul.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _mk(client, "something")
+        assert client.get("/issues?label=ghost").json() == []
+
+
+def test_list_filters_compose(tmp_path):
+    # WHY: status + search + label must AND together — narrowing, not replacing.
+    db_file = tmp_path / "compose.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        target = _mk(client, "urgent login fix", status="done")
+        _mk(client, "login fix", status="open")  # right text, wrong status
+        lab = client.post(
+            "/labels", json={"name": "auth"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        client.post(
+            f"/issues/{target['id']}/labels",
+            json={"label_id": lab["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        titles = [
+            i["title"]
+            for i in client.get("/issues?status=done&search=login&label=auth").json()
+        ]
+        assert titles == ["urgent login fix"]
+
+
+def test_list_no_filters_returns_all(tmp_path):
+    db_file = tmp_path / "all.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _mk(client, "one")
+        _mk(client, "two")
+        assert len(client.get("/issues").json()) == 2
