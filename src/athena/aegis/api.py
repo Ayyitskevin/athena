@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.aegis import issues
+from athena.aegis import comments, issues
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -38,6 +38,19 @@ class IssueOut(BaseModel):
     body: str
     status: str
     created_by: int
+    created_at: str
+
+
+class CommentCreate(BaseModel):
+    body: str
+
+
+class CommentOut(BaseModel):
+    id: int
+    issue_id: int
+    author_id: int
+    author_name: str
+    body: str
     created_at: str
 
 
@@ -74,3 +87,30 @@ def update(
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return updated
+
+
+@router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
+def add_comment(
+    issue_id: int,
+    payload: CommentCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # author is the authenticated actor, never a caller-supplied field.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="comment body is required")
+    return comments.add_comment(
+        conn, issue_id=issue_id, author_id=actor["id"], body=body
+    )
+
+
+@router.get("/{issue_id}/comments", response_model=list[CommentOut])
+def list_comments(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return comments.list_comments(conn, issue_id)

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from athena.aegis import issues
+from athena.aegis import comments, issues
 from athena.core.deps import get_conn
 
 router = APIRouter()
@@ -217,8 +217,34 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_detail.html",
-        context={"issue": issue},
+        context={"issue": issue, "comments": comments.list_comments(conn, issue_id)},
     )
+
+
+@router.post("/aegis/issues/{issue_id}/comments")
+def add_issue_comment(
+    request: Request,
+    issue_id: int,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Post a comment from the detail page. Gated on the session user (the
+    author is the session, never a form field), then 303-redirects back to the
+    issue so the new comment shows."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to comment.</div>',
+            status_code=401,
+        )
+    if issues.get_issue(conn, issue_id) is None:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    body = body.strip()
+    if not body:
+        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+
+    comments.add_comment(conn, issue_id=issue_id, author_id=user["id"], body=body)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
 @router.get("/aegis/boards", response_class=HTMLResponse)
