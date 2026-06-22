@@ -18,12 +18,15 @@ STATUSES = ("open", "in_progress", "done")
 # the one canonical set the REST API and the web forms both validate against.
 PRIORITIES = ("low", "medium", "high", "urgent")
 
-# Every read returns the assignee's display name alongside the row (NULL when
-# unassigned), so callers never resolve assignee_id -> name themselves. LEFT
-# JOIN, not JOIN: an unassigned issue must still come back.
+# Every read returns the assignee's display name and the project's name
+# alongside the row (NULL when unassigned / no project), so callers never resolve
+# the ids themselves. LEFT JOINs, not JOINs: an unassigned or project-less issue
+# must still come back.
 _SELECT = (
-    "SELECT i.*, u.name AS assignee_name "
-    "FROM issues i LEFT JOIN users u ON u.id = i.assignee_id"
+    "SELECT i.*, u.name AS assignee_name, p.name AS project_name "
+    "FROM issues i "
+    "LEFT JOIN users u ON u.id = i.assignee_id "
+    "LEFT JOIN projects p ON p.id = i.project_id"
 )
 
 
@@ -35,13 +38,16 @@ def create_issue(
     created_by: int,
     status: str = "open",
     priority: str = "medium",
+    project_id: int | None = None,
 ) -> dict:
     """Insert an issue and return it. Raises sqlite3.IntegrityError if
-    created_by isn't a real user (the foreign key refuses the orphan)."""
+    created_by isn't a real user, or if project_id is a non-NULL id with no
+    matching project (the foreign keys refuse the orphan). project_id is
+    optional — None means the issue starts with no project."""
     cur = conn.execute(
-        "INSERT INTO issues (title, body, status, priority, created_by) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (title, body, status, priority, created_by),
+        "INSERT INTO issues (title, body, status, priority, created_by, project_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (title, body, status, priority, created_by, project_id),
     )
     conn.commit()
     return get_issue(conn, cur.lastrowid)
@@ -112,6 +118,24 @@ def set_assignee(
     return get_issue(conn, issue_id)
 
 
+def set_project(
+    conn: sqlite3.Connection, issue_id: int, project_id: int | None
+) -> dict | None:
+    """Move the issue into a project, or remove it from one (project_id=None ->
+    no project). Returns the updated issue, or None if no issue has that id.
+    Checking that project_id is a real project is the boundary's job; the DB's
+    foreign key is the backstop (raises sqlite3.IntegrityError on an unknown
+    non-NULL id). Mirrors set_assignee — a single nullable column, so a dedicated
+    operation keeps None ('remove') distinct from PATCH's 'leave unchanged'."""
+    cur = conn.execute(
+        "UPDATE issues SET project_id = ? WHERE id = ?", (project_id, issue_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_issue(conn, issue_id)
+
+
 def can_modify(issue: dict, actor_id: int) -> bool:
     """Whether an actor may modify this issue (change status, edit, assign).
     The rule: the issue's creator OR its current assignee. An unassigned issue
@@ -131,6 +155,7 @@ def list_issues(
     *,
     status: str | None = None,
     search: str | None = None,
+    project_id: int | None = None,
     ids: list[int] | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
@@ -138,6 +163,8 @@ def list_issues(
 
     - status: exact status match.
     - search: case-insensitive substring in title or body (SQLite LIKE).
+    - project_id: restrict to issues in this project (a direct column on the
+      issue, so unlike labels this module filters it itself).
     - ids: restrict to these issue ids. Generic on purpose — the caller resolves
       *what* the ids mean (e.g. labels.py turns a label name into ids), so this
       module stays decoupled from labels. An empty list means "match nothing".
@@ -154,6 +181,9 @@ def list_issues(
         clauses.append("(i.title LIKE ? OR i.body LIKE ?)")
         like = f"%{search}%"
         params.extend([like, like])
+    if project_id is not None:
+        clauses.append("i.project_id = ?")
+        params.append(project_id)
     if ids is not None:
         placeholders = ",".join("?" for _ in ids)
         clauses.append(f"i.id IN ({placeholders})")

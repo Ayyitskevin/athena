@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.aegis import comments, issues, labels
+from athena.aegis import comments, issues, labels, projects
 from athena.core import users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
@@ -21,6 +21,10 @@ router = APIRouter(prefix="/issues", tags=["aegis"])
 # so they get their own router. Attaching a label TO an issue is a sub-resource
 # of /issues and lives on `router` below.
 labels_router = APIRouter(prefix="/labels", tags=["aegis"])
+# Projects are a top-level resource too (a container issues belong to), so they
+# get their own router. Setting an issue's project is a sub-resource of /issues
+# and lives on `router` below.
+projects_router = APIRouter(prefix="/projects", tags=["aegis"])
 
 # Reject any status outside the lifecycle at the boundary (422), so bad input
 # never reaches the DB. Built from the one canonical list in issues.py.
@@ -33,6 +37,7 @@ class IssueCreate(BaseModel):
     body: str = ""
     status: Status = "open"
     priority: Priority = "medium"
+    project_id: int | None = None
 
 
 class IssueUpdate(BaseModel):
@@ -47,6 +52,24 @@ class IssueUpdate(BaseModel):
 class AssigneeUpdate(BaseModel):
     # None clears the assignee (unassign); an int assigns to that user.
     assignee_id: int | None
+
+
+class ProjectUpdate(BaseModel):
+    # None removes the issue from its project; an int moves it into that project.
+    project_id: int | None
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    description: str
+    created_by: int
+    created_at: str
 
 
 class LabelCreate(BaseModel):
@@ -74,6 +97,8 @@ class IssueOut(BaseModel):
     created_at: str
     assignee_id: int | None = None
     assignee_name: str | None = None
+    project_id: int | None = None
+    project_name: str | None = None
     labels: list[LabelOut] = []
 
 
@@ -113,12 +138,18 @@ def create(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # created_by is the authenticated actor, never a value the caller supplied.
+    # Reject an unknown project here (422) rather than letting the FK raise a 500.
+    if payload.project_id is not None and projects.get_project(
+        conn, payload.project_id
+    ) is None:
+        raise HTTPException(status_code=422, detail="no such project")
     issue = issues.create_issue(
         conn,
         title=payload.title,
         body=payload.body,
         status=payload.status,
         priority=payload.priority,
+        project_id=payload.project_id,
         created_by=actor["id"],
     )
     return _with_labels(conn, issue)
@@ -129,13 +160,17 @@ def index(
     status: str | None = None,
     label: str | None = None,
     search: str | None = None,
+    project: int | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Optional filters, same semantics the web list uses (one shared path in
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
+    # project is a direct column on the issue, so it's filtered by id here.
     ids = labels.issue_ids_for_label(conn, label) if label else None
-    rows = issues.list_issues(conn, status=status, search=search, ids=ids)
+    rows = issues.list_issues(
+        conn, status=status, search=search, project_id=project, ids=ids
+    )
     return _with_labels_many(conn, rows)
 
 
@@ -219,6 +254,25 @@ def set_assignee(
     return _with_labels(conn, issues.set_assignee(conn, issue_id, payload.assignee_id))
 
 
+@router.put("/{issue_id}/project", response_model=IssueOut)
+def set_project(
+    issue_id: int,
+    payload: ProjectUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Moving an issue between projects is a write — creator-or-assignee only
+    # (404 if missing, 403 if not permitted), same gate as status/assign/labels.
+    _issue_for_write(conn, issue_id, actor)
+    # Reject an unknown project here (422) rather than letting the FK raise a 500.
+    # None is always valid — it means "remove from project".
+    if payload.project_id is not None and projects.get_project(
+        conn, payload.project_id
+    ) is None:
+        raise HTTPException(status_code=422, detail="no such project")
+    return _with_labels(conn, issues.set_project(conn, issue_id, payload.project_id))
+
+
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
 def add_comment(
     issue_id: int,
@@ -286,6 +340,42 @@ def delete_comment(
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     comments.delete_comment(conn, comment_id)
+
+
+# --- Projects: a top-level grouping of issues -----------------------------
+
+
+@projects_router.get("", response_model=list[ProjectOut])
+def list_all_projects(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    # Reading the project list is open, like listing issues.
+    return projects.list_projects(conn)
+
+
+@projects_router.post("", response_model=ProjectOut, status_code=201)
+def create_project(
+    payload: ProjectCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Any authenticated actor may create a project (like creating a label).
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="project name is required")
+    if projects.get_project_by_name(conn, name) is not None:
+        raise HTTPException(status_code=409, detail="project already exists")
+    return projects.create_project(
+        conn, name=name, description=payload.description, created_by=actor["id"]
+    )
+
+
+@projects_router.get("/{project_id}", response_model=ProjectOut)
+def show_project(
+    project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    return project
 
 
 # --- Labels: a top-level shared vocabulary --------------------------------

@@ -63,9 +63,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(users_api.router)
     app.include_router(tokens_api.router)
 
-    # Aegis REST API (issues + labels).
+    # Aegis REST API (issues + labels + projects).
     app.include_router(aegis_api.router)
     app.include_router(aegis_api.labels_router)
+    app.include_router(aegis_api.projects_router)
 
     @app.get("/healthz")
     def healthz():
