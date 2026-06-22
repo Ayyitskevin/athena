@@ -44,6 +44,9 @@
             <td class="issue-id">#{{ issue.id }}</td>
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
+                {% for l in issue.labels %}
+                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                {% endfor %}
             </td>
             <td>
                 <span class="status {{ issue.status }}">{{ issue.status }}</span>

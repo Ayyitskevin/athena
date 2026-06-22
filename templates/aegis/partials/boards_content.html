@@ -10,6 +10,13 @@
                 {% if issue.body %}
                 <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
                 {% endif %}
+                {% if issue.labels %}
+                <div class="label-list">
+                    {% for l in issue.labels %}
+                    <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <div class="meta small">
                     <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
                     · <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>

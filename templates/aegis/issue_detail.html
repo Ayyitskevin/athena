@@ -21,6 +21,32 @@
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
+        <div class="meta-item label-block">
+            <strong>Labels</strong>
+            <div class="label-list">
+                {% for l in issue_labels %}
+                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
+                    {{ l.name }}
+                    {% if can_modify %}
+                    <form method="post" action="/aegis/issues/{{ issue.id }}/labels/{{ l.id }}/delete" class="label-remove">
+                        <button type="submit" title="Remove label" aria-label="Remove label">×</button>
+                    </form>
+                    {% endif %}
+                </span>
+                {% else %}
+                <span class="muted">None</span>
+                {% endfor %}
+            </div>
+            {% if can_modify %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/labels" class="label-add">
+                <input type="text" name="name" list="all-labels" placeholder="Add label…" required>
+                <button type="submit" class="button small">Add</button>
+            </form>
+            <datalist id="all-labels">
+                {% for l in all_labels %}<option value="{{ l.name }}">{% endfor %}
+            </datalist>
+            {% endif %}
+        </div>
     </div>
 
     <div class="main-content">

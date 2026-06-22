@@ -266,6 +266,51 @@ footer {
     color: #b02a25;
 }
 
+.label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.05rem 0.45rem;
+    margin: 0.1rem 0.1rem 0 0;
+    font-size: 0.72rem;
+    border-radius: 999px;
+    font-weight: 500;
+    vertical-align: middle;
+}
+
+.label-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.15rem;
+    margin: 0.25rem 0;
+}
+
+.label-remove {
+    display: inline;
+    margin: 0;
+}
+
+.label-remove button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: inherit;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0;
+}
+
+.label-add {
+    display: flex;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+}
+
+.label-add input {
+    flex: 1;
+    min-width: 0;
+}
+
 .muted {
     color: #666;
     font-size: 0.85rem;

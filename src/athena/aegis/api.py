@@ -11,12 +11,16 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.aegis import comments, issues
+from athena.aegis import comments, issues, labels
 from athena.core import users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
+# Labels are a top-level resource (shared vocabulary), not nested under an issue,
+# so they get their own router. Attaching a label TO an issue is a sub-resource
+# of /issues and lives on `router` below.
+labels_router = APIRouter(prefix="/labels", tags=["aegis"])
 
 # Reject any status outside the lifecycle at the boundary (422), so bad input
 # never reaches the DB. Built from the one canonical list in issues.py.
@@ -45,6 +49,21 @@ class AssigneeUpdate(BaseModel):
     assignee_id: int | None
 
 
+class LabelCreate(BaseModel):
+    name: str
+    color: str = "#6b7280"
+
+
+class LabelOut(BaseModel):
+    id: int
+    name: str
+    color: str
+
+
+class LabelAttach(BaseModel):
+    label_id: int
+
+
 class IssueOut(BaseModel):
     id: int
     title: str
@@ -55,6 +74,7 @@ class IssueOut(BaseModel):
     created_at: str
     assignee_id: int | None = None
     assignee_name: str | None = None
+    labels: list[LabelOut] = []
 
 
 class CommentCreate(BaseModel):
@@ -70,6 +90,22 @@ class CommentOut(BaseModel):
     created_at: str
 
 
+def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
+    """Attach the issue's labels under a "labels" key. Issues own their core row
+    (issues.py); labels are composed on here so the two modules stay in their
+    lanes and reads still come back as one object for the client."""
+    issue["labels"] = labels.labels_for_issue(conn, issue["id"])
+    return issue
+
+
+def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
+    """Same as _with_labels but for a list, using one bulk query (no N+1)."""
+    by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
+    for r in rows:
+        r["labels"] = by_issue.get(r["id"], [])
+    return rows
+
+
 @router.post("", response_model=IssueOut, status_code=201)
 def create(
     payload: IssueCreate,
@@ -77,7 +113,7 @@ def create(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # created_by is the authenticated actor, never a value the caller supplied.
-    return issues.create_issue(
+    issue = issues.create_issue(
         conn,
         title=payload.title,
         body=payload.body,
@@ -85,11 +121,12 @@ def create(
         priority=payload.priority,
         created_by=actor["id"],
     )
+    return _with_labels(conn, issue)
 
 
 @router.get("", response_model=list[IssueOut])
 def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    return issues.list_issues(conn)
+    return _with_labels_many(conn, issues.list_issues(conn))
 
 
 def _issue_for_write(
@@ -137,7 +174,7 @@ def update(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
-    return updated
+    return _with_labels(conn, updated)
 
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
@@ -157,7 +194,7 @@ def set_assignee(
         conn, payload.assignee_id
     ) is None:
         raise HTTPException(status_code=422, detail="no such user")
-    return issues.set_assignee(conn, issue_id, payload.assignee_id)
+    return _with_labels(conn, issues.set_assignee(conn, issue_id, payload.assignee_id))
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
@@ -227,3 +264,58 @@ def delete_comment(
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     comments.delete_comment(conn, comment_id)
+
+
+# --- Labels: a top-level shared vocabulary --------------------------------
+
+
+@labels_router.get("", response_model=list[LabelOut])
+def list_all_labels(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+    # Reading the vocabulary is open, like listing issues.
+    return labels.list_labels(conn)
+
+
+@labels_router.post("", response_model=LabelOut, status_code=201)
+def create_label(
+    payload: LabelCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Any authenticated actor may add to the shared vocabulary (like commenting).
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="label name is required")
+    if labels.get_label_by_name(conn, name) is not None:
+        raise HTTPException(status_code=409, detail="label already exists")
+    return labels.create_label(conn, name=name, color=payload.color)
+
+
+# --- Labels on an issue: a write, so creator-or-assignee gated -------------
+
+
+@router.post("/{issue_id}/labels", response_model=IssueOut, status_code=201)
+def attach_label(
+    issue_id: int,
+    payload: LabelAttach,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Changing an issue's labels is a write — same gate as status/assign.
+    issue = _issue_for_write(conn, issue_id, actor)
+    if labels.get_label(conn, payload.label_id) is None:
+        raise HTTPException(status_code=422, detail="no such label")
+    labels.add_label_to_issue(conn, issue_id, payload.label_id)  # idempotent
+    return _with_labels(conn, issue)
+
+
+@router.delete("/{issue_id}/labels/{label_id}", response_model=IssueOut)
+def detach_label(
+    issue_id: int,
+    label_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    issue = _issue_for_write(conn, issue_id, actor)
+    if not labels.remove_label_from_issue(conn, issue_id, label_id):
+        raise HTTPException(status_code=404, detail="label not on this issue")
+    return _with_labels(conn, issue)
