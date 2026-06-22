@@ -69,8 +69,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(aegis_api.labels_router)
     app.include_router(aegis_api.projects_router)
 
-    # Mentor REST API (spaces; pages + versions later).
+    # Mentor REST API (spaces + pages; versions later).
     app.include_router(mentor_api.spaces_router)
+    app.include_router(mentor_api.pages_router)
 
     @app.get("/healthz")
     def healthz():
