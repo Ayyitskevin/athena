@@ -104,6 +104,49 @@ def test_create_issue_blocked_when_logged_out(tmp_path):
     assert "sign in" in response.text.lower()
 
 
+def test_assignee_name_shows_in_list_and_board(tmp_path):
+    # WHY: the assignee's name (resolved by the issues.py LEFT JOIN) must reach
+    # the list table AND the board cards, not just the detail page — otherwise
+    # "who's on it" is invisible exactly where you scan many issues at once.
+    db_file = tmp_path / "web.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)  # user 1 = Kevin
+        created = client.post(
+            "/issues", json={"title": "assigned issue"}, headers={"X-Athena-Actor": "1"}
+        )
+        issue_id = created.json()["id"]
+        client.put(
+            f"/issues/{issue_id}/assignee",
+            json={"assignee_id": 1},
+            headers={"X-Athena-Actor": "1"},
+        )
+
+        list_view = client.get("/aegis/issues")
+        assert list_view.status_code == 200
+        assert "Assignee" in list_view.text  # column header
+        assert "Kevin" in list_view.text  # the resolved name, not just an id
+
+        board_view = client.get("/aegis/boards")
+        assert board_view.status_code == 200
+        assert "Kevin" in board_view.text
+
+
+def test_unassigned_issue_reads_unassigned_in_list(tmp_path):
+    # WHY: an unassigned issue must say so explicitly, not render a blank cell
+    # that looks like a bug or missing data.
+    db_file = tmp_path / "web.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        client.post(
+            "/issues", json={"title": "nobody's issue"}, headers={"X-Athena-Actor": "1"}
+        )
+        response = client.get("/aegis/issues")
+    assert response.status_code == 200
+    assert "Unassigned" in response.text
+
+
 def test_boards_page_renders(tmp_path):
     app = create_app(tmp_path / "web.db")
     with TestClient(app) as client:
