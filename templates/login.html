@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in — Athena{% endblock %}
+
+{% block content %}
+<div class="auth">
+    <h1>Sign in</h1>
+
+    {% if error %}
+    <div class="error" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="auth-form">
+        <label>
+            Email
+            <input type="email" name="email" value="{{ email | default('') }}"
+                   autocomplete="username" required autofocus>
+        </label>
+        <label>
+            Password
+            <input type="password" name="password"
+                   autocomplete="current-password" required>
+        </label>
+        <button type="submit">Sign in</button>
+    </form>
+</div>
+{% endblock %}

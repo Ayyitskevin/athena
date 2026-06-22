@@ -18,6 +18,14 @@
                 {% block nav %}
                 <a href="/aegis">Aegis</a>
                 <a href="/mentor">Mentor</a>
+                {% if request.state.user %}
+                <span class="nav-user">{{ request.state.user.name }}</span>
+                <form method="post" action="/logout" class="nav-logout">
+                    <button type="submit">Sign out</button>
+                </form>
+                {% else %}
+                <a href="/login">Sign in</a>
+                {% endif %}
                 {% endblock %}
             </nav>
         </div>

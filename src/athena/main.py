@@ -9,13 +9,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import api as aegis_api
-from athena.core import db, tokens_api, users_api
+from athena.core import db, sessions, tokens_api, users_api
+from athena.web import auth as web_auth
 from athena.web import init_templates, router as web_router
 
 
@@ -35,12 +36,28 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     app = FastAPI(title="Athena", lifespan=lifespan)
 
+    @app.middleware("http")
+    async def attach_session_user(request: Request, call_next):
+        # Resolve the browser session once per request onto request.state.user,
+        # so every page (and the nav) knows who is logged in without each route
+        # re-doing it. No cookie → no DB hit; user stays None.
+        request.state.user = None
+        raw = request.cookies.get(config.SESSION_COOKIE)
+        if raw:
+            conn = db.connect(request.app.state.db_path)
+            try:
+                request.state.user = sessions.resolve_session(conn, raw)
+            finally:
+                conn.close()
+        return await call_next(request)
+
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.
     app.mount("/static", StaticFiles(directory="static"), name="static")
     templates = Jinja2Templates(directory="templates")
     init_templates(templates)
     app.include_router(web_router)
+    app.include_router(web_auth.router)
 
     # Core REST API (users, api tokens).
     app.include_router(users_api.router)

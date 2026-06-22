@@ -10,16 +10,41 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.core import passwords
 
-def create_user(conn: sqlite3.Connection, *, email: str, name: str) -> dict:
-    """Insert a user and return it. Raises sqlite3.IntegrityError if the email
-    is already taken (the UNIQUE constraint refuses the duplicate)."""
+
+def create_user(
+    conn: sqlite3.Connection, *, email: str, name: str, password: str | None = None
+) -> dict:
+    """Insert a user and return it. An optional password enables browser login;
+    without one the user exists as an actor but can only act via API tokens.
+    Raises sqlite3.IntegrityError if the email is already taken."""
     cur = conn.execute(
-        "INSERT INTO users (email, name) VALUES (?, ?)",
-        (email, name),
+        "INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)",
+        (email, name, passwords.hash_password(password) if password else None),
     )
     conn.commit()
     return get_user(conn, cur.lastrowid)
+
+
+def set_password(conn: sqlite3.Connection, user_id: int, password: str) -> None:
+    """Set or replace a user's login password."""
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (passwords.hash_password(password), user_id),
+    )
+    conn.commit()
+
+
+def verify_credentials(
+    conn: sqlite3.Connection, *, email: str, password: str
+) -> dict | None:
+    """Return the user iff the email exists and the password matches. One opaque
+    None for both 'no such email' and 'wrong password' — don't reveal which."""
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if row is None or not passwords.verify_password(password, row["password_hash"]):
+        return None
+    return dict(row)
 
 
 def get_user(conn: sqlite3.Connection, user_id: int) -> dict | None:

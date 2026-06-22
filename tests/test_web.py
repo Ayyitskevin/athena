@@ -89,17 +89,19 @@ def test_new_issue_form_renders(tmp_path):
     assert 'name="title"' in response.text
 
 
-def test_create_issue_shows_blocked_state(tmp_path):
+def test_create_issue_blocked_when_logged_out(tmp_path):
     app = create_app(tmp_path / "web.db")
     with TestClient(app) as client:
-        # POST create should show the auth blocker message (no user system yet)
+        # No session cookie → the UI write path is refused with a sign-in prompt,
+        # the same actor rule the REST API enforces (see test_auth.py for the
+        # logged-in counterpart).
         response = client.post(
             "/aegis/issues",
             data={"title": "Should not create", "body": "foo", "status": "open"},
             headers={"HX-Request": "true"},
         )
-    assert response.status_code == 200
-    assert "issue creation needs user accounts (coming in core/auth)" in response.text
+    assert response.status_code == 401
+    assert "sign in" in response.text.lower()
 
 
 def test_boards_page_renders(tmp_path):

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -24,6 +24,11 @@ def init_templates(templates: Jinja2Templates) -> None:
     """Receive the configured Jinja2Templates from the app factory."""
     global _templates
     _templates = templates
+
+
+def get_templates() -> Jinja2Templates | None:
+    """The configured templates instance, for other web routers (e.g. auth)."""
+    return _templates
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -132,17 +137,35 @@ def new_issue_form(request: Request):
 
 
 @router.post("/aegis/issues", response_class=HTMLResponse)
-async def create_issue(request: Request):
-    """Create is currently blocked: requires user accounts (auth in core).
-
-    See AGENTS.md cardinal rule and this task's blocker note.
-    """
+def create_issue(
+    request: Request,
+    title: str = Form(""),
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Create an issue as the logged-in user. The actor is the browser session
+    (request.state.user), never a field in the form — same rule as the REST API.
+    Logged-out callers get a prompt to sign in instead of a write."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    # Return blocked state into the form's result target. Do not write.
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to create issues.</div>',
+            status_code=401,
+        )
+
+    title = title.strip()
+    if not title:
+        return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
+    body = body.strip()
+
+    issue = issues.create_issue(conn, title=title, body=body, created_by=user["id"])
+    # HTMX swaps this into #create-result; nudge the browser to the new issue.
     return HTMLResponse(
-        "<div class=\"blocked\">issue creation needs user accounts (coming in core/auth)</div>"
+        f'<div class="success">Created issue #{issue["id"]}.</div>'
+        f'<script>window.location.href="/aegis/issues/{issue["id"]}";</script>'
     )
 
 

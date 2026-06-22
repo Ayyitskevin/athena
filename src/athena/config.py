@@ -20,3 +20,10 @@ def _bool_env(name: str, default: bool) -> bool:
 # on a trusted local/tailnet box. Turn it OFF (ATHENA_TRUST_ACTOR_HEADER=0) the
 # moment Athena is network-exposed — then only real bearer tokens authenticate.
 TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", True)
+
+# Browser session lifetime, and whether the session cookie carries the Secure
+# flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
+# dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.
+SESSION_TTL_DAYS = int(os.environ.get("ATHENA_SESSION_TTL_DAYS", "14"))
+COOKIE_SECURE = _bool_env("ATHENA_COOKIE_SECURE", False)
+SESSION_COOKIE = "athena_session"

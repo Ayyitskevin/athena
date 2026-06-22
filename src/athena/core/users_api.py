@@ -20,6 +20,8 @@ router = APIRouter(prefix="/users", tags=["core"])
 class UserCreate(BaseModel):
     email: str
     name: str
+    # Optional: set it to enable browser login. Omit for agent/API-only users.
+    password: str | None = None
 
 
 class UserOut(BaseModel):
@@ -32,7 +34,9 @@ class UserOut(BaseModel):
 @router.post("", response_model=UserOut, status_code=201)
 def create(payload: UserCreate, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     try:
-        return users.create_user(conn, email=payload.email, name=payload.name)
+        return users.create_user(
+            conn, email=payload.email, name=payload.name, password=payload.password
+        )
     except sqlite3.IntegrityError:
         # email collides with an existing user — reject at the boundary.
         raise HTTPException(status_code=400, detail="email already in use")
