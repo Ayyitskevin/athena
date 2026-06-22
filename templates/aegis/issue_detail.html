@@ -19,6 +19,7 @@
         <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
+        <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
     </div>
 
     <div class="main-content">
@@ -68,6 +69,16 @@
                     {% endfor %}
                 </select>
                 <button type="submit" class="button small">Change Status</button>
+            </form>
+            <form method="post" action="/aegis/issues/{{ issue.id }}/assignee" class="assignee-form">
+                <label for="assignee-select">Assignee</label>
+                <select id="assignee-select" name="assignee_id">
+                    <option value="" {% if not issue.assignee_id %}selected{% endif %}>Unassigned</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if u.id == issue.assignee_id %}selected{% endif %}>{{ u.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="button small">Assign</button>
             </form>
             {% else %}
             <p class="note-small"><a href="/login">Sign in</a> to change status.</p>

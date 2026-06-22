@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import comments, issues
+from athena.core import users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -32,6 +33,11 @@ class IssueUpdate(BaseModel):
     status: Status
 
 
+class AssigneeUpdate(BaseModel):
+    # None clears the assignee (unassign); an int assigns to that user.
+    assignee_id: int | None
+
+
 class IssueOut(BaseModel):
     id: int
     title: str
@@ -39,6 +45,8 @@ class IssueOut(BaseModel):
     status: str
     created_by: int
     created_at: str
+    assignee_id: int | None = None
+    assignee_name: str | None = None
 
 
 class CommentCreate(BaseModel):
@@ -84,6 +92,25 @@ def update(
 ) -> dict:
     # Any authenticated actor may move any issue (no per-issue ownership yet).
     updated = issues.update_status(conn, issue_id, payload.status)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return updated
+
+
+@router.put("/{issue_id}/assignee", response_model=IssueOut)
+def set_assignee(
+    issue_id: int,
+    payload: AssigneeUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Reject an unknown user here (422) rather than letting the FK raise a 500.
+    # None is always valid — it means "unassign".
+    if payload.assignee_id is not None and users.get_user(
+        conn, payload.assignee_id
+    ) is None:
+        raise HTTPException(status_code=422, detail="no such user")
+    updated = issues.set_assignee(conn, issue_id, payload.assignee_id)
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return updated
