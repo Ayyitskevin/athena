@@ -66,3 +66,44 @@ def test_missing_title_is_a_validation_error(tmp_path):
         _seed_user(db_file)
         r = client.post("/issues", json={}, headers={"X-Athena-Actor": "1"})
         assert r.status_code == 422
+
+
+def test_get_single_issue(tmp_path):
+    # WHY: API-first means every issue is addressable on its own URL, not only
+    # as a row in the list. GET /issues/{id} is the canonical single read.
+    db_file = tmp_path / "one.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        created = client.post(
+            "/issues", json={"title": "find me"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        r = client.get(f"/issues/{created['id']}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["id"] == created["id"]
+        assert body["title"] == "find me"
+        assert body["labels"] == []  # composed in like every other issue read
+
+
+def test_get_single_issue_is_open_to_anyone(tmp_path):
+    # WHY: reads are open — no actor header required, same contract as the list
+    # endpoint. Only writes pass through the creator-or-assignee gate.
+    db_file = tmp_path / "open.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        created = client.post(
+            "/issues", json={"title": "public read"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        r = client.get(f"/issues/{created['id']}")  # no actor header
+        assert r.status_code == 200
+
+
+def test_get_missing_issue_is_404(tmp_path):
+    db_file = tmp_path / "missing.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        r = client.get("/issues/999")
+        assert r.status_code == 404

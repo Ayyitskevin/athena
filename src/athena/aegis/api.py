@@ -129,6 +129,18 @@ def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     return _with_labels_many(conn, issues.list_issues(conn))
 
 
+@router.get("/{issue_id}", response_model=IssueOut)
+def show(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    # Reads are open to everyone (no actor), same as the list endpoint — only
+    # writes pass through the creator-or-assignee gate.
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return _with_labels(conn, issue)
+
+
 def _issue_for_write(
     conn: sqlite3.Connection, issue_id: int, actor: dict
 ) -> dict:
