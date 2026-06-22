@@ -143,6 +143,7 @@ def create_issue(
     title: str = Form(""),
     body: str = Form(""),
     status: str = Form("open"),
+    priority: str = Form("medium"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Create an issue as the logged-in user. The actor is the browser session
@@ -163,10 +164,13 @@ def create_issue(
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
     if status not in issues.STATUSES:
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
+    if priority not in issues.PRIORITIES:
+        return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
     body = body.strip()
 
     issue = issues.create_issue(
-        conn, title=title, body=body, status=status, created_by=user["id"]
+        conn, title=title, body=body, status=status, priority=priority,
+        created_by=user["id"],
     )
     # HTMX swaps this into #create-result; nudge the browser to the new issue.
     return HTMLResponse(
@@ -268,6 +272,32 @@ def change_issue_status(
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
 
     issues.update_status(conn, issue_id, status)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/priority")
+def change_issue_priority(
+    request: Request,
+    issue_id: int,
+    priority: str = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Change an issue's priority from the detail page. Same gate as status:
+    logged in (401) and creator-or-assignee (404/403), validated against
+    PRIORITIES, then 303 back to the issue."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to change priority.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    if priority not in issues.PRIORITIES:
+        return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
+
+    issues.update_issue(conn, issue_id, priority=priority)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

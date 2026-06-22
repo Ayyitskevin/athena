@@ -17,6 +17,7 @@
     <div class="meta-sidebar">
         <div class="meta-item"><strong>ID</strong> #{{ issue.id }}</div>
         <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+        <div class="meta-item"><strong>Priority</strong> <span class="priority {{ issue.priority }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
@@ -88,6 +89,15 @@
                     {% endfor %}
                 </select>
                 <button type="submit" class="button small">Change Status</button>
+            </form>
+            <form method="post" action="/aegis/issues/{{ issue.id }}/priority" class="priority-form">
+                <label for="priority-select">Priority</label>
+                <select id="priority-select" name="priority">
+                    {% for val, label in [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("urgent", "Urgent")] %}
+                    <option value="{{ val }}" {% if val == issue.priority %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="button small">Change Priority</button>
             </form>
             <form method="post" action="/aegis/issues/{{ issue.id }}/assignee" class="assignee-form">
                 <label for="assignee-select">Assignee</label>

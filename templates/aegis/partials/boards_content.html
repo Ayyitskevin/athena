@@ -11,7 +11,8 @@
                 <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
                 {% endif %}
                 <div class="meta small">
-                    <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>
+                    <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
+                    · <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>
                     · {{ issue.created_at }}
                 </div>
             </div>
