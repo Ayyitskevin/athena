@@ -125,8 +125,18 @@ def create(
 
 
 @router.get("", response_model=list[IssueOut])
-def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    return _with_labels_many(conn, issues.list_issues(conn))
+def index(
+    status: str | None = None,
+    label: str | None = None,
+    search: str | None = None,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Optional filters, same semantics the web list uses (one shared path in
+    # issues.list_issues). A label name is resolved to issue ids by labels.py so
+    # issues.py stays decoupled from the join; an unknown label matches nothing.
+    ids = labels.issue_ids_for_label(conn, label) if label else None
+    rows = issues.list_issues(conn, status=status, search=search, ids=ids)
+    return _with_labels_many(conn, rows)
 
 
 @router.get("/{issue_id}", response_model=IssueOut)

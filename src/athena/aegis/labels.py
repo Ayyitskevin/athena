@@ -84,6 +84,19 @@ def remove_label_from_issue(
     return cur.rowcount > 0
 
 
+def issue_ids_for_label(conn: sqlite3.Connection, name: str) -> list[int]:
+    """The ids of every issue carrying the named label (case-insensitive). Lets a
+    caller filter the issue list by label without coupling issues.py to the join
+    — issues.list_issues takes the resolved ids, this resolves them. Returns []
+    for an unknown label (so the filter naturally matches nothing)."""
+    rows = conn.execute(
+        "SELECT il.issue_id FROM issue_labels il "
+        "JOIN labels l ON l.id = il.label_id WHERE l.name = ?",
+        (name,),
+    ).fetchall()
+    return [row["issue_id"] for row in rows]
+
+
 def labels_for_issue(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
     """The labels attached to one issue, alphabetical."""
     rows = conn.execute(

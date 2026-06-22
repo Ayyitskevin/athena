@@ -126,6 +126,38 @@ def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def list_issues(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(f"{_SELECT} ORDER BY i.id").fetchall()
+def list_issues(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    search: str | None = None,
+    ids: list[int] | None = None,
+) -> list[dict]:
+    """List issues, optionally filtered. This is the ONE filtering path the API
+    and the web list both use, so the two never disagree on what matches.
+
+    - status: exact status match.
+    - search: case-insensitive substring in title or body (SQLite LIKE).
+    - ids: restrict to these issue ids. Generic on purpose — the caller resolves
+      *what* the ids mean (e.g. labels.py turns a label name into ids), so this
+      module stays decoupled from labels. An empty list means "match nothing".
+
+    Column names below are hardcoded literals; all values stay parameterized."""
+    if ids is not None and not ids:
+        return []  # an empty id set can't match — and "IN ()" isn't valid SQL
+    clauses: list[str] = []
+    params: list = []
+    if status:
+        clauses.append("i.status = ?")
+        params.append(status)
+    if search:
+        clauses.append("(i.title LIKE ? OR i.body LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like])
+    if ids is not None:
+        placeholders = ",".join("?" for _ in ids)
+        clauses.append(f"i.id IN ({placeholders})")
+        params.extend(ids)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(f"{_SELECT}{where} ORDER BY i.id", params).fetchall()
     return [dict(row) for row in rows]

@@ -91,25 +91,12 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     sort = request.query_params.get("sort", "created_at")
     order = request.query_params.get("order", "desc")
 
-    all_issues = issues.list_issues(conn)
-    # Attach labels to every issue up front (one bulk query, no N+1) so we can
-    # filter on them below; the paged slice then already carries its chips.
-    _attach_labels(conn, all_issues)
-    filtered = all_issues
-    if status_filter:
-        filtered = [i for i in filtered if i["status"] == status_filter]
-    if label_filter:
-        filtered = [
-            i
-            for i in filtered
-            if any(l["name"] == label_filter for l in i["labels"])
-        ]
-    if search:
-        filtered = [
-            i
-            for i in filtered
-            if search in i["title"].lower() or search in (i.get("body") or "").lower()
-        ]
+    # Filtering goes through the shared data-layer path (same one the API uses),
+    # so the list and the API never disagree on what matches. The web layer then
+    # only does the presentation concerns — sort + pagination — on the result.
+    ids = labels.issue_ids_for_label(conn, label_filter) if label_filter else None
+    filtered = issues.list_issues(conn, status=status_filter, search=search, ids=ids)
+    _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
 
     # Sort in web layer (presentation concern) – safe since we don't own data
     reverse = order == "desc"
@@ -127,7 +114,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     total = len(filtered)
     start = (page - 1) * per_page
-    paged = filtered[start : start + per_page]  # labels already attached above
+    paged = filtered[start : start + per_page]  # labels already attached
 
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
