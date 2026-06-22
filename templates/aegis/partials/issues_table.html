@@ -23,8 +23,9 @@
                    hx-swap="outerHTML">Status{% if sort == 'status' %} {{ '↓' if order == 'desc' else '↑' }}{% endif %}</a>
             </th>
             <th>Created By</th>
+            <th>Assignee</th>
             <th>
-                <a href="#" 
+                <a href="#"
                    hx-get="/aegis/issues?status={{ status_filter }}&search={{ search }}&sort=created_at&order={% if sort == 'created_at' and order == 'desc' %}asc{% else %}desc{% endif %}&page=1&per_page={{ per_page }}"
                    hx-target="#issues-table"
                    hx-swap="outerHTML">Created{% if sort == 'created_at' %} {{ '↓' if order == 'desc' else '↑' }}{% endif %}</a>
@@ -42,6 +43,7 @@
                 <span class="status {{ issue.status }}">{{ issue.status }}</span>
             </td>
             <td class="muted">{{ issue.created_by }}</td>
+            <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
             <td class="muted">{{ issue.created_at }}</td>
         </tr>
     {% endfor %}
