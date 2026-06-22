@@ -20,26 +20,38 @@
             hx-trigger="keyup changed delay:300ms"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
         <select 
             class="filter-select"
             name="status"
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All statuses</option>
             <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
             <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
             <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
         </select>
-        <select 
+        <select
+            class="filter-select"
+            name="label"
+            hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
+            hx-target="#issues-table"
+            hx-swap="outerHTML"
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            <option value="">All labels</option>
+            {% for l in all_labels %}
+            <option value="{{ l.name }}" {% if label_filter == l.name %}selected{% endif %}>{{ l.name }}</option>
+            {% endfor %}
+        </select>
+        <select
             class="filter-select"
             name="sort"
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="created_at" {% if sort == 'created_at' or not sort %}selected{% endif %}>Sort: Created</option>
             <option value="title" {% if sort == 'title' %}selected{% endif %}>Sort: Title</option>
             <option value="status" {% if sort == 'status' %}selected{% endif %}>Sort: Status</option>
@@ -50,7 +62,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="desc" {% if order == 'desc' or not order %}selected{% endif %}>Desc</option>
             <option value="asc" {% if order == 'asc' %}selected{% endif %}>Asc</option>
         </select>
@@ -60,7 +72,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="10" {% if per_page == 10 %}selected{% endif %}>10 / page</option>
             <option value="20" {% if per_page == 20 or not per_page %}selected{% endif %}>20 / page</option>
             <option value="50" {% if per_page == 50 %}selected{% endif %}>50 / page</option>
@@ -71,7 +83,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='label'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             Refresh
         </button>
     </div>

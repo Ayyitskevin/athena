@@ -427,3 +427,57 @@ def test_web_logged_out_cannot_label(tmp_path):
             f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"}
         )
         assert r.status_code == 401
+
+
+# --- web list: filter by label --------------------------------------------
+
+
+def test_web_list_filters_by_label(tmp_path):
+    # WHY: labels are only useful if you can FIND by them. Filtering the list to
+    # one label must show issues carrying it and hide the rest — this is the
+    # whole point of the label vocabulary.
+    db_file = tmp_path / "f1.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        bug_issue = _make_issue(client, actor="1", title="alpha-the-bug")
+        other = _make_issue(client, actor="1", title="beta-no-label")
+        client.post(
+            f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"}
+        )
+        page = client.get("/aegis/issues?label=bug").text
+        assert "alpha-the-bug" in page
+        assert "beta-no-label" not in page
+
+
+def test_web_list_unfiltered_shows_all(tmp_path):
+    # WHY (control): without a label filter, both issues appear — so the
+    # exclusion above is the filter doing its job, not a rendering quirk.
+    db_file = tmp_path / "f2.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        bug_issue = _make_issue(client, actor="1", title="alpha-the-bug")
+        _make_issue(client, actor="1", title="beta-no-label")
+        client.post(
+            f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"}
+        )
+        page = client.get("/aegis/issues").text
+        assert "alpha-the-bug" in page
+        assert "beta-no-label" in page
+
+
+def test_web_list_label_filter_dropdown_lists_labels(tmp_path):
+    # WHY: the filter control must be populated from the real vocabulary, so a
+    # user can pick an existing label rather than guess its name.
+    db_file = tmp_path / "f3.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        issue = _make_issue(client, actor="1", title="x")
+        client.post(
+            f"/aegis/issues/{issue['id']}/labels", data={"name": "frontend"}
+        )
+        page = client.get("/aegis/issues").text
+        assert 'name="label"' in page  # the filter select exists
+        assert '<option value="frontend"' in page  # populated from vocabulary
