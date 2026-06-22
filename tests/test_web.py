@@ -25,7 +25,7 @@ def test_aegis_dashboard_renders(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
-        client.post("/issues", json={"title": "Dashboard test issue", "created_by": 1})
+        client.post("/issues", json={"title": "Dashboard test issue"}, headers={"X-Athena-Actor": "1"})
         response = client.get("/aegis")
     assert response.status_code == 200
     assert "Aegis" in response.text
