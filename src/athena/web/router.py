@@ -86,14 +86,24 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     status_filter = request.query_params.get("status")
+    label_filter = (request.query_params.get("label") or "").strip()
     search = (request.query_params.get("search") or "").strip().lower()
     sort = request.query_params.get("sort", "created_at")
     order = request.query_params.get("order", "desc")
 
     all_issues = issues.list_issues(conn)
+    # Attach labels to every issue up front (one bulk query, no N+1) so we can
+    # filter on them below; the paged slice then already carries its chips.
+    _attach_labels(conn, all_issues)
     filtered = all_issues
     if status_filter:
         filtered = [i for i in filtered if i["status"] == status_filter]
+    if label_filter:
+        filtered = [
+            i
+            for i in filtered
+            if any(l["name"] == label_filter for l in i["labels"])
+        ]
     if search:
         filtered = [
             i
@@ -117,8 +127,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     total = len(filtered)
     start = (page - 1) * per_page
-    paged = filtered[start : start + per_page]
-    _attach_labels(conn, paged)
+    paged = filtered[start : start + per_page]  # labels already attached above
 
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
@@ -127,6 +136,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
+            "label_filter": label_filter,
+            "all_labels": labels.list_labels(conn),
             "search": search,
             "sort": sort,
             "order": order,
