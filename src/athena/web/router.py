@@ -338,6 +338,66 @@ def add_issue_comment(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
+def _own_comment_or_response(conn, issue_id, comment_id, user):
+    """Return the comment if it belongs to this issue and the session user is its
+    author; otherwise an HTMLResponse (404/403) to return as-is. Mirrors the
+    API's author-ownership rule on the web write paths."""
+    existing = comments.get_comment(conn, comment_id)
+    if existing is None or existing["issue_id"] != issue_id:
+        return None, HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+    if existing["author_id"] != user["id"]:
+        return None, HTMLResponse('<div class="error">You can only change your own comments.</div>', status_code=403)
+    return existing, None
+
+
+@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/edit")
+def edit_issue_comment(
+    request: Request,
+    issue_id: int,
+    comment_id: int,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Edit a comment from the detail page. Gated on the session user AND on
+    author-ownership (you may only edit your own), then 303 back to the issue."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit comments.</div>',
+            status_code=401,
+        )
+    _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
+    if err is not None:
+        return err
+    body = body.strip()
+    if not body:
+        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+    comments.update_comment(conn, comment_id, body=body)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/delete")
+def delete_issue_comment(
+    request: Request,
+    issue_id: int,
+    comment_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete a comment from the detail page. Same author-ownership rule as edit.
+    Uses POST (not DELETE) because HTML forms can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to delete comments.</div>',
+            status_code=401,
+        )
+    _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
+    if err is not None:
+        return err
+    comments.delete_comment(conn, comment_id)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
 @router.get("/aegis/boards", response_class=HTMLResponse)
 def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Boards view (Aegis) using real list_issues with search/filter."""

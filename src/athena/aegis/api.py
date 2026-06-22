@@ -154,3 +154,45 @@ def list_comments(
     if issues.get_issue(conn, issue_id) is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return comments.list_comments(conn, issue_id)
+
+
+def _author_comment_or_error(
+    conn: sqlite3.Connection, issue_id: int, comment_id: int, actor: dict
+) -> dict:
+    """Fetch a comment that belongs to this issue, requiring the actor to be its
+    author. Raises 404 if the comment is missing or hangs off another issue, 403
+    if someone other than the author tries to change it. This author-ownership
+    check is the one place we enforce per-row ownership today (issues themselves
+    are still 'any authenticated actor' — a separate, deferred design)."""
+    existing = comments.get_comment(conn, comment_id)
+    if existing is None or existing["issue_id"] != issue_id:
+        raise HTTPException(status_code=404, detail="no such comment")
+    if existing["author_id"] != actor["id"]:
+        raise HTTPException(status_code=403, detail="not the comment author")
+    return existing
+
+
+@router.patch("/{issue_id}/comments/{comment_id}", response_model=CommentOut)
+def edit_comment(
+    issue_id: int,
+    comment_id: int,
+    payload: CommentCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    _author_comment_or_error(conn, issue_id, comment_id, actor)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="comment body is required")
+    return comments.update_comment(conn, comment_id, body=body)
+
+
+@router.delete("/{issue_id}/comments/{comment_id}", status_code=204)
+def delete_comment(
+    issue_id: int,
+    comment_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    _author_comment_or_error(conn, issue_id, comment_id, actor)
+    comments.delete_comment(conn, comment_id)
