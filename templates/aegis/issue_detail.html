@@ -21,6 +21,13 @@
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
+        <div class="meta-item"><strong>Project</strong>
+            {% if issue.project_id %}
+            <a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a>
+            {% else %}
+            <span class="muted">No project</span>
+            {% endif %}
+        </div>
         <div class="meta-item label-block">
             <strong>Labels</strong>
             <div class="label-list">
@@ -134,6 +141,16 @@
                     {% endfor %}
                 </select>
                 <button type="submit" class="button small">Assign</button>
+            </form>
+            <form method="post" action="/aegis/issues/{{ issue.id }}/project" class="project-form">
+                <label for="project-select">Project</label>
+                <select id="project-select" name="project_id">
+                    <option value="" {% if not issue.project_id %}selected{% endif %}>No project</option>
+                    {% for p in all_projects %}
+                    <option value="{{ p.id }}" {% if p.id == issue.project_id %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="button small">Set Project</button>
             </form>
             {% elif request.state.user %}
             <p class="note-small">Only the issue creator or assignee can change status or assignment.</p>
