@@ -135,6 +135,91 @@ def update_page(
     return get_page(conn, page_id)
 
 
+def count_child_pages(conn: sqlite3.Connection, page_id: int) -> int:
+    """How many pages nest directly under this one. The delete path uses it to
+    refuse deleting a page that still has children (the caller would orphan them);
+    the web UI uses it to disable the Delete button with an explanation. Counts
+    only DIRECT children — that's all the block rule needs, since each child is
+    itself undeletable until ITS children are gone."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM pages WHERE parent_id = ?", (page_id,)
+    ).fetchone()["n"]
+
+
+def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
+    """Delete a page and everything derived from it. Returns True if a page was
+    deleted, False if no page had that id (so the boundary can 404).
+
+    PRECONDITION: the page has no child pages. The caller checks count_child_pages
+    first and returns a clean 409 — we do NOT cascade, because silently deleting a
+    subtree is the kind of irreversible bulk loss a wiki must not do by accident.
+    (If a stray child somehow remained, the parent_id foreign key would refuse the
+    delete and raise, rather than orphan it.)
+
+    page_versions has a foreign key to this page with no ON DELETE, so its history
+    rows would block the delete — we clear them first, in the same transaction as
+    the page delete so the two can't half-happen. Then, exactly like create/update,
+    we maintain the two DERIVED indexes through their owners: an empty body clears
+    this page's outgoing links, and re-indexing a now-missing row removes its search
+    entry. (Inbound links from OTHER pages are left dangling on purpose — they
+    resolve as 'broken', the same lazy-resolve contract as a not-yet-created
+    target.)"""
+    if get_page(conn, page_id) is None:
+        return False
+    conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+    conn.commit()
+    links.sync_links(conn, source_kind="page", source_id=page_id, body="")
+    search.index_document(conn, kind="page", source_id=page_id)
+    return True
+
+
+def validate_move(
+    conn: sqlite3.Connection, page: dict, new_parent_id: int | None
+) -> str | None:
+    """Is it legal to re-parent `page` under `new_parent_id`? Returns None if the
+    move is allowed, else a human-readable reason the boundary turns into an error.
+    A predicate the API and web surfaces share so the rule has ONE home (like
+    issues.can_modify). `page` is the already-fetched row (the caller 404s a
+    missing page before calling this).
+
+    Moving to the top level (new_parent_id is None) is always allowed. Otherwise
+    the new parent must (1) not be the page itself, (2) be a real page IN THE SAME
+    SPACE — a tree can't span spaces, the same rule create enforces — and (3) not
+    live inside this page's OWN subtree, which would detach a loop from the root.
+    We test the cycle by walking UP from the proposed parent: if we reach the page
+    being moved, the parent is one of its descendants."""
+    if new_parent_id is None:
+        return None
+    if new_parent_id == page["id"]:
+        return "A page cannot be its own parent."
+    parent = get_page(conn, new_parent_id)
+    if parent is None or parent["space_id"] != page["space_id"]:
+        return "Parent must be a page in this space."
+    node = parent
+    while node is not None:
+        if node["id"] == page["id"]:
+            return "A page cannot be moved under one of its own descendants."
+        node = get_page(conn, node["parent_id"]) if node["parent_id"] else None
+    return None
+
+
+def set_parent(
+    conn: sqlite3.Connection, page_id: int, new_parent_id: int | None
+) -> dict | None:
+    """Re-parent a page (the structural half of a move). Returns the updated page,
+    or None if no page has that id. Validation (same-space, no cycle) is the
+    caller's job via validate_move — this only writes. Moving doesn't touch
+    title/body, so there's nothing to re-index for links or search."""
+    cur = conn.execute(
+        "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_page(conn, page_id)
+
+
 def list_page_versions(conn: sqlite3.Connection, page_id: int) -> list[dict]:
     """A page's superseded revisions, newest first (highest version first). Empty
     for a page never edited. Does NOT include the live current revision — that is

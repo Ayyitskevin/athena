@@ -68,5 +68,37 @@
     {% endif %}
 </div>
 
+{% if request.state.user %}
+<div class="form-container">
+    <h3>Manage</h3>
+
+    <form method="post" action="/mentor/pages/{{ page.id }}/move" class="issue-form">
+        <div class="form-group">
+            <label for="move-parent">Move under</label>
+            <select id="move-parent" name="parent_id">
+                <option value=""{% if not page.parent_id %} selected{% endif %}>— Top level —</option>
+                {% for p in move_candidates %}
+                <option value="{{ p.id }}"{% if p.id == page.parent_id %} selected{% endif %}>{{ p.title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button secondary">Move page</button>
+        </div>
+    </form>
+
+    <form method="post" action="/mentor/pages/{{ page.id }}/delete"
+          onsubmit="return confirm('Delete this page? Its history is removed too. This cannot be undone.');">
+        {% if child_count > 0 %}
+        <button type="submit" class="button danger" disabled>Delete page</button>
+        <p class="note-small">This page has {{ child_count }} child page{{ "s" if child_count != 1 }} —
+            move or delete {{ "them" if child_count != 1 else "it" }} first.</p>
+        {% else %}
+        <button type="submit" class="button danger">Delete page</button>
+        {% endif %}
+    </form>
+</div>
+{% endif %}
+
 <p class="note">Data from the Mentor pages API.</p>
 {% endblock %}

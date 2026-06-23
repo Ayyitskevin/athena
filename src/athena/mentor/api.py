@@ -62,6 +62,12 @@ class PageUpdate(BaseModel):
     body: str | None = None
 
 
+class ParentUpdate(BaseModel):
+    # null = move to the top level (no parent). Kept a dedicated body, like the
+    # issue assignee/project PUTs, so "remove the parent" (null) is unambiguous.
+    parent_id: int | None = None
+
+
 class PageVersionOut(BaseModel):
     id: int
     page_id: int
@@ -202,6 +208,43 @@ def edit_page(
     return pages.update_page(
         conn, page_id, editor_id=actor["id"], title=title, body=payload.body
     )
+
+
+@pages_router.put("/{page_id}/move", response_model=PageOut)
+def move_page(
+    page_id: int,
+    payload: ParentUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Re-parent a page within its space. Open to any authenticated actor, like
+    # edit (no creator lock). 404 if the page is missing; 422 if the new parent is
+    # invalid (another space, the page itself, or its own descendant — a cycle).
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    err = pages.validate_move(conn, page, payload.parent_id)
+    if err is not None:
+        raise HTTPException(status_code=422, detail=err)
+    return pages.set_parent(conn, page_id, payload.parent_id)
+
+
+@pages_router.delete("/{page_id}", status_code=204)
+def delete_page(
+    page_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    # Delete a page. Authed like edit/move. 404 if missing; 409 if it still has
+    # child pages — we refuse rather than cascade, so a delete can't silently wipe
+    # a subtree. 204 (no body) on success.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    if pages.count_child_pages(conn, page_id) > 0:
+        raise HTTPException(
+            status_code=409, detail="move or delete its child pages first"
+        )
+    pages.delete_page(conn, page_id)
 
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])

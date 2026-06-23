@@ -210,6 +210,10 @@ def page_detail(
     if page is None:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
 
+    # Candidates for the "Move under" select: every other page in the space (self
+    # excluded — you can't be your own parent). Descendants are left in the list and
+    # rejected by validate_move if chosen, rather than computing the subtree here.
+    siblings = [p for p in pages.list_pages_in_space(conn, page["space_id"]) if p["id"] != page_id]
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_detail.html",
@@ -219,6 +223,9 @@ def page_detail(
             "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
             "versions": pages.list_page_versions(conn, page_id),
+            "move_candidates": siblings,
+            # Drives the Delete button: a page with children can't be deleted.
+            "child_count": pages.count_child_pages(conn, page_id),
         },
     )
 
@@ -269,3 +276,63 @@ def edit_page(
 
     pages.update_page(conn, page_id, editor_id=user["id"], title=title, body=body.strip())
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/move")
+def move_page(
+    request: Request,
+    page_id: int,
+    parent_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Re-parent a page from its detail page. Gated on the session user. An empty
+    parent value means "move to the top level"; otherwise it must be a page id, and
+    validate_move enforces same-space + no-cycle (its message is a fixed internal
+    string, safe to render). 303 back to the page so the new breadcrumb shows."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("move pages")
+
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+
+    parent_id = parent_id.strip()
+    if parent_id == "":
+        new_parent: int | None = None
+    else:
+        if not parent_id.isdigit():
+            return HTMLResponse('<div class="error">Invalid parent page.</div>', status_code=400)
+        new_parent = int(parent_id)
+
+    err = pages.validate_move(conn, page, new_parent)
+    if err is not None:
+        return HTMLResponse(f'<div class="error">{err}</div>', status_code=400)
+    pages.set_parent(conn, page_id, new_parent)
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/delete")
+def delete_page(
+    request: Request,
+    page_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete a page from its detail page. Gated on the session user. Refuses (409)
+    if the page still has children — same no-cascade rule as the API. On success the
+    page is gone, so we 303 to the space it lived in (captured before the delete)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("delete pages")
+
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    if pages.count_child_pages(conn, page_id) > 0:
+        return HTMLResponse(
+            '<div class="error">Move or delete its child pages first.</div>',
+            status_code=409,
+        )
+    space_id = page["space_id"]
+    pages.delete_page(conn, page_id)
+    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
