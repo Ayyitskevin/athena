@@ -331,7 +331,13 @@ def test_project_filter_composes_with_status(tmp_path):
 
 
 def _login(client, email, name):
-    client.post("/users", json={"email": email, "name": name, "password": "secret"})
+    # User creation is authenticated after the first (bootstrap) user; act as
+    # user 1, who always exists once the first _login has run.
+    client.post(
+        "/users",
+        json={"email": email, "name": name, "password": "secret"},
+        headers={"X-Athena-Actor": "1"},
+    )
     client.post("/login", data={"email": email, "password": "secret"})
 
 

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from athena.core import users
 from athena.core.deps import get_conn
+from athena.core.identity import current_actor, optional_actor
 
 router = APIRouter(prefix="/users", tags=["core"])
 
@@ -32,7 +33,17 @@ class UserOut(BaseModel):
 
 
 @router.post("", response_model=UserOut, status_code=201)
-def create(payload: UserCreate, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def create(
+    payload: UserCreate,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Bootstrap exception: the very first user is created without authentication,
+    # because on a fresh install there is nobody to authenticate as yet. Once any
+    # user exists, creating more requires an authenticated actor — otherwise an
+    # exposed instance lets anonymous callers mint accounts (and then tokens).
+    if users.count_users(conn) > 0 and actor is None:
+        raise HTTPException(status_code=401, detail="authentication required")
     try:
         return users.create_user(
             conn, email=payload.email, name=payload.name, password=payload.password
@@ -43,12 +54,21 @@ def create(payload: UserCreate, conn: sqlite3.Connection = Depends(get_conn)) ->
 
 
 @router.get("", response_model=list[UserOut])
-def index(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+def index(
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Listing users is an authenticated operation — don't let an exposed instance
+    # be enumerated anonymously.
     return users.list_users(conn)
 
 
 @router.get("/{user_id}", response_model=UserOut)
-def show(user_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def show(
+    user_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
     user = users.get_user(conn, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="no such user")
