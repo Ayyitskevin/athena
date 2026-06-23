@@ -16,10 +16,12 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 # Whether to trust the X-Athena-Actor header as a fallback identity when no
-# bearer token is presented. The header only CLAIMS an id, so this is safe only
-# on a trusted local/tailnet box. Turn it OFF (ATHENA_TRUST_ACTOR_HEADER=0) the
-# moment Athena is network-exposed — then only real bearer tokens authenticate.
-TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", True)
+# bearer token is presented. The header only CLAIMS an id, so it is safe only on
+# a trusted local/tailnet box. It defaults OFF: an unconfigured deploy that gets
+# exposed to the network must NOT accept a spoofable identity header. Turn it ON
+# (ATHENA_TRUST_ACTOR_HEADER=1) deliberately on a trusted box — typically just
+# long enough to mint the first bearer token, then turn it back off.
+TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local

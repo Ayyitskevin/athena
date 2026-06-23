@@ -8,11 +8,17 @@ ways, in order of trust:
    agents and remote clients use, and the only one safe on an exposed network.
 
 2. `X-Athena-Actor: <user_id>` — only CLAIMS an id, proves nothing. Accepted as
-   a fallback solely when `config.TRUST_ACTOR_HEADER` is on, which is meant for a
-   trusted local/tailnet box. It also bootstraps the first token: on a fresh
-   deploy you mint a token through this path, then turn the header off.
+   a fallback solely when `config.TRUST_ACTOR_HEADER` is on (it defaults OFF), a
+   mode meant for a trusted local/tailnet box. It also bootstraps the first
+   token: on a fresh deploy you enable the header, mint a token through this
+   path, then turn the header back off.
 
 With the header trust off and no valid bearer token, the request is 401.
+
+`optional_actor` is the same resolution without the 401: it returns the actor or
+None. Endpoints that must stay reachable during first-run bootstrap (e.g.
+creating the very first user, when nobody can possibly be authenticated yet)
+depend on it and decide for themselves when absence is allowed.
 """
 from __future__ import annotations
 
@@ -57,3 +63,18 @@ def current_actor(
         return actor
 
     raise HTTPException(status_code=401, detail="authentication required")
+
+
+def optional_actor(
+    authorization: str | None = Header(default=None),
+    x_athena_actor: str | None = Header(default=None, alias=ACTOR_HEADER),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | None:
+    """Resolve the acting user the same way as `current_actor`, but return None
+    instead of raising when authentication is absent or invalid. The caller
+    decides whether a missing actor is acceptable (used by the first-user
+    bootstrap path)."""
+    try:
+        return current_actor(authorization, x_athena_actor, conn)
+    except HTTPException:
+        return None

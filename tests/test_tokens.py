@@ -13,7 +13,13 @@ from athena.main import create_app
 
 
 def _user(client, email="kevin@example.com", name="Kevin") -> int:
-    return client.post("/users", json={"email": email, "name": name}).json()["id"]
+    # User creation is authenticated after the first (bootstrap) user; act as
+    # user 1, who always exists once the first _user has run.
+    return client.post(
+        "/users",
+        json={"email": email, "name": name},
+        headers={"X-Athena-Actor": "1"},
+    ).json()["id"]
 
 
 def _mint(client, user_id, name="laptop") -> str:

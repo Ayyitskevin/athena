@@ -60,3 +60,10 @@ def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
 def list_users(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
     return [dict(row) for row in rows]
+
+
+def count_users(conn: sqlite3.Connection) -> int:
+    """How many users exist. Used by the bootstrap rule: the first user can be
+    created without authentication (nobody could be authenticated yet); after
+    that, creating users requires an authenticated actor."""
+    return conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
