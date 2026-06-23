@@ -54,8 +54,16 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-    templates = Jinja2Templates(directory="templates")
+    # Resolve from the package location, not the process cwd, so the app boots the
+    # same whether launched from the repo root or anywhere else (static/ and
+    # templates/ live at the repo root, two levels above this src/athena/ package).
+    repo_root = Path(__file__).resolve().parents[2]
+    app.mount(
+        "/static",
+        StaticFiles(directory=repo_root / "static"),
+        name="static",
+    )
+    templates = Jinja2Templates(directory=repo_root / "templates")
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_auth.router)
