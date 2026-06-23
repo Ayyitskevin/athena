@@ -138,6 +138,11 @@ def create(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # created_by is the authenticated actor, never a value the caller supplied.
+    # Reject a blank title at the boundary (422) so the API matches the web form,
+    # which already strips and rejects empties — persist the stripped value.
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="title cannot be empty")
     # Reject an unknown project here (422) rather than letting the FK raise a 500.
     if payload.project_id is not None and projects.get_project(
         conn, payload.project_id
@@ -145,7 +150,7 @@ def create(
         raise HTTPException(status_code=422, detail="no such project")
     issue = issues.create_issue(
         conn,
-        title=payload.title,
+        title=title,
         body=payload.body,
         status=payload.status,
         priority=payload.priority,

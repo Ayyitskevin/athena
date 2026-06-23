@@ -68,6 +68,34 @@ def test_missing_title_is_a_validation_error(tmp_path):
         assert r.status_code == 422
 
 
+def test_blank_title_is_422(tmp_path):
+    # WHY: a present-but-whitespace title is still nameless. The API must reject
+    # it (422) like the web form does, so the two surfaces can't disagree — Codex
+    # found POST /issues with "   " was returning 201.
+    db_file = tmp_path / "blank.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        r = client.post(
+            "/issues", json={"title": "   "}, headers={"X-Athena-Actor": "1"}
+        )
+        assert r.status_code == 422
+
+
+def test_title_is_persisted_stripped(tmp_path):
+    # WHY: surrounding whitespace is noise, not part of the title. What we store
+    # (and echo back) is the trimmed value.
+    db_file = tmp_path / "strip.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        r = client.post(
+            "/issues", json={"title": "  spaced out  "}, headers={"X-Athena-Actor": "1"}
+        )
+        assert r.status_code == 201
+        assert r.json()["title"] == "spaced out"
+
+
 def test_get_single_issue(tmp_path):
     # WHY: API-first means every issue is addressable on its own URL, not only
     # as a row in the list. GET /issues/{id} is the canonical single read.
