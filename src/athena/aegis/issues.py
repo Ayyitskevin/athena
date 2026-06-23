@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import links
+from athena.core import links, search
 
 # The lifecycle an issue moves through. This is the canonical set the whole app
 # agrees on — the REST API and the web forms both validate against it, and the
@@ -54,6 +54,8 @@ def create_issue(
     conn.commit()
     # Index any [[issue:N]]/[[page:N]] references this issue's body makes.
     links.sync_links(conn, source_kind="issue", source_id=cur.lastrowid, body=body)
+    # Index its title + body for full-text search.
+    search.index_document(conn, kind="issue", source_id=cur.lastrowid)
     return get_issue(conn, cur.lastrowid)
 
 
@@ -101,6 +103,10 @@ def update_issue(
         links.sync_links(
             conn, source_kind="issue", source_id=issue_id, body=fields["body"]
         )
+    # Re-index for search whenever an indexed field (title or body) changed; a
+    # status/priority-only edit can't affect the text index.
+    if "title" in fields or "body" in fields:
+        search.index_document(conn, kind="issue", source_id=issue_id)
     return get_issue(conn, issue_id)
 
 
