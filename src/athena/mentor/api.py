@@ -11,6 +11,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from athena.core import links
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 from athena.mentor import pages, spaces
@@ -69,6 +70,15 @@ class PageVersionOut(BaseModel):
     body: str
     edited_by: int
     created_at: str
+
+
+class LinkOut(BaseModel):
+    # One resolved cross-reference: the kind/id it points at, that target's
+    # current title, and whether it still exists (title is null when broken).
+    kind: str
+    id: int
+    title: str | None = None
+    exists: bool
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -192,6 +202,17 @@ def edit_page(
     return pages.update_page(
         conn, page_id, editor_id=actor["id"], title=title, body=payload.body
     )
+
+
+@pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])
+def backlinks(
+    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # "What references this page?" — open like other reads. 404 if the page
+    # itself is missing, so a typo'd id reads as not-found, not empty.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    return links.backlinks(conn, target_kind="page", target_id=page_id)
 
 
 @pages_router.get("/{page_id}/versions", response_model=list[PageVersionOut])

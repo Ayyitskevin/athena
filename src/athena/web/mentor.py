@@ -18,8 +18,10 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from athena.core import links
 from athena.core.deps import get_conn
 from athena.mentor import pages, spaces
+from athena.web.render import render_body
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -213,6 +215,8 @@ def page_detail(
         name="mentor/page_detail.html",
         context={
             "page": page,
+            "body_html": render_body(conn, page["body"]),
+            "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
             "versions": pages.list_page_versions(conn, page_id),
         },

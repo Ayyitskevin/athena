@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.core import links
+
 
 def create_page(
     conn: sqlite3.Connection,
@@ -33,6 +35,8 @@ def create_page(
         (space_id, parent_id, title, body, created_by, created_by),
     )
     conn.commit()
+    # Index any [[issue:N]]/[[page:N]] references this page's body makes.
+    links.sync_links(conn, source_kind="page", source_id=cur.lastrowid, body=body)
     return get_page(conn, cur.lastrowid)
 
 
@@ -118,6 +122,11 @@ def update_page(
     except Exception:
         conn.rollback()
         raise
+    # Re-index references only when the body actually changed (the only field
+    # that carries [[...]] tokens); a title-only edit leaves them be. Runs after
+    # the snapshot transaction commits, so links never reflect a rolled-back edit.
+    if "body" in fields:
+        links.sync_links(conn, source_kind="page", source_id=page_id, body=fields["body"])
     return get_page(conn, page_id)
 
 

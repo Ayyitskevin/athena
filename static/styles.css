@@ -570,6 +570,43 @@ footer {
     border: 1px solid #eee;
 }
 
+.doc-body {
+    background: white;
+    padding: 1rem;
+    border-radius: 4px;
+    border: 1px solid #eee;
+    line-height: 1.6;
+}
+
+/* A live cross-reference ([[issue:N]]/[[page:N]] resolved to a real target). */
+.xref {
+    color: #2563eb;
+    text-decoration: none;
+    border-bottom: 1px solid #bfdbfe;
+}
+
+.xref:hover {
+    border-bottom-color: #2563eb;
+}
+
+/* A reference whose target doesn't exist (typo, or not created yet). Shown, not
+   dropped, so the author can see and fix the dangling link. */
+.xref.broken {
+    color: #b91c1c;
+    border-bottom: 1px dashed #fca5a5;
+    cursor: help;
+}
+
+.backlink-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+}
+
+.backlink-list li {
+    padding: 0.25rem 0;
+}
+
 .quick-actions {
     margin-top: 1.5rem;
     padding-top: 1rem;
