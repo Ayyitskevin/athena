@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Spaces — Mentor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Mentor</h1>
+        <p class="subtitle">Documentation spaces — each holds a tree of pages</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{% if spaces %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Key</th>
+            <th>Space</th>
+            <th>Description</th>
+            <th>Pages</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for s in spaces %}
+        <tr>
+            <td class="muted"><code>{{ s.key }}</code></td>
+            <td class="issue-title"><a href="/mentor/spaces/{{ s.id }}">{{ s.name }}</a></td>
+            <td class="muted">{{ s.description or "—" }}</td>
+            <td class="muted">{{ counts.get(s.id, 0) }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No spaces yet.</p>
+{% endif %}
+
+<div class="form-container">
+    {% if request.state.user %}
+    <h3>New Space</h3>
+    <form method="post" action="/mentor/spaces" class="issue-form">
+        <div class="form-group">
+            <label for="space-key">Key</label>
+            <input type="text" id="space-key" name="key" required placeholder="e.g. ENG"
+                   style="text-transform: uppercase;">
+        </div>
+        <div class="form-group">
+            <label for="space-name">Name</label>
+            <input type="text" id="space-name" name="name" required placeholder="e.g. Engineering">
+        </div>
+        <div class="form-group">
+            <label for="space-description">Description</label>
+            <textarea id="space-description" name="description" rows="2"
+                      placeholder="What is this space for?"></textarea>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create Space</button>
+        </div>
+    </form>
+    {% else %}
+    <p class="note-small"><a href="/login">Sign in</a> to create a space.</p>
+    {% endif %}
+</div>
+
+<p class="note">Data from the Mentor spaces API.</p>
+{% endblock %}

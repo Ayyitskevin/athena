@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — Mentor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        {% if space %}
+        <a href="/mentor/spaces/{{ space.id }}" class="muted">← {{ space.name }}</a>
+        {% endif %}
+        <h1>{{ page.title }}</h1>
+        <p class="subtitle muted">Updated {{ page.updated_at }}</p>
+    </div>
+    {% if request.state.user %}
+    <div>
+        <a href="/mentor/pages/{{ page.id }}/edit" class="button secondary">Edit</a>
+    </div>
+    {% endif %}
+</div>
+
+<div class="page-body">
+    {% if page.body %}
+    <pre class="doc-body">{{ page.body }}</pre>
+    {% else %}
+    <p class="empty-state">This page has no content yet.</p>
+    {% endif %}
+</div>
+
+<div class="form-container">
+    <h3>History</h3>
+    {% if versions %}
+    <table class="issues-table">
+        <thead>
+            <tr><th>Version</th><th>Title</th><th>Edited</th></tr>
+        </thead>
+        <tbody>
+        {% for v in versions %}
+            <tr>
+                <td class="muted">v{{ v.version }}</td>
+                <td>{{ v.title }}</td>
+                <td class="muted">{{ v.created_at }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="note-small">No prior versions — this page hasn't been edited yet.</p>
+    {% endif %}
+</div>
+
+<p class="note">Data from the Mentor pages API.</p>
+{% endblock %}
