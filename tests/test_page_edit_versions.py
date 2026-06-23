@@ -13,6 +13,10 @@ The contract these encode — why each rule earns its place:
     (missing -> 404), needs at least one field (-> 422), and refuses a blank
     title (-> 422) — the live page can never be edited into a nameless state.
 """
+import sqlite3
+import threading
+
+import pytest
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -109,6 +113,59 @@ def test_never_edited_page_has_no_versions(tmp_path):
 def test_update_unknown_page_returns_none(tmp_path):
     conn = _migrated_conn(tmp_path / "miss.db")
     assert pages.update_page(conn, 999, editor_id=1, body="x") is None
+
+
+def test_concurrent_edits_do_not_collide_on_version(tmp_path):
+    # WHY (load-bearing): two editors saving the same page at the same instant
+    # must not both compute the same next version and collide on
+    # UNIQUE(page_id, version). BEGIN IMMEDIATE serializes the writers, so the
+    # snapshots come out dense (1, 2) with no IntegrityError and no lost history.
+    db_file = tmp_path / "race.db"
+    setup = _migrated_conn(db_file)
+    page = _space_with_page(setup)  # seeds users 1 and 2
+    setup.close()
+
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def edit(editor_id: int, body: str) -> None:
+        conn = db.connect(db_file)
+        try:
+            barrier.wait()  # both threads enter update_page together
+            pages.update_page(conn, page["id"], editor_id=editor_id, body=body)
+        except Exception as exc:  # noqa: BLE001 — the test asserts there are none
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=edit, args=(1, "from A")),
+        threading.Thread(target=edit, args=(2, "from B")),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []  # neither writer hit a UNIQUE collision
+    check = db.connect(db_file)
+    history = pages.list_page_versions(check, page["id"])
+    check.close()
+    # Two edits => exactly two dense snapshots, no duplicate or skipped version.
+    assert [h["version"] for h in history] == [2, 1]
+
+
+def test_failed_update_rolls_back_the_version_snapshot(tmp_path):
+    # WHY: the snapshot INSERT and the live UPDATE are one transaction. If the
+    # UPDATE fails (here a non-existent editor trips the updated_by foreign key),
+    # the snapshot must roll back with it — history can never gain an orphan
+    # version for an edit that never actually landed.
+    conn = _migrated_conn(tmp_path / "rollback.db")
+    page = _space_with_page(conn, body="v1 text")  # users 1 and 2 exist; 999 does not
+    with pytest.raises(sqlite3.IntegrityError):
+        pages.update_page(conn, page["id"], editor_id=999, body="never lands")
+    assert pages.list_page_versions(conn, page["id"]) == []  # no orphan snapshot
+    assert pages.get_page(conn, page["id"])["body"] == "v1 text"  # live row untouched
 
 
 # --- API ------------------------------------------------------------------

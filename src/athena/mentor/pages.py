@@ -65,48 +65,59 @@ def update_page(
     changing fields the page is returned untouched and no version is cut.
 
     The snapshot-then-overwrite happens in one transaction so history can never
-    diverge from the live page. The version number is dense per page — one more
-    than the count already stored — so versions read 1, 2, 3… The snapshot carries
-    the SUPERSEDED revision's own author and time (the page's current updated_by/
-    updated_at), not the editor doing the replacing; the new editor stamps the
-    fresh live row. Column names in the SET clause are hardcoded literals, never
-    caller input, so the f-string is safe; values stay parameterized."""
-    page = get_page(conn, page_id)
-    if page is None:
-        return None
+    diverge from the live page. We open it with BEGIN IMMEDIATE so the page is
+    re-read, the next version is computed, and both writes land while this
+    connection holds SQLite's write lock — without it two concurrent editors can
+    both read COUNT()+1 == the same number and collide on UNIQUE(page_id, version).
+    The version number is dense per page — one more than the count already stored —
+    so versions read 1, 2, 3… The snapshot carries the SUPERSEDED revision's own
+    author and time (the page's current updated_by/updated_at), not the editor
+    doing the replacing; the new editor stamps the fresh live row. Column names in
+    the SET clause are hardcoded literals, never caller input, so the f-string is
+    safe; values stay parameterized."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        page = get_page(conn, page_id)
+        if page is None:
+            conn.rollback()
+            return None
 
-    fields = {
-        col: val
-        for col, val in (("title", title), ("body", body))
-        if val is not None
-    }
-    if not fields:
-        return page  # nothing to change — no new revision
+        fields = {
+            col: val
+            for col, val in (("title", title), ("body", body))
+            if val is not None
+        }
+        if not fields:
+            conn.rollback()  # nothing to change — no new revision, release the lock
+            return page
 
-    next_version = conn.execute(
-        "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
-    ).fetchone()["n"] + 1
-    conn.execute(
-        "INSERT INTO page_versions "
-        "(page_id, version, title, body, edited_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            page_id,
-            next_version,
-            page["title"],
-            page["body"],
-            page["updated_by"],
-            page["updated_at"],
-        ),
-    )
+        next_version = conn.execute(
+            "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
+        ).fetchone()["n"] + 1
+        conn.execute(
+            "INSERT INTO page_versions "
+            "(page_id, version, title, body, edited_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                page_id,
+                next_version,
+                page["title"],
+                page["body"],
+                page["updated_by"],
+                page["updated_at"],
+            ),
+        )
 
-    assignments = ", ".join(f"{col} = ?" for col in fields)
-    conn.execute(
-        f"UPDATE pages SET {assignments}, updated_by = ?, "
-        "updated_at = datetime('now') WHERE id = ?",
-        (*fields.values(), editor_id, page_id),
-    )
-    conn.commit()
+        assignments = ", ".join(f"{col} = ?" for col in fields)
+        conn.execute(
+            f"UPDATE pages SET {assignments}, updated_by = ?, "
+            "updated_at = datetime('now') WHERE id = ?",
+            (*fields.values(), editor_id, page_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return get_page(conn, page_id)
 
 
