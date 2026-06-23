@@ -51,6 +51,24 @@ class PageOut(BaseModel):
     body: str
     created_by: int
     created_at: str
+    # The current revision's editor + time (== creator/created_at until first edit).
+    updated_by: int
+    updated_at: str
+
+
+class PageUpdate(BaseModel):
+    title: str | None = None
+    body: str | None = None
+
+
+class PageVersionOut(BaseModel):
+    id: int
+    page_id: int
+    version: int
+    title: str
+    body: str
+    edited_by: int
+    created_at: str
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -150,3 +168,48 @@ def show_page(
     if page is None:
         raise HTTPException(status_code=404, detail="no such page")
     return page
+
+
+@pages_router.patch("/{page_id}", response_model=PageOut)
+def edit_page(
+    page_id: int,
+    payload: PageUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Editing is open to any authenticated actor, mirroring create (a page has no
+    # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
+    # history anyway). 404 if the page is missing.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    # Only the fields the client actually sent are touched.
+    sent = payload.model_dump(exclude_unset=True)
+    if not sent:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    title = payload.title.strip() if payload.title is not None else None
+    if title is not None and not title:
+        raise HTTPException(status_code=422, detail="title cannot be empty")
+    return pages.update_page(
+        conn, page_id, editor_id=actor["id"], title=title, body=payload.body
+    )
+
+
+@pages_router.get("/{page_id}/versions", response_model=list[PageVersionOut])
+def list_versions(
+    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Reads are open. 404 if the page itself is missing (distinct from a real page
+    # that has never been edited, which returns []).
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    return pages.list_page_versions(conn, page_id)
+
+
+@pages_router.get("/{page_id}/versions/{version}", response_model=PageVersionOut)
+def show_version(
+    page_id: int, version: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    snapshot = pages.get_page_version(conn, page_id, version)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail="no such version")
+    return snapshot
