@@ -73,6 +73,7 @@
     <h3>Manage</h3>
 
     <form method="post" action="/mentor/pages/{{ page.id }}/move" class="issue-form">
+        {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="move-parent">Move under</label>
             <select id="move-parent" name="parent_id">
@@ -89,6 +90,7 @@
 
     <form method="post" action="/mentor/pages/{{ page.id }}/delete"
           onsubmit="return confirm('Delete this page? Its history is removed too. This cannot be undone.');">
+        {% include "partials/csrf.html" %}
         {% if child_count > 0 %}
         <button type="submit" class="button danger" disabled>Delete page</button>
         <p class="note-small">This page has {{ child_count }} child page{{ "s" if child_count != 1 }} —

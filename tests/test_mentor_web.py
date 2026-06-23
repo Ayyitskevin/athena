@@ -18,6 +18,9 @@ def _login(client, email="ann@e.com", name="Ann"):
         headers={"X-Athena-Actor": "1"},
     )
     client.post("/login", data={"email": email, "password": "secret"})
+    # Browser writes now carry a CSRF token; echo the cookie value in the header
+    # the TestClient sends on every later request (see web/csrf.py).
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 # --- spaces -----------------------------------------------------------------

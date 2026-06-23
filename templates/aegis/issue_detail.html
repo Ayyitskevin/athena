@@ -36,6 +36,7 @@
                     {{ l.name }}
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/labels/{{ l.id }}/delete" class="label-remove">
+                        {% include "partials/csrf.html" %}
                         <button type="submit" title="Remove label" aria-label="Remove label">×</button>
                     </form>
                     {% endif %}
@@ -46,6 +47,7 @@
             </div>
             {% if can_modify %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/labels" class="label-add">
+                {% include "partials/csrf.html" %}
                 <input type="text" name="name" list="all-labels" placeholder="Add label…" required>
                 <button type="submit" class="button small">Add</button>
             </form>
@@ -102,12 +104,14 @@
                         <details class="comment-edit">
                             <summary class="muted">Edit</summary>
                             <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/edit">
+                                {% include "partials/csrf.html" %}
                                 <textarea name="body" rows="2" required>{{ c.body }}</textarea>
                                 <button type="submit" class="button small">Save</button>
                             </form>
                         </details>
                         <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/delete"
                               onsubmit="return confirm('Delete this comment?');">
+                            {% include "partials/csrf.html" %}
                             <button type="submit" class="button small secondary">Delete</button>
                         </form>
                     </div>
@@ -121,6 +125,7 @@
 
             {% if request.state.user %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/comments" class="comment-form">
+                {% include "partials/csrf.html" %}
                 <label for="comment-body">Add a comment</label>
                 <textarea id="comment-body" name="body" rows="3" required
                           placeholder="Leave a comment…"></textarea>
@@ -135,6 +140,7 @@
             <h4>Quick Actions</h4>
             {% if can_modify %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="status-form">
+                {% include "partials/csrf.html" %}
                 <label for="status-select">Status</label>
                 <select id="status-select" name="status">
                     {% for val, label in [("open", "Open"), ("in_progress", "In Progress"), ("done", "Done")] %}
@@ -144,6 +150,7 @@
                 <button type="submit" class="button small">Change Status</button>
             </form>
             <form method="post" action="/aegis/issues/{{ issue.id }}/priority" class="priority-form">
+                {% include "partials/csrf.html" %}
                 <label for="priority-select">Priority</label>
                 <select id="priority-select" name="priority">
                     {% for val, label in [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("urgent", "Urgent")] %}
@@ -153,6 +160,7 @@
                 <button type="submit" class="button small">Change Priority</button>
             </form>
             <form method="post" action="/aegis/issues/{{ issue.id }}/assignee" class="assignee-form">
+                {% include "partials/csrf.html" %}
                 <label for="assignee-select">Assignee</label>
                 <select id="assignee-select" name="assignee_id">
                     <option value="" {% if not issue.assignee_id %}selected{% endif %}>Unassigned</option>
@@ -163,6 +171,7 @@
                 <button type="submit" class="button small">Assign</button>
             </form>
             <form method="post" action="/aegis/issues/{{ issue.id }}/project" class="project-form">
+                {% include "partials/csrf.html" %}
                 <label for="project-select">Project</label>
                 <select id="project-select" name="project_id">
                     <option value="" {% if not issue.project_id %}selected{% endif %}>No project</option>

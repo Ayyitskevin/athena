@@ -41,6 +41,7 @@
     {% if request.state.user %}
     <h3>New Space</h3>
     <form method="post" action="/mentor/spaces" class="issue-form">
+        {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="space-key">Key</label>
             <input type="text" id="space-key" name="key" required placeholder="e.g. ENG"

@@ -123,6 +123,9 @@ def _login(client):
         json={"email": "kevin@example.com", "name": "Kevin", "password": "secret"},
     )
     client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+    # Browser writes now carry a CSRF token; echo the cookie value in the header
+    # the TestClient sends on every later request (see web/csrf.py).
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def test_web_comment_is_gated_and_renders(tmp_path):
@@ -144,6 +147,7 @@ def test_web_comment_is_gated_and_renders(tmp_path):
 
         # Logged in: stored, 303 back to the issue, and visible on the page.
         client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
         ok = client.post(
             f"/aegis/issues/{issue_id}/comments",
             data={"body": "on it"},

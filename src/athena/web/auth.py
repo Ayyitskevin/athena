@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from athena import config
 from athena.core import sessions, users
 from athena.core.deps import get_conn
+from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -29,6 +30,23 @@ def _set_session_cookie(response, raw: str) -> None:
         raw,
         max_age=config.SESSION_TTL_DAYS * 24 * 3600,
         httponly=True,
+        samesite="lax",
+        secure=config.COOKIE_SECURE,
+        path="/",
+    )
+
+
+def _set_csrf_cookie(response, csrf: str) -> None:
+    # NOT HttpOnly on purpose: a same-origin script (or HTMX) may read this to
+    # echo the token in an X-CSRF-Token header. Same-origin policy still stops a
+    # cross-site attacker from reading it, so the double-submit guarantee holds.
+    # Server-rendered forms get the token from request.state.csrf_token instead,
+    # so plain HTML forms work without any JavaScript.
+    response.set_cookie(
+        config.CSRF_COOKIE,
+        csrf,
+        max_age=config.SESSION_TTL_DAYS * 24 * 3600,
+        httponly=False,
         samesite="lax",
         secure=config.COOKIE_SECURE,
         path="/",
@@ -71,12 +89,14 @@ def login(
     # 303 so the browser re-requests /aegis with GET, carrying the new cookie.
     response = RedirectResponse("/aegis", status_code=303)
     _set_session_cookie(response, raw)
+    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw))
     return response
 
 
-@router.post("/logout")
+@router.post("/logout", dependencies=[Depends(verify_csrf)])
 def logout(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(config.SESSION_COOKIE, path="/")
+    response.delete_cookie(config.CSRF_COOKIE, path="/")
     return response

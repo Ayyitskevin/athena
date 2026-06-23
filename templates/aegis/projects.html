@@ -39,6 +39,7 @@
     {% if request.state.user %}
     <h3>New Project</h3>
     <form method="post" action="/aegis/projects" class="issue-form">
+        {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="project-name">Name</label>
             <input type="text" id="project-name" name="name" required placeholder="e.g. Website Redesign">

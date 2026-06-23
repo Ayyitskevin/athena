@@ -36,6 +36,7 @@
     {% if request.state.user %}
     <h3>New Page</h3>
     <form method="post" action="/mentor/spaces/{{ space.id }}/pages" class="issue-form">
+        {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="page-title">Title</label>
             <input type="text" id="page-title" name="title" required placeholder="e.g. Deployment runbook">

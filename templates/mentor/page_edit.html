@@ -12,6 +12,7 @@
 
 <div class="form-container">
     <form method="post" action="/mentor/pages/{{ page.id }}/edit" class="issue-form">
+        {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required value="{{ page.title }}">

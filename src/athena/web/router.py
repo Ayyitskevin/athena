@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from athena.aegis import comments, issues, labels, projects
 from athena.core import links, search, users
 from athena.core.deps import get_conn
+from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_snippet
 
 router = APIRouter()
@@ -180,7 +181,7 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     )
 
 
-@router.post("/aegis/issues", response_class=HTMLResponse)
+@router.post("/aegis/issues", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
 def create_issue(
     request: Request,
     title: str = Form(""),
@@ -273,7 +274,7 @@ def edit_issue_form(
     )
 
 
-@router.post("/aegis/issues/{issue_id}/edit")
+@router.post("/aegis/issues/{issue_id}/edit", dependencies=[Depends(verify_csrf)])
 def edit_issue(
     request: Request,
     issue_id: int,
@@ -301,7 +302,7 @@ def edit_issue(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/status")
+@router.post("/aegis/issues/{issue_id}/status", dependencies=[Depends(verify_csrf)])
 def change_issue_status(
     request: Request,
     issue_id: int,
@@ -327,7 +328,7 @@ def change_issue_status(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/priority")
+@router.post("/aegis/issues/{issue_id}/priority", dependencies=[Depends(verify_csrf)])
 def change_issue_priority(
     request: Request,
     issue_id: int,
@@ -387,7 +388,7 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
     )
 
 
-@router.post("/aegis/issues/{issue_id}/assignee")
+@router.post("/aegis/issues/{issue_id}/assignee", dependencies=[Depends(verify_csrf)])
 def change_issue_assignee(
     request: Request,
     issue_id: int,
@@ -422,7 +423,7 @@ def change_issue_assignee(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/project")
+@router.post("/aegis/issues/{issue_id}/project", dependencies=[Depends(verify_csrf)])
 def change_issue_project(
     request: Request,
     issue_id: int,
@@ -454,7 +455,7 @@ def change_issue_project(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/labels")
+@router.post("/aegis/issues/{issue_id}/labels", dependencies=[Depends(verify_csrf)])
 def add_issue_label(
     request: Request,
     issue_id: int,
@@ -481,7 +482,7 @@ def add_issue_label(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/labels/{label_id}/delete")
+@router.post("/aegis/issues/{issue_id}/labels/{label_id}/delete", dependencies=[Depends(verify_csrf)])
 def remove_issue_label(
     request: Request,
     issue_id: int,
@@ -503,7 +504,7 @@ def remove_issue_label(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/comments")
+@router.post("/aegis/issues/{issue_id}/comments", dependencies=[Depends(verify_csrf)])
 def add_issue_comment(
     request: Request,
     issue_id: int,
@@ -541,7 +542,7 @@ def _own_comment_or_response(conn, issue_id, comment_id, user):
     return existing, None
 
 
-@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/edit")
+@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/edit", dependencies=[Depends(verify_csrf)])
 def edit_issue_comment(
     request: Request,
     issue_id: int,
@@ -567,7 +568,7 @@ def edit_issue_comment(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/delete")
+@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/delete", dependencies=[Depends(verify_csrf)])
 def delete_issue_comment(
     request: Request,
     issue_id: int,
@@ -647,7 +648,7 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     )
 
 
-@router.post("/aegis/projects", response_class=HTMLResponse)
+@router.post("/aegis/projects", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
 def create_project(
     request: Request,
     name: str = Form(""),

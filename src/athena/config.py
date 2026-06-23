@@ -29,3 +29,7 @@ TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 SESSION_TTL_DAYS = int(os.environ.get("ATHENA_SESSION_TTL_DAYS", "14"))
 COOKIE_SECURE = _bool_env("ATHENA_COOKIE_SECURE", False)
 SESSION_COOKIE = "athena_session"
+# The readable (non-HttpOnly) cookie carrying the session's CSRF token, so a
+# same-origin script/HTMX can echo it in an X-CSRF-Token header. Server-rendered
+# forms embed the token directly, so this cookie is a convenience, not required.
+CSRF_COOKIE = "athena_csrf"

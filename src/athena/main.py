@@ -42,13 +42,18 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     async def attach_session_user(request: Request, call_next):
         # Resolve the browser session once per request onto request.state.user,
         # so every page (and the nav) knows who is logged in without each route
-        # re-doing it. No cookie → no DB hit; user stays None.
+        # re-doing it. The session's CSRF token rides alongside on
+        # request.state.csrf_token, so forms can embed it and verify_csrf can
+        # check it. No cookie → no DB hit; both stay None.
         request.state.user = None
+        request.state.csrf_token = None
         raw = request.cookies.get(config.SESSION_COOKIE)
         if raw:
             conn = db.connect(request.app.state.db_path)
             try:
                 request.state.user = sessions.resolve_session(conn, raw)
+                if request.state.user is not None:
+                    request.state.csrf_token = sessions.csrf_token_for(conn, raw)
             finally:
                 conn.close()
         return await call_next(request)
