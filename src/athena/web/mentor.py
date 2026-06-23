@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from athena.core import links
 from athena.core.deps import get_conn
 from athena.mentor import pages, spaces
+from athena.web.csrf import verify_csrf
 from athena.web.render import render_body
 from athena.web.router import get_templates
 
@@ -85,7 +86,7 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
 
 
-@router.post("/mentor/spaces")
+@router.post("/mentor/spaces", dependencies=[Depends(verify_csrf)])
 def create_space(
     request: Request,
     key: str = Form(""),
@@ -148,7 +149,7 @@ def space_detail(
     )
 
 
-@router.post("/mentor/spaces/{space_id}/pages")
+@router.post("/mentor/spaces/{space_id}/pages", dependencies=[Depends(verify_csrf)])
 def create_page(
     request: Request,
     space_id: int,
@@ -253,7 +254,7 @@ def edit_page_form(
     )
 
 
-@router.post("/mentor/pages/{page_id}/edit")
+@router.post("/mentor/pages/{page_id}/edit", dependencies=[Depends(verify_csrf)])
 def edit_page(
     request: Request,
     page_id: int,
@@ -278,7 +279,7 @@ def edit_page(
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
-@router.post("/mentor/pages/{page_id}/move")
+@router.post("/mentor/pages/{page_id}/move", dependencies=[Depends(verify_csrf)])
 def move_page(
     request: Request,
     page_id: int,
@@ -312,7 +313,7 @@ def move_page(
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
-@router.post("/mentor/pages/{page_id}/delete")
+@router.post("/mentor/pages/{page_id}/delete", dependencies=[Depends(verify_csrf)])
 def delete_page(
     request: Request,
     page_id: int,

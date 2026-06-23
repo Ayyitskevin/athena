@@ -240,6 +240,9 @@ def test_api_move_missing_is_404_and_requires_auth(tmp_path):
 def _login(client):
     client.post("/users", json={"email": "a@e.com", "name": "A", "password": "secret"}, headers=_H)
     client.post("/login", data={"email": "a@e.com", "password": "secret"})
+    # Browser writes now carry a CSRF token; echo the cookie value in the header
+    # the TestClient sends on every later request (see web/csrf.py).
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def test_web_delete_requires_login(tmp_path):

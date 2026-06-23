@@ -26,6 +26,7 @@
                 {% if request.state.user %}
                 <span class="nav-user">{{ request.state.user.name }}</span>
                 <form method="post" action="/logout" class="nav-logout">
+                    {% include "partials/csrf.html" %}
                     <button type="submit">Sign out</button>
                 </form>
                 {% else %}

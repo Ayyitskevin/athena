@@ -16,6 +16,7 @@
         hx-target="#create-result"
         hx-swap="innerHTML"
         class="issue-form">
+        {% include "partials/csrf.html" %}
         {% if error %}
         <div class="error">{{ error }}</div>
         {% endif %}

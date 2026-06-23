@@ -128,6 +128,9 @@ def _login(client, db_file):
         json={"email": "kevin@example.com", "name": "Kevin", "password": "secret"},
     )
     client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+    # Browser writes now carry a CSRF token; echo the cookie value in the header
+    # the TestClient sends on every later request (see web/csrf.py).
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def test_web_change_status_is_gated_on_login(tmp_path):
@@ -149,6 +152,7 @@ def test_web_change_status_is_gated_on_login(tmp_path):
 
         # Log back in → the change goes through (303 back to the issue).
         client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
         ok = client.post(
             f"/aegis/issues/{issue_id}/status",
             data={"status": "done"},

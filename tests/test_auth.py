@@ -92,6 +92,8 @@ def test_logout_destroys_session_server_side(tmp_path):
     with TestClient(app) as client:
         _user(client, password="secret")
         client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        # Logout is CSRF-protected; echo the token cookie in the header.
+        client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
         raw = client.cookies.get(config.SESSION_COOKIE)
         assert raw is not None
 
@@ -138,6 +140,7 @@ def test_issue_creation_is_gated_on_login(tmp_path):
         assert "sign in" in logged_out.text.lower()
 
         client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
         logged_in = client.post("/aegis/issues", data={"title": "mine"})
         assert logged_in.status_code == 200
 
