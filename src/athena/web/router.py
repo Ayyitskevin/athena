@@ -12,8 +12,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, issues, labels, projects
-from athena.core import users
+from athena.core import links, users
 from athena.core.deps import get_conn
+from athena.web.render import render_body
 
 router = APIRouter()
 
@@ -348,6 +349,8 @@ def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Dep
         name="aegis/issue_detail.html",
         context={
             "issue": issue,
+            "body_html": render_body(conn, issue["body"]),
+            "backlinks": links.backlinks(conn, "issue", issue_id),
             "comments": comments.list_comments(conn, issue_id),
             "users": users.list_users(conn),
             "issue_labels": labels.labels_for_issue(conn, issue_id),

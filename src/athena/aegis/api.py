@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import comments, issues, labels, projects
-from athena.core import users
+from athena.core import links, users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -102,6 +102,15 @@ class IssueOut(BaseModel):
     labels: list[LabelOut] = []
 
 
+class LinkOut(BaseModel):
+    # One resolved cross-reference: the kind/id it points at, that target's
+    # current title, and whether it still exists (title is null when broken).
+    kind: str
+    id: int
+    title: str | None = None
+    exists: bool
+
+
 class CommentCreate(BaseModel):
     body: str
 
@@ -189,6 +198,17 @@ def show(
     if issue is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return _with_labels(conn, issue)
+
+
+@router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
+def backlinks(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # "What references this issue?" — open like other reads. 404 if the issue
+    # itself is missing, so a typo'd id reads as not-found, not empty.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return links.backlinks(conn, target_kind="issue", target_id=issue_id)
 
 
 def _issue_for_write(

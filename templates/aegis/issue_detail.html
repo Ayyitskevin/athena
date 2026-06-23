@@ -63,7 +63,27 @@
                 <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>
             {% endif %}
             </h3>
-            <div class="body-text">{{ (issue.body or "No description provided.") | replace('\n', '<br>') | safe }}</div>
+            <div class="body-text">{% if issue.body %}{{ body_html }}{% else %}No description provided.{% endif %}</div>
+        </div>
+
+        <div class="backlinks">
+            <h3>Referenced by</h3>
+            {% if backlinks %}
+            <ul class="backlink-list">
+                {% for ref in backlinks %}
+                <li>
+                    {% if ref.kind == "issue" %}
+                    <a href="/aegis/issues/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+                    {% else %}
+                    <a href="/mentor/pages/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+                    {% endif %}
+                    <span class="muted">({{ ref.kind }})</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">Nothing references this issue yet.</p>
+            {% endif %}
         </div>
 
         <div class="comments">

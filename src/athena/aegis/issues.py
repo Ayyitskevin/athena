@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.core import links
+
 # The lifecycle an issue moves through. This is the canonical set the whole app
 # agrees on — the REST API and the web forms both validate against it, and the
 # boards view lays out one column per status. 'open' is the create default
@@ -50,6 +52,8 @@ def create_issue(
         (title, body, status, priority, created_by, project_id),
     )
     conn.commit()
+    # Index any [[issue:N]]/[[page:N]] references this issue's body makes.
+    links.sync_links(conn, source_kind="issue", source_id=cur.lastrowid, body=body)
     return get_issue(conn, cur.lastrowid)
 
 
@@ -91,6 +95,12 @@ def update_issue(
     conn.commit()
     if cur.rowcount == 0:
         return None
+    # Re-index references only when the body actually changed (the only field
+    # that carries [[...]] tokens); a status/priority/title edit leaves them be.
+    if "body" in fields:
+        links.sync_links(
+            conn, source_kind="issue", source_id=issue_id, body=fields["body"]
+        )
     return get_issue(conn, issue_id)
 
 

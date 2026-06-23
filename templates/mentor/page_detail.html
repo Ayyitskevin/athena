@@ -20,9 +20,29 @@
 
 <div class="page-body">
     {% if page.body %}
-    <pre class="doc-body">{{ page.body }}</pre>
+    <div class="doc-body">{{ body_html }}</div>
     {% else %}
     <p class="empty-state">This page has no content yet.</p>
+    {% endif %}
+</div>
+
+<div class="form-container">
+    <h3>Referenced by</h3>
+    {% if backlinks %}
+    <ul class="backlink-list">
+        {% for ref in backlinks %}
+        <li>
+            {% if ref.kind == "issue" %}
+            <a href="/aegis/issues/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+            {% else %}
+            <a href="/mentor/pages/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+            {% endif %}
+            <span class="muted">({{ ref.kind }})</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="note-small">Nothing references this page yet.</p>
     {% endif %}
 </div>
 
