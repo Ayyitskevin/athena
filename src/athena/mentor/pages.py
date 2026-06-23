@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import links
+from athena.core import links, search
 
 
 def create_page(
@@ -37,6 +37,8 @@ def create_page(
     conn.commit()
     # Index any [[issue:N]]/[[page:N]] references this page's body makes.
     links.sync_links(conn, source_kind="page", source_id=cur.lastrowid, body=body)
+    # Index its title + body for full-text search.
+    search.index_document(conn, kind="page", source_id=cur.lastrowid)
     return get_page(conn, cur.lastrowid)
 
 
@@ -127,6 +129,9 @@ def update_page(
     # the snapshot transaction commits, so links never reflect a rolled-back edit.
     if "body" in fields:
         links.sync_links(conn, source_kind="page", source_id=page_id, body=fields["body"])
+    # Re-index for search whenever an indexed field (title or body) changed.
+    if "title" in fields or "body" in fields:
+        search.index_document(conn, kind="page", source_id=page_id)
     return get_page(conn, page_id)
 
 
