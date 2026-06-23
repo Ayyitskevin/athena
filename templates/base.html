@@ -16,6 +16,10 @@
             </div>
             <nav>
                 {% block nav %}
+                <form method="get" action="/find" class="nav-search" role="search">
+                    <input type="search" name="q" placeholder="Search…" class="search-input"
+                           aria-label="Search issues and pages">
+                </form>
                 <a href="/aegis">Aegis</a>
                 <a href="/aegis/projects">Projects</a>
                 <a href="/mentor">Mentor</a>

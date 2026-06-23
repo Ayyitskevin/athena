@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Search — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Search</h1>
+        <p class="subtitle">Across issues and pages, ranked best-first</p>
+    </div>
+</div>
+
+<form method="get" action="/find" class="search-form">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search issues and pages…"
+           class="search-input search-input-wide" autofocus>
+    <button type="submit" class="button">Search</button>
+</form>
+
+{% if q %}
+    {% if hits %}
+    <ul class="search-results">
+    {% for h in hits %}
+        <li class="search-hit">
+            <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
+            <span class="search-hit-kind">{{ h.kind }}</span>
+            {% if h.snippet_html %}<p class="search-hit-snippet">{{ h.snippet_html }}</p>{% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-state">No matches for “{{ q }}”.</p>
+    {% endif %}
+{% else %}
+<p class="note">Type a query above to search every issue and page.</p>
+{% endif %}
+{% endblock %}
