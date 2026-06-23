@@ -12,9 +12,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, issues, labels, projects
-from athena.core import links, users
+from athena.core import links, search, users
 from athena.core.deps import get_conn
-from athena.web.render import render_body
+from athena.web.render import render_body, render_snippet
 
 router = APIRouter()
 
@@ -52,6 +52,32 @@ def home(request: Request):
     return _templates.TemplateResponse(
         request=request,
         name="home.html",
+    )
+
+
+@router.get("/find", response_class=HTMLResponse)
+def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Human-facing search across issues and pages — the browser twin of the JSON
+    API at /search (which serves the fleet). It runs the SAME core.search query, so
+    the two never disagree on what matches or how it ranks; this route only adds the
+    presentation: an <a> per hit to its detail page and a highlighted snippet.
+    Reading is open, like every other web read; a blank box just shows the form."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    q = (request.query_params.get("q") or "").strip()
+    hits = search.search(conn, q) if q else []
+    for h in hits:
+        # render_snippet escapes then turns search's [..] match markers into <mark>;
+        # the href maps a hit's kind to where it lives in the web UI.
+        h["snippet_html"] = render_snippet(h.get("snippet"))
+        h["href"] = (
+            f"/aegis/issues/{h['source_id']}" if h["kind"] == "issue"
+            else f"/mentor/pages/{h['source_id']}"
+        )
+    return _templates.TemplateResponse(
+        request=request,
+        name="search.html",
+        context={"q": q, "hits": hits},
     )
 
 

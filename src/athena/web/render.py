@@ -15,6 +15,7 @@ matches.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from markupsafe import Markup, escape
@@ -23,6 +24,27 @@ from athena.core import links
 
 # Where each kind is addressable in the web UI. Keys match the resolver's kinds.
 _HREF = {"issue": "/aegis/issues/{}", "page": "/mentor/pages/{}"}
+
+# core.search builds snippets with the matched terms wrapped in [..] (its chosen
+# delimiters). This pulls a balanced [..] pair out of the ALREADY-escaped snippet
+# so we can swap it for <mark>. Non-greedy + balanced, so a lone literal '[' with
+# no closing ']' is left as plain text rather than opening a dangling tag.
+_SNIPPET_MARK = re.compile(r"\[([^\[\]]*)\]")
+
+
+def render_snippet(snippet: str | None) -> Markup:
+    """Render a core.search snippet to safe HTML with the matched terms in <mark>.
+
+    Same XSS rule as render_body: the snippet is excerpted from author-supplied
+    body text, so we escape EVERYTHING first, then substitute markup into the
+    already-escaped string. search wraps matches in [..]; we turn those into
+    <mark>…</mark>. The match text itself is already escaped, so a body that
+    contained <script> shows as inert text inside the highlight."""
+    if not snippet:
+        return Markup("")
+    escaped = str(escape(snippet))
+    marked = _SNIPPET_MARK.sub(lambda m: f"<mark>{m.group(1)}</mark>", escaped)
+    return Markup(marked)
 
 
 def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
