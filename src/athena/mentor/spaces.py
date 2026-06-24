@@ -46,3 +46,20 @@ def list_spaces(conn: sqlite3.Connection) -> list[dict]:
         "SELECT * FROM spaces ORDER BY name COLLATE NOCASE"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def delete_space(conn: sqlite3.Connection, space_id: int) -> bool:
+    """Delete a space. Returns True if a space was deleted, False if no space had
+    that id (so the boundary can 404).
+
+    PRECONDITION: the space holds no pages. The caller checks
+    pages.count_pages_in_space first and returns a clean 409 — we do NOT cascade,
+    because deleting a whole documentation tree is exactly the kind of irreversible
+    bulk loss a wiki must never do silently (the same rule project- and page-delete
+    follow). Unlike a page, a space has no version history or derived link/search
+    rows of its own, so there is nothing to clean up beyond the row itself. (If a
+    stray page somehow remained, the pages.space_id foreign key has no ON DELETE, so
+    it would refuse the delete and raise rather than orphan it.)"""
+    cur = conn.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
+    conn.commit()
+    return cur.rowcount > 0

@@ -135,6 +135,17 @@ def update_page(
     return get_page(conn, page_id)
 
 
+def count_pages_in_space(conn: sqlite3.Connection, space_id: int) -> int:
+    """How many pages live in this space (at any depth). The space-delete path uses
+    it to refuse deleting a space that still holds pages (the caller would orphan a
+    whole tree); the web UI uses it to disable the Delete button with an explanation.
+    Lives here, not in spaces.py, because pages.py owns the space_id column — the
+    same split as issues.count_issues_in_project owning issues.project_id."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM pages WHERE space_id = ?", (space_id,)
+    ).fetchone()["n"]
+
+
 def count_child_pages(conn: sqlite3.Connection, page_id: int) -> int:
     """How many pages nest directly under this one. The delete path uses it to
     refuse deleting a page that still has children (the caller would orphan them);

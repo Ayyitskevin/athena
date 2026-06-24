@@ -116,6 +116,36 @@ def create_space(
     return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
 
+@router.post("/mentor/spaces/{space_id}/delete", dependencies=[Depends(verify_csrf)])
+def delete_space(
+    request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Delete a space from its detail page. Creator-only — unlike Mentor's open
+    create/edit, removing a whole container is gated to its creator (401 logged-out,
+    403 non-creator, 404 missing), mirroring the Aegis project delete. Refused with
+    409 if the space still holds pages: we don't cascade, so the pages must be moved
+    or deleted first. On success the space is gone, so we 303 back to /mentor."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("delete spaces")
+
+    space = spaces.get_space(conn, space_id)
+    if space is None:
+        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+    if space["created_by"] != user["id"]:
+        return HTMLResponse(
+            '<div class="blocked">Only the space creator may delete it.</div>',
+            status_code=403,
+        )
+    if pages.count_pages_in_space(conn, space_id) > 0:
+        return HTMLResponse(
+            '<div class="error">Delete or move this space\'s pages first.</div>',
+            status_code=409,
+        )
+    spaces.delete_space(conn, space_id)
+    return RedirectResponse("/mentor", status_code=303)
+
+
 @router.get("/mentor/spaces/{space_id}", response_class=HTMLResponse)
 def space_detail(
     request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
@@ -137,6 +167,7 @@ def space_detail(
         )
 
     page_rows = pages.list_pages_in_space(conn, space_id)
+    user = getattr(request.state, "user", None)
     return templates.TemplateResponse(
         request=request,
         name="mentor/space_detail.html",
@@ -145,6 +176,11 @@ def space_detail(
             "tree": _tree_rows(page_rows),
             # Flat list (alpha) for the optional "nest under" parent select.
             "all_pages": page_rows,
+            # Drives the danger zone: only the creator sees Delete (creator-only,
+            # tighter than Mentor's open write model), and it's disabled while the
+            # space still holds pages (the API would refuse that delete with 409).
+            "can_delete": user is not None and user["id"] == space["created_by"],
+            "page_count": len(page_rows),
         },
     )
 
