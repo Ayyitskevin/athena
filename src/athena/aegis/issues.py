@@ -152,6 +152,17 @@ def set_project(
     return get_issue(conn, issue_id)
 
 
+def count_issues_in_project(conn: sqlite3.Connection, project_id: int) -> int:
+    """How many issues currently belong to this project. The project-delete path
+    uses it to refuse deleting a project that still owns issues (deleting would
+    either orphan them at the FK or silently detach them); the web UI uses it to
+    explain a disabled Delete button. Lives here because issues.py owns the
+    project_id column — projects.py never reaches into the issues table."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM issues WHERE project_id = ?", (project_id,)
+    ).fetchone()["n"]
+
+
 def can_modify(issue: dict, actor_id: int) -> bool:
     """Whether an actor may modify this issue (change status, edit, assign).
     The rule: the issue's creator OR its current assignee. An unassigned issue
