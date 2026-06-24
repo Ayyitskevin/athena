@@ -19,9 +19,9 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.core import links
+from athena.core import activity, links
 from athena.core.deps import get_conn
-from athena.mentor import pages, spaces
+from athena.mentor import page_activity, pages, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body
 from athena.web.router import get_templates
@@ -287,6 +287,9 @@ def create_page(
         conn, space_id=space_id, title=title, body=body.strip() or "",
         parent_id=parent, created_by=user["id"],
     )
+    page_activity.record_page_created(
+        conn, actor_id=user["id"], page_id=page["id"], title=page["title"]
+    )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
@@ -320,6 +323,9 @@ def page_detail(
             "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
             "versions": pages.list_page_versions(conn, page_id),
+            "activity": activity.list_activity(
+                conn, target_kind="page", target_id=page_id
+            ),
             "move_candidates": siblings,
             # Drives the Delete button: a page with children can't be deleted.
             "child_count": pages.count_child_pages(conn, page_id),
@@ -365,13 +371,19 @@ def edit_page(
     if user is None:
         return _signin_required("edit pages")
 
-    if pages.get_page(conn, page_id) is None:
+    before = pages.get_page(conn, page_id)
+    if before is None:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
 
-    pages.update_page(conn, page_id, editor_id=user["id"], title=title, body=body.strip())
+    after = pages.update_page(
+        conn, page_id, editor_id=user["id"], title=title, body=body.strip()
+    )
+    page_activity.record_page_edited(
+        conn, actor_id=user["id"], before=before, after=after
+    )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -435,6 +447,9 @@ def delete_page(
         )
     space_id = page["space_id"]
     pages.delete_page(conn, page_id)
+    page_activity.record_page_deleted(
+        conn, actor_id=user["id"], page_id=page_id, title=page["title"]
+    )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
 
 
