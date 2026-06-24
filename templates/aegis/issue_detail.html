@@ -13,6 +13,21 @@
     </div>
 </div>
 
+{% if blocked_warning %}
+<div class="warning blocked-warning">
+    <strong>Heads up:</strong> this issue is still blocked by
+    {% for b in blocked_warning %}
+        <a href="/aegis/issues/{{ b.id }}" class="xref">{{ b.key or "#" ~ b.id }}</a> ({{ b.status }}){% if not loop.last %}, {% endif %}
+    {% endfor %}.
+    <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="confirm-done">
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="status" value="done">
+        <input type="hidden" name="confirm" value="1">
+        <button type="submit" class="button small">Mark done anyway</button>
+    </form>
+</div>
+{% endif %}
+
 <div class="issue-detail">
     <div class="meta-sidebar">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
@@ -85,6 +100,53 @@
             </ul>
             {% else %}
             <p class="muted">Nothing references this issue yet.</p>
+            {% endif %}
+        </div>
+
+        <div class="relationships">
+            <h3>Relationships</h3>
+            {% set groups = [
+                ("blocked_by", "Blocked by", links.blocked_by),
+                ("blocks", "Blocks", links.blocks),
+                ("relates", "Relates to", links.relates)
+            ] %}
+            {% if links.blocked_by or links.blocks or links.relates %}
+            {% for relation, heading, items in groups %}
+                {% if items %}
+                <div class="rel-group">
+                    <strong class="rel-heading">{{ heading }}</strong>
+                    <ul class="rel-list">
+                        {% for it in items %}
+                        <li>
+                            <a href="/aegis/issues/{{ it.id }}" class="xref">{{ it.key or "#" ~ it.id }} {{ it.title }}</a>
+                            <span class="status {{ it.status }}">{{ it.status }}</span>
+                            {% if can_modify %}
+                            <form method="post" action="/aegis/issues/{{ issue.id }}/links/{{ relation }}/{{ it.id }}/delete" class="rel-remove">
+                                {% include "partials/csrf.html" %}
+                                <button type="submit" title="Remove relationship" aria-label="Remove relationship">×</button>
+                            </form>
+                            {% endif %}
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endif %}
+            {% endfor %}
+            {% else %}
+            <p class="muted">No relationships yet.</p>
+            {% endif %}
+
+            {% if can_modify %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/links" class="rel-add">
+                {% include "partials/csrf.html" %}
+                <select name="relation" aria-label="Relationship type">
+                    <option value="blocks">Blocks</option>
+                    <option value="blocked_by">Is blocked by</option>
+                    <option value="relates">Relates to</option>
+                </select>
+                <input type="text" name="target_ref" placeholder="Issue id or key (e.g. ATH-15)" required>
+                <button type="submit" class="button small">Link</button>
+            </form>
             {% endif %}
         </div>
 
