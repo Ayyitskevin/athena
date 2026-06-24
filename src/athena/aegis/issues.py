@@ -251,6 +251,7 @@ def list_issues(
     status: str | None = None,
     search: str | None = None,
     project_id: int | None = None,
+    backlog: bool = False,
     ids: list[int] | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
@@ -260,6 +261,9 @@ def list_issues(
     - search: case-insensitive substring in title or body (SQLite LIKE).
     - project_id: restrict to issues in this project (a direct column on the
       issue, so unlike labels this module filters it itself).
+    - backlog: restrict to issues in NO project (project_id IS NULL). Distinct
+      from project_id=None, which means "don't filter by project at all". The two
+      are mutually exclusive — the boundary picks one.
     - ids: restrict to these issue ids. Generic on purpose — the caller resolves
       *what* the ids mean (e.g. labels.py turns a label name into ids), so this
       module stays decoupled from labels. An empty list means "match nothing".
@@ -276,7 +280,9 @@ def list_issues(
         clauses.append("(i.title LIKE ? OR i.body LIKE ?)")
         like = f"%{search}%"
         params.extend([like, like])
-    if project_id is not None:
+    if backlog:
+        clauses.append("i.project_id IS NULL")
+    elif project_id is not None:
         clauses.append("i.project_id = ?")
         params.append(project_id)
     if ids is not None:
