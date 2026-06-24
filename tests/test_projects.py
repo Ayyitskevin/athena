@@ -12,6 +12,7 @@ single nullable column (issues.project_id). These tests encode the contract:
   * every issue read carries its project_id + project_name (NULL when none), and
     the issue list can be filtered to one project.
 """
+import re
 import sqlite3
 
 from fastapi.testclient import TestClient
@@ -47,10 +48,16 @@ def _make_issue(client, actor="1", **body) -> dict:
     return r.json()
 
 
-def _create_project(client, name, actor="1", description="") -> dict:
+def _key_for(name: str) -> str:
+    """A valid key derived from a project name, so test helpers don't have to spell
+    one out every time. Strip to letters/digits, uppercase, cap at 10."""
+    return re.sub(r"[^A-Za-z0-9]", "", name).upper()[:10]
+
+
+def _create_project(client, name, actor="1", description="", key=None) -> dict:
     r = client.post(
         "/projects",
-        json={"name": name, "description": description},
+        json={"name": name, "key": key or _key_for(name), "description": description},
         headers={"X-Athena-Actor": actor},
     )
     assert r.status_code == 201, r.text
@@ -65,7 +72,7 @@ def test_create_and_get_project_round_trip(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     made = projects.create_project(
-        conn, name="Website", description="the redesign", created_by=1
+        conn, name="Website", key="WEB", description="the redesign", created_by=1
     )
     got = projects.get_project(conn, made["id"])
     assert got["name"] == "Website"
@@ -77,7 +84,7 @@ def test_get_project_by_name_is_case_insensitive(tmp_path):
     conn = _migrated_conn(tmp_path / "pn.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    projects.create_project(conn, name="Mobile", created_by=1)
+    projects.create_project(conn, name="Mobile", key="MOB", created_by=1)
     assert projects.get_project_by_name(conn, "mobile")["name"] == "Mobile"
 
 
@@ -85,8 +92,8 @@ def test_list_projects_is_alphabetical(tmp_path):
     conn = _migrated_conn(tmp_path / "pl.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    projects.create_project(conn, name="Zebra", created_by=1)
-    projects.create_project(conn, name="apple", created_by=1)
+    projects.create_project(conn, name="Zebra", key="ZEB", created_by=1)
+    projects.create_project(conn, name="apple", key="APP", created_by=1)
     assert [p["name"] for p in projects.list_projects(conn)] == ["apple", "Zebra"]
 
 
@@ -96,7 +103,7 @@ def test_set_project_sets_then_clears(tmp_path):
     conn = _migrated_conn(tmp_path / "sp.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
-    proj = projects.create_project(conn, name="Core", created_by=1)
+    proj = projects.create_project(conn, name="Core", key="CORE", created_by=1)
     issue = issues.create_issue(conn, title="t", body="", created_by=1)
     moved = issues.set_project(conn, issue["id"], proj["id"])
     assert moved["project_id"] == proj["id"]
@@ -137,7 +144,7 @@ def test_create_project_requires_actor(tmp_path):
     app = create_app(tmp_path / "noactor.db")
     with TestClient(app) as client:
         _seed_three_users(tmp_path / "noactor.db")
-        r = client.post("/projects", json={"name": "Anon"})
+        r = client.post("/projects", json={"name": "Anon", "key": "AN"})
         assert r.status_code == 401
 
 
@@ -146,7 +153,9 @@ def test_empty_project_name_is_rejected(tmp_path):
     with TestClient(app) as client:
         _seed_three_users(tmp_path / "empty.db")
         r = client.post(
-            "/projects", json={"name": "   "}, headers={"X-Athena-Actor": "1"}
+            "/projects",
+            json={"name": "   ", "key": "EMPTY"},
+            headers={"X-Athena-Actor": "1"},
         )
         assert r.status_code == 422
 
@@ -159,7 +168,9 @@ def test_duplicate_project_name_is_409(tmp_path):
         _seed_three_users(tmp_path / "dup.db")
         _create_project(client, "Atlas")
         r = client.post(
-            "/projects", json={"name": "atlas"}, headers={"X-Athena-Actor": "1"}
+            "/projects",
+            json={"name": "atlas", "key": "ATL2"},
+            headers={"X-Athena-Actor": "1"},
         )
         assert r.status_code == 409
 
@@ -352,7 +363,7 @@ def test_web_create_project(tmp_path):
         _login(client, "ann@e.com", "Ann")  # user 1
         r = client.post(
             "/aegis/projects",
-            data={"name": "Website", "description": "redesign"},
+            data={"name": "Website", "key": "WEB", "description": "redesign"},
             follow_redirects=False,
         )
         assert r.status_code == 303
@@ -382,8 +393,8 @@ def test_web_duplicate_project_name_is_409(tmp_path):
     app = create_app(tmp_path / "wd.db")
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
-        client.post("/aegis/projects", data={"name": "Atlas"})
-        r = client.post("/aegis/projects", data={"name": "atlas"})
+        client.post("/aegis/projects", data={"name": "Atlas", "key": "ATL"})
+        r = client.post("/aegis/projects", data={"name": "atlas", "key": "ATL2"})
         assert r.status_code == 409
 
 
@@ -391,7 +402,7 @@ def test_web_set_project_on_issue(tmp_path):
     app = create_app(tmp_path / "ws.db")
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")  # user 1 = creator
-        client.post("/aegis/projects", data={"name": "Core"})
+        client.post("/aegis/projects", data={"name": "Core", "key": "CORE"})
         proj = client.get("/projects").json()[0]
         issue = _make_issue(client, actor="1", title="t")
         r = client.post(
@@ -410,7 +421,7 @@ def test_web_bystander_cannot_set_project(tmp_path):
     app = create_app(tmp_path / "wb.db")
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")  # user 1 — creator
-        client.post("/aegis/projects", data={"name": "Core"})
+        client.post("/aegis/projects", data={"name": "Core", "key": "CORE"})
         proj = client.get("/projects").json()[0]
         issue = _make_issue(client, actor="1", title="t")
         _login(client, "bob@e.com", "Bob")  # user 2 now the session — bystander
@@ -427,7 +438,7 @@ def test_web_list_filters_by_project(tmp_path):
     app = create_app(tmp_path / "wf.db")
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
-        client.post("/aegis/projects", data={"name": "Core"})
+        client.post("/aegis/projects", data={"name": "Core", "key": "CORE"})
         proj = client.get("/projects").json()[0]
         _make_issue(client, actor="1", title="in core", project_id=proj["id"])
         _make_issue(client, actor="1", title="loose one")

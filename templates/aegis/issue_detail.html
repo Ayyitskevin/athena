@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}#{{ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
+{% block title %}{{ issue.key or "#" ~ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <a href="/aegis/issues" class="muted">← Back to issues</a>
-        <h1>#{{ issue.id }} {{ issue.title }}</h1>
+        <h1>{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</h1>
     </div>
     <div>
         <span class="status {{ issue.status }} large">{{ issue.status }}</span>
@@ -15,7 +15,7 @@
 
 <div class="issue-detail">
     <div class="meta-sidebar">
-        <div class="meta-item"><strong>ID</strong> #{{ issue.id }}</div>
+        <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
         <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
         <div class="meta-item"><strong>Priority</strong> <span class="priority {{ issue.priority }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>

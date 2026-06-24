@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Edit #{{ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
+{% block title %}Edit {{ issue.key or "#" ~ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <a href="/aegis/issues/{{ issue.id }}" class="muted">← Back to issue</a>
-        <h1>Edit #{{ issue.id }}</h1>
+        <h1>Edit {{ issue.key or "#" ~ issue.id }}</h1>
     </div>
 </div>
 

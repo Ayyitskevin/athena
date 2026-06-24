@@ -61,6 +61,9 @@ class ProjectUpdate(BaseModel):
 
 class ProjectCreate(BaseModel):
     name: str
+    # The issue-key prefix (e.g. "ATH" -> ATH-1, ATH-2). Required on create and
+    # the canonical short identity; validated for shape and uniqueness below.
+    key: str
     description: str = ""
 
 
@@ -68,12 +71,14 @@ class ProjectEdit(BaseModel):
     # A partial edit of the project itself (not an issue's link to it — that is
     # ProjectUpdate above). Send any subset; unset fields are left unchanged.
     name: str | None = None
+    key: str | None = None
     description: str | None = None
 
 
 class ProjectOut(BaseModel):
     id: int
     name: str
+    key: str
     description: str
     created_by: int
     created_at: str
@@ -96,6 +101,9 @@ class LabelAttach(BaseModel):
 
 class IssueOut(BaseModel):
     id: int
+    # The project-scoped key (e.g. "ATH-12"), or null for a backlog issue with no
+    # project. Computed by issues.py from the project prefix + per-project number.
+    key: str | None = None
     title: str
     body: str
     status: str
@@ -129,6 +137,19 @@ class CommentOut(BaseModel):
     author_name: str
     body: str
     created_at: str
+
+
+def _validate_key(key: str) -> str:
+    """Normalize and validate a project key, or raise 422. Returns the uppercased
+    key the boundary should pass on to the data layer / dup check. The shape rule
+    itself lives in projects.normalize_key so the web form enforces it identically."""
+    normalized = projects.normalize_key(key)
+    if normalized is None:
+        raise HTTPException(
+            status_code=422,
+            detail="key must start with a letter and be 1–10 letters/digits",
+        )
+    return normalized
 
 
 def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
@@ -195,13 +216,16 @@ def index(
     return _with_labels_many(conn, rows)
 
 
-@router.get("/{issue_id}", response_model=IssueOut)
+@router.get("/{ref}", response_model=IssueOut)
 def show(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    ref: str, conn: sqlite3.Connection = Depends(get_conn)
 ) -> dict:
     # Reads are open to everyone (no actor), same as the list endpoint — only
-    # writes pass through the creator-or-assignee gate.
-    issue = issues.get_issue(conn, issue_id)
+    # writes pass through the creator-or-assignee gate. ref is addressable two
+    # ways: the numeric id ("12") or the project key ("ATH-12"); both resolve to
+    # the same issue. Writes and sub-resources below stay numeric (forms post the
+    # id we control), so only this read entry point widens.
+    issue = issues.get_by_ref(conn, ref)
     if issue is None:
         raise HTTPException(status_code=404, detail="no such issue")
     return _with_labels(conn, issue)
@@ -393,10 +417,17 @@ def create_project(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="project name is required")
+    key = _validate_key(payload.key)
     if projects.get_project_by_name(conn, name) is not None:
         raise HTTPException(status_code=409, detail="project already exists")
+    if projects.get_project_by_key(conn, key) is not None:
+        raise HTTPException(status_code=409, detail="project key already in use")
     return projects.create_project(
-        conn, name=name, description=payload.description, created_by=actor["id"]
+        conn,
+        name=name,
+        key=key,
+        description=payload.description,
+        created_by=actor["id"],
     )
 
 
@@ -450,8 +481,15 @@ def update_project(
         clash = projects.get_project_by_name(conn, name)
         if clash is not None and clash["id"] != project_id:
             raise HTTPException(status_code=409, detail="project already exists")
+    key = _validate_key(payload.key) if payload.key is not None else None
+    if key is not None:
+        # Same collision logic as name: a key already held by ANOTHER project is a
+        # 409; re-saving your own current key (NOCASE self-match) is fine.
+        clash = projects.get_project_by_key(conn, key)
+        if clash is not None and clash["id"] != project_id:
+            raise HTTPException(status_code=409, detail="project key already in use")
     updated = projects.update_project(
-        conn, project_id, name=name, description=payload.description
+        conn, project_id, name=name, key=key, description=payload.description
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such project")

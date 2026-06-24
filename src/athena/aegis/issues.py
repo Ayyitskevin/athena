@@ -5,8 +5,10 @@ queries, so if the storage ever changes, only this file does.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
+from athena.aegis import projects
 from athena.core import links, search
 
 # The lifecycle an issue moves through. This is the canonical set the whole app
@@ -20,16 +22,33 @@ STATUSES = ("open", "in_progress", "done")
 # the one canonical set the REST API and the web forms both validate against.
 PRIORITIES = ("low", "medium", "high", "urgent")
 
-# Every read returns the assignee's display name and the project's name
+# Every read returns the assignee's display name and the project's name + key
 # alongside the row (NULL when unassigned / no project), so callers never resolve
 # the ids themselves. LEFT JOINs, not JOINs: an unassigned or project-less issue
 # must still come back.
 _SELECT = (
-    "SELECT i.*, u.name AS assignee_name, p.name AS project_name "
+    "SELECT i.*, u.name AS assignee_name, "
+    "p.name AS project_name, p.key AS project_key "
     "FROM issues i "
     "LEFT JOIN users u ON u.id = i.assignee_id "
     "LEFT JOIN projects p ON p.id = i.project_id"
 )
+
+
+def _to_issue(row: sqlite3.Row) -> dict:
+    """Turn a _SELECT row into an issue dict, adding the computed display key.
+
+    The key is the project's prefix + the issue's per-project number (ATH-12). It
+    exists only when the issue is in a project (project_seq is NULL otherwise), so
+    a backlog issue has key=None and callers fall back to "#<id>". Computed here,
+    in the one place every read funnels through, so the API and the web view can
+    never disagree on an issue's key."""
+    issue = dict(row)
+    if issue.get("project_key") and issue.get("project_seq") is not None:
+        issue["key"] = f"{issue['project_key']}-{issue['project_seq']}"
+    else:
+        issue["key"] = None
+    return issue
 
 
 def create_issue(
@@ -45,11 +64,17 @@ def create_issue(
     """Insert an issue and return it. Raises sqlite3.IntegrityError if
     created_by isn't a real user, or if project_id is a non-NULL id with no
     matching project (the foreign keys refuse the orphan). project_id is
-    optional — None means the issue starts with no project."""
+    optional — None means the issue starts with no project (and so has no key
+    until it's moved into one)."""
+    # If the issue is born into a project, allocate its per-project number from
+    # that project's counter. next_seq doesn't commit, so the counter bump and the
+    # INSERT below land together under the single commit (or roll back together).
+    project_seq = projects.next_seq(conn, project_id) if project_id is not None else None
     cur = conn.execute(
-        "INSERT INTO issues (title, body, status, priority, created_by, project_id) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (title, body, status, priority, created_by, project_id),
+        "INSERT INTO issues "
+        "(title, body, status, priority, created_by, project_id, project_seq) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (title, body, status, priority, created_by, project_id, project_seq),
     )
     conn.commit()
     # Index any [[issue:N]]/[[page:N]] references this issue's body makes.
@@ -142,13 +167,27 @@ def set_project(
     Checking that project_id is a real project is the boundary's job; the DB's
     foreign key is the backstop (raises sqlite3.IntegrityError on an unknown
     non-NULL id). Mirrors set_assignee — a single nullable column, so a dedicated
-    operation keeps None ('remove') distinct from PATCH's 'leave unchanged'."""
-    cur = conn.execute(
-        "UPDATE issues SET project_id = ? WHERE id = ?", (project_id, issue_id)
+    operation keeps None ('remove') distinct from PATCH's 'leave unchanged'.
+
+    Moving an issue reassigns its key: it gives up its old number (retired, never
+    reused) and is handed a FRESH number in the destination project. So we only
+    touch project_seq when the project actually changes — re-setting an issue to
+    the project it's already in is a no-op that keeps its current number. Removing
+    it from a project (project_id=None) clears the number too: a backlog issue has
+    no key."""
+    current = conn.execute(
+        "SELECT project_id FROM issues WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if current is None:
+        return None
+    if current["project_id"] == project_id:
+        return get_issue(conn, issue_id)  # same project — keep the existing number
+    project_seq = projects.next_seq(conn, project_id) if project_id is not None else None
+    conn.execute(
+        "UPDATE issues SET project_id = ?, project_seq = ? WHERE id = ?",
+        (project_id, project_seq, issue_id),
     )
     conn.commit()
-    if cur.rowcount == 0:
-        return None
     return get_issue(conn, issue_id)
 
 
@@ -174,7 +213,36 @@ def can_modify(issue: dict, actor_id: int) -> bool:
 
 def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE i.id = ?", (issue_id,)).fetchone()
-    return dict(row) if row else None
+    return _to_issue(row) if row else None
+
+
+# An issue ref is either a bare numeric id ("12") or a project key ("ATH-12").
+# The key form is a project prefix (letters, leading letter) + "-" + the
+# per-project number. This is the addressable surface used by the API and web
+# read routes; writes stay numeric (forms post the issue id we control).
+_KEY_REF_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)$")
+
+
+def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
+    """Resolve an issue from a ref that is either its numeric id ("12") or its
+    project key ("ATH-12"). Returns the issue, or None if nothing matches (unknown
+    id, unknown project key, or no issue with that number in that project) so the
+    boundary can 404. A key lookup is case-insensitive on the prefix (projects.key
+    is COLLATE NOCASE)."""
+    ref = ref.strip()
+    if ref.isdigit():
+        return get_issue(conn, int(ref))
+    m = _KEY_REF_RE.match(ref)
+    if not m:
+        return None
+    project = projects.get_project_by_key(conn, m.group(1))
+    if project is None:
+        return None
+    row = conn.execute(
+        f"{_SELECT} WHERE i.project_id = ? AND i.project_seq = ?",
+        (project["id"], int(m.group(2))),
+    ).fetchone()
+    return _to_issue(row) if row else None
 
 
 def list_issues(
@@ -217,4 +285,4 @@ def list_issues(
         params.extend(ids)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(f"{_SELECT}{where} ORDER BY i.id", params).fetchall()
-    return [dict(row) for row in rows]
+    return [_to_issue(row) for row in rows]

@@ -42,7 +42,7 @@
     <ul>
     {% for issue in recent_issues %}
         <li>
-            <a href="/aegis/issues/{{ issue.id }}">#{{ issue.id }} {{ issue.title }}</a>
+            <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</a>
             <span class="status {{ issue.status }}">{{ issue.status }}</span>
             <span class="muted small">{{ issue.created_at }}</span>
         </li>

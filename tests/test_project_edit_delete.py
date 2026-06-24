@@ -12,6 +12,8 @@ These encode the contract, not just HTTP shapes:
     the Mentor page-delete-on-children rule: a delete must not move data by
     surprise. The project survives the refused delete.
 """
+import re
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import projects
@@ -27,10 +29,13 @@ def _seed_two_users(db_file):
     conn.close()
 
 
-def _make_project(client, actor="1", name="Apollo", description="moon shots") -> dict:
+def _make_project(client, actor="1", name="Apollo", description="moon shots", key=None) -> dict:
+    # Default the key off the name so distinct projects get distinct keys (the key
+    # is unique, like the name); callers can still pin one explicitly.
+    key = key or re.sub(r"[^A-Za-z0-9]", "", name).upper()[:10]
     r = client.post(
         "/projects",
-        json={"name": name, "description": description},
+        json={"name": name, "key": key, "description": description},
         headers={"X-Athena-Actor": actor},
     )
     assert r.status_code == 201, r.text
@@ -310,7 +315,7 @@ def test_web_edit_saves_and_redirects(tmp_path):
         proj = _make_project(client, actor="1")
         r = client.post(
             f"/aegis/projects/{proj['id']}/edit",
-            data={"name": "Renamed", "description": "new words"},
+            data={"name": "Renamed", "key": "REN", "description": "new words"},
             follow_redirects=False,
         )
         assert r.status_code == 303
@@ -399,7 +404,7 @@ def test_update_project_partial_leaves_unsent_fields(tmp_path):
         conn = db.connect(db_file)
         conn.execute("INSERT INTO users (email, name) VALUES ('z@e.com', 'Z')")
         conn.commit()
-        proj = projects.create_project(conn, name="Orig", created_by=1, description="d")
+        proj = projects.create_project(conn, name="Orig", key="ORIG", created_by=1, description="d")
         updated = projects.update_project(conn, proj["id"], description="d2")
         assert updated["name"] == "Orig"  # untouched
         assert updated["description"] == "d2"

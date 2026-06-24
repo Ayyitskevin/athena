@@ -69,5 +69,18 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
         # belt-and-suspenders (it has no special chars, so this is a no-op).
         return f'<span class="xref broken">{escape(match.group(0))}</span>'
 
+    def _key_link(match) -> str:
+        # [[ATH-12]] — resolve the project key + number to a concrete issue. A hit
+        # links to that issue (by id, the stable address); a miss (unknown key or
+        # retired number) renders the literal token as broken, same as a dangling
+        # numeric ref.
+        ref = links.resolve_key_ref(conn, match.group(1), int(match.group(2)))
+        if ref["exists"]:
+            href = _HREF["issue"].format(ref["id"])
+            label = escape(ref["title"])
+            return f'<a href="{href}" class="xref">{label}</a>'
+        return f'<span class="xref broken">{escape(match.group(0))}</span>'
+
     linked = links.REF_RE.sub(_link, escaped)
+    linked = links.KEY_REF_RE.sub(_key_link, linked)
     return Markup(linked.replace("\n", "<br>"))

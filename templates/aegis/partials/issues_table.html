@@ -42,7 +42,7 @@
     <tbody>
     {% for issue in issues %}
         <tr>
-            <td class="issue-id">#{{ issue.id }}</td>
+            <td class="issue-id">{{ issue.key or "#" ~ issue.id }}</td>
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
                 {% for l in issue.labels %}

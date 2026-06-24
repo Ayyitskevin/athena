@@ -19,6 +19,15 @@
         </div>
 
         <div class="form-group">
+            <label for="key">Key</label>
+            <input type="text" id="key" name="key" required maxlength="10"
+                   pattern="[A-Za-z][A-Za-z0-9]*" value="{{ project.key }}"
+                   title="Start with a letter, then letters or digits (up to 10).">
+            <p class="note-small">Prefix for issue keys, e.g. <code>{{ project.key }}-1</code>. Changing it
+                re-labels existing issues but does not renumber them.</p>
+        </div>
+
+        <div class="form-group">
             <label for="description">Description</label>
             <textarea id="description" name="description" rows="3"
                       placeholder="What is this project for?">{{ project.description }}</textarea>

@@ -7,18 +7,43 @@ there is no join table — issues.py owns that column and filters on it directly
 """
 from __future__ import annotations
 
+import re
 import sqlite3
+
+# A valid issue-key prefix: a leading letter, then up to 9 more letters/digits.
+# This is the shape both the [[ATH-12]] cross-link grammar and the addressable
+# URL depend on, so it's defined once here and shared by every boundary (REST API
+# and web form) that accepts a key.
+_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,9}$")
+
+
+def normalize_key(key: str) -> str | None:
+    """Return the canonical (uppercased) form of a project key, or None if it's not
+    a valid key. Callers (the REST API, the web form) turn None into their own
+    422/400; storing the uppercased value keeps the key case-insensitively unique."""
+    key = key.strip()
+    return key.upper() if _KEY_RE.match(key) else None
 
 
 def create_project(
-    conn: sqlite3.Connection, *, name: str, created_by: int, description: str = ""
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    key: str,
+    created_by: int,
+    description: str = "",
 ) -> dict:
     """Insert a project and return it. Raises sqlite3.IntegrityError if a project
-    with this name already exists (name is UNIQUE, case-insensitive) or if
-    created_by isn't a real user (the foreign key refuses the orphan)."""
+    with this name OR key already exists (both are UNIQUE, case-insensitive) or if
+    created_by isn't a real user (the foreign key refuses the orphan).
+
+    key is the issue-key prefix (e.g. "ATH" -> issues ATH-1, ATH-2, ...). It is
+    stored uppercased so it is canonical; the boundary validates its shape
+    (letters/digits, leading letter) and turns a duplicate into a clean 409."""
     cur = conn.execute(
-        "INSERT INTO projects (name, description, created_by) VALUES (?, ?, ?)",
-        (name, description, created_by),
+        "INSERT INTO projects (name, key, description, created_by) "
+        "VALUES (?, ?, ?, ?)",
+        (name, key.upper(), description, created_by),
     )
     conn.commit()
     return get_project(conn, cur.lastrowid)
@@ -39,6 +64,16 @@ def get_project_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_project_by_key(conn: sqlite3.Connection, key: str) -> dict | None:
+    """Look a project up by its issue-key prefix (case-insensitive — the column is
+    COLLATE NOCASE). Used to resolve an issue ref like "ATH-12" and to detect a
+    duplicate key before create returns a 409."""
+    row = conn.execute(
+        "SELECT * FROM projects WHERE key = ?", (key,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def list_projects(conn: sqlite3.Connection) -> list[dict]:
     """Every project, alphabetical."""
     rows = conn.execute(
@@ -52,17 +87,25 @@ def update_project(
     project_id: int,
     *,
     name: str | None = None,
+    key: str | None = None,
     description: str | None = None,
 ) -> dict | None:
     """Partial edit: only the fields passed as non-None are written, the rest are
     left as-is (mirrors issues.update_issue). Returns the updated project, or None
-    if no project has that id. Raises sqlite3.IntegrityError if the new name
-    collides with another project (name is UNIQUE, case-insensitive) — the
-    boundary checks for a duplicate first and returns a clean 409."""
+    if no project has that id. Raises sqlite3.IntegrityError if the new name OR key
+    collides with another project (both are UNIQUE, case-insensitive) — the
+    boundary checks for a duplicate first and returns a clean 409.
+
+    Editing the key only changes the prefix shown in issue keys (ATH-1 -> OPS-1);
+    it does NOT renumber anything, because the per-project sequence is independent
+    of the prefix."""
     sets, params = [], []
     if name is not None:
         sets.append("name = ?")
         params.append(name)
+    if key is not None:
+        sets.append("key = ?")
+        params.append(key.upper())
     if description is not None:
         sets.append("description = ?")
         params.append(description)
@@ -91,3 +134,21 @@ def delete_project(conn: sqlite3.Connection, project_id: int) -> bool:
     cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
     return cur.rowcount > 0
+
+
+def next_seq(conn: sqlite3.Connection, project_id: int) -> int:
+    """Allocate and return the next per-project issue number for this project.
+
+    issue_counter is a monotonic high-water mark: we bump it and hand back the new
+    value, so a number is NEVER reused even after the issue that held it is deleted
+    or moved away. This does NOT commit — it runs inside the caller's transaction
+    (e.g. create_issue's), so the counter bump and the issue write either both land
+    or both roll back, and two concurrent allocators can't be handed the same
+    number (the UPDATE takes a write lock on the row)."""
+    conn.execute(
+        "UPDATE projects SET issue_counter = issue_counter + 1 WHERE id = ?",
+        (project_id,),
+    )
+    return conn.execute(
+        "SELECT issue_counter FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()["issue_counter"]

@@ -38,6 +38,14 @@ _TABLE = {"issue": "issues", "page": "pages"}
 # and what gets turned into a link never diverge on "what counts as a reference".
 REF_RE = re.compile(r"\[\[(issue|page):(\d+)\]\]")
 
+# Matches the Jira-style issue key form [[ATH-12]] — a project key prefix (leading
+# letter, then letters/digits) a dash, and the per-project number. Disjoint from
+# REF_RE (colon vs dash), so the two grammars never overlap. A key ref is sugar
+# for "the issue with this number in this project"; it resolves to a concrete
+# issue id at index time and is then stored as an ordinary ('issue', id) link, so
+# the links table and backlinks stay numeric and stable.
+KEY_REF_RE = re.compile(r"\[\[([A-Za-z][A-Za-z0-9]*)-(\d+)\]\]")
+
 
 def extract_refs(text: str | None) -> list[tuple[str, int]]:
     """Every distinct (kind, id) reference in a body, in first-seen order.
@@ -52,6 +60,29 @@ def extract_refs(text: str | None) -> list[tuple[str, int]]:
     return out
 
 
+def resolve_key_ref(conn: sqlite3.Connection, key: str, seq: int) -> dict:
+    """Resolve a [[KEY-N]] issue reference to {kind:'issue', id, title, exists}.
+
+    Looks up the issue holding number N in the project whose prefix is KEY. id and
+    title are None when nothing matches — an unknown project key, or a number that
+    was never allocated or has since been retired (the issue moved away/was
+    deleted). Reads the issues/projects tables directly (projects.key is COLLATE
+    NOCASE, so the match is case-insensitive) to stay cycle-free — links.py never
+    imports the aegis module."""
+    row = conn.execute(
+        "SELECT i.id, i.title FROM issues i "
+        "JOIN projects p ON p.id = i.project_id "
+        "WHERE p.key = ? AND i.project_seq = ?",
+        (key, seq),
+    ).fetchone()
+    return {
+        "kind": "issue",
+        "id": row["id"] if row else None,
+        "title": row["title"] if row else None,
+        "exists": row is not None,
+    }
+
+
 def sync_links(
     conn: sqlite3.Connection, *, source_kind: str, source_id: int, body: str | None
 ) -> None:
@@ -62,12 +93,20 @@ def sync_links(
     links, so the body is the single source of truth and re-deriving is simplest
     and always correct. A self-reference (a thing linking to itself) is dropped as
     noise. Commits, since the data-access callers commit their own write too."""
-    refs = extract_refs(body)
+    targets = extract_refs(body)  # typed [[issue:N]]/[[page:N]] refs
+    # Key refs [[ATH-12]] resolve to a concrete issue id NOW and are stored as
+    # ordinary ('issue', id) links. An unresolvable key ref is simply not stored —
+    # it renders broken but, by design, leaves no backlink (the one documented
+    # asymmetry vs [[issue:N]], which records the broken numeric id regardless).
+    for key, num in KEY_REF_RE.findall(body or ""):
+        resolved = resolve_key_ref(conn, key, int(num))
+        if resolved["exists"] and ("issue", resolved["id"]) not in targets:
+            targets.append(("issue", resolved["id"]))
     conn.execute(
         "DELETE FROM links WHERE source_kind = ? AND source_id = ?",
         (source_kind, source_id),
     )
-    for target_kind, target_id in refs:
+    for target_kind, target_id in targets:
         if target_kind == source_kind and target_id == source_id:
             continue  # a self-link is noise, not a cross-reference
         conn.execute(
