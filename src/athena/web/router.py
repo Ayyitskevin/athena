@@ -194,18 +194,61 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
 
 
+_FEED_PAGE = 50
+
+
+def _int_or_none(raw: str | None) -> int | None:
+    """A query param parsed to int, or None if absent/blank/garbage — a filter the
+    user can't set to a bad value just by editing the URL."""
+    if raw is None or raw.strip() == "" or not raw.strip().lstrip("-").isdigit():
+        return None
+    return int(raw)
+
+
 @router.get("/aegis/activity", response_class=HTMLResponse)
 def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """The global activity timeline — the browser twin of GET /activity. Reading
     is open, like every other web read (the JSON API gates the feed for the fleet;
     the human view follows the rest of the site's open-read convention). It runs
-    the SAME data-layer query the API serves, so the two never disagree."""
+    the SAME data-layer query the API serves, so the two never disagree.
+
+    Supports the same filters (actor / verb / target kind) and a cursor (?before=)
+    for paging back through history one page at a time."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+
+    actor_id = _int_or_none(request.query_params.get("actor"))
+    before_id = _int_or_none(request.query_params.get("before"))
+    verb = (request.query_params.get("verb") or "").strip() or None
+    kind = (request.query_params.get("kind") or "").strip() or None
+
+    # Fetch one extra row to know whether an older page exists without a count
+    # query; if we got it, there's more — trim it off and remember the cursor.
+    rows = activity.list_activity(
+        conn,
+        target_kind=kind,
+        actor_id=actor_id,
+        verb=verb,
+        before_id=before_id,
+        limit=_FEED_PAGE + 1,
+    )
+    has_more = len(rows) > _FEED_PAGE
+    events = rows[:_FEED_PAGE]
+    next_before = events[-1]["id"] if has_more and events else None
+
     return _templates.TemplateResponse(
         request=request,
         name="aegis/activity.html",
-        context={"events": activity.list_activity(conn)},
+        context={
+            "events": events,
+            "all_users": users.list_users(conn),
+            "all_verbs": activity.distinct_verbs(conn),
+            "all_kinds": activity.distinct_target_kinds(conn),
+            "f_actor": actor_id,
+            "f_verb": verb,
+            "f_kind": kind,
+            "next_before": next_before,
+        },
     )
 
 

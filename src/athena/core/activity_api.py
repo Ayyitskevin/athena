@@ -34,20 +34,32 @@ class ActivityOut(BaseModel):
 @router.get("", response_model=list[ActivityOut])
 def feed(
     target_kind: str | None = Query(
-        None, description="with target_id, scope to one target's history"
+        None, description="filter by kind; with target_id, one target's history"
     ),
     target_id: int | None = Query(None),
+    actor_id: int | None = Query(None, description="filter to one actor's actions"),
+    verb: str | None = Query(None, description="filter to one event type"),
+    before_id: int | None = Query(
+        None, description="paging cursor: only events older than this id"
+    ),
     limit: int = Query(50, ge=1, le=200),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Both filters together or neither: a kind without an id (or an id without a
-    # kind) is an ambiguous half-query, so reject it rather than silently ignore.
-    if (target_kind is None) != (target_id is None):
+    # target_id is meaningless without target_kind (an id with no idea what kind of
+    # thing it is), so reject that half-query. target_kind alone is fine — it's a
+    # valid feed filter ("all issue events").
+    if target_id is not None and target_kind is None:
         raise HTTPException(
             status_code=422,
-            detail="pass both target_kind and target_id, or neither",
+            detail="target_id requires target_kind",
         )
     return activity.list_activity(
-        conn, target_kind=target_kind, target_id=target_id, limit=limit
+        conn,
+        target_kind=target_kind,
+        target_id=target_id,
+        actor_id=actor_id,
+        verb=verb,
+        before_id=before_id,
+        limit=limit,
     )

@@ -83,6 +83,66 @@ def test_list_is_newest_first_and_target_scoped(tmp_path):
     assert one[0]["verb"] == "changed_status"
 
 
+def test_list_filters_by_actor_and_verb(tmp_path):
+    # WHY: the feed must answer "what did Grok do?" and "show all status changes"
+    # — independent actor and verb filters, narrowing without bleeding in others.
+    db_file = tmp_path / "filter.db"
+    conn = _migrated_conn(db_file)
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("g@e.com", "Grok"))
+    conn.commit()
+    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=2,
+        detail="open → done",
+    )
+
+    by_grok = activity.list_activity(conn, actor_id=2)
+    assert all(r["actor_id"] == 2 for r in by_grok)
+    assert len(by_grok) == 2
+
+    status = activity.list_activity(conn, verb="changed_status")
+    conn.close()
+    assert [r["verb"] for r in status] == ["changed_status"]
+
+
+def test_before_id_cursor_walks_back(tmp_path):
+    # WHY: paging back through history must be stable on the append-only ordering —
+    # before_id returns only rows older than the cursor, so page 2 picks up exactly
+    # where page 1 left off with no overlap and no gap.
+    db_file = tmp_path / "cursor.db"
+    conn = _migrated_conn(db_file)
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
+    conn.commit()
+    for _ in range(5):
+        activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+
+    page1 = activity.list_activity(conn, limit=2)
+    assert [r["id"] for r in page1] == [5, 4]
+    page2 = activity.list_activity(conn, limit=2, before_id=page1[-1]["id"])
+    conn.close()
+    assert [r["id"] for r in page2] == [3, 2]  # strictly older, no overlap
+
+
+def test_distinct_verbs_reflects_only_recorded(tmp_path):
+    # WHY: the verb filter's options come from real data, never a hardcoded list
+    # that could drift — only verbs something actually recorded.
+    db_file = tmp_path / "verbs.db"
+    conn = _migrated_conn(db_file)
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
+    conn.commit()
+    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    activity.record(
+        conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=1,
+        detail="open → done",
+    )
+    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=2)
+    verbs = activity.distinct_verbs(conn)
+    conn.close()
+    assert verbs == ["changed_status", "created"]  # alphabetical, deduped
+
+
 # --- REST feed ------------------------------------------------------------
 
 
@@ -95,15 +155,49 @@ def test_feed_requires_authentication(tmp_path):
         assert client.get("/activity").status_code == 401
 
 
-def test_feed_half_filter_is_422(tmp_path):
-    # WHY: a target_kind without a target_id (or vice versa) is an ambiguous
-    # half-query; reject it rather than silently ignore one side.
+def test_feed_target_id_without_kind_is_422(tmp_path):
+    # WHY: a target_id with no target_kind is an id that names nothing — we can't
+    # tell what kind of thing #5 is. Reject it rather than guess. (target_kind
+    # ALONE is now a valid feed filter — "all issue events" — so that's allowed.)
     db_file = tmp_path / "feed_half.db"
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
-        r = client.get("/activity?target_kind=issue", headers={"X-Athena-Actor": "1"})
+        r = client.get("/activity?target_id=5", headers={"X-Athena-Actor": "1"})
         assert r.status_code == 422
+
+
+def test_feed_kind_alone_filters_by_kind(tmp_path):
+    # WHY: the new feed filter — target_kind without target_id scopes the global
+    # feed to one kind of thing, no longer a rejected half-query.
+    db_file = tmp_path / "feed_kind.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _make_issue(client)
+        r = client.get("/activity?target_kind=issue", headers={"X-Athena-Actor": "1"})
+        assert r.status_code == 200
+        assert [e["verb"] for e in r.json()] == ["created"]
+
+
+def test_feed_actor_and_cursor_params(tmp_path):
+    # WHY: the REST feed must expose the same actor filter and paging cursor the
+    # web view uses, so the two stay a single source of truth (the thin-client rule).
+    db_file = tmp_path / "feed_params.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file, email="kevin@example.com", name="Kevin")  # id 1
+        _seed_user(db_file, email="grok@example.com", name="Grok")  # id 2
+        i1 = _make_issue(client, actor="1")
+        i2 = _make_issue(client, actor="2")
+        # actor filter: only Grok's "created"
+        grok = client.get("/activity?actor_id=2", headers={"X-Athena-Actor": "1"}).json()
+        assert [e["target_id"] for e in grok] == [i2]
+        # cursor: everything older than Grok's event is Kevin's
+        older = client.get(
+            f"/activity?before_id={grok[0]['id']}", headers={"X-Athena-Actor": "1"}
+        ).json()
+        assert [e["target_id"] for e in older] == [i1]
 
 
 # --- Wired into the issue lifecycle ---------------------------------------

@@ -81,6 +81,60 @@ def test_global_feed_empty_state(tmp_path):
     assert "No activity yet" in page.text
 
 
+def test_global_feed_offers_filters(tmp_path):
+    # WHY: the feed is only navigable if you can narrow it — the page must render
+    # the actor/event/kind filter controls, populated from real recorded data.
+    db_file = tmp_path / "feed_filters.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _make_issue(client)
+        page = client.get("/aegis/activity")
+    assert page.status_code == 200
+    assert 'name="actor"' in page.text
+    assert 'name="verb"' in page.text
+    assert 'name="kind"' in page.text
+    # The verb option comes from the trail, not a hardcoded menu.
+    assert ">created</option>" in page.text
+
+
+def test_global_feed_actor_filter_narrows(tmp_path):
+    # WHY: selecting an actor must actually scope the feed to that actor's events —
+    # the web view passing the filter through to the same data layer the API uses.
+    db_file = tmp_path / "feed_actor.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file, email="kevin@example.com", name="Kevin")  # id 1
+        _seed_user(db_file, email="grok@example.com", name="Grok")  # id 2
+        _make_issue(client, title="kevin-issue", actor="1")
+        grok_issue = _make_issue(client, title="grok-issue", actor="2")
+        page = client.get("/aegis/activity?actor=2")
+    assert page.status_code == 200
+    # Only Grok's created event links its issue; Kevin's must not appear.
+    assert f'href="/aegis/issues/{grok_issue}"' in page.text
+    assert 'href="/aegis/issues/1"' not in page.text
+
+
+def test_global_feed_pages_with_cursor(tmp_path):
+    # WHY: a feed longer than one page must offer an "Older" link carrying a cursor,
+    # and following it must return the strictly older events — stable paging.
+    db_file = tmp_path / "feed_pager.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        # 51 events (> one 50-row page): 51 issue creations.
+        ids = [_make_issue(client, title=f"i{n}") for n in range(51)]
+        first = client.get("/aegis/activity")
+        assert first.status_code == 200
+        assert "Older →" in first.text
+        # The oldest issue (created first, lowest id) is off page one.
+        assert f'href="/aegis/issues/{ids[0]}"' not in first.text
+        # Follow the cursor to the oldest event's id (created event id 1).
+        older = client.get("/aegis/activity?before=2")
+    assert older.status_code == 200
+    assert f'href="/aegis/issues/{ids[0]}"' in older.text
+
+
 def test_activity_in_nav(tmp_path):
     # WHY: the feed is only useful if it's reachable; the global timeline gets a
     # top-level nav entry like Aegis/Projects/Mentor.
