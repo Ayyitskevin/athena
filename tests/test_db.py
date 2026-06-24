@@ -40,6 +40,16 @@ def test_foreign_key_is_enforced(tmp_path):
         )
 
 
+def test_connect_sets_a_busy_timeout(tmp_path):
+    # WHY this test matters: it fails the moment someone removes
+    # `PRAGMA busy_timeout` from connect(). Without it, a second concurrent
+    # writer gets an instant "database is locked" (a 500) instead of waiting
+    # its turn behind the write lock — fine in single-process dogfood, a real
+    # error the day the fleet hits the API in parallel as actors.
+    conn = db.connect(tmp_path / "busy.db")
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
 def test_can_insert_a_user_and_their_issue(tmp_path):
     conn = db.connect(tmp_path / "happy.db")
     db.migrate(conn)

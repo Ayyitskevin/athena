@@ -15,6 +15,7 @@ The contract these encode — why each rule earns its place:
 """
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from athena.core import db, links, search
@@ -65,6 +66,32 @@ def test_delete_missing_page_returns_false(tmp_path):
     conn = _migrated_conn(tmp_path / "delm.db")
     _seed_user(conn)
     assert pages.delete_page(conn, 999) is False
+
+
+def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
+    # WHY: delete clears history (page_versions) BEFORE the page row, because the
+    # FK forces that order. If the page delete then fails — a stray child's
+    # parent_id FK restricts it — a non-atomic delete would leave history gone for
+    # a page that still exists. The BEGIN IMMEDIATE + rollback must restore both.
+    # The route guards against children up front; this drives the precondition
+    # violation directly to prove the data-access layer itself can't half-delete.
+    conn = _migrated_conn(tmp_path / "delatomic.db")
+    _seed_user(conn)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    parent = pages.create_page(conn, space_id=sp["id"], title="Parent", body="v1", created_by=1)
+    pages.update_page(conn, parent["id"], editor_id=1, body="v2")  # cut version 1
+    pages.create_page(
+        conn, space_id=sp["id"], title="Child", body="", created_by=1, parent_id=parent["id"]
+    )
+    assert pages.list_page_versions(conn, parent["id"]) != []  # history exists
+
+    # The child's parent_id REFERENCES pages(id) restricts the parent delete.
+    with pytest.raises(sqlite3.IntegrityError):
+        pages.delete_page(conn, parent["id"])
+
+    # Rollback put it all back: the page is still here AND so is its history.
+    assert pages.get_page(conn, parent["id"]) is not None
+    assert pages.list_page_versions(conn, parent["id"]) != []
 
 
 def test_inbound_links_survive_delete_as_broken(tmp_path):
