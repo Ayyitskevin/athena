@@ -87,6 +87,37 @@ def test_api_space_delete_records_with_name_preserved(tmp_path):
     assert row["detail"] == "Obsolete"
 
 
+def test_api_space_edit_records_and_noop_is_silent(tmp_path):
+    # WHY: renaming/retagging a space is a real change that must record
+    # "space_edited"; a PATCH that moves no field writes nothing — the trail
+    # reflects change, not requests (mirrors the page edit no-op rule).
+    db_file = tmp_path / "api_space_edit.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        space = _make_space(client, key="ENG", name="Engineering")
+        # Real change: rename.
+        client.patch(
+            f"/spaces/{space['id']}",
+            json={"name": "Platform"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        # No-op: re-send the now-current name.
+        client.patch(
+            f"/spaces/{space['id']}",
+            json={"name": "Platform"},
+            headers={"X-Athena-Actor": "1"},
+        )
+    conn = db.connect(db_file)
+    rows = conn.execute(
+        "SELECT detail FROM activity "
+        "WHERE verb = 'space_edited' AND target_id = ?",
+        (space["id"],),
+    ).fetchall()
+    conn.close()
+    assert [r["detail"] for r in rows] == ["Platform"]  # the no-op wrote nothing
+
+
 # --- Web surface records ---------------------------------------------------
 
 
@@ -109,6 +140,32 @@ def test_web_space_create_records_and_shows_on_detail(tmp_path):
     assert "Activity" in detail.text
     assert "created space" in detail.text
     assert "Ann" in detail.text
+
+
+def test_web_space_edit_records_attributed_to_session_user(tmp_path):
+    # WHY: editing a space from the browser form must record "space_edited" stamped
+    # with the logged-in user, not a default, like the API.
+    db_file = tmp_path / "web_space_edit.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        space = _make_space(client, key="ENG", name="Engineering")
+        r = client.post(
+            f"/mentor/spaces/{space['id']}/edit",
+            data={"key": "ENG", "name": "Platform", "description": ""},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'space_edited' AND target_id = ?",
+        (space["id"],),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1
+    assert row["detail"] == "Platform"
 
 
 def test_web_space_delete_records(tmp_path):
