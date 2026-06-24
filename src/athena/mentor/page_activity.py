@@ -20,6 +20,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.core import activity
+from athena.mentor import pages
 
 
 def record_page_created(
@@ -66,4 +67,59 @@ def record_page_deleted(
         target_kind="page",
         target_id=page_id,
         detail=title,
+    )
+
+
+def record_page_moved(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    before_parent_id: int | None,
+    after_parent_id: int | None,
+) -> None:
+    """A page was re-parented. No-op if the parent didn't actually change (set_parent
+    matches the row even when the value is unchanged, so the no-op guard lives here,
+    like the issue project-move rule). The detail names the new parent so the feed
+    can say where it landed; an empty detail means it was moved to the top level."""
+    if before_parent_id == after_parent_id:
+        return
+    if after_parent_id is None:
+        detail = ""
+    else:
+        parent = pages.get_page(conn, after_parent_id)
+        detail = parent["title"] if parent else ""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_moved",
+        target_kind="page",
+        target_id=page_id,
+        detail=detail,
+    )
+
+
+def record_page_restored(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    version: int,
+    before: dict,
+    after: dict,
+) -> None:
+    """A page's content was rolled back to a prior revision. Recorded as its own verb
+    (not page_edited) so the trail says "restored v3", not just "edited". No-op if the
+    restored content was identical to the live row — restore_version returns the page
+    untouched in that case (it never files a redundant version), and so we record
+    nothing either."""
+    if before["title"] == after["title"] and before["body"] == after["body"]:
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_restored",
+        target_kind="page",
+        target_id=page_id,
+        detail=f"v{version}",
     )

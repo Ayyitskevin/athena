@@ -311,7 +311,15 @@ def move_page(
     err = pages.validate_move(conn, page, payload.parent_id)
     if err is not None:
         raise HTTPException(status_code=422, detail=err)
-    return pages.set_parent(conn, page_id, payload.parent_id)
+    moved = pages.set_parent(conn, page_id, payload.parent_id)
+    page_activity.record_page_moved(
+        conn,
+        actor_id=actor["id"],
+        page_id=page_id,
+        before_parent_id=page["parent_id"],
+        after_parent_id=payload.parent_id,
+    )
+    return moved
 
 
 @pages_router.delete("/{page_id}", status_code=204)
@@ -380,7 +388,16 @@ def restore_version(
     # creator-locked the way delete is. 404 if the page or that version is missing;
     # the snapshot's author stamps nothing, the restoring actor stamps the new live
     # revision. Returns the updated page.
+    before = pages.get_page(conn, page_id)
     restored = pages.restore_version(conn, page_id, version, editor_id=actor["id"])
     if restored is None:
         raise HTTPException(status_code=404, detail="no such page or version")
+    page_activity.record_page_restored(
+        conn,
+        actor_id=actor["id"],
+        page_id=page_id,
+        version=version,
+        before=before,
+        after=restored,
+    )
     return restored

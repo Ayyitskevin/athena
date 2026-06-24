@@ -35,6 +35,10 @@
             edited page <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "page_deleted" %}
             deleted page <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "page_moved" %}
+            {% if e.detail %}moved page under <span class="activity-detail">{{ e.detail }}</span>{% else %}moved page to the top level{% endif %}
+        {% elif e.verb == "page_restored" %}
+            restored page to <span class="activity-detail">{{ e.detail }}</span>
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}
