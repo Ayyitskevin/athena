@@ -60,15 +60,18 @@ def list_labels(conn: sqlite3.Connection) -> list[dict]:
 
 def add_label_to_issue(
     conn: sqlite3.Connection, issue_id: int, label_id: int
-) -> None:
+) -> bool:
     """Attach a label to an issue. Idempotent: re-attaching the same pair is a
-    no-op (the composite PK + OR IGNORE swallow the duplicate). Raises
-    sqlite3.IntegrityError if the issue or label doesn't exist (the FKs)."""
-    conn.execute(
+    no-op (the composite PK + OR IGNORE swallow the duplicate). Returns True if a
+    new pairing was created, False if it was already attached — so the caller can
+    record the audit event only on a real change. Raises sqlite3.IntegrityError
+    if the issue or label doesn't exist (the FKs)."""
+    cur = conn.execute(
         "INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)",
         (issue_id, label_id),
     )
     conn.commit()
+    return cur.rowcount > 0
 
 
 def remove_label_from_issue(

@@ -160,6 +160,49 @@ def test_web_assignment_records(tmp_path):
     assert "assigned to" in page.text
 
 
+def test_web_project_move_records(tmp_path):
+    # WHY: moving an issue into a project from the browser is a tracked change too.
+    # The web path must record "changed_project" with the project name, like the API.
+    db_file = tmp_path / "web_project.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        proj = client.post(
+            "/projects",
+            json={"name": "Platform", "key": "PLAT"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        issue_id = _make_issue(client)
+        r = client.post(
+            f"/aegis/issues/{issue_id}/project",
+            data={"project_id": str(proj["id"])},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "moved to" in page.text
+    assert "Platform" in page.text
+
+
+def test_web_label_add_records(tmp_path):
+    # WHY: labeling from the browser is a tracked classification change — the web
+    # path must record "labeled" with the label's name, like the API.
+    db_file = tmp_path / "web_label.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        r = client.post(
+            f"/aegis/issues/{issue_id}/labels",
+            data={"name": "urgent"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "labeled" in page.text
+    assert "urgent" in page.text
+
+
 def test_web_noop_status_records_nothing(tmp_path):
     # WHY: the trail reflects real change, not form submissions. Re-submitting the
     # current status from the browser must not write a spurious event — the same
