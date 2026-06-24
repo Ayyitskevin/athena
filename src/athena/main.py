@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import api as aegis_api
-from athena.core import db, search_api, sessions, tokens_api, users_api
+from athena.core import activity_api, db, search_api, sessions, tokens_api, users_api
 from athena.mentor import api as mentor_api
 from athena.web import auth as web_auth
 from athena.web import mentor as web_mentor
@@ -79,6 +79,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     app.include_router(users_api.router)
     app.include_router(tokens_api.router)
     app.include_router(search_api.router)
+    app.include_router(activity_api.router)
 
     # Aegis REST API (issues + labels + projects).
     app.include_router(aegis_api.router)

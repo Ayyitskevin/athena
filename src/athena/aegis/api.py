@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import comments, dependencies, issues, labels, projects
-from athena.core import links, users
+from athena.core import activity, links, users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -217,6 +217,13 @@ def create(
         project_id=payload.project_id,
         created_by=actor["id"],
     )
+    activity.record(
+        conn,
+        actor_id=actor["id"],
+        verb="created",
+        target_kind="issue",
+        target_id=issue["id"],
+    )
     return _with_labels(conn, issue)
 
 
@@ -309,7 +316,7 @@ def update(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Creator or assignee only (404 if missing, 403 if not permitted).
-    _issue_for_write(conn, issue_id, actor)
+    before = _issue_for_write(conn, issue_id, actor)
     # Only the fields the client actually sent are touched (exclude_unset).
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
@@ -327,6 +334,18 @@ def update(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
+    # Record a status change as its own audit fact (the lifecycle moment that
+    # matters: "open → done"). Only when status was actually sent AND changed —
+    # a no-op PATCH or an edit that only touches title/body records nothing.
+    if "status" in fields and updated["status"] != before["status"]:
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb="changed_status",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=f"{before['status']} → {updated['status']}",
+        )
     return _with_labels(conn, updated)
 
 
@@ -340,14 +359,37 @@ def set_assignee(
     # Creator or assignee only (404 if missing, 403 if not permitted). Checked
     # against the CURRENT assignee — so an unassigned issue can only be assigned
     # by its creator, and an assignee may reassign or unassign themselves.
-    _issue_for_write(conn, issue_id, actor)
+    before = _issue_for_write(conn, issue_id, actor)
     # Reject an unknown user here (422) rather than letting the FK raise a 500.
     # None is always valid — it means "unassign".
     if payload.assignee_id is not None and users.get_user(
         conn, payload.assignee_id
     ) is None:
         raise HTTPException(status_code=422, detail="no such user")
-    return _with_labels(conn, issues.set_assignee(conn, issue_id, payload.assignee_id))
+    updated = issues.set_assignee(conn, issue_id, payload.assignee_id)
+    # Record the assignment change only when it actually changed (re-PUTting the
+    # same assignee records nothing). Clearing -> "unassigned" with no detail;
+    # setting -> "assigned" with the new assignee's name as the human specifics.
+    if before["assignee_id"] != payload.assignee_id:
+        if payload.assignee_id is None:
+            activity.record(
+                conn,
+                actor_id=actor["id"],
+                verb="unassigned",
+                target_kind="issue",
+                target_id=issue_id,
+            )
+        else:
+            assignee = users.get_user(conn, payload.assignee_id)
+            activity.record(
+                conn,
+                actor_id=actor["id"],
+                verb="assigned",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=assignee["name"],
+            )
+    return _with_labels(conn, updated)
 
 
 @router.put("/{issue_id}/project", response_model=IssueOut)
