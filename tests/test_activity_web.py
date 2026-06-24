@@ -24,6 +24,15 @@ def _make_issue(client, title="ship it", actor="1") -> int:
     return r.json()["id"]
 
 
+def _login(client, email="kevin@example.com", name="Kevin", password="secret"):
+    """Create a user with a password and log the browser in (sets the cookie +
+    CSRF header the write forms require). Returns nothing — the client is now
+    an authenticated browser session for that user."""
+    client.post("/users", json={"email": email, "name": name, "password": password})
+    client.post("/login", data={"email": email, "password": password})
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
+
+
 def test_issue_detail_shows_history(tmp_path):
     # WHY: the detail page must surface the issue's own audit trail so a reader
     # sees how it got to its current state — at minimum the "created" event, and a
@@ -81,3 +90,90 @@ def test_activity_in_nav(tmp_path):
         page = client.get("/aegis")
     assert page.status_code == 200
     assert 'href="/aegis/activity"' in page.text
+
+
+# --- The audit gap: browser writes must record too ------------------------
+
+
+def test_web_create_records_activity(tmp_path):
+    # WHY: Athena is dogfooded through the web UI. An issue created from the
+    # browser form must leave the same trail an API-created one does — otherwise
+    # the audit log silently misses every human action.
+    db_file = tmp_path / "web_create.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        r = client.post("/aegis/issues", data={"title": "from the browser"})
+        assert r.status_code == 200  # HTMX success fragment
+        feed = client.get("/aegis/activity")
+    assert "created" in feed.text
+    assert "Kevin" in feed.text
+
+
+def test_web_status_change_records_attributed_to_session_user(tmp_path):
+    # WHY: this is the gap PR #43/#44 left. A status change via the detail-page
+    # form calls the data layer directly, bypassing the REST endpoint that records.
+    # The History must show the transition, stamped with the logged-in user.
+    db_file = tmp_path / "web_status.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)  # actor "1" is the user we just made
+        r = client.post(
+            f"/aegis/issues/{issue_id}/status",
+            data={"status": "done"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "changed status" in page.text
+    assert "open → done" in page.text
+    # Attribution must be unambiguous — assert on the recorded row, not page text
+    # (the nav shows "Kevin" on every page, so a substring check would lie).
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'changed_status' AND target_id = ?",
+        (issue_id,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1  # the logged-in session user, not a default
+    assert row["detail"] == "open → done"
+
+
+def test_web_assignment_records(tmp_path):
+    # WHY: assigning from the browser is a tracked responsibility change too — the
+    # web path must record "assigned" with the new owner's name, like the API.
+    db_file = tmp_path / "web_assign.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        r = client.post(
+            f"/aegis/issues/{issue_id}/assignee",
+            data={"assignee_id": "1"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "assigned to" in page.text
+
+
+def test_web_noop_status_records_nothing(tmp_path):
+    # WHY: the trail reflects real change, not form submissions. Re-submitting the
+    # current status from the browser must not write a spurious event — the same
+    # no-op rule the API path follows.
+    db_file = tmp_path / "web_noop.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        client.post(
+            f"/aegis/issues/{issue_id}/status",
+            data={"status": "open"},  # already open
+            follow_redirects=False,
+        )
+        page = client.get(f"/aegis/issues/{issue_id}")
+    # The History holds only "created" — no spurious status row.
+    assert "changed status" not in page.text
