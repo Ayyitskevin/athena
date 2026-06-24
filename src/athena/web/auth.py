@@ -85,6 +85,14 @@ def login(
             status_code=401,
         )
 
+    # Rotate the session at the auth boundary: tear down whatever session the
+    # browser arrived with before minting the new one. create_session already
+    # issues a fresh random cookie value, so a planted/"fixed" value can't survive
+    # login on its own — but destroying the prior row too means a re-login or an
+    # account switch leaves no still-valid session orphaned server-side, and any
+    # cookie the browser presented is positively killed rather than merely
+    # overwritten in the response.
+    sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
     # 303 so the browser re-requests /aegis with GET, carrying the new cookie.
     response = RedirectResponse("/aegis", status_code=303)

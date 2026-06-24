@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from athena import config
-from athena.core import db, sessions
+from athena.core import db, sessions, users
 from athena.main import create_app
 
 _TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -169,3 +169,56 @@ def test_nav_reflects_login_state(tmp_path):
         home = client.get("/")
         assert "Kevin" in home.text
         assert "Sign out" in home.text
+
+
+def test_login_rotates_session_and_kills_the_prior_one(tmp_path):
+    # WHY: the session is rotated at the auth boundary. Logging in a second time
+    # must invalidate the session the browser already held server-side, not just
+    # overwrite the cookie — otherwise a prior (possibly planted or shared) cookie
+    # value stays valid after login. The new session must of course still work.
+    app = create_app(tmp_path / "rotate.db")
+    with TestClient(app) as client:
+        _user(client, password="secret")
+        client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        first = client.cookies.get(config.SESSION_COOKIE)
+
+        # A second login (e.g. re-auth) while still carrying the first cookie.
+        client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
+        second = client.cookies.get(config.SESSION_COOKIE)
+        assert second != first  # a fresh value, not the old one re-set
+
+        c = db.connect(tmp_path / "rotate.db")
+        # The old session is dead server-side; only the new one resolves.
+        assert sessions.resolve_session(c, first) is None
+        assert sessions.resolve_session(c, second) is not None
+        # Exactly one live session row remains — no orphan left behind.
+        assert c.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"] == 1
+        c.close()
+
+
+def test_switching_accounts_invalidates_the_first_account_session(tmp_path):
+    # WHY: rotation is per-login, not per-user. Logging in as a SECOND user from
+    # the same browser must kill the first user's session — the cookie a shared
+    # machine carried for account A cannot keep resolving once B has signed in.
+    app = create_app(tmp_path / "switch.db")
+    # Seed both users straight into the DB: /users is bootstrap-gated (only the
+    # first user can be created anonymously), and this test needs two login-capable
+    # accounts without that ceremony.
+    with TestClient(app):
+        pass
+    seed = db.connect(tmp_path / "switch.db")
+    users.create_user(seed, email="a@e.com", name="A", password="pwA")
+    users.create_user(seed, email="b@e.com", name="B", password="pwB")
+    seed.close()
+
+    with TestClient(app) as client:
+        client.post("/login", data={"email": "a@e.com", "password": "pwA"})
+        a_cookie = client.cookies.get(config.SESSION_COOKIE)
+
+        client.post("/login", data={"email": "b@e.com", "password": "pwB"})
+        b_cookie = client.cookies.get(config.SESSION_COOKIE)
+
+        c = db.connect(tmp_path / "switch.db")
+        assert sessions.resolve_session(c, a_cookie) is None      # A's session gone
+        assert sessions.resolve_session(c, b_cookie)["email"] == "b@e.com"
+        c.close()
