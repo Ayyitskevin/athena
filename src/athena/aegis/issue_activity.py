@@ -150,3 +150,32 @@ def record_label_removed(
         target_id=issue_id,
         detail=label["name"] if label else "",
     )
+
+
+def record_commented(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int
+) -> None:
+    """Record that someone commented on the issue. The event targets the issue (so
+    it lands on the issue's History and the global feed links there); the comment
+    body itself lives on the issue, not duplicated into the trail's detail."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="commented",
+        target_kind="issue",
+        target_id=issue_id,
+    )
+
+
+def record_comment_deleted(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int
+) -> None:
+    """Record that a comment was removed from the issue — the audit-worthy half of
+    the comment lifecycle (who took content down). No detail: the comment is gone."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="comment_deleted",
+        target_kind="issue",
+        target_id=issue_id,
+    )

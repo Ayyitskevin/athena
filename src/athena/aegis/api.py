@@ -412,9 +412,11 @@ def add_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    return comments.add_comment(
+    comment = comments.add_comment(
         conn, issue_id=issue_id, author_id=actor["id"], body=body
     )
+    issue_activity.record_commented(conn, actor_id=actor["id"], issue_id=issue_id)
+    return comment
 
 
 @router.get("/{issue_id}/comments", response_model=list[CommentOut])
@@ -466,6 +468,9 @@ def delete_comment(
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     comments.delete_comment(conn, comment_id)
+    issue_activity.record_comment_deleted(
+        conn, actor_id=actor["id"], issue_id=issue_id
+    )
 
 
 # --- Links: typed dependencies between issues -----------------------------
