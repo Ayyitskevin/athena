@@ -147,9 +147,10 @@ def edit_space(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing a space is open to any authenticated actor, like creating one or
-    # editing a page — only DELETE is creator-locked, because that's the one
-    # destructive, unrecorded action. 404 if the space is missing.
-    if spaces.get_space(conn, space_id) is None:
+    # editing a page — only DELETE is creator-locked, because removing a whole
+    # container is the destructive action. 404 if the space is missing.
+    before = spaces.get_space(conn, space_id)
+    if before is None:
         raise HTTPException(status_code=404, detail="no such space")
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
@@ -168,9 +169,13 @@ def edit_space(
         clash = spaces.get_space_by_key(conn, key)
         if clash is not None and clash["id"] != space_id:
             raise HTTPException(status_code=409, detail="space key already exists")
-    return spaces.update_space(
+    after = spaces.update_space(
         conn, space_id, key=key, name=name, description=payload.description
     )
+    space_activity.record_space_edited(
+        conn, actor_id=actor["id"], before=before, after=after
+    )
+    return after
 
 
 def _space_for_write(

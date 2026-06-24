@@ -192,7 +192,8 @@ def edit_space(
     if user is None:
         return _signin_required("edit spaces")
 
-    if spaces.get_space(conn, space_id) is None:
+    before = spaces.get_space(conn, space_id)
+    if before is None:
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
     key = key.strip().upper()
     name = name.strip()
@@ -206,8 +207,11 @@ def edit_space(
             '<div class="error">A space with that key already exists.</div>', status_code=409
         )
 
-    spaces.update_space(
+    after = spaces.update_space(
         conn, space_id, key=key, name=name, description=description.strip()
+    )
+    space_activity.record_space_edited(
+        conn, actor_id=user["id"], before=before, after=after
     )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
 

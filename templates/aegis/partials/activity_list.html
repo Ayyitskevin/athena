@@ -41,6 +41,8 @@
             restored page to <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "space_created" %}
             created space <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "space_edited" %}
+            edited space <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "space_deleted" %}
             deleted space <span class="activity-detail">{{ e.detail }}</span>
         {% else %}

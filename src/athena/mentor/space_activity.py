@@ -33,6 +33,29 @@ def record_space_created(
     )
 
 
+def record_space_edited(
+    conn: sqlite3.Connection, *, actor_id: int, before: dict, after: dict
+) -> None:
+    """A space's key, name, or description changed. No-op if none of the three
+    actually moved — the web edit form always resubmits all fields, so an unchanged
+    save is not a lifecycle moment (mirrors the page no-op rule). The detail names
+    the space (its current name) so the feed reads cleanly."""
+    if (
+        before["key"] == after["key"]
+        and before["name"] == after["name"]
+        and before["description"] == after["description"]
+    ):
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="space_edited",
+        target_kind="space",
+        target_id=after["id"],
+        detail=after["name"],
+    )
+
+
 def record_space_deleted(
     conn: sqlite3.Connection, *, actor_id: int, space_id: int, name: str
 ) -> None:
