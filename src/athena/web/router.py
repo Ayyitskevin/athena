@@ -116,6 +116,10 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     status_filter = request.query_params.get("status")
     label_filter = (request.query_params.get("label") or "").strip()
     project_raw = (request.query_params.get("project") or "").strip()
+    # "none" selects the backlog (issues with no project); a number selects that
+    # project; anything else is "all projects". Same surface as the API's
+    # ?project= param so the dropdown value round-trips through both.
+    backlog = project_raw.lower() == "none"
     project_id = int(project_raw) if project_raw.isdigit() else None
     search = (request.query_params.get("search") or "").strip().lower()
     sort = request.query_params.get("sort", "created_at")
@@ -126,7 +130,12 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # only does the presentation concerns — sort + pagination — on the result.
     ids = labels.issue_ids_for_label(conn, label_filter) if label_filter else None
     filtered = issues.list_issues(
-        conn, status=status_filter, search=search, project_id=project_id, ids=ids
+        conn,
+        status=status_filter,
+        search=search,
+        project_id=project_id,
+        backlog=backlog,
+        ids=ids,
     )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
 

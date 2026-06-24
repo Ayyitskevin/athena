@@ -53,6 +53,7 @@
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='label'],[name='project'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All projects</option>
+            <option value="none" {% if project_filter == 'none' %}selected{% endif %}>No project (backlog)</option>
             {% for p in all_projects %}
             <option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>
             {% endfor %}

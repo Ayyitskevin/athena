@@ -445,3 +445,76 @@ def test_web_list_filters_by_project(tmp_path):
         page = client.get(f"/aegis/issues?project={proj['id']}").text
         assert "in core" in page
         assert "loose one" not in page
+
+
+# --- backlog filter (issues with no project) ------------------------------
+
+
+def test_list_issues_backlog_only_unprojected(tmp_path):
+    # WHY: backlog=True is a DISTINCT filter from project_id=None — it restricts
+    # to issues with no project, where project_id=None means "don't filter".
+    conn = _migrated_conn(tmp_path / "bl.db")
+    conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
+    conn.commit()
+    proj = projects.create_project(conn, name="Core", key="CORE", created_by=1)
+    issues.create_issue(conn, title="in core", body="", created_by=1, project_id=proj["id"])
+    issues.create_issue(conn, title="loose one", body="", created_by=1)
+    backlog = [i["title"] for i in issues.list_issues(conn, backlog=True)]
+    assert backlog == ["loose one"]
+    # project_id=None (the default) does NOT filter — both issues come back.
+    assert len(issues.list_issues(conn)) == 2
+
+
+def test_api_filter_backlog_with_project_none(tmp_path):
+    # WHY: ?project=none narrows the list to backlog issues through the same
+    # shared list_issues path; an id still selects that project, garbage is 422.
+    app = create_app(tmp_path / "apibl.db")
+    with TestClient(app) as client:
+        _seed_three_users(tmp_path / "apibl.db")
+        core = _create_project(client, "Core")
+        _make_issue(client, title="in core", project_id=core["id"])
+        _make_issue(client, title="no project")
+        backlog = [i["title"] for i in client.get("/issues?project=none").json()]
+        assert backlog == ["no project"]
+        # the id form is unaffected by the sentinel
+        assert [i["title"] for i in client.get(f"/issues?project={core['id']}").json()] == ["in core"]
+        # a non-"none", non-numeric value stays a 422 (param is still strict)
+        assert client.get("/issues?project=bogus").status_code == 422
+
+
+def test_api_backlog_composes_with_status(tmp_path):
+    # WHY: backlog must AND with other filters, not replace them.
+    app = create_app(tmp_path / "blcompose.db")
+    with TestClient(app) as client:
+        _seed_three_users(tmp_path / "blcompose.db")
+        _make_issue(client, title="done loose", status="done")
+        _make_issue(client, title="open loose", status="open")
+        titles = [
+            i["title"] for i in client.get("/issues?project=none&status=done").json()
+        ]
+        assert titles == ["done loose"]
+
+
+def test_web_list_filters_to_backlog(tmp_path):
+    # WHY: the dropdown's "No project (backlog)" option posts project=none and the
+    # web list shows only unprojected issues — same shared path as the API.
+    app = create_app(tmp_path / "wbl.db")
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")
+        client.post("/aegis/projects", data={"name": "Core", "key": "CORE"})
+        proj = client.get("/projects").json()[0]
+        _make_issue(client, actor="1", title="in core", project_id=proj["id"])
+        _make_issue(client, actor="1", title="loose one")
+        page = client.get("/aegis/issues?project=none").text
+        assert "loose one" in page
+        assert "in core" not in page
+
+
+def test_web_list_offers_backlog_option(tmp_path):
+    # WHY: the backlog filter is only reachable if the dropdown renders the option.
+    app = create_app(tmp_path / "wopt.db")
+    with TestClient(app) as client:
+        _seed_three_users(tmp_path / "wopt.db")
+        page = client.get("/aegis/issues").text
+        assert 'value="none"' in page
+        assert "No project (backlog)" in page

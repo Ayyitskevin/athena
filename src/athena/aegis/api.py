@@ -197,21 +197,43 @@ def create(
     return _with_labels(conn, issue)
 
 
+def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
+    """Parse the ?project= filter value into (project_id, backlog):
+    - None / "" -> (None, False): no project filter.
+    - "none" (case-insensitive) -> (None, True): only issues with no project.
+    - all-digits -> (that id, False).
+    - anything else -> 422 (kept strict, like the old int-typed param)."""
+    if not project:
+        return None, False
+    if project.lower() == "none":
+        return None, True
+    if project.isdigit():
+        return int(project), False
+    raise HTTPException(status_code=422, detail="invalid project filter")
+
+
 @router.get("", response_model=list[IssueOut])
 def index(
     status: str | None = None,
     label: str | None = None,
     search: str | None = None,
-    project: int | None = None,
+    project: str | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Optional filters, same semantics the web list uses (one shared path in
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
-    # project is a direct column on the issue, so it's filtered by id here.
+    # project is a direct column on the issue: an id restricts to that project,
+    # "none" restricts to the backlog (no project).
+    project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
-        conn, status=status, search=search, project_id=project, ids=ids
+        conn,
+        status=status,
+        search=search,
+        project_id=project_id,
+        backlog=backlog,
+        ids=ids,
     )
     return _with_labels_many(conn, rows)
 
