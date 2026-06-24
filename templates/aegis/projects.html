@@ -15,6 +15,7 @@
     <thead>
         <tr>
             <th>Project</th>
+            <th>Key</th>
             <th>Description</th>
             <th>Issues</th>
             <th></th>
@@ -26,6 +27,7 @@
             <td class="issue-title">
                 <a href="/aegis/issues?project={{ p.id }}">{{ p.name }}</a>
             </td>
+            <td class="muted"><code>{{ p.key }}</code></td>
             <td class="muted">{{ p.description or "—" }}</td>
             <td class="muted">{{ counts[p.id] }}</td>
             <td class="muted">
@@ -49,6 +51,13 @@
         <div class="form-group">
             <label for="project-name">Name</label>
             <input type="text" id="project-name" name="name" required placeholder="e.g. Website Redesign">
+        </div>
+        <div class="form-group">
+            <label for="project-key">Key</label>
+            <input type="text" id="project-key" name="key" required maxlength="10"
+                   pattern="[A-Za-z][A-Za-z0-9]*" placeholder="e.g. WEB"
+                   title="Start with a letter, then letters or digits (up to 10).">
+            <p class="note-small">Short prefix for issue keys, e.g. <code>WEB-1</code>.</p>
         </div>
         <div class="form-group">
             <label for="project-description">Description</label>

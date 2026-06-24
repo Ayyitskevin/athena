@@ -354,21 +354,24 @@ def change_issue_priority(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.get("/aegis/issues/{issue_id}", response_class=HTMLResponse)
-def issue_detail(request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)):
-    """Show a single issue from real DB via get_issue."""
+@router.get("/aegis/issues/{ref}", response_class=HTMLResponse)
+def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(get_conn)):
+    """Show a single issue, addressable by numeric id ("12") or project key
+    ("ATH-12"). get_by_ref resolves either form; everything past it keys off the
+    issue's real numeric id (backlinks/comments/labels stay numeric)."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    issue = issues.get_issue(conn, issue_id)
+    issue = issues.get_by_ref(conn, ref)
     if not issue:
         # not-found state: render empty list page with error (minimal)
         return _templates.TemplateResponse(
             request=request,
             name="aegis/issues.html",
-            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue #{issue_id} not found"},
+            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue {ref} not found"},
         )
 
+    issue_id = issue["id"]
     user = getattr(request.state, "user", None)
     can_modify = bool(user) and issues.can_modify(issue, user["id"])
     return _templates.TemplateResponse(
@@ -652,12 +655,13 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 def create_project(
     request: Request,
     name: str = Form(""),
+    key: str = Form(""),
     description: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Create a project as the logged-in user (the actor is the session, never a
-    form field — same rule as the REST API). Empty name → 400, duplicate → 409;
-    otherwise 303 back to the projects list."""
+    form field — same rule as the REST API). Empty name → 400, bad key → 400,
+    duplicate name or key → 409; otherwise 303 back to the projects list."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -667,10 +671,22 @@ def create_project(
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+    normalized_key = projects.normalize_key(key)
+    if normalized_key is None:
+        return HTMLResponse(
+            '<div class="error">Key must start with a letter and be 1–10 letters/digits.</div>',
+            status_code=400,
+        )
     if projects.get_project_by_name(conn, name) is not None:
         return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+    if projects.get_project_by_key(conn, normalized_key) is not None:
+        return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
     projects.create_project(
-        conn, name=name, description=description.strip(), created_by=user["id"]
+        conn,
+        name=name,
+        key=normalized_key,
+        description=description.strip(),
+        created_by=user["id"],
     )
     return RedirectResponse("/aegis/projects", status_code=303)
 
@@ -728,12 +744,13 @@ def project_edit_save(
     request: Request,
     project_id: int,
     name: str = Form(""),
+    key: str = Form(""),
     description: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    """Save an edit to a project's name/description. Creator-only (401/403/404),
-    empty name → 400, a name that collides with ANOTHER project → 409; otherwise
-    303 back to the projects list."""
+    """Save an edit to a project's name/key/description. Creator-only (401/403/404),
+    empty name → 400, bad key → 400, a name OR key that collides with ANOTHER
+    project → 409; otherwise 303 back to the projects list."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -746,11 +763,20 @@ def project_edit_save(
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+    normalized_key = projects.normalize_key(key)
+    if normalized_key is None:
+        return HTMLResponse(
+            '<div class="error">Key must start with a letter and be 1–10 letters/digits.</div>',
+            status_code=400,
+        )
     clash = projects.get_project_by_name(conn, name)
     if clash is not None and clash["id"] != project_id:
         return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+    key_clash = projects.get_project_by_key(conn, normalized_key)
+    if key_clash is not None and key_clash["id"] != project_id:
+        return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
     projects.update_project(
-        conn, project_id, name=name, description=description.strip()
+        conn, project_id, name=name, key=normalized_key, description=description.strip()
     )
     return RedirectResponse("/aegis/projects", status_code=303)
 
