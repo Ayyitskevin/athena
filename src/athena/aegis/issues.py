@@ -245,6 +245,29 @@ def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
     return _to_issue(row) if row else None
 
 
+def parse_project_filter(project: str | None) -> tuple[int | None, bool] | None:
+    """Interpret the ?project= filter value, shared by the REST API and the web
+    list so the two can never drift on what the param means. Returns:
+
+      - (None, False) for None/"" — no project filter at all;
+      - (None, True)  for "none" (case-insensitive) — only backlog issues;
+      - (id, False)   for an all-digits value — restrict to that project;
+      - None          for anything else — INVALID. The caller rejects it (the API
+        with 422, the web with 400) instead of silently showing every issue, so a
+        garbled filter fails loud on both surfaces rather than lying on one.
+
+    Returning None to mean "invalid" is unambiguous because the valid no-filter
+    case is the tuple (None, False); callers check `is None` before unpacking."""
+    if not project or not project.strip():
+        return None, False
+    value = project.strip()
+    if value.lower() == "none":
+        return None, True
+    if value.isdigit():
+        return int(value), False
+    return None
+
+
 def list_issues(
     conn: sqlite3.Connection,
     *,

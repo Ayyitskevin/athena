@@ -117,13 +117,27 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     label_filter = (request.query_params.get("label") or "").strip()
     project_raw = (request.query_params.get("project") or "").strip()
     # "none" selects the backlog (issues with no project); a number selects that
-    # project; anything else is "all projects". Same surface as the API's
-    # ?project= param so the dropdown value round-trips through both.
-    backlog = project_raw.lower() == "none"
-    project_id = int(project_raw) if project_raw.isdigit() else None
-    search = (request.query_params.get("search") or "").strip().lower()
+    # project; anything else is "all projects". The exact same parser the API
+    # uses (issues.parse_project_filter) so the dropdown value can never mean one
+    # thing here and another there. A garbled value is rejected (400), not
+    # silently widened to "all" — the web mirror of the API's 422.
+    parsed = issues.parse_project_filter(project_raw)
+    if parsed is None:
+        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+    project_id, backlog = parsed
+    # Do NOT pre-lower the needle: SQLite LIKE is already case-insensitive for
+    # ASCII, and lowering here would diverge from the API (which passes the raw
+    # search straight to list_issues) on non-ASCII text. Let LIKE own casing.
+    search = (request.query_params.get("search") or "").strip()
+    # Sort/order are presentation concerns the web layer owns, but only over a
+    # whitelist: an unknown column falls back to created_at rather than KeyError-ing
+    # or letting a caller sort by an arbitrary attribute.
     sort = request.query_params.get("sort", "created_at")
+    if sort not in {"id", "title", "status", "priority", "created_at"}:
+        sort = "created_at"
     order = request.query_params.get("order", "desc")
+    if order not in {"asc", "desc"}:
+        order = "desc"
 
     # Filtering goes through the shared data-layer path (same one the API uses),
     # so the list and the API never disagree on what matches. The web layer then
@@ -139,18 +153,19 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
 
-    # Sort in web layer (presentation concern) – safe since we don't own data
+    # Sort in web layer (presentation concern) – safe since we don't own data.
+    # sort is whitelisted above, so x.get(sort) is a real column; coalesce to ""
+    # so a NULL (e.g. an unset priority) sorts as empty rather than raising on the
+    # str/None comparison Python 3 forbids.
     reverse = order == "desc"
-    try:
-        filtered = sorted(filtered, key=lambda x: x.get(sort) or "", reverse=reverse)
-    except Exception:
-        pass  # fallback if sort key bad
+    filtered = sorted(filtered, key=lambda x: x.get(sort) or "", reverse=reverse)
 
-    # Simple pagination (server-side slice)
+    # Simple pagination (server-side slice). A non-numeric page/per_page in the
+    # query string is the only failure here; fall back to the defaults for that.
     try:
         page = max(1, int(request.query_params.get("page", 1)))
         per_page = max(5, min(50, int(request.query_params.get("per_page", 20))))
-    except:
+    except (TypeError, ValueError):
         page, per_page = 1, 20
 
     total = len(filtered)
@@ -373,11 +388,14 @@ def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(
 
     issue = issues.get_by_ref(conn, ref)
     if not issue:
-        # not-found state: render empty list page with error (minimal)
+        # not-found state: render empty list page with error (minimal). Carry a
+        # real 404 status — a missing issue is not a 200, and the API surface for
+        # the same id returns 404, so the browser path must not disagree.
         return _templates.TemplateResponse(
             request=request,
             name="aegis/issues.html",
             context={"issues": [], "status_filter": "", "search": "", "error": f"Issue {ref} not found"},
+            status_code=404,
         )
 
     issue_id = issue["id"]
@@ -608,18 +626,13 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    search = (request.query_params.get("search") or "").strip().lower()
+    # Same data-layer path as the issues list and the API: filtering (status +
+    # search) is done by list_issues, NOT re-implemented in Python here. The old
+    # code re-filtered a full table scan with its own pre-lowered substring match,
+    # which both diverged from the API's casing and duplicated the filter logic.
+    search = (request.query_params.get("search") or "").strip()
     status_filter = request.query_params.get("status")
-
-    all_issues = issues.list_issues(conn)
-    filtered = all_issues
-    if status_filter:
-        filtered = [i for i in filtered if i.get("status") == status_filter]
-    if search:
-        filtered = [
-            i for i in filtered
-            if search in i.get("title", "").lower() or search in (i.get("body") or "").lower()
-        ]
+    filtered = issues.list_issues(conn, status=status_filter, search=search)
 
     _attach_labels(conn, filtered)
     from collections import defaultdict
@@ -635,7 +648,6 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "columns": dict(columns),
             "search": search,
             "status_filter": status_filter or "",
-            "all_issues": all_issues,  # for counts if wanted
         },
     )
 
