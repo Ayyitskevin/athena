@@ -802,3 +802,38 @@ footer {
     padding: 0 0.1em;
     border-radius: 2px;
 }
+
+/* Activity timeline (issue history + global feed). */
+.activity {
+    margin-top: 1.5rem;
+}
+
+.activity-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0 0;
+}
+
+.activity-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.92rem;
+}
+
+.activity-actor {
+    font-weight: 600;
+}
+
+.activity-detail {
+    color: #444;
+}
+
+.activity-time {
+    margin-left: auto;
+    font-size: 0.82rem;
+    white-space: nowrap;
+}
