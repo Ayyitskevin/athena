@@ -491,6 +491,19 @@ footer {
     font-weight: 500;
 }
 
+.board-card .project {
+    margin-top: 0.2rem;
+}
+
+.board-card .project a {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #4a5568;
+    background: #edf2f7;
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+}
+
 .board-card .meta {
     font-size: 0.75rem;
     color: #777;
