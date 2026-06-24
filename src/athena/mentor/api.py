@@ -29,6 +29,12 @@ class SpaceCreate(BaseModel):
     description: str = ""
 
 
+class SpaceUpdate(BaseModel):
+    key: str | None = None
+    name: str | None = None
+    description: str | None = None
+
+
 class SpaceOut(BaseModel):
     id: int
     key: str
@@ -127,6 +133,40 @@ def show_space(
     if space is None:
         raise HTTPException(status_code=404, detail="no such space")
     return space
+
+
+@spaces_router.patch("/{space_id}", response_model=SpaceOut)
+def edit_space(
+    space_id: int,
+    payload: SpaceUpdate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Editing a space is open to any authenticated actor, like creating one or
+    # editing a page — only DELETE is creator-locked, because that's the one
+    # destructive, unrecorded action. 404 if the space is missing.
+    if spaces.get_space(conn, space_id) is None:
+        raise HTTPException(status_code=404, detail="no such space")
+    sent = payload.model_dump(exclude_unset=True)
+    if not sent:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    # Normalize + validate exactly as create does: key uppercased and non-empty,
+    # name non-empty. Only the fields the client actually sent are touched.
+    key = payload.key.strip().upper() if payload.key is not None else None
+    name = payload.name.strip() if payload.name is not None else None
+    if key is not None and not key:
+        raise HTTPException(status_code=422, detail="space key cannot be empty")
+    if name is not None and not name:
+        raise HTTPException(status_code=422, detail="space name cannot be empty")
+    # A key change must not collide with a DIFFERENT space (key is UNIQUE). Checked
+    # here for a clean 409 instead of letting the IntegrityError surface as a 500.
+    if key is not None:
+        clash = spaces.get_space_by_key(conn, key)
+        if clash is not None and clash["id"] != space_id:
+            raise HTTPException(status_code=409, detail="space key already exists")
+    return spaces.update_space(
+        conn, space_id, key=key, name=name, description=payload.description
+    )
 
 
 def _space_for_write(

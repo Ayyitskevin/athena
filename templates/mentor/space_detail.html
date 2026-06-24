@@ -9,6 +9,11 @@
         <h1>{{ space.name }} <code class="muted">{{ space.key }}</code></h1>
         {% if space.description %}<p class="subtitle">{{ space.description }}</p>{% endif %}
     </div>
+    {% if request.state.user %}
+    <div>
+        <a href="/mentor/spaces/{{ space.id }}/edit" class="button secondary">Edit</a>
+    </div>
+    {% endif %}
 </div>
 
 {% if tree %}

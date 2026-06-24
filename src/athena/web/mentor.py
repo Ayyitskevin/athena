@@ -146,6 +146,65 @@ def delete_space(
     return RedirectResponse("/mentor", status_code=303)
 
 
+@router.get("/mentor/spaces/{space_id}/edit", response_class=HTMLResponse)
+def edit_space_form(
+    request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Render the space edit form prefilled with its current key/name/description.
+    Editing is a write open to any signed-in actor (only delete is creator-locked),
+    so a logged-out caller gets a sign-in prompt rather than a dead form."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("edit spaces")
+
+    space = spaces.get_space(conn, space_id)
+    if space is None:
+        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+    return templates.TemplateResponse(
+        request=request, name="mentor/space_edit.html", context={"space": space}
+    )
+
+
+@router.post("/mentor/spaces/{space_id}/edit", dependencies=[Depends(verify_csrf)])
+def edit_space(
+    request: Request,
+    space_id: int,
+    key: str = Form(""),
+    name: str = Form(""),
+    description: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Save edits to a space's key/name/description. Open to any session user (like
+    create/edit a page); only delete is creator-locked. Mirrors the API: key
+    uppercased, key + name required, a key clash with a DIFFERENT space → 409.
+    303 back to the space detail on success."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("edit spaces")
+
+    if spaces.get_space(conn, space_id) is None:
+        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+    key = key.strip().upper()
+    name = name.strip()
+    if not key:
+        return HTMLResponse('<div class="error">Space key is required.</div>', status_code=400)
+    if not name:
+        return HTMLResponse('<div class="error">Space name is required.</div>', status_code=400)
+    clash = spaces.get_space_by_key(conn, key)
+    if clash is not None and clash["id"] != space_id:
+        return HTMLResponse(
+            '<div class="error">A space with that key already exists.</div>', status_code=409
+        )
+
+    spaces.update_space(
+        conn, space_id, key=key, name=name, description=description.strip()
+    )
+    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
 @router.get("/mentor/spaces/{space_id}", response_class=HTMLResponse)
 def space_detail(
     request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
