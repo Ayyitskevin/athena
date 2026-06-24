@@ -77,6 +77,13 @@
     {% endif %}
 </div>
 
+<div class="form-container">
+    <h3>Activity</h3>
+    {% with events = activity, show_target = False %}
+    {% include "aegis/partials/activity_list.html" %}
+    {% endwith %}
+</div>
+
 {% if request.state.user %}
 <div class="form-container">
     <h3>Manage</h3>

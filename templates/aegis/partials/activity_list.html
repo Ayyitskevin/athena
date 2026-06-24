@@ -29,12 +29,20 @@
             commented
         {% elif e.verb == "comment_deleted" %}
             deleted a comment
+        {% elif e.verb == "page_created" %}
+            created page <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "page_edited" %}
+            edited page <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "page_deleted" %}
+            deleted page <span class="activity-detail">{{ e.detail }}</span>
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}
         {% if show_target %}
             {% if e.target_kind == "issue" %}
             <a href="/aegis/issues/{{ e.target_id }}" class="xref">issue #{{ e.target_id }}</a>
+            {% elif e.target_kind == "page" %}
+            <a href="/mentor/pages/{{ e.target_id }}" class="xref">page #{{ e.target_id }}</a>
             {% else %}
             <span class="muted">{{ e.target_kind }} #{{ e.target_id }}</span>
             {% endif %}

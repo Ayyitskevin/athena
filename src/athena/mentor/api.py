@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from athena.core import links
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
-from athena.mentor import pages, spaces
+from athena.mentor import page_activity, pages, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
@@ -231,7 +231,7 @@ def create_page(
             raise HTTPException(
                 status_code=422, detail="parent must be a page in this space"
             )
-    return pages.create_page(
+    page = pages.create_page(
         conn,
         space_id=space_id,
         title=title,
@@ -239,6 +239,10 @@ def create_page(
         parent_id=payload.parent_id,
         created_by=actor["id"],
     )
+    page_activity.record_page_created(
+        conn, actor_id=actor["id"], page_id=page["id"], title=page["title"]
+    )
+    return page
 
 
 @spaces_router.get("/{space_id}/pages", response_model=list[PageOut])
@@ -272,7 +276,8 @@ def edit_page(
     # Editing is open to any authenticated actor, mirroring create (a page has no
     # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
     # history anyway). 404 if the page is missing.
-    if pages.get_page(conn, page_id) is None:
+    before = pages.get_page(conn, page_id)
+    if before is None:
         raise HTTPException(status_code=404, detail="no such page")
     # Only the fields the client actually sent are touched.
     sent = payload.model_dump(exclude_unset=True)
@@ -281,9 +286,13 @@ def edit_page(
     title = payload.title.strip() if payload.title is not None else None
     if title is not None and not title:
         raise HTTPException(status_code=422, detail="title cannot be empty")
-    return pages.update_page(
+    after = pages.update_page(
         conn, page_id, editor_id=actor["id"], title=title, body=payload.body
     )
+    page_activity.record_page_edited(
+        conn, actor_id=actor["id"], before=before, after=after
+    )
+    return after
 
 
 @pages_router.put("/{page_id}/move", response_model=PageOut)
@@ -314,13 +323,17 @@ def delete_page(
     # Delete a page. Authed like edit/move. 404 if missing; 409 if it still has
     # child pages — we refuse rather than cascade, so a delete can't silently wipe
     # a subtree. 204 (no body) on success.
-    if pages.get_page(conn, page_id) is None:
+    page = pages.get_page(conn, page_id)
+    if page is None:
         raise HTTPException(status_code=404, detail="no such page")
     if pages.count_child_pages(conn, page_id) > 0:
         raise HTTPException(
             status_code=409, detail="move or delete its child pages first"
         )
     pages.delete_page(conn, page_id)
+    page_activity.record_page_deleted(
+        conn, actor_id=actor["id"], page_id=page_id, title=page["title"]
+    )
 
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])
