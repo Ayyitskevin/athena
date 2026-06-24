@@ -177,9 +177,20 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     target.)"""
     if get_page(conn, page_id) is None:
         return False
-    conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
-    conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
-    conn.commit()
+    # page_versions.page_id REFERENCES pages(id) with no ON DELETE, so the history
+    # rows MUST be cleared before the page row (deleting the parent first would
+    # trip the FK). The danger is a half-delete: history gone, page still here, if
+    # the page delete then fails (e.g. a stray child's parent_id FK restricts it).
+    # BEGIN IMMEDIATE + rollback-on-failure makes the pair atomic — exactly the
+    # pattern update_page uses — so a failed page delete restores the history too.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
+        conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     links.sync_links(conn, source_kind="page", source_id=page_id, body="")
     search.index_document(conn, kind="page", source_id=page_id)
     return True
@@ -274,6 +285,8 @@ def restore_version(
     if snapshot is None:
         return None
     current = get_page(conn, page_id)
+    if current is None:  # page vanished between the version lookup and now -> 404
+        return None
     if snapshot["title"] == current["title"] and snapshot["body"] == current["body"]:
         return current
     return update_page(
