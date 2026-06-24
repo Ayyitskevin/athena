@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.aegis import labels, projects
 from athena.core import activity, users
 
 
@@ -81,4 +82,71 @@ def record_assignee_change(
         target_kind="issue",
         target_id=issue_id,
         detail=assignee["name"] if assignee else "",
+    )
+
+
+def record_project_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: int | None,
+    after: int | None,
+) -> None:
+    """Record a project move. No-op if the project didn't change. Clearing records
+    "removed_from_project" with the old project's name; setting records
+    "changed_project" with the new project's name as the human specifics."""
+    if before == after:
+        return
+    if after is None:
+        old = projects.get_project(conn, before)
+        activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="removed_from_project",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=old["name"] if old else "",
+        )
+        return
+    new = projects.get_project(conn, after)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="changed_project",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=new["name"] if new else "",
+    )
+
+
+def record_label_added(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
+) -> None:
+    """Record that a label was attached, stamped with the label's name. Caller
+    records only when the attach actually created a new pairing."""
+    label = labels.get_label(conn, label_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="labeled",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=label["name"] if label else "",
+    )
+
+
+def record_label_removed(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
+) -> None:
+    """Record that a label was detached, stamped with the label's name. Caller
+    records only when a pairing was actually removed."""
+    label = labels.get_label(conn, label_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="unlabeled",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=label["name"] if label else "",
     )

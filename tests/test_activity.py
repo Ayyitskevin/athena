@@ -201,6 +201,99 @@ def test_assign_and_unassign_record_correct_verbs(tmp_path):
         assert assigned["detail"] == "Ann"
 
 
+def test_project_move_records_changed_and_removed(tmp_path):
+    # WHY: moving an issue between projects is a tracked organizational change.
+    # Setting a project records "changed_project" with the project's name; clearing
+    # records "removed_from_project" with the project it left — only on real change.
+    db_file = tmp_path / "project.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        proj = client.post(
+            "/projects",
+            json={"name": "Platform", "key": "PLAT"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        issue_id = _make_issue(client)
+        client.put(
+            f"/issues/{issue_id}/project",
+            json={"project_id": proj["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        client.put(
+            f"/issues/{issue_id}/project",
+            json={"project_id": None},
+            headers={"X-Athena-Actor": "1"},
+        )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        # newest first: removed_from_project, changed_project, created
+        assert [r["verb"] for r in feed] == [
+            "removed_from_project",
+            "changed_project",
+            "created",
+        ]
+        assert feed[1]["detail"] == "Platform"  # moved into it
+        assert feed[0]["detail"] == "Platform"  # left it
+
+
+def test_label_add_and_remove_record_verbs(tmp_path):
+    # WHY: labeling is a tracked classification change. Attaching records "labeled"
+    # with the label's name; detaching records "unlabeled" with the same name.
+    db_file = tmp_path / "label.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client)
+        label = client.post(
+            "/labels", json={"name": "urgent"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        client.post(
+            f"/issues/{issue_id}/labels",
+            json={"label_id": label["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        client.delete(
+            f"/issues/{issue_id}/labels/{label['id']}",
+            headers={"X-Athena-Actor": "1"},
+        )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        # newest first: unlabeled, labeled, created
+        assert [r["verb"] for r in feed] == ["unlabeled", "labeled", "created"]
+        assert feed[1]["detail"] == "urgent"
+        assert feed[0]["detail"] == "urgent"
+
+
+def test_relabel_same_label_records_nothing(tmp_path):
+    # WHY: the trail reflects real change, not API traffic. Re-attaching a label the
+    # issue already carries is a no-op and must not write a spurious "labeled" row.
+    db_file = tmp_path / "relabel.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client)
+        label = client.post(
+            "/labels", json={"name": "urgent"}, headers={"X-Athena-Actor": "1"}
+        ).json()
+        for _ in range(2):
+            client.post(
+                f"/issues/{issue_id}/labels",
+                json={"label_id": label["id"]},
+                headers={"X-Athena-Actor": "1"},
+            )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        # Only one "labeled" despite two POSTs — the second was already attached.
+        assert [r["verb"] for r in feed] == ["labeled", "created"]
+
+
 def test_activity_attributes_close_to_the_actor_not_the_creator(tmp_path):
     # WHY: this is the whole promise — "Grok closed AEGIS-88" as a recorded fact,
     # not a guess. The creator (Kevin) opens and assigns the issue to Grok; when

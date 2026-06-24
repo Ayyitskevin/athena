@@ -17,6 +17,14 @@
             assigned to <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "unassigned" %}
             unassigned
+        {% elif e.verb == "changed_project" %}
+            moved to <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "removed_from_project" %}
+            removed from <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "labeled" %}
+            labeled <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "unlabeled" %}
+            removed label <span class="activity-detail">{{ e.detail }}</span>
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}

@@ -381,14 +381,22 @@ def set_project(
 ) -> dict:
     # Moving an issue between projects is a write — creator-or-assignee only
     # (404 if missing, 403 if not permitted), same gate as status/assign/labels.
-    _issue_for_write(conn, issue_id, actor)
+    before = _issue_for_write(conn, issue_id, actor)
     # Reject an unknown project here (422) rather than letting the FK raise a 500.
     # None is always valid — it means "remove from project".
     if payload.project_id is not None and projects.get_project(
         conn, payload.project_id
     ) is None:
         raise HTTPException(status_code=422, detail="no such project")
-    return _with_labels(conn, issues.set_project(conn, issue_id, payload.project_id))
+    updated = issues.set_project(conn, issue_id, payload.project_id)
+    issue_activity.record_project_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["project_id"],
+        after=updated["project_id"],
+    )
+    return _with_labels(conn, updated)
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
@@ -676,7 +684,10 @@ def attach_label(
     issue = _issue_for_write(conn, issue_id, actor)
     if labels.get_label(conn, payload.label_id) is None:
         raise HTTPException(status_code=422, detail="no such label")
-    labels.add_label_to_issue(conn, issue_id, payload.label_id)  # idempotent
+    if labels.add_label_to_issue(conn, issue_id, payload.label_id):  # idempotent
+        issue_activity.record_label_added(
+            conn, actor_id=actor["id"], issue_id=issue_id, label_id=payload.label_id
+        )
     return _with_labels(conn, issue)
 
 
@@ -690,4 +701,7 @@ def detach_label(
     issue = _issue_for_write(conn, issue_id, actor)
     if not labels.remove_label_from_issue(conn, issue_id, label_id):
         raise HTTPException(status_code=404, detail="label not on this issue")
+    issue_activity.record_label_removed(
+        conn, actor_id=actor["id"], issue_id=issue_id, label_id=label_id
+    )
     return _with_labels(conn, issue)

@@ -545,7 +545,7 @@ def change_issue_project(
             '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
@@ -557,7 +557,14 @@ def change_issue_project(
             return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         target = int(project_id)
 
-    issues.set_project(conn, issue_id, target)
+    updated = issues.set_project(conn, issue_id, target)
+    issue_activity.record_project_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["project_id"],
+        after=updated["project_id"],
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -584,7 +591,10 @@ def add_issue_label(
     if not name:
         return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
     label = labels.get_or_create_label(conn, name=name)
-    labels.add_label_to_issue(conn, issue_id, label["id"])  # idempotent
+    if labels.add_label_to_issue(conn, issue_id, label["id"]):  # idempotent
+        issue_activity.record_label_added(
+            conn, actor_id=user["id"], issue_id=issue_id, label_id=label["id"]
+        )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -606,7 +616,10 @@ def remove_issue_label(
     _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    labels.remove_label_from_issue(conn, issue_id, label_id)
+    if labels.remove_label_from_issue(conn, issue_id, label_id):
+        issue_activity.record_label_removed(
+            conn, actor_id=user["id"], issue_id=issue_id, label_id=label_id
+        )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
