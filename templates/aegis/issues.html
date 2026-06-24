@@ -102,6 +102,10 @@
     </div>
 </div>
 
+{% if error %}
+<div class="error">{{ error }}</div>
+{% endif %}
+
 {% include "aegis/partials/issues_table.html" %}
 
 <p class="note">Data from the Aegis issues API.</p>
