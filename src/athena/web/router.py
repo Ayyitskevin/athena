@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, dependencies, issues, labels, projects
-from athena.core import links, search, users
+from athena.core import activity, links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_snippet
@@ -191,6 +191,21 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "per_page": per_page,
             "total": total,
         },
+    )
+
+
+@router.get("/aegis/activity", response_class=HTMLResponse)
+def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """The global activity timeline — the browser twin of GET /activity. Reading
+    is open, like every other web read (the JSON API gates the feed for the fleet;
+    the human view follows the rest of the site's open-read convention). It runs
+    the SAME data-layer query the API serves, so the two never disagree."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/activity.html",
+        context={"events": activity.list_activity(conn)},
     )
 
 
@@ -442,6 +457,11 @@ def _render_issue_detail(
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
         "can_modify": can_modify,
+        # This issue's own audit trail (newest first) — the same data-layer read
+        # the REST feed serves, scoped to this target.
+        "activity": activity.list_activity(
+            conn, target_kind="issue", target_id=issue_id
+        ),
     }
     if extra:
         context.update(extra)

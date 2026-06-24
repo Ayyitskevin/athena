@@ -1,0 +1,36 @@
+{# Renders an activity timeline from `events` (newest first, as returned by
+   core.activity.list_activity). `show_target` = true on the global feed, where
+   each row must say WHICH issue it happened to and link to it; false on an
+   issue's own detail page, where the target is already the page you're on.
+   Presentation only — the audit facts (who/verb/detail) come straight from the
+   API's data layer, never reshaped here. #}
+{% if events %}
+<ul class="activity-list">
+    {% for e in events %}
+    <li class="activity-item">
+        <span class="activity-actor">{{ e.actor_name }}</span>
+        {% if e.verb == "created" %}
+            created
+        {% elif e.verb == "changed_status" %}
+            changed status <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "assigned" %}
+            assigned to <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "unassigned" %}
+            unassigned
+        {% else %}
+            {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
+        {% endif %}
+        {% if show_target %}
+            {% if e.target_kind == "issue" %}
+            <a href="/aegis/issues/{{ e.target_id }}" class="xref">issue #{{ e.target_id }}</a>
+            {% else %}
+            <span class="muted">{{ e.target_kind }} #{{ e.target_id }}</span>
+            {% endif %}
+        {% endif %}
+        <span class="muted activity-time">{{ e.created_at }}</span>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No activity yet.</p>
+{% endif %}

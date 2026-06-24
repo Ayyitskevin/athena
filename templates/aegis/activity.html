@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Activity — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis" class="muted">← Back to Aegis</a>
+        <h1>Activity</h1>
+    </div>
+</div>
+
+<p class="muted">The audit trail across every issue — who did what, newest first.</p>
+
+{% with events=events, show_target=True %}
+{% include "aegis/partials/activity_list.html" %}
+{% endwith %}
+
+<p class="note">Activity from the API.</p>
+{% endblock %}

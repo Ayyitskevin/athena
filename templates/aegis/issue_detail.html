@@ -198,6 +198,13 @@
             {% endif %}
         </div>
 
+        <div class="activity">
+            <h3>History</h3>
+            {% with events=activity, show_target=False %}
+            {% include "aegis/partials/activity_list.html" %}
+            {% endwith %}
+        </div>
+
         <div class="quick-actions">
             <h4>Quick Actions</h4>
             {% if can_modify %}
