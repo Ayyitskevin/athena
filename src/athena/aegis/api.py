@@ -11,8 +11,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.aegis import comments, dependencies, issues, labels, projects
-from athena.core import activity, links, users
+from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
+from athena.core import links, users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -217,13 +217,7 @@ def create(
         project_id=payload.project_id,
         created_by=actor["id"],
     )
-    activity.record(
-        conn,
-        actor_id=actor["id"],
-        verb="created",
-        target_kind="issue",
-        target_id=issue["id"],
-    )
+    issue_activity.record_created(conn, actor_id=actor["id"], issue_id=issue["id"])
     return _with_labels(conn, issue)
 
 
@@ -335,16 +329,15 @@ def update(
     if updated is None:
         raise HTTPException(status_code=404, detail="no such issue")
     # Record a status change as its own audit fact (the lifecycle moment that
-    # matters: "open → done"). Only when status was actually sent AND changed —
-    # a no-op PATCH or an edit that only touches title/body records nothing.
-    if "status" in fields and updated["status"] != before["status"]:
-        activity.record(
+    # matters: "open → done"). The helper no-ops if status didn't actually move,
+    # so an edit that only touches title/body records nothing.
+    if "status" in fields:
+        issue_activity.record_status_change(
             conn,
             actor_id=actor["id"],
-            verb="changed_status",
-            target_kind="issue",
-            target_id=issue_id,
-            detail=f"{before['status']} → {updated['status']}",
+            issue_id=issue_id,
+            before=before["status"],
+            after=updated["status"],
         )
     return _with_labels(conn, updated)
 
@@ -367,28 +360,15 @@ def set_assignee(
     ) is None:
         raise HTTPException(status_code=422, detail="no such user")
     updated = issues.set_assignee(conn, issue_id, payload.assignee_id)
-    # Record the assignment change only when it actually changed (re-PUTting the
-    # same assignee records nothing). Clearing -> "unassigned" with no detail;
-    # setting -> "assigned" with the new assignee's name as the human specifics.
-    if before["assignee_id"] != payload.assignee_id:
-        if payload.assignee_id is None:
-            activity.record(
-                conn,
-                actor_id=actor["id"],
-                verb="unassigned",
-                target_kind="issue",
-                target_id=issue_id,
-            )
-        else:
-            assignee = users.get_user(conn, payload.assignee_id)
-            activity.record(
-                conn,
-                actor_id=actor["id"],
-                verb="assigned",
-                target_kind="issue",
-                target_id=issue_id,
-                detail=assignee["name"],
-            )
+    # The helper records "assigned"/"unassigned" only when the assignee actually
+    # changed (re-PUTting the same assignee records nothing).
+    issue_activity.record_assignee_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["assignee_id"],
+        after=payload.assignee_id,
+    )
     return _with_labels(conn, updated)
 
 

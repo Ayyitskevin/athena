@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from athena.aegis import comments, dependencies, issues, labels, projects
+from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
 from athena.core import activity, links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -265,6 +265,9 @@ def create_issue(
         conn, title=title, body=body, status=status, priority=priority,
         project_id=project, created_by=user["id"],
     )
+    # Record onto the audit trail — same fact the REST create records, so a
+    # browser-created issue and an API-created one read identically in the feed.
+    issue_activity.record_created(conn, actor_id=user["id"], issue_id=issue["id"])
     # HTMX swaps this into #create-result; nudge the browser to the new issue.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>'
@@ -379,6 +382,15 @@ def change_issue_status(
             )
 
     issues.update_status(conn, issue_id, status)
+    # Record the transition (helper no-ops if it didn't actually move), attributed
+    # to the session user — the browser path now leaves the same trail as the API.
+    issue_activity.record_status_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["status"],
+        after=status,
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -489,7 +501,7 @@ def change_issue_assignee(
             '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
@@ -505,6 +517,15 @@ def change_issue_assignee(
             return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
 
     issues.set_assignee(conn, issue_id, target)
+    # Record the assignment change (helper no-ops if unchanged), attributed to the
+    # session user — same trail the REST assignee endpoint leaves.
+    issue_activity.record_assignee_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["assignee_id"],
+        after=target,
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
