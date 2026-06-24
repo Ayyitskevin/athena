@@ -39,6 +39,10 @@
             {% if e.detail %}moved page under <span class="activity-detail">{{ e.detail }}</span>{% else %}moved page to the top level{% endif %}
         {% elif e.verb == "page_restored" %}
             restored page to <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "space_created" %}
+            created space <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "space_deleted" %}
+            deleted space <span class="activity-detail">{{ e.detail }}</span>
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}
@@ -47,6 +51,8 @@
             <a href="/aegis/issues/{{ e.target_id }}" class="xref">issue #{{ e.target_id }}</a>
             {% elif e.target_kind == "page" %}
             <a href="/mentor/pages/{{ e.target_id }}" class="xref">page #{{ e.target_id }}</a>
+            {% elif e.target_kind == "space" %}
+            <a href="/mentor/spaces/{{ e.target_id }}" class="xref">space #{{ e.target_id }}</a>
             {% else %}
             <span class="muted">{{ e.target_kind }} #{{ e.target_id }}</span>
             {% endif %}

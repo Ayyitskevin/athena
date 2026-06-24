@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from athena.core import links
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
-from athena.mentor import page_activity, pages, spaces
+from athena.mentor import page_activity, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
@@ -116,13 +116,17 @@ def create_space(
         raise HTTPException(status_code=422, detail="space name is required")
     if spaces.get_space_by_key(conn, key) is not None:
         raise HTTPException(status_code=409, detail="space key already exists")
-    return spaces.create_space(
+    space = spaces.create_space(
         conn,
         key=key,
         name=name,
         description=payload.description,
         created_by=actor["id"],
     )
+    space_activity.record_space_created(
+        conn, actor_id=actor["id"], space_id=space["id"], name=space["name"]
+    )
+    return space
 
 
 @spaces_router.get("/{space_id}", response_model=SpaceOut)
@@ -175,8 +179,8 @@ def _space_for_write(
     """Fetch a space the actor may DELETE, or raise: 404 if no such space, 403 if
     the actor isn't its creator. Deleting a space is creator-only — tighter than
     Mentor's otherwise-open write model (any signed-in actor may create spaces and
-    edit pages), because removing a whole container is destructive and unlike a page
-    edit it isn't recorded in any history. Mirrors aegis _project_for_write."""
+    edit pages), because removing a whole container is destructive and wipes a
+    documentation tree. Mirrors aegis _project_for_write."""
     space = spaces.get_space(conn, space_id)
     if space is None:
         raise HTTPException(status_code=404, detail="no such space")
@@ -194,7 +198,7 @@ def delete_space(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Creator only (404 if missing, 403 if not permitted).
-    _space_for_write(conn, space_id, actor)
+    space = _space_for_write(conn, space_id, actor)
     # Refuse rather than cascade: a space that still holds pages must be emptied
     # first. 409, mirroring project-delete-on-issues and page-delete-on-children —
     # a delete must not silently wipe a documentation tree.
@@ -203,6 +207,9 @@ def delete_space(
             status_code=409, detail="delete or move its pages first"
         )
     spaces.delete_space(conn, space_id)
+    space_activity.record_space_deleted(
+        conn, actor_id=actor["id"], space_id=space_id, name=space["name"]
+    )
 
 
 # --- Pages: documents within a space --------------------------------------

@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena.core import activity, links
 from athena.core.deps import get_conn
-from athena.mentor import page_activity, pages, spaces
+from athena.mentor import page_activity, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body
 from athena.web.router import get_templates
@@ -114,6 +114,9 @@ def create_space(
     space = spaces.create_space(
         conn, key=key, name=name, description=description.strip(), created_by=user["id"]
     )
+    space_activity.record_space_created(
+        conn, actor_id=user["id"], space_id=space["id"], name=space["name"]
+    )
     return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
 
@@ -144,6 +147,9 @@ def delete_space(
             status_code=409,
         )
     spaces.delete_space(conn, space_id)
+    space_activity.record_space_deleted(
+        conn, actor_id=user["id"], space_id=space_id, name=space["name"]
+    )
     return RedirectResponse("/mentor", status_code=303)
 
 
@@ -241,6 +247,9 @@ def space_detail(
             # space still holds pages (the API would refuse that delete with 409).
             "can_delete": user is not None and user["id"] == space["created_by"],
             "page_count": len(page_rows),
+            "activity": activity.list_activity(
+                conn, target_kind="space", target_id=space_id
+            ),
         },
     )
 
