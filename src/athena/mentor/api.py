@@ -129,6 +129,42 @@ def show_space(
     return space
 
 
+def _space_for_write(
+    conn: sqlite3.Connection, space_id: int, actor: dict
+) -> dict:
+    """Fetch a space the actor may DELETE, or raise: 404 if no such space, 403 if
+    the actor isn't its creator. Deleting a space is creator-only — tighter than
+    Mentor's otherwise-open write model (any signed-in actor may create spaces and
+    edit pages), because removing a whole container is destructive and unlike a page
+    edit it isn't recorded in any history. Mirrors aegis _project_for_write."""
+    space = spaces.get_space(conn, space_id)
+    if space is None:
+        raise HTTPException(status_code=404, detail="no such space")
+    if space["created_by"] != actor["id"]:
+        raise HTTPException(
+            status_code=403, detail="only the space creator may delete it"
+        )
+    return space
+
+
+@spaces_router.delete("/{space_id}", status_code=204)
+def delete_space(
+    space_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    # Creator only (404 if missing, 403 if not permitted).
+    _space_for_write(conn, space_id, actor)
+    # Refuse rather than cascade: a space that still holds pages must be emptied
+    # first. 409, mirroring project-delete-on-issues and page-delete-on-children —
+    # a delete must not silently wipe a documentation tree.
+    if pages.count_pages_in_space(conn, space_id) > 0:
+        raise HTTPException(
+            status_code=409, detail="delete or move its pages first"
+        )
+    spaces.delete_space(conn, space_id)
+
+
 # --- Pages: documents within a space --------------------------------------
 
 

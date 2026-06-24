@@ -63,5 +63,25 @@
     {% endif %}
 </div>
 
+{% if can_delete %}
+<div class="form-container danger-zone">
+    <h3>Delete space</h3>
+    {% if page_count > 0 %}
+    <p class="note-small">
+        This space has {{ page_count }} page{{ "s" if page_count != 1 }}.
+        Delete or move them before you can delete the space.
+    </p>
+    <button type="button" class="button danger" disabled>Delete Space</button>
+    {% else %}
+    <p class="note-small">This permanently removes the space. This cannot be undone.</p>
+    <form method="post" action="/mentor/spaces/{{ space.id }}/delete"
+          onsubmit="return confirm('Delete space “{{ space.name }}”? This cannot be undone.');">
+        {% include "partials/csrf.html" %}
+        <button type="submit" class="button danger">Delete Space</button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
 <p class="note">Data from the Mentor pages API.</p>
 {% endblock %}
