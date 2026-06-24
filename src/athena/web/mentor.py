@@ -421,6 +421,13 @@ def move_page(
             f'<div class="error">{html.escape(err)}</div>', status_code=400
         )
     pages.set_parent(conn, page_id, new_parent)
+    page_activity.record_page_moved(
+        conn,
+        actor_id=user["id"],
+        page_id=page_id,
+        before_parent_id=page["parent_id"],
+        after_parent_id=new_parent,
+    )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -472,9 +479,18 @@ def restore_version(
     if user is None:
         return _signin_required("restore pages")
 
+    before = pages.get_page(conn, page_id)
     restored = pages.restore_version(conn, page_id, version, editor_id=user["id"])
     if restored is None:
         return HTMLResponse(
             '<div class="error">No such page or version.</div>', status_code=404
         )
+    page_activity.record_page_restored(
+        conn,
+        actor_id=user["id"],
+        page_id=page_id,
+        version=version,
+        before=before,
+        after=restored,
+    )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)

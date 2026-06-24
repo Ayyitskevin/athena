@@ -205,6 +205,189 @@ def test_web_page_delete_records(tmp_path):
     assert row["detail"] == "Scratch"
 
 
+def test_api_page_move_records_with_parent_name(tmp_path):
+    # WHY: re-parenting is a structural change to the page; it must record
+    # "page_moved" naming the new parent so the feed says where the page landed.
+    db_file = tmp_path / "api_move.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        space = _make_space(client)
+        parent = _make_page(client, space["id"], title="Parent")
+        child = _make_page(client, space["id"], title="Child")
+        r = client.put(
+            f"/pages/{child['id']}/move",
+            json={"parent_id": parent["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'page_moved' AND target_id = ?",
+        (child["id"],),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1
+    assert row["detail"] == "Parent"
+
+
+def test_api_page_move_to_top_level_records_empty_detail(tmp_path):
+    # WHY: moving a nested page back to the root is still a recorded move, with an
+    # empty detail the feed renders as "to the top level" — no parent to name.
+    db_file = tmp_path / "api_move_top.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        space = _make_space(client)
+        parent = _make_page(client, space["id"], title="Parent")
+        child = _make_page(
+            client, space["id"], title="Child", parent_id=parent["id"]
+        )
+        r = client.put(
+            f"/pages/{child['id']}/move",
+            json={"parent_id": None},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT verb, detail FROM activity "
+        "WHERE verb = 'page_moved' AND target_id = ?",
+        (child["id"],),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["detail"] == ""
+
+
+def test_api_page_move_noop_is_silent(tmp_path):
+    # WHY: re-submitting the same parent is not a move — the trail reflects real
+    # structural change, not requests (set_parent matches the row regardless).
+    db_file = tmp_path / "api_move_noop.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        space = _make_space(client)
+        parent = _make_page(client, space["id"], title="Parent")
+        child = _make_page(
+            client, space["id"], title="Child", parent_id=parent["id"]
+        )
+        # Move under the SAME parent it already has.
+        r = client.put(
+            f"/pages/{child['id']}/move",
+            json={"parent_id": parent["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+    conn = db.connect(db_file)
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM activity "
+        "WHERE verb = 'page_moved' AND target_id = ?",
+        (child["id"],),
+    ).fetchone()["n"]
+    conn.close()
+    assert n == 0
+
+
+def test_api_restore_records_and_identical_restore_is_silent(tmp_path):
+    # WHY: rolling back to a prior revision records "page_restored vN" (its own verb,
+    # not a generic edit); restoring content identical to the live row writes nothing
+    # — restore_version never files a redundant version, so neither do we.
+    db_file = tmp_path / "api_restore.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        space = _make_space(client)
+        page = _make_page(client, space["id"], title="Doc", body="v1 body")
+        # Edit so v1 is snapshotted into history.
+        client.patch(
+            f"/pages/{page['id']}",
+            json={"body": "v2 body"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        # Restore v1 (a real content change back to "v1 body").
+        r = client.post(
+            f"/pages/{page['id']}/versions/1/restore",
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+        # Live content now equals v1 again; restoring v1 a second time is identical
+        # to the live row -> no-op, writes no second page_restored row.
+        client.post(
+            f"/pages/{page['id']}/versions/1/restore",
+            headers={"X-Athena-Actor": "1"},
+        )
+    conn = db.connect(db_file)
+    rows = conn.execute(
+        "SELECT detail FROM activity "
+        "WHERE verb = 'page_restored' AND target_id = ?",
+        (page["id"],),
+    ).fetchall()
+    conn.close()
+    assert [r["detail"] for r in rows] == ["v1"]
+
+
+def test_web_page_move_records(tmp_path):
+    # WHY: moving from the detail-page form must record like the API, stamped with
+    # the session user.
+    db_file = tmp_path / "web_move.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        space = _make_space(client)
+        parent = _make_page(client, space["id"], title="Parent")
+        child = _make_page(client, space["id"], title="Child")
+        r = client.post(
+            f"/mentor/pages/{child['id']}/move",
+            data={"parent_id": str(parent["id"])},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'page_moved' AND target_id = ?",
+        (child["id"],),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1
+    assert row["detail"] == "Parent"
+
+
+def test_web_restore_records(tmp_path):
+    # WHY: restoring from the History form must record "page_restored" stamped with
+    # the session user, like the API.
+    db_file = tmp_path / "web_restore.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        space = _make_space(client)
+        page = _make_page(client, space["id"], title="Doc", body="orig")
+        client.post(
+            f"/mentor/pages/{page['id']}/edit",
+            data={"title": "Doc", "body": "changed"},
+            follow_redirects=False,
+        )
+        r = client.post(
+            f"/mentor/pages/{page['id']}/versions/1/restore",
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'page_restored' AND target_id = ?",
+        (page["id"],),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1
+    assert row["detail"] == "v1"
+
+
 def test_global_feed_links_page_event_to_its_page(tmp_path):
     # WHY: the global timeline spans every surface, so a page event must say which
     # page it happened to and link there — the feed is navigable across modules.
