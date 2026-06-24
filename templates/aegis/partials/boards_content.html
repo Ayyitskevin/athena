@@ -7,6 +7,9 @@
             {% for issue in col_issues %}
             <div class="board-card">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</a>
+                {% if issue.project_name %}
+                <div class="project"><a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a></div>
+                {% endif %}
                 {% if issue.body %}
                 <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
                 {% endif %}

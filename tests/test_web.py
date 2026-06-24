@@ -147,6 +147,38 @@ def test_unassigned_issue_reads_unassigned_in_list(tmp_path):
     assert "Unassigned" in response.text
 
 
+def test_project_name_shows_on_board_card(tmp_path):
+    # WHY: when scanning a board you want to see which project a card belongs to
+    # without opening it. The project name (resolved by the issues.py LEFT JOIN)
+    # must reach the board card, and link to that project's filtered list.
+    db_file = tmp_path / "web.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)  # user 1 = Kevin
+        proj = client.post(
+            "/projects",
+            json={"name": "Atlas", "key": "ATL"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        client.post(
+            "/issues",
+            json={"title": "in atlas", "project_id": proj["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+        client.post(
+            "/issues", json={"title": "loose card"}, headers={"X-Athena-Actor": "1"}
+        )
+
+        board = client.get("/aegis/boards")
+        assert board.status_code == 200
+        # the projected card shows the project name, linking to its filtered list
+        assert "Atlas" in board.text
+        assert f'/aegis/issues?project={proj["id"]}' in board.text
+        # a backlog issue gets no project chip — the name is the only "Atlas" hit,
+        # so the count of project links equals the one projected card
+        assert board.text.count('class="project"') == 1
+
+
 def test_boards_page_renders(tmp_path):
     app = create_app(tmp_path / "web.db")
     with TestClient(app) as client:
