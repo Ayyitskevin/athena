@@ -636,6 +636,78 @@ footer {
     padding: 0.25rem 0;
 }
 
+/* Typed dependencies between issues (blocks / blocked-by / relates). */
+.relationships {
+    margin-top: 1.5rem;
+}
+
+.rel-group {
+    margin: 0.5rem 0;
+}
+
+.rel-heading {
+    display: block;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #666;
+    margin-bottom: 0.2rem;
+}
+
+.rel-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.rel-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+}
+
+.rel-remove {
+    display: inline;
+    margin: 0;
+}
+
+.rel-remove button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0;
+}
+
+.rel-add {
+    display: flex;
+    gap: 0.3rem;
+    margin-top: 0.5rem;
+}
+
+.rel-add input {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Advisory banner when closing an issue that still has open blockers. */
+.warning {
+    background: #fff3cd;
+    color: #664d03;
+    border: 1px solid #ffe69c;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-bottom: 1rem;
+}
+
+.blocked-warning .confirm-done {
+    display: inline;
+    margin-left: 0.5rem;
+}
+
 .quick-actions {
     margin-top: 1.5rem;
     padding-top: 1rem;

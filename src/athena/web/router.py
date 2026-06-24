@@ -5,13 +5,14 @@ is configured in main.py (per wiring contract) and injected via init_templates.
 """
 from __future__ import annotations
 
+import html
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from athena.aegis import comments, issues, labels, projects
+from athena.aegis import comments, dependencies, issues, labels, projects
 from athena.core import links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -331,22 +332,36 @@ def change_issue_status(
     request: Request,
     issue_id: int,
     status: str = Form(...),
+    confirm: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Move an issue to a new status from the detail page. Gated on the session
     user (same actor rule as create), validates against the lifecycle, then
-    303-redirects back to the issue so the page reloads with the new state."""
+    303-redirects back to the issue so the page reloads with the new state.
+
+    Closing (status -> done) an issue that still has OPEN blockers re-renders the
+    page with an advisory warning instead of applying the change, unless the form
+    carries confirm=1 ("Mark done anyway"). The warning is a nudge, not a lock —
+    dependencies in this product are advisory — so a second submit goes through."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
             '<div class="blocked">Please <a href="/login">sign in</a> to change status.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     if status not in issues.STATUSES:
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
+
+    if status == "done" and not confirm.strip():
+        blockers = dependencies.open_blockers(conn, issue_id)
+        if blockers:
+            # Don't apply the close — show the warning and let the user confirm.
+            return _render_issue_detail(
+                request, conn, issue, extra={"blocked_warning": blockers}
+            )
 
     issues.update_status(conn, issue_id, status)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
@@ -398,23 +413,43 @@ def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(
             status_code=404,
         )
 
+    return _render_issue_detail(request, conn, issue)
+
+
+def _render_issue_detail(
+    request: Request,
+    conn: sqlite3.Connection,
+    issue: dict,
+    *,
+    extra: dict | None = None,
+    status_code: int = 200,
+):
+    """Assemble the issue-detail page. One place builds the context so the normal
+    view and the warn-on-close re-render can never drift on what the page needs.
+    `extra` overlays warning state (e.g. the open blockers banner) without the
+    caller re-listing every base key."""
     issue_id = issue["id"]
     user = getattr(request.state, "user", None)
     can_modify = bool(user) and issues.can_modify(issue, user["id"])
+    context = {
+        "issue": issue,
+        "body_html": render_body(conn, issue["body"]),
+        "backlinks": links.backlinks(conn, "issue", issue_id),
+        "links": dependencies.list_links(conn, issue_id),
+        "comments": comments.list_comments(conn, issue_id),
+        "users": users.list_users(conn),
+        "issue_labels": labels.labels_for_issue(conn, issue_id),
+        "all_labels": labels.list_labels(conn),
+        "all_projects": projects.list_projects(conn),
+        "can_modify": can_modify,
+    }
+    if extra:
+        context.update(extra)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_detail.html",
-        context={
-            "issue": issue,
-            "body_html": render_body(conn, issue["body"]),
-            "backlinks": links.backlinks(conn, "issue", issue_id),
-            "comments": comments.list_comments(conn, issue_id),
-            "users": users.list_users(conn),
-            "issue_labels": labels.labels_for_issue(conn, issue_id),
-            "all_labels": labels.list_labels(conn),
-            "all_projects": projects.list_projects(conn),
-            "can_modify": can_modify,
-        },
+        context=context,
+        status_code=status_code,
     )
 
 
@@ -531,6 +566,68 @@ def remove_issue_label(
     if err is not None:
         return err
     labels.remove_label_from_issue(conn, issue_id, label_id)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/links", dependencies=[Depends(verify_csrf)])
+def add_issue_link(
+    request: Request,
+    issue_id: int,
+    target_ref: str = Form(""),
+    relation: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Declare a relationship from this issue to another (addressed by id or key).
+    Same write gate as labels/status. The other issue is resolved from its ref
+    (400 if unknown); add_link enforces shape (self-ref, contradiction) and
+    returns a reason we surface as a 400."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    target = issues.get_by_ref(conn, target_ref.strip())
+    if target is None:
+        return HTMLResponse('<div class="error">No such target issue.</div>', status_code=400)
+    reason = dependencies.add_link(
+        conn,
+        from_id=issue_id,
+        to_id=target["id"],
+        relation=relation,
+        created_by=user["id"],
+    )
+    if reason is not None:
+        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/links/{relation}/{target_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_issue_link(
+    request: Request,
+    issue_id: int,
+    relation: str,
+    target_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Remove a relationship. Same write gate. POST (not DELETE) because HTML forms
+    can't issue DELETE. relation is the user-facing form used to create it."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    dependencies.remove_link(conn, from_id=issue_id, to_id=target_id, relation=relation)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

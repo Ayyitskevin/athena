@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.aegis import comments, issues, labels, projects
+from athena.aegis import comments, dependencies, issues, labels, projects
 from athena.core import links, users
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
@@ -124,6 +124,29 @@ class LinkOut(BaseModel):
     id: int
     title: str | None = None
     exists: bool
+
+
+class LinkCreate(BaseModel):
+    # The other issue, addressed by ref — numeric id ("15") or project key
+    # ("ATH-15"), the same addressing the read endpoints accept. relation is the
+    # user-facing form; "blocked_by" is stored as the inverse "blocks" edge.
+    target_ref: str
+    relation: Literal["blocks", "blocked_by", "relates"]
+
+
+class IssueLinkSummary(BaseModel):
+    # Just enough of the other issue to link to it and show its state.
+    id: int
+    key: str | None = None
+    title: str
+    status: str
+
+
+class IssueLinksOut(BaseModel):
+    # One issue's relationships, grouped by user-facing relation.
+    blocks: list[IssueLinkSummary] = []
+    blocked_by: list[IssueLinkSummary] = []
+    relates: list[IssueLinkSummary] = []
 
 
 class CommentCreate(BaseModel):
@@ -413,6 +436,68 @@ def delete_comment(
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     comments.delete_comment(conn, comment_id)
+
+
+# --- Links: typed dependencies between issues -----------------------------
+
+
+@router.get("/{issue_id}/links", response_model=IssueLinksOut)
+def list_links(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    # Open read, like backlinks/comments. 404 if the issue itself is missing, so
+    # a typo'd id reads as not-found rather than three empty lists.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return dependencies.list_links(conn, issue_id)
+
+
+@router.post("/{issue_id}/links", response_model=IssueLinksOut, status_code=201)
+def add_link(
+    issue_id: int,
+    payload: LinkCreate,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Declaring a relationship FROM this issue is a write on it — creator-or-
+    # assignee only (404 if missing, 403 if not permitted), same gate as
+    # status/assign/labels. The gate is on THIS issue (the one being edited),
+    # regardless of which end the edge is stored on.
+    _issue_for_write(conn, issue_id, actor)
+    target = issues.get_by_ref(conn, payload.target_ref)
+    if target is None:
+        raise HTTPException(status_code=422, detail="no such target issue")
+    reason = dependencies.add_link(
+        conn,
+        from_id=issue_id,
+        to_id=target["id"],
+        relation=payload.relation,
+        created_by=actor["id"],
+    )
+    if reason is not None:
+        # The direct contradiction (A blocks B while B blocks A) conflicts with
+        # existing state -> 409; everything else is bad input -> 422.
+        status = 409 if "block each other" in reason else 422
+        raise HTTPException(status_code=status, detail=reason)
+    return dependencies.list_links(conn, issue_id)
+
+
+@router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
+def remove_link(
+    issue_id: int,
+    relation: str,
+    target_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Removing a relationship is a write on this issue too. relation is the same
+    # user-facing form used to add it; an unknown relation simply matches no row.
+    _issue_for_write(conn, issue_id, actor)
+    if not dependencies.remove_link(
+        conn, from_id=issue_id, to_id=target_id, relation=relation
+    ):
+        raise HTTPException(status_code=404, detail="no such relationship")
+    return dependencies.list_links(conn, issue_id)
 
 
 # --- Projects: a top-level grouping of issues -----------------------------
