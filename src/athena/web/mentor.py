@@ -13,6 +13,7 @@ a shared wiki and every edit is snapshotted into history), so the only gate is
 """
 from __future__ import annotations
 
+import html
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -77,7 +78,7 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # One page-count per space — cheap on the small lists Mentor holds, and it
     # comes from the real data layer (no cached counter to drift).
     counts = {
-        s["id"]: len(pages.list_pages_in_space(conn, s["id"])) for s in all_spaces
+        s["id"]: pages.count_pages_in_space(conn, s["id"]) for s in all_spaces
     }
     return templates.TemplateResponse(
         request=request,
@@ -383,8 +384,9 @@ def move_page(
 ):
     """Re-parent a page from its detail page. Gated on the session user. An empty
     parent value means "move to the top level"; otherwise it must be a page id, and
-    validate_move enforces same-space + no-cycle (its message is a fixed internal
-    string, safe to render). 303 back to the page so the new breadcrumb shows."""
+    validate_move enforces same-space + no-cycle; its message is a fixed internal
+    string today but we HTML-escape it on the way out so this stays safe even if
+    the predicate ever grows to echo user input. 303 back so the new breadcrumb shows."""
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("move pages")
@@ -403,7 +405,9 @@ def move_page(
 
     err = pages.validate_move(conn, page, new_parent)
     if err is not None:
-        return HTMLResponse(f'<div class="error">{err}</div>', status_code=400)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(err)}</div>', status_code=400
+        )
     pages.set_parent(conn, page_id, new_parent)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 

@@ -13,7 +13,8 @@ way they used to:
   * search casing is owned by SQLite LIKE, not pre-lowered in the web layer, so an
     uppercase needle matches the same rows through the list, the boards, and the API;
   * an unknown ?sort= column falls back to created_at instead of raising;
-  * a missing issue detail is a real 404, not a 200 with an error banner;
+  * a missing issue detail is a real 404 AND tells the human why (renders the
+    error context), not the old 200-with-silent-empty-list;
   * the boards column filtering runs through list_issues, not a re-implemented
     Python scan.
 """
@@ -122,7 +123,12 @@ def test_missing_issue_detail_is_404(tmp_path):
         # The contract this pins is the STATUS: a missing issue is a 404, matching
         # the API's /issues/9999 -> 404, not the old 200-with-empty-list that made
         # "gone" indistinguishable from "found" to a caller checking the code.
-        assert client.get("/aegis/issues/9999").status_code == 404
+        r = client.get("/aegis/issues/9999")
+        assert r.status_code == 404
+        # ...and a HUMAN looking at the page must actually be told why it's empty.
+        # The route passes an `error` context; this pins that the template renders
+        # it, not silently drops it (the old dead-context gap).
+        assert "9999 not found" in r.text
         assert client.get("/issues/9999").status_code == 404  # API agrees
 
 
