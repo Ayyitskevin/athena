@@ -198,18 +198,13 @@ def create(
 
 
 def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
-    """Parse the ?project= filter value into (project_id, backlog):
-    - None / "" -> (None, False): no project filter.
-    - "none" (case-insensitive) -> (None, True): only issues with no project.
-    - all-digits -> (that id, False).
-    - anything else -> 422 (kept strict, like the old int-typed param)."""
-    if not project:
-        return None, False
-    if project.lower() == "none":
-        return None, True
-    if project.isdigit():
-        return int(project), False
-    raise HTTPException(status_code=422, detail="invalid project filter")
+    """HTTP wrapper over the shared issues.parse_project_filter: the parsing rules
+    live in one place (so the web list can't drift from us), and here we turn the
+    "invalid" signal (None) into the API's 422."""
+    parsed = issues.parse_project_filter(project)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail="invalid project filter")
+    return parsed
 
 
 @router.get("", response_model=list[IssueOut])
