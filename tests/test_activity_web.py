@@ -257,6 +257,61 @@ def test_web_label_add_records(tmp_path):
     assert "urgent" in page.text
 
 
+def test_web_comment_records(tmp_path):
+    # WHY: commenting from the browser is a tracked interaction too — the web path
+    # must record "commented" on the issue's trail, like the API.
+    db_file = tmp_path / "web_comment.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        r = client.post(
+            f"/aegis/issues/{issue_id}/comments",
+            data={"body": "from the browser"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "commented" in page.text
+
+
+def test_web_comment_delete_records(tmp_path):
+    # WHY: deleting a comment from the browser is the audit-worthy removal — the
+    # web path must record "comment_deleted" (who took content down), like the API.
+    db_file = tmp_path / "web_comment_del.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        client.post(
+            f"/aegis/issues/{issue_id}/comments",
+            data={"body": "to be removed"},
+            follow_redirects=False,
+        )
+        # Find the comment's id from the DB to delete it.
+        conn = db.connect(db_file)
+        cid = conn.execute(
+            "SELECT id FROM comments WHERE issue_id = ?", (issue_id,)
+        ).fetchone()["id"]
+        conn.close()
+        r = client.post(
+            f"/aegis/issues/{issue_id}/comments/{cid}/delete",
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        # Assert on the recorded row, not page text ("deleted a comment" only ever
+        # appears in the History, but be precise about the verb landing).
+        conn = db.connect(db_file)
+        row = conn.execute(
+            "SELECT actor_id, verb FROM activity "
+            "WHERE verb = 'comment_deleted' AND target_id = ?",
+            (issue_id,),
+        ).fetchone()
+        conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1
+
+
 def test_web_noop_status_records_nothing(tmp_path):
     # WHY: the trail reflects real change, not form submissions. Re-submitting the
     # current status from the browser must not write a spurious event — the same

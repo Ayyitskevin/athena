@@ -388,6 +388,34 @@ def test_relabel_same_label_records_nothing(tmp_path):
         assert [r["verb"] for r in feed] == ["labeled", "created"]
 
 
+def test_comment_add_and_delete_record_verbs(tmp_path):
+    # WHY: commenting is a tracked interaction, and deleting a comment is the
+    # audit-worthy half (who took content down). Both record against the issue so
+    # they land on its History; deletion still leaves the "commented" fact behind.
+    db_file = tmp_path / "comment.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client)
+        c = client.post(
+            f"/issues/{issue_id}/comments",
+            json={"body": "looks good"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert c.status_code == 201
+        client.delete(
+            f"/issues/{issue_id}/comments/{c.json()['id']}",
+            headers={"X-Athena-Actor": "1"},
+        )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        # newest first: comment_deleted, commented, created
+        assert [r["verb"] for r in feed] == ["comment_deleted", "commented", "created"]
+        assert all(r["actor_id"] == 1 for r in feed)
+
+
 def test_activity_attributes_close_to_the_actor_not_the_creator(tmp_path):
     # WHY: this is the whole promise — "Grok closed AEGIS-88" as a recorded fact,
     # not a guess. The creator (Kevin) opens and assigns the issue to Grok; when

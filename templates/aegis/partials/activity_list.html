@@ -25,6 +25,10 @@
             labeled <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "unlabeled" %}
             removed label <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "commented" %}
+            commented
+        {% elif e.verb == "comment_deleted" %}
+            deleted a comment
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}

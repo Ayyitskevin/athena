@@ -751,6 +751,7 @@ def add_issue_comment(
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
 
     comments.add_comment(conn, issue_id=issue_id, author_id=user["id"], body=body)
+    issue_activity.record_commented(conn, actor_id=user["id"], issue_id=issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -811,6 +812,7 @@ def delete_issue_comment(
     if err is not None:
         return err
     comments.delete_comment(conn, comment_id)
+    issue_activity.record_comment_deleted(conn, actor_id=user["id"], issue_id=issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
