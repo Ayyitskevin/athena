@@ -48,6 +48,42 @@ def list_spaces(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def update_space(
+    conn: sqlite3.Connection,
+    space_id: int,
+    *,
+    key: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+) -> dict | None:
+    """Partial edit: only the fields passed as non-None are written, the rest are
+    left as-is (mirrors aegis.update_project). Returns the updated space, or None if
+    no space has that id. Raises sqlite3.IntegrityError if the new key collides with
+    another space (key is UNIQUE, case-insensitive) — the boundary checks for a
+    duplicate first and returns a clean 409. The key is normalized to UPPERCASE here
+    too, so "eng" and "ENG" stay one identity exactly as create does."""
+    sets, params = [], []
+    if key is not None:
+        sets.append("key = ?")
+        params.append(key.upper())
+    if name is not None:
+        sets.append("name = ?")
+        params.append(name)
+    if description is not None:
+        sets.append("description = ?")
+        params.append(description)
+    if not sets:
+        return get_space(conn, space_id)
+    params.append(space_id)
+    cur = conn.execute(
+        f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_space(conn, space_id)
+
+
 def delete_space(conn: sqlite3.Connection, space_id: int) -> bool:
     """Delete a space. Returns True if a space was deleted, False if no space had
     that id (so the boundary can 404).

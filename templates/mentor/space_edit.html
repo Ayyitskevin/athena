@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ space.name }} — Mentor{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/mentor/spaces/{{ space.id }}" class="muted">← Back to space</a>
+        <h1>Edit space</h1>
+    </div>
+</div>
+
+<div class="form-container">
+    <form method="post" action="/mentor/spaces/{{ space.id }}/edit" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="key">Key</label>
+            <input type="text" id="key" name="key" required value="{{ space.key }}">
+        </div>
+        <div class="form-group">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" required value="{{ space.name }}">
+        </div>
+        <div class="form-group">
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="4">{{ space.description }}</textarea>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Save Changes</button>
+            <a href="/mentor/spaces/{{ space.id }}" class="button secondary">Cancel</a>
+        </div>
+    </form>
+    <p class="note-small">The key is uppercased; it must stay unique across spaces.</p>
+</div>
+{% endblock %}
