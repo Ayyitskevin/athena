@@ -12,9 +12,58 @@
 
 <p class="muted">The audit trail across every issue — who did what, newest first.</p>
 
+{# Filter form: a plain GET so the active filters live in the URL (shareable,
+   bookmarkable). Submitting drops ?before, which restarts paging from the top —
+   the right behaviour when the filter set changes. #}
+<form method="get" action="/aegis/activity" class="activity-filters">
+    <label>
+        Actor
+        <select name="actor">
+            <option value="">Anyone</option>
+            {% for u in all_users %}
+            <option value="{{ u.id }}" {% if f_actor == u.id %}selected{% endif %}>{{ u.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Event
+        <select name="verb">
+            <option value="">Any event</option>
+            {% for v in all_verbs %}
+            <option value="{{ v }}" {% if f_verb == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>
+        Kind
+        <select name="kind">
+            <option value="">Any kind</option>
+            {% for k in all_kinds %}
+            <option value="{{ k }}" {% if f_kind == k %}selected{% endif %}>{{ k }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Filter</button>
+    {% if f_actor or f_verb or f_kind %}
+    <a href="/aegis/activity" class="muted">Clear</a>
+    {% endif %}
+</form>
+
 {% with events=events, show_target=True %}
 {% include "aegis/partials/activity_list.html" %}
 {% endwith %}
+
+{% if next_before %}
+{# Carry the active filters into the Older link so paging stays within the
+   current filter set; before= is the cursor (this page's oldest id). #}
+{% set q = {"before": next_before} %}
+{% if f_actor %}{% set _ = q.update({"actor": f_actor}) %}{% endif %}
+{% if f_verb %}{% set _ = q.update({"verb": f_verb}) %}{% endif %}
+{% if f_kind %}{% set _ = q.update({"kind": f_kind}) %}{% endif %}
+<p class="activity-pager">
+    <a href="/aegis/activity?{{ q | urlencode }}">Older →</a>
+</p>
+{% endif %}
 
 <p class="note">Activity from the API.</p>
 {% endblock %}

@@ -49,17 +49,55 @@ def list_activity(
     *,
     target_kind: str | None = None,
     target_id: int | None = None,
+    actor_id: int | None = None,
+    verb: str | None = None,
+    before_id: int | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """Activity newest first. With target_kind+target_id, just that target's
-    history (one issue's timeline); without, the global feed across everything."""
-    where = ""
+    """Activity newest first. Every filter is optional and independent: pass
+    target_kind+target_id for one target's timeline, target_kind alone to scope
+    the global feed to a kind, actor_id/verb to narrow who/what. before_id is the
+    paging cursor — only rows older than it (a.id < before_id), so the caller can
+    walk back through history a page at a time on a stable, append-only ordering."""
+    clauses: list[str] = []
     params: list = []
-    if target_kind is not None and target_id is not None:
-        where = " WHERE a.target_kind = ? AND a.target_id = ?"
-        params += [target_kind, target_id]
+    if target_kind is not None:
+        clauses.append("a.target_kind = ?")
+        params.append(target_kind)
+    if target_id is not None:
+        clauses.append("a.target_id = ?")
+        params.append(target_id)
+    if actor_id is not None:
+        clauses.append("a.actor_id = ?")
+        params.append(actor_id)
+    if verb is not None:
+        clauses.append("a.verb = ?")
+        params.append(verb)
+    if before_id is not None:
+        clauses.append("a.id < ?")
+        params.append(before_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
     rows = conn.execute(
         f"{_SELECT}{where} ORDER BY a.id DESC LIMIT ?", params
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
+    """The verbs that actually occur in the trail, alphabetical. Powers the feed's
+    verb filter from real data — never a hardcoded list that could drift from what
+    the recorders emit."""
+    rows = conn.execute(
+        "SELECT DISTINCT verb FROM activity ORDER BY verb"
+    ).fetchall()
+    return [row["verb"] for row in rows]
+
+
+def distinct_target_kinds(conn: sqlite3.Connection) -> list[str]:
+    """The target kinds that actually occur in the trail, alphabetical. Same
+    honesty rule as distinct_verbs — only kinds something has recorded against."""
+    rows = conn.execute(
+        "SELECT DISTINCT target_kind FROM activity ORDER BY target_kind"
+    ).fetchall()
+    return [row["target_kind"] for row in rows]
