@@ -673,3 +673,108 @@ def create_project(
         conn, name=name, description=description.strip(), created_by=user["id"]
     )
     return RedirectResponse("/aegis/projects", status_code=303)
+
+
+def _authorize_project_write(conn, project_id: int, user: dict):
+    """Resolve a project the logged-in user may edit/delete, or an error response.
+    Returns (project, None) on success, or (None, HTMLResponse) with the right
+    status: 404 if no such project, 403 if the user isn't its creator. Edit/delete
+    is creator-only, the same rule the REST API enforces. The 401 (logged-out)
+    check stays at each call site, before this."""
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        return None, HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    if project["created_by"] != user["id"]:
+        return None, HTMLResponse(
+            '<div class="blocked">Only the project creator may edit it.</div>',
+            status_code=403,
+        )
+    return project, None
+
+
+@router.get("/aegis/projects/{project_id}/edit", response_class=HTMLResponse)
+def project_edit_form(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The prefilled edit form for a project. Creator-only, like the save below:
+    a logged-out user gets 401, a non-creator 403, a missing project 404. The
+    Delete control lives here too, disabled with an explanation while the project
+    still owns issues (the API would refuse that delete with a 409)."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit projects.</div>',
+            status_code=401,
+        )
+    project, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/project_edit.html",
+        context={
+            "project": project,
+            "issue_count": issues.count_issues_in_project(conn, project_id),
+        },
+    )
+
+
+@router.post("/aegis/projects/{project_id}/edit", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+def project_edit_save(
+    request: Request,
+    project_id: int,
+    name: str = Form(""),
+    description: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Save an edit to a project's name/description. Creator-only (401/403/404),
+    empty name → 400, a name that collides with ANOTHER project → 409; otherwise
+    303 back to the projects list."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit projects.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    name = name.strip()
+    if not name:
+        return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+    clash = projects.get_project_by_name(conn, name)
+    if clash is not None and clash["id"] != project_id:
+        return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+    projects.update_project(
+        conn, project_id, name=name, description=description.strip()
+    )
+    return RedirectResponse("/aegis/projects", status_code=303)
+
+
+@router.post("/aegis/projects/{project_id}/delete", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+def project_delete(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Delete a project from the edit page. Creator-only (401/403/404). Refused
+    with 409 if the project still owns issues — we don't cascade or detach, so the
+    issues must be reassigned/deleted first (same rule as the REST API)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to delete projects.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    if issues.count_issues_in_project(conn, project_id) > 0:
+        return HTMLResponse(
+            '<div class="error">Reassign or delete this project\'s issues first.</div>',
+            status_code=409,
+        )
+    projects.delete_project(conn, project_id)
+    return RedirectResponse("/aegis/projects", status_code=303)

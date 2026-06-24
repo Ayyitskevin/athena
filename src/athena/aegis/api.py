@@ -64,6 +64,13 @@ class ProjectCreate(BaseModel):
     description: str = ""
 
 
+class ProjectEdit(BaseModel):
+    # A partial edit of the project itself (not an issue's link to it — that is
+    # ProjectUpdate above). Send any subset; unset fields are left unchanged.
+    name: str | None = None
+    description: str | None = None
+
+
 class ProjectOut(BaseModel):
     id: int
     name: str
@@ -401,6 +408,72 @@ def show_project(
     if project is None:
         raise HTTPException(status_code=404, detail="no such project")
     return project
+
+
+def _project_for_write(
+    conn: sqlite3.Connection, project_id: int, actor: dict
+) -> dict:
+    """Fetch a project the actor may MODIFY, or raise: 404 if no such project, 403
+    if the actor isn't its creator. Edit/delete is creator-only — projects have no
+    assignee, so unlike issues there is no second eligible writer. Reading the
+    project (and creating one) stay open; only changing or removing an existing
+    one is gated here."""
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    if project["created_by"] != actor["id"]:
+        raise HTTPException(
+            status_code=403, detail="only the project creator may modify it"
+        )
+    return project
+
+
+@projects_router.patch("/{project_id}", response_model=ProjectOut)
+def update_project(
+    project_id: int,
+    payload: ProjectEdit,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Creator only (404 if missing, 403 if not permitted).
+    _project_for_write(conn, project_id, actor)
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    name = payload.name.strip() if payload.name is not None else None
+    if name is not None:
+        if not name:
+            raise HTTPException(status_code=422, detail="project name cannot be empty")
+        # A rename onto another project's name is the same collision create guards
+        # against (409). Renaming to your own current name is fine (NOCASE match
+        # on yourself), so only block when the match is a DIFFERENT project.
+        clash = projects.get_project_by_name(conn, name)
+        if clash is not None and clash["id"] != project_id:
+            raise HTTPException(status_code=409, detail="project already exists")
+    updated = projects.update_project(
+        conn, project_id, name=name, description=payload.description
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    return updated
+
+
+@projects_router.delete("/{project_id}", status_code=204)
+def delete_project(
+    project_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    # Creator only (404 if missing, 403 if not permitted).
+    _project_for_write(conn, project_id, actor)
+    # Refuse rather than cascade/detach: a project that still owns issues must be
+    # emptied first (reassign or delete those issues). 409, mirroring the Mentor
+    # page-delete-on-children rule — a delete must not silently move data.
+    if issues.count_issues_in_project(conn, project_id) > 0:
+        raise HTTPException(
+            status_code=409, detail="reassign or delete its issues first"
+        )
+    projects.delete_project(conn, project_id)
 
 
 # --- Labels: a top-level shared vocabulary --------------------------------

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Edit {{ project.name }} — Projects — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Back to projects</a>
+        <h1>Edit project</h1>
+    </div>
+</div>
+
+<div class="form-container">
+    <form method="post" action="/aegis/projects/{{ project.id }}/edit" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="name">Name</label>
+            <input type="text" id="name" name="name" required value="{{ project.name }}">
+        </div>
+
+        <div class="form-group">
+            <label for="description">Description</label>
+            <textarea id="description" name="description" rows="3"
+                      placeholder="What is this project for?">{{ project.description }}</textarea>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="button">Save Changes</button>
+            <a href="/aegis/projects" class="button secondary">Cancel</a>
+        </div>
+    </form>
+</div>
+
+<div class="form-container danger-zone">
+    <h3>Delete project</h3>
+    {% if issue_count > 0 %}
+    <p class="note-small">
+        This project has {{ issue_count }} issue{{ "s" if issue_count != 1 }}.
+        Reassign or delete them before you can delete the project.
+    </p>
+    <button type="button" class="button danger" disabled>Delete Project</button>
+    {% else %}
+    <p class="note-small">This permanently removes the project. This cannot be undone.</p>
+    <form method="post" action="/aegis/projects/{{ project.id }}/delete"
+          onsubmit="return confirm('Delete project “{{ project.name }}”? This cannot be undone.');">
+        {% include "partials/csrf.html" %}
+        <button type="submit" class="button danger">Delete Project</button>
+    </form>
+    {% endif %}
+</div>
+{% endblock %}
