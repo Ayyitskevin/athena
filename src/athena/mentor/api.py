@@ -313,3 +313,21 @@ def show_version(
     if snapshot is None:
         raise HTTPException(status_code=404, detail="no such version")
     return snapshot
+
+
+@pages_router.post("/{page_id}/versions/{version}/restore", response_model=PageOut)
+def restore_version(
+    page_id: int,
+    version: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Restoring is an EDIT, not a destruction (the current content is preserved as
+    # a new version), so it's open to any authenticated actor like edit/move — not
+    # creator-locked the way delete is. 404 if the page or that version is missing;
+    # the snapshot's author stamps nothing, the restoring actor stamps the new live
+    # revision. Returns the updated page.
+    restored = pages.restore_version(conn, page_id, version, editor_id=actor["id"])
+    if restored is None:
+        raise HTTPException(status_code=404, detail="no such page or version")
+    return restored

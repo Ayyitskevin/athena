@@ -250,3 +250,36 @@ def get_page_version(
         (page_id, version),
     ).fetchone()
     return dict(row) if row else None
+
+
+def restore_version(
+    conn: sqlite3.Connection, page_id: int, version: int, *, editor_id: int
+) -> dict | None:
+    """Restore a page's content to a prior revision. Returns the updated page, or
+    None if no such page/version exists (so the boundary can 404).
+
+    NON-DESTRUCTIVE: this is an ordinary edit, not a rewind. We read the snapshot
+    and hand its title+body to update_page, which FIRST snapshots the page's current
+    content into history, THEN overwrites the live row. So restoring v1 onto a page
+    last saved as v4 turns the v4 content into the newest version and makes v1's
+    content live — nothing is lost and you can always restore forward again. Reusing
+    update_page also means restore inherits its history + link + search re-indexing
+    for free, so a restore can never leave a derived index out of sync.
+
+    Restoring content identical to the live row is a no-op: we guard it here because
+    update_page only skips when NO fields are passed (and restore always passes
+    both), so without this check an identical restore would file a redundant
+    duplicate version. We return the page untouched instead."""
+    snapshot = get_page_version(conn, page_id, version)
+    if snapshot is None:
+        return None
+    current = get_page(conn, page_id)
+    if snapshot["title"] == current["title"] and snapshot["body"] == current["body"]:
+        return current
+    return update_page(
+        conn,
+        page_id,
+        editor_id=editor_id,
+        title=snapshot["title"],
+        body=snapshot["body"],
+    )

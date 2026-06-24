@@ -51,7 +51,7 @@
     {% if versions %}
     <table class="issues-table">
         <thead>
-            <tr><th>Version</th><th>Title</th><th>Edited</th></tr>
+            <tr><th>Version</th><th>Title</th><th>Edited</th>{% if request.state.user %}<th></th>{% endif %}</tr>
         </thead>
         <tbody>
         {% for v in versions %}
@@ -59,6 +59,15 @@
                 <td class="muted">v{{ v.version }}</td>
                 <td>{{ v.title }}</td>
                 <td class="muted">{{ v.created_at }}</td>
+                {% if request.state.user %}
+                <td>
+                    <form method="post" action="/mentor/pages/{{ page.id }}/versions/{{ v.version }}/restore"
+                          onsubmit="return confirm('Restore version {{ v.version }}? The current content is kept in history.');">
+                        {% include "partials/csrf.html" %}
+                        <button type="submit" class="button secondary small">Restore</button>
+                    </form>
+                </td>
+                {% endif %}
             </tr>
         {% endfor %}
         </tbody>

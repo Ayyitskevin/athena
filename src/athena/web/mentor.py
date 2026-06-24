@@ -373,3 +373,30 @@ def delete_page(
     space_id = page["space_id"]
     pages.delete_page(conn, page_id)
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+@router.post(
+    "/mentor/pages/{page_id}/versions/{version}/restore",
+    dependencies=[Depends(verify_csrf)],
+)
+def restore_version(
+    request: Request,
+    page_id: int,
+    version: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Restore a page to one of its prior revisions from the history table. Gated on
+    the session user, like edit/move (restore IS an edit — the current content is
+    kept as a new version, so it's reversible and needs no creator lock). 404 if the
+    page or that version is missing; 303 back to the page, which now shows the
+    restored content with the previously-live revision added to its history."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("restore pages")
+
+    restored = pages.restore_version(conn, page_id, version, editor_id=user["id"])
+    if restored is None:
+        return HTMLResponse(
+            '<div class="error">No such page or version.</div>', status_code=404
+        )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
