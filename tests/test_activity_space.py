@@ -206,3 +206,23 @@ def test_global_feed_links_space_event_to_its_space(tmp_path):
     assert f'href="/mentor/spaces/{space["id"]}"' in feed.text
     # The kind filter must offer "space" from real recorded data.
     assert ">space</option>" in feed.text
+
+
+def test_feed_does_not_link_a_deleted_space(tmp_path):
+    # WHY: a space_deleted row names a container that no longer exists — linking it
+    # would dead-end at a 404. The create row still links (the space existed then),
+    # so after a delete exactly ONE link to this space survives in the feed, not two.
+    db_file = tmp_path / "feed_deleted_space.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        space = _make_space(client, name="Doomed")
+        r = client.delete(f"/spaces/{space['id']}", headers={"X-Athena-Actor": "1"})
+        assert r.status_code == 204
+        feed = client.get("/aegis/activity")
+    assert feed.status_code == 200
+    # Both events are on the trail...
+    assert "created space" in feed.text
+    assert "deleted space" in feed.text
+    # ...but only the create event links; the delete event must be unlinked.
+    assert feed.text.count(f'href="/mentor/spaces/{space["id"]}"') == 1

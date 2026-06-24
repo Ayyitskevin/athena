@@ -49,7 +49,10 @@
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}
         {% if show_target %}
-            {% if e.target_kind == "issue" %}
+            {% if e.verb in ["page_deleted", "space_deleted"] %}
+            {# The target is gone — linking would 404. Name it, don't link it. #}
+            <span class="muted">{{ e.target_kind }} #{{ e.target_id }}</span>
+            {% elif e.target_kind == "issue" %}
             <a href="/aegis/issues/{{ e.target_id }}" class="xref">issue #{{ e.target_id }}</a>
             {% elif e.target_kind == "page" %}
             <a href="/mentor/pages/{{ e.target_id }}" class="xref">page #{{ e.target_id }}</a>
