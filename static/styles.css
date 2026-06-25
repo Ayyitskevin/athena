@@ -404,6 +404,24 @@ footer {
     gap: 0.4rem;
 }
 
+.inline-form input,
+.inline-form select {
+    min-width: 7rem;
+    padding: 0.3rem 0.45rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+}
+
+.password-reset-form {
+    margin-top: 0.35rem;
+}
+
+.password-state {
+    font-size: 0.78rem;
+    color: #666;
+}
+
 .token-secret {
     margin: 0;
     padding: 0.75rem;

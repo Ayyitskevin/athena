@@ -68,6 +68,18 @@ def _token_row(db_path, token_id=None):
         conn.close()
 
 
+def _has_password(db_path, user_id):
+    conn = db.connect(db_path)
+    try:
+        return bool(
+            conn.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+            ).fetchone()["password_hash"]
+        )
+    finally:
+        conn.close()
+
+
 def test_token_settings_mints_scoped_token_and_hides_secret_on_reload(tmp_path):
     db_path = tmp_path / "token_settings.db"
     app = create_app(db_path)
@@ -153,6 +165,85 @@ def test_viewer_can_view_tokens_but_cannot_manage_them(tmp_path):
         blocked_revoke = client.post(f"/settings/tokens/{created['id']}/revoke")
         assert blocked_revoke.status_code == 403
         assert _token_row(db_path, created["id"])["revoked_at"] is None
+
+
+def test_admin_users_page_sets_and_resets_passwords(tmp_path):
+    db_path = tmp_path / "admin_passwords.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        target = _create_user(
+            client,
+            "api-only@e.com",
+            "API Only",
+            role=users.MEMBER_ROLE,
+            password=None,
+        )
+        assert not _has_password(db_path, target["id"])
+
+        _login(client)
+        page = client.get("/admin/users")
+        assert page.status_code == 200
+        assert "not set" in page.text
+        assert f"/admin/users/{target['id']}/password" in page.text
+
+        set_password = client.post(
+            f"/admin/users/{target['id']}/password",
+            data={"password": "first-pass"},
+            follow_redirects=False,
+        )
+        assert set_password.status_code == 303, set_password.text
+        assert _has_password(db_path, target["id"])
+
+        _login(client, "api-only@e.com", "first-pass")
+
+        _login(client)
+        reset = client.post(
+            f"/admin/users/{target['id']}/password",
+            data={"password": "second-pass"},
+            follow_redirects=False,
+        )
+        assert reset.status_code == 303, reset.text
+
+        old_password = client.post(
+            "/login",
+            data={"email": "api-only@e.com", "password": "first-pass"},
+            follow_redirects=False,
+        )
+        assert old_password.status_code == 401
+        _login(client, "api-only@e.com", "second-pass")
+
+
+def test_admin_password_reset_rejects_non_admin_missing_user_and_blank_password(
+    tmp_path,
+):
+    db_path = tmp_path / "admin_password_guard.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        _create_user(client, "member@e.com", "Member", role=users.MEMBER_ROLE)
+        target = _create_user(
+            client, "api-only@e.com", "API Only", role=users.MEMBER_ROLE, password=None
+        )
+
+        _login(client, "member@e.com")
+        denied = client.post(
+            f"/admin/users/{target['id']}/password", data={"password": "blocked"}
+        )
+        assert denied.status_code == 403
+        assert not _has_password(db_path, target["id"])
+
+        _login(client)
+        blank = client.post(
+            f"/admin/users/{target['id']}/password", data={"password": "   "}
+        )
+        assert blank.status_code == 400
+        assert "Password is required" in blank.text
+        assert not _has_password(db_path, target["id"])
+
+        missing = client.post("/admin/users/999/password", data={"password": "x"})
+        assert missing.status_code == 404
+        assert "No such user" in missing.text
 
 
 def test_admin_users_page_creates_users_and_changes_roles(tmp_path):

@@ -54,13 +54,22 @@ def create_user(
     return get_user(conn, cur.lastrowid)
 
 
-def set_password(conn: sqlite3.Connection, user_id: int, password: str) -> None:
-    """Set or replace a user's login password."""
-    conn.execute(
+def _with_password_state(user: dict) -> dict:
+    user["has_password"] = bool(user.get("password_hash"))
+    user.pop("password_hash", None)
+    return user
+
+
+def set_password(conn: sqlite3.Connection, user_id: int, password: str) -> dict | None:
+    """Set or replace a user's login password and return the updated row."""
+    cur = conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (passwords.hash_password(password), user_id),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_user(conn, user_id)
 
 
 def verify_credentials(
@@ -102,7 +111,7 @@ def count_admins(conn: sqlite3.Connection) -> int:
 
 def list_users(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-    return [dict(row) for row in rows]
+    return [_with_password_state(dict(row)) for row in rows]
 
 
 def count_users(conn: sqlite3.Connection) -> int:

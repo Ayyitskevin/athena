@@ -19,6 +19,7 @@
             <th>Name</th>
             <th>Email</th>
             <th>Role</th>
+            <th>Password</th>
             <th>Created</th>
             <th></th>
         </tr>
@@ -37,6 +38,14 @@
                         {% endfor %}
                     </select>
                     <button type="submit" class="button secondary small">Save</button>
+                </form>
+            </td>
+            <td>
+                <div class="password-state">{{ "set" if u.has_password else "not set" }}</div>
+                <form method="post" action="/admin/users/{{ u.id }}/password" class="inline-form password-reset-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="password" name="password" required autocomplete="new-password" placeholder='{{ "Reset" if u.has_password else "Set" }} password'>
+                    <button type="submit" class="button secondary small">Set</button>
                 </form>
             </td>
             <td class="muted">{{ u.created_at }}</td>
