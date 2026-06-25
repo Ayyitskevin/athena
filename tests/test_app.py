@@ -19,6 +19,58 @@ def test_healthz_returns_ok(tmp_path):
     assert response.json() == {"status": "ok"}
 
 
+def test_readyz_checks_database(tmp_path):
+    # WHY: /healthz is intentionally cheap. /readyz is the deploy-facing check
+    # that proves SQLite is reachable and migrations have run.
+    db_file = tmp_path / "ready.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "database": "ok"}
+
+
+def test_readyz_fails_when_schema_is_missing(tmp_path):
+    db_file = tmp_path / "ready_fail.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        conn = sqlite3.connect(db_file)
+        conn.execute("DROP TABLE schema_migrations")
+        conn.commit()
+        conn.close()
+
+        response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json() == {"status": "error", "database": "unavailable"}
+
+
+def test_security_headers_are_attached(tmp_path):
+    app = create_app(tmp_path / "headers.db")
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["referrer-policy"] == "same-origin"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    assert response.headers["permissions-policy"] == (
+        "camera=(), geolocation=(), microphone=()"
+    )
+
+
+def test_request_body_limit_rejects_large_payload(tmp_path):
+    # WHY: Athena is local-first, but a single oversized POST should still be
+    # rejected before route parsing or database work.
+    app = create_app(tmp_path / "body_limit.db", max_request_body_bytes=64)
+    with TestClient(app) as client:
+        response = client.post(
+            "/users",
+            json={"email": "kevin@example.com", "name": "K" * 100, "password": "pw"},
+        )
+    assert response.status_code == 413
+    assert response.json() == {"detail": "request body too large"}
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
 def test_startup_migrates_the_database(tmp_path):
     db_file = tmp_path / "startup.db"
     app = create_app(db_file)

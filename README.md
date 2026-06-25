@@ -36,6 +36,12 @@ pytest -q
 uvicorn athena.main:app --reload
 ```
 
+## Operations
+
+- `/healthz` is a cheap liveness check.
+- `/readyz` checks that SQLite is reachable and migrated.
+- `ATHENA_MAX_REQUEST_BODY_BYTES` caps request bodies; it defaults to 1 MiB.
+
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the full design and phased roadmap.
