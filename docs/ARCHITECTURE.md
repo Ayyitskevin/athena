@@ -73,6 +73,15 @@ docs/        this file and design notes
 ## Security
 
 - Secrets in a `.env` file, never committed (see `.gitignore`).
-- Scoped per-agent API tokens; every write records *who* did it.
+- Browser sessions use HttpOnly cookies and CSRF tokens for state-changing forms.
+- Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
+  user is bootstrapped as admin, and the last admin cannot be demoted.
+- Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`);
+  every write records *who* did it. Scopes narrow bearer tokens but never expand
+  a user's role.
+- The `X-Athena-Actor` fallback is disabled by default and should be enabled only
+  on trusted local/tailnet deployments, usually just long enough for headless
+  token bootstrap.
 - When/if hosted: dedicated system user + systemd sandboxing, tailnet-only by
-  default. Public exposure would be a deliberate, separate decision.
+  default. Public exposure would be a deliberate, separate decision. See
+  [`OPERATIONS.md`](OPERATIONS.md) for the deployment checklist.
