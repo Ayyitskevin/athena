@@ -6,6 +6,7 @@ authentication is the gate (the same bar as listing users or searching). Writes
 are never made here — activity rows are recorded as a side effect of the actions
 that cause them, at those endpoints.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -39,6 +40,9 @@ def feed(
     target_id: int | None = Query(None),
     actor_id: int | None = Query(None, description="filter to one actor's actions"),
     verb: str | None = Query(None, description="filter to one event type"),
+    q: str | None = Query(
+        None, description="search actor, verb, target, detail, or timestamp text"
+    ),
     before_id: int | None = Query(
         None, description="paging cursor: only events older than this id"
     ),
@@ -60,6 +64,7 @@ def feed(
         target_id=target_id,
         actor_id=actor_id,
         verb=verb,
+        search=q,
         before_id=before_id,
         limit=limit,
     )

@@ -285,16 +285,22 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
     before_id = _int_or_none(request.query_params.get("before"))
+    target_id = _int_or_none(request.query_params.get("target"))
     verb = (request.query_params.get("verb") or "").strip() or None
     kind = (request.query_params.get("kind") or "").strip() or None
+    q = (request.query_params.get("q") or "").strip()
+    if target_id is not None and kind is None:
+        return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
 
     # Fetch one extra row to know whether an older page exists without a count
     # query; if we got it, there's more — trim it off and remember the cursor.
     rows = activity.list_activity(
         conn,
         target_kind=kind,
+        target_id=target_id,
         actor_id=actor_id,
         verb=verb,
+        search=q,
         before_id=before_id,
         limit=_FEED_PAGE + 1,
     )
@@ -313,6 +319,8 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "f_actor": actor_id,
             "f_verb": verb,
             "f_kind": kind,
+            "f_target": target_id,
+            "f_q": q,
             "next_before": next_before,
         },
     )
