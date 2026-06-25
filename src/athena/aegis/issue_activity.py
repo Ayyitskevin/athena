@@ -42,7 +42,7 @@ def record_edited(
     resubmit of identical content (both surfaces send every field) isn't an audit
     fact. Detail carries the new title so the feed can name what was edited, since
     the global feed otherwise links an issue only by number. Status and priority
-    are their own concerns (changed_status; priority is not yet recorded), so this
+    are their own concerns (changed_status and changed_priority), so this
     deliberately ignores them."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
@@ -72,6 +72,27 @@ def record_status_change(
         conn,
         actor_id=actor_id,
         verb="changed_status",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=f"{before} → {after}",
+    )
+
+
+def record_priority_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: str,
+    after: str,
+) -> None:
+    """Record a priority transition as "before -> after". No-op if unchanged."""
+    if before == after:
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="changed_priority",
         target_kind="issue",
         target_id=issue_id,
         detail=f"{before} → {after}",

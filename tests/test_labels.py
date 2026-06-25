@@ -193,6 +193,70 @@ def test_create_empty_label_name_is_422(tmp_path):
         assert r.status_code == 422
 
 
+def test_create_label_rejects_css_color_injection(tmp_path):
+    # WHY: label colors are rendered into inline styles. Only a strict hex color
+    # may cross the API boundary; arbitrary CSS text must never be persisted.
+    db_file = tmp_path / "label_color.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_three_users(db_file)
+        r = client.post(
+            "/labels",
+            json={"name": "p0", "color": "red; position: fixed; inset: 0;"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 422
+        assert client.get("/labels").json() == []
+
+
+def test_label_color_migration_sanitizes_existing_rows(tmp_path):
+    # WHY: older installs could already have unsafe color text persisted before
+    # validation existed. The forward migration must make those rows safe too.
+    db_file = tmp_path / "label_color_migration.db"
+    conn = db.connect(db_file)
+    conn.execute(
+        "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
+    conn.execute(
+        "CREATE TABLE labels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, color TEXT NOT NULL DEFAULT '#6b7280')"
+    )
+    conn.execute(
+        "INSERT INTO labels (name, color) VALUES (?, ?)",
+        ("bad", "red; position: fixed; inset: 0;"),
+    )
+    conn.execute(
+        "INSERT INTO labels (name, color) VALUES (?, ?)",
+        ("good", "#ABCDEF"),
+    )
+    for path in db.MIGRATIONS_DIR.glob("*.sql"):
+        if path.name < "0018_label_color_safety.sql":
+            conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (path.name,))
+    conn.commit()
+
+    assert db.migrate(conn) == ["0018_label_color_safety.sql"]
+    rows = {
+        row["name"]: row["color"]
+        for row in conn.execute("SELECT name, color FROM labels").fetchall()
+    }
+    conn.close()
+
+    assert rows == {"bad": "#6b7280", "good": "#abcdef"}
+
+
+def test_label_color_is_normalized_to_lowercase_hex(tmp_path):
+    db_file = tmp_path / "label_color_lower.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_three_users(db_file)
+        r = client.post(
+            "/labels",
+            json={"name": "frontend", "color": "#ABCDEF"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 201
+        assert r.json()["color"] == "#abcdef"
+
+
 def test_create_label_requires_a_known_actor(tmp_path):
     # WHY: label creation is open to any *signed-in* actor, but not anonymous —
     # an unknown actor is 401, same as elsewhere.

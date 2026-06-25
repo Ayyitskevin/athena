@@ -331,6 +331,25 @@ def test_web_noop_status_records_nothing(tmp_path):
     assert "changed status" not in page.text
 
 
+def test_web_priority_change_records(tmp_path):
+    # WHY: the browser priority form bypasses the REST PATCH endpoint, so it must
+    # explicitly leave the same activity trail as API clients.
+    db_file = tmp_path / "web_priority.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        r = client.post(
+            f"/aegis/issues/{issue_id}/priority",
+            data={"priority": "urgent"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        page = client.get(f"/aegis/issues/{issue_id}")
+    assert "changed priority" in page.text
+    assert "medium → urgent" in page.text
+
+
 def test_web_edit_records_attributed_to_session_user(tmp_path):
     # WHY: editing an issue's title/body from the detail-page form calls the data
     # layer directly, bypassing the REST endpoint that records. The trail must show

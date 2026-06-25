@@ -17,7 +17,8 @@ def test_home_returns_200_and_contains_athena(tmp_path):
     assert "Athena" in response.text
     # Basic sanity that it's HTML and our layout is there
     assert "<!DOCTYPE html>" in response.text or "<html" in response.text.lower()
-    assert "htmx" in response.text.lower()  # CDN script present in base
+    assert '<script src="/static/htmx.min.js"></script>' in response.text
+    assert "unpkg.com" not in response.text
 
 
 def test_aegis_dashboard_renders(tmp_path):
@@ -60,6 +61,42 @@ def test_issues_list_renders_real_data(tmp_path):
     assert "Issues" in response.text
     assert "Real issue from API" in response.text
     assert 'hx-get="/aegis/issues?page=1' in response.text
+
+
+def test_issue_table_hx_urls_are_encoded(tmp_path):
+    # WHY: issue-list sort and pagination links carry user-controlled filters.
+    # Server-built URLs must encode characters like spaces and ampersands instead
+    # of letting them split or mutate the query string.
+    db_file = tmp_path / "web_encoded_urls.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue = client.post(
+            "/issues",
+            json={"title": "alpha & beta"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        label = client.post(
+            "/labels",
+            json={"name": "bug & ux"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        client.post(
+            f"/issues/{issue['id']}/labels",
+            json={"label_id": label["id"]},
+            headers={"X-Athena-Actor": "1"},
+        )
+
+        response = client.get(
+            "/aegis/issues?label=bug+%26+ux&search=alpha+%26+beta",
+            headers={"HX-Request": "true"},
+        )
+
+    assert response.status_code == 200
+    assert "label=bug+%26+ux" in response.text
+    assert "search=alpha+%26+beta" in response.text
+    assert "label=bug & ux" not in response.text
+    assert "search=alpha & beta" not in response.text
 
 
 def test_issue_detail_renders_real_data(tmp_path):

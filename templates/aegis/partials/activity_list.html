@@ -15,6 +15,8 @@
             edited issue <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "changed_status" %}
             changed status <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb == "changed_priority" %}
+            changed priority <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "assigned" %}
             assigned to <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "unassigned" %}

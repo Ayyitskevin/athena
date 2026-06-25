@@ -241,6 +241,47 @@ def test_status_change_records_old_and_new(tmp_path):
         assert feed[0]["detail"] == "open → done"
 
 
+def test_priority_change_records_old_and_new(tmp_path):
+    # WHY: priority is an audit-worthy planning change just like status. The
+    # trail must preserve the transition instead of silently changing urgency.
+    db_file = tmp_path / "priority.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client)
+        r = client.patch(
+            f"/issues/{issue_id}",
+            json={"priority": "urgent"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        assert feed[0]["verb"] == "changed_priority"
+        assert feed[0]["detail"] == "medium → urgent"
+
+
+def test_noop_priority_reset_records_no_priority_change(tmp_path):
+    # WHY: same as status: re-submitting the current priority is not a real event.
+    db_file = tmp_path / "priority_noop.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client)
+        client.patch(
+            f"/issues/{issue_id}",
+            json={"priority": "medium"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        assert [r["verb"] for r in feed] == ["created"]
+
+
 def test_noop_status_reset_records_no_status_change(tmp_path):
     # WHY: the trail must reflect real change, not API traffic. A title edit is its
     # own fact (issue_edited), never a spurious status transition; re-setting the

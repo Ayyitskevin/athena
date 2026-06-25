@@ -161,6 +161,25 @@ def test_web_comment_is_gated_and_renders(tmp_path):
         assert "Kevin" in page.text
 
 
+def test_web_comment_escapes_untrusted_html(tmp_path):
+    # WHY: comment bodies are untrusted user text. The detail thread may preserve
+    # line breaks, but it must never mark raw HTML safe.
+    db_file = tmp_path / "web_xss.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        client.post(
+            f"/aegis/issues/{issue_id}/comments",
+            data={"body": "<script>alert(1)</script>\nsecond"},
+            follow_redirects=False,
+        )
+        page = client.get(f"/aegis/issues/{issue_id}")
+
+    assert "<script>alert(1)</script>" not in page.text
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;<br>second" in page.text
+
+
 def test_web_empty_comment_is_rejected(tmp_path):
     db_file = tmp_path / "web_empty.db"
     app = create_app(db_file)
