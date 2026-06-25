@@ -22,6 +22,7 @@ from athena import config
 from athena.aegis import api as aegis_api
 from athena.core import activity_api, db, search_api, sessions, tokens_api, users_api
 from athena.mentor import api as mentor_api
+from athena.web import admin as web_admin
 from athena.web import auth as web_auth
 from athena.web import mentor as web_mentor
 from athena.web import init_templates, router as web_router
@@ -215,6 +216,7 @@ def create_app(
     app.include_router(web_router)
     app.include_router(web_auth.router)
     app.include_router(web_mentor.router)
+    app.include_router(web_admin.router)
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)

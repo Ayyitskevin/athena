@@ -6,6 +6,7 @@ functions instead of writing queries, so storage changes touch only this file.
 Users are the actors in Athena — people now, agents later. Issues (and, later,
 docs) point at a user via a foreign key, so a user must exist before it can act.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -81,6 +82,22 @@ def get_user(conn: sqlite3.Connection, user_id: int) -> dict | None:
 def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     return dict(row) if row else None
+
+
+def set_role(conn: sqlite3.Connection, user_id: int, role: str) -> dict | None:
+    """Change a user's role and return the updated row, or None if missing."""
+    role = normalize_role(role)
+    cur = conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_user(conn, user_id)
+
+
+def count_admins(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role = ?", (ADMIN_ROLE,)
+    ).fetchone()["n"]
 
 
 def list_users(conn: sqlite3.Connection) -> list[dict]:
