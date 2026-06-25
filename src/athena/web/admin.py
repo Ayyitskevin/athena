@@ -1,4 +1,4 @@
-"""Browser administration and token-management routes."""
+"""Browser administration and settings routes."""
 
 from __future__ import annotations
 
@@ -79,6 +79,84 @@ def _token_context(
             (tokens.ADMIN_SCOPE, "Admin"),
         ],
     }
+
+
+def _password_context(*, error: str | None = None, success: str | None = None) -> dict:
+    return {"error": error, "success": success}
+
+
+@router.get("/settings/password", response_class=HTMLResponse)
+def password_settings(request: Request, updated: str | None = None):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("change your password")
+    return templates.TemplateResponse(
+        request=request,
+        name="settings/password.html",
+        context=_password_context(
+            success="Password updated." if updated else None,
+        ),
+    )
+
+
+@router.post(
+    "/settings/password",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_own_password(
+    request: Request,
+    current_password: str = Form(""),
+    new_password: str = Form(""),
+    confirm_password: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("change your password")
+
+    new_password = new_password.strip()
+    confirm_password = confirm_password.strip()
+    if not current_password.strip():
+        return templates.TemplateResponse(
+            request=request,
+            name="settings/password.html",
+            context=_password_context(error="Current password is required."),
+            status_code=400,
+        )
+    if not new_password:
+        return templates.TemplateResponse(
+            request=request,
+            name="settings/password.html",
+            context=_password_context(error="New password is required."),
+            status_code=400,
+        )
+    if new_password != confirm_password:
+        return templates.TemplateResponse(
+            request=request,
+            name="settings/password.html",
+            context=_password_context(error="New passwords do not match."),
+            status_code=400,
+        )
+    if (
+        users.verify_credentials(conn, email=user["email"], password=current_password)
+        is None
+    ):
+        return templates.TemplateResponse(
+            request=request,
+            name="settings/password.html",
+            context=_password_context(error="Current password is incorrect."),
+            status_code=400,
+        )
+
+    users.set_password(conn, user["id"], new_password)
+    return RedirectResponse("/settings/password?updated=1", status_code=303)
 
 
 @router.get("/settings/tokens", response_class=HTMLResponse)
