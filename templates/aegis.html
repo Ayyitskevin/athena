@@ -17,7 +17,7 @@
             Done: {{ status_counts.get('done', 0) }}
         </p>
         <a href="/aegis/issues" class="button">View all issues →</a>
-        <a href="/aegis/issues/new" class="button secondary small">+ New</a>
+        {% if can_write %}<a href="/aegis/issues/new" class="button secondary small">+ New</a>{% endif %}
     </div>
 
     <div class="card">
@@ -30,7 +30,7 @@
         <h3>Quick actions</h3>
         <ul class="quick-actions">
             <li><a href="/aegis/issues">Browse issues</a></li>
-            <li><a href="/aegis/issues/new">Create new issue</a></li>
+            {% if can_write %}<li><a href="/aegis/issues/new">Create new issue</a></li>{% endif %}
             <li><a href="/aegis/boards">Open boards</a></li>
         </ul>
     </div>

@@ -11,7 +11,7 @@
         <h1>{{ page.title }}</h1>
         <p class="subtitle muted">Updated {{ page.updated_at }}</p>
     </div>
-    {% if request.state.user %}
+    {% if can_write %}
     <div>
         <a href="/mentor/pages/{{ page.id }}/edit" class="button secondary">Edit</a>
     </div>
@@ -51,7 +51,7 @@
     {% if versions %}
     <table class="issues-table">
         <thead>
-            <tr><th>Version</th><th>Title</th><th>Edited</th>{% if request.state.user %}<th></th>{% endif %}</tr>
+            <tr><th>Version</th><th>Title</th><th>Edited</th>{% if can_write %}<th></th>{% endif %}</tr>
         </thead>
         <tbody>
         {% for v in versions %}
@@ -59,7 +59,7 @@
                 <td class="muted">v{{ v.version }}</td>
                 <td>{{ v.title }}</td>
                 <td class="muted">{{ v.created_at }}</td>
-                {% if request.state.user %}
+                {% if can_write %}
                 <td>
                     <form method="post" action="/mentor/pages/{{ page.id }}/versions/{{ v.version }}/restore"
                           data-confirm="Restore version {{ v.version }}? The current content is kept in history.">
@@ -84,7 +84,7 @@
     {% endwith %}
 </div>
 
-{% if request.state.user %}
+{% if can_write %}
 <div class="form-container">
     <h3>Manage</h3>
 

@@ -227,7 +227,7 @@ def test_label_color_migration_sanitizes_existing_rows(tmp_path):
         ("good", "#ABCDEF"),
     )
     for path in db.MIGRATIONS_DIR.glob("*.sql"):
-        if path.name < "0018_label_color_safety.sql":
+        if path.name != "0018_label_color_safety.sql":
             conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (path.name,))
     conn.commit()
 

@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
-from athena.core import activity, links, search, users
+from athena.core import activity, identity, links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_plaintext, render_snippet
@@ -34,6 +34,13 @@ def init_templates(templates: Jinja2Templates) -> None:
 def get_templates() -> Jinja2Templates | None:
     """The configured templates instance, for other web routers (e.g. auth)."""
     return _templates
+
+
+def _readonly_response() -> HTMLResponse:
+    return HTMLResponse(
+        '<div class="blocked">Viewer role is read-only.</div>',
+        status_code=403,
+    )
 
 
 def _issues_url(
@@ -125,6 +132,8 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         all_issues, key=lambda x: x.get("created_at", ""), reverse=True
     )[:5]
 
+    user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
     return _templates.TemplateResponse(
         request=request,
         name="aegis.html",
@@ -132,6 +141,7 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "status_counts": dict(status_counts),
             "recent_issues": recent_issues,
             "total_issues": len(all_issues),
+            "can_write": can_write,
         },
     )
 
@@ -222,6 +232,9 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         for column in ("id", "title", "status", "priority", "created_at")
     }
 
+    user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
+
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
         request=request,
@@ -242,6 +255,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "sort_urls": sort_urls,
             "prev_page_url": page_url(page - 1),
             "next_page_url": page_url(page + 1),
+            "can_write": can_write,
         },
     )
 
@@ -309,6 +323,9 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     """Render the new issue creation form."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is not None and not identity.can_write(user):
+        return _readonly_response()
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
@@ -338,6 +355,8 @@ def create_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to create issues.</div>',
             status_code=401,
         )
+    if not identity.can_write(user):
+        return _readonly_response()
 
     title = title.strip()
     if not title:
@@ -379,6 +398,8 @@ def _authorize_issue_write(conn, issue_id, user):
     issue = issues.get_issue(conn, issue_id)
     if not issue:
         return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    if not identity.can_write(user):
+        return None, _readonly_response()
     if not issues.can_modify(issue, user["id"]):
         return None, HTMLResponse(
             '<div class="error">Only the issue creator or assignee may modify it.</div>',
@@ -565,7 +586,8 @@ def _render_issue_detail(
     caller re-listing every base key."""
     issue_id = issue["id"]
     user = getattr(request.state, "user", None)
-    can_modify = bool(user) and issues.can_modify(issue, user["id"])
+    can_write = user is not None and identity.can_write(user)
+    can_modify = can_write and issues.can_modify(issue, user["id"])
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
         comment["body_html"] = render_plaintext(comment["body"])
@@ -581,6 +603,7 @@ def _render_issue_detail(
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
         "can_modify": can_modify,
+        "can_write": can_write,
         # This issue's own audit trail (newest first) — the same data-layer read
         # the REST feed serves, scoped to this target.
         "activity": activity.list_activity(
@@ -813,6 +836,8 @@ def add_issue_comment(
             '<div class="blocked">Please <a href="/login">sign in</a> to comment.</div>',
             status_code=401,
         )
+    if not identity.can_write(user):
+        return _readonly_response()
     if issues.get_issue(conn, issue_id) is None:
         return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
     body = body.strip()
@@ -852,6 +877,8 @@ def edit_issue_comment(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit comments.</div>',
             status_code=401,
         )
+    if not identity.can_write(user):
+        return _readonly_response()
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
     if err is not None:
         return err
@@ -877,6 +904,8 @@ def delete_issue_comment(
             '<div class="blocked">Please <a href="/login">sign in</a> to delete comments.</div>',
             status_code=401,
         )
+    if not identity.can_write(user):
+        return _readonly_response()
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
     if err is not None:
         return err
@@ -930,10 +959,12 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         p["id"]: len(issues.list_issues(conn, project_id=p["id"]))
         for p in all_projects
     }
+    user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/projects.html",
-        context={"projects": all_projects, "counts": counts},
+        context={"projects": all_projects, "counts": counts, "can_write": can_write},
     )
 
 
@@ -954,6 +985,8 @@ def create_project(
             '<div class="blocked">Please <a href="/login">sign in</a> to create projects.</div>',
             status_code=401,
         )
+    if not identity.can_write(user):
+        return _readonly_response()
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
@@ -988,6 +1021,8 @@ def _authorize_project_write(conn, project_id: int, user: dict):
         return None, HTMLResponse(
             '<div class="error">No such project.</div>', status_code=404
         )
+    if not identity.can_write(user):
+        return None, _readonly_response()
     if project["created_by"] != user["id"]:
         return None, HTMLResponse(
             '<div class="blocked">Only the project creator may edit it.</div>',

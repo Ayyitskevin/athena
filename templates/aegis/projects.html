@@ -31,7 +31,7 @@
             <td class="muted">{{ p.description or "—" }}</td>
             <td class="muted">{{ counts[p.id] }}</td>
             <td class="muted">
-                {% if request.state.user and request.state.user.id == p.created_by %}
+                {% if can_write and request.state.user.id == p.created_by %}
                 <a href="/aegis/projects/{{ p.id }}/edit">Edit</a>
                 {% endif %}
             </td>
@@ -44,7 +44,7 @@
 {% endif %}
 
 <div class="form-container">
-    {% if request.state.user %}
+    {% if can_write %}
     <h3>New Project</h3>
     <form method="post" action="/aegis/projects" class="issue-form">
         {% include "partials/csrf.html" %}
@@ -67,6 +67,8 @@
             <button type="submit" class="button">Create Project</button>
         </div>
     </form>
+    {% elif request.state.user %}
+    <p class="note-small">Viewer role is read-only.</p>
     {% else %}
     <p class="note-small"><a href="/login">Sign in</a> to create a project.</p>
     {% endif %}

@@ -9,7 +9,7 @@
         <p class="subtitle">Aegis work items</p>
     </div>
     <div class="header-actions">
-        <a href="/aegis/issues/new" class="button">+ New Issue</a>
+        {% if can_write %}<a href="/aegis/issues/new" class="button">+ New Issue</a>{% endif %}
         <input 
             type="text" 
             name="search" 

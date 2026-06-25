@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
 from athena.core import links, users
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import write_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
@@ -194,7 +194,7 @@ def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
 @router.post("", response_model=IssueOut, status_code=201)
 def create(
     payload: IssueCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # created_by is the authenticated actor, never a value the caller supplied.
@@ -306,7 +306,7 @@ def _issue_for_write(
 def update(
     issue_id: int,
     payload: IssueUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Creator or assignee only (404 if missing, 403 if not permitted).
@@ -364,7 +364,7 @@ def update(
 def set_assignee(
     issue_id: int,
     payload: AssigneeUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Creator or assignee only (404 if missing, 403 if not permitted). Checked
@@ -394,7 +394,7 @@ def set_assignee(
 def set_project(
     issue_id: int,
     payload: ProjectUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Moving an issue between projects is a write — creator-or-assignee only
@@ -421,7 +421,7 @@ def set_project(
 def add_comment(
     issue_id: int,
     payload: CommentCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # author is the authenticated actor, never a caller-supplied field.
@@ -467,7 +467,7 @@ def edit_comment(
     issue_id: int,
     comment_id: int,
     payload: CommentCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
@@ -481,7 +481,7 @@ def edit_comment(
 def delete_comment(
     issue_id: int,
     comment_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
@@ -509,7 +509,7 @@ def list_links(
 def add_link(
     issue_id: int,
     payload: LinkCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Declaring a relationship FROM this issue is a write on it — creator-or-
@@ -540,7 +540,7 @@ def remove_link(
     issue_id: int,
     relation: str,
     target_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Removing a relationship is a write on this issue too. relation is the same
@@ -565,7 +565,7 @@ def list_all_projects(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict
 @projects_router.post("", response_model=ProjectOut, status_code=201)
 def create_project(
     payload: ProjectCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a project (like creating a label).
@@ -618,7 +618,7 @@ def _project_for_write(
 def update_project(
     project_id: int,
     payload: ProjectEdit,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Creator only (404 if missing, 403 if not permitted).
@@ -654,7 +654,7 @@ def update_project(
 @projects_router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Creator only (404 if missing, 403 if not permitted).
@@ -681,7 +681,7 @@ def list_all_labels(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
 @labels_router.post("", response_model=LabelOut, status_code=201)
 def create_label(
     payload: LabelCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may add to the shared vocabulary (like commenting).
@@ -703,7 +703,7 @@ def create_label(
 def attach_label(
     issue_id: int,
     payload: LabelAttach,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Changing an issue's labels is a write — same gate as status/assign.
@@ -721,7 +721,7 @@ def attach_label(
 def detach_label(
     issue_id: int,
     label_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     issue = _issue_for_write(conn, issue_id, actor)

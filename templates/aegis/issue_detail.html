@@ -161,7 +161,7 @@
                         <span class="muted">{{ c.created_at }}</span>
                     </div>
                     <div class="comment-body">{{ c.body_html }}</div>
-                    {% if request.state.user and c.author_id == request.state.user.id %}
+                    {% if can_write and c.author_id == request.state.user.id %}
                     <div class="comment-actions">
                         <details class="comment-edit">
                             <summary class="muted">Edit</summary>
@@ -185,7 +185,7 @@
             <p class="muted">No comments yet.</p>
             {% endif %}
 
-            {% if request.state.user %}
+            {% if can_write %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/comments" class="comment-form">
                 {% include "partials/csrf.html" %}
                 <label for="comment-body">Add a comment</label>
@@ -193,6 +193,8 @@
                           placeholder="Leave a comment…"></textarea>
                 <button type="submit" class="button small">Comment</button>
             </form>
+            {% elif request.state.user %}
+            <p class="note-small">Viewer role is read-only.</p>
             {% else %}
             <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
             {% endif %}
@@ -250,6 +252,8 @@
                 </select>
                 <button type="submit" class="button small">Set Project</button>
             </form>
+            {% elif request.state.user and not can_write %}
+            <p class="note-small">Viewer role is read-only.</p>
             {% elif request.state.user %}
             <p class="note-small">Only the issue creator or assignee can change status or assignment.</p>
             {% else %}
