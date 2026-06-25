@@ -36,6 +36,10 @@ class UserCreate(BaseModel):
     role: Role | None = None
 
 
+class UserRoleUpdate(BaseModel):
+    role: Role
+
+
 class UserOut(BaseModel):
     id: int
     email: str
@@ -99,3 +103,25 @@ def show(
     if user is None:
         raise HTTPException(status_code=404, detail="no such user")
     return user
+
+
+@router.put("/{user_id}/role", response_model=UserOut)
+def update_role(
+    user_id: int,
+    payload: UserRoleUpdate,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    target = users.get_user(conn, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    if target["role"] == users.ADMIN_ROLE and payload.role != users.ADMIN_ROLE:
+        if users.count_admins(conn) <= 1:
+            raise HTTPException(status_code=409, detail="cannot remove the last admin")
+    try:
+        updated = users.set_role(conn, user_id, payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    return updated

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Users — Admin — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Users</h1>
+        <p class="subtitle">Account and role management</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if success %}<div class="success">{{ success }}</div>{% endif %}
+
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for u in users %}
+        <tr>
+            <td class="issue-title">{{ u.name }}</td>
+            <td class="muted">{{ u.email }}</td>
+            <td>
+                <form method="post" action="/admin/users/{{ u.id }}/role" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <select name="role">
+                        {% for role in roles %}
+                        <option value="{{ role }}" {% if u.role == role %}selected{% endif %}>{{ role }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="button secondary small">Save</button>
+                </form>
+            </td>
+            <td class="muted">{{ u.created_at }}</td>
+            <td class="muted">{% if u.id == request.state.user.id %}current user{% endif %}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<div class="form-container">
+    <h3>New User</h3>
+    <form method="post" action="/admin/users" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="user-email">Email</label>
+            <input type="email" id="user-email" name="email" required>
+        </div>
+        <div class="form-group">
+            <label for="user-name">Name</label>
+            <input type="text" id="user-name" name="name" required>
+        </div>
+        <div class="form-group">
+            <label for="user-password">Password</label>
+            <input type="password" id="user-password" name="password" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+            <label for="user-role">Role</label>
+            <select id="user-role" name="role">
+                {% for role in roles %}
+                <option value="{{ role }}" {% if role == "member" %}selected{% endif %}>{{ role }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create User</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

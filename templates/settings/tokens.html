@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Tokens — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Tokens</h1>
+        <p class="subtitle">API tokens for {{ request.state.user.name }}</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{% if created %}
+<div class="form-container">
+    <h3>New token</h3>
+    <p class="note-small">This token is shown once.</p>
+    <pre class="token-secret">{{ created.token }}</pre>
+</div>
+{% endif %}
+
+{% if tokens %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Scopes</th>
+            <th>Created</th>
+            <th>Last used</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for token in tokens %}
+        <tr>
+            <td class="issue-title">{{ token.name }}</td>
+            <td class="muted">{{ token.scopes | join(", ") }}</td>
+            <td class="muted">{{ token.created_at }}</td>
+            <td class="muted">{{ token.last_used_at or "—" }}</td>
+            <td class="muted">{{ "revoked" if token.revoked_at else "active" }}</td>
+            <td class="muted">
+                {% if can_manage_tokens and not token.revoked_at %}
+                <form method="post" action="/settings/tokens/{{ token.id }}/revoke" data-confirm="Revoke token {{ token.name }}?">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Revoke</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No tokens yet.</p>
+{% endif %}
+
+<div class="form-container">
+    {% if can_manage_tokens %}
+    <h3>Create token</h3>
+    <form method="post" action="/settings/tokens" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="token-name">Name</label>
+            <input id="token-name" type="text" name="name" required placeholder="e.g. laptop, ci, grok">
+        </div>
+        <div class="form-group">
+            <label>Scopes</label>
+            <label><input type="checkbox" name="scope_read" value="1" checked> Read</label>
+            <label><input type="checkbox" name="scope_issue_write" value="1"> Aegis writes</label>
+            <label><input type="checkbox" name="scope_docs_write" value="1"> Mentor writes</label>
+            <label><input type="checkbox" name="scope_admin" value="1"> Admin</label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create Token</button>
+        </div>
+    </form>
+    {% else %}
+    <p class="note-small">Viewer role is read-only.</p>
+    {% endif %}
+</div>
+{% endblock %}
