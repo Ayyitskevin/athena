@@ -63,7 +63,8 @@ curl -fsS -X POST http://127.0.0.1:8000/users \
 ```
 
 After the first user exists, creating users requires an admin actor. Browser
-admins can manage users at `/admin/users`.
+admins can create users, change roles, and set or reset browser passwords at
+`/admin/users`.
 
 ## Roles
 

@@ -241,6 +241,39 @@ def create_user(
 
 
 @router.post(
+    "/admin/users/{user_id}/password",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_user_password(
+    request: Request,
+    user_id: int,
+    password: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    target = users.get_user(conn, user_id)
+    if target is None:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
+    password = password.strip()
+    if not password:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/users.html",
+            context=_admin_context(conn, error="Password is required."),
+            status_code=400,
+        )
+    users.set_password(conn, user_id, password)
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post(
     "/admin/users/{user_id}/role",
     response_class=HTMLResponse,
     dependencies=[Depends(verify_csrf)],
