@@ -4,6 +4,7 @@ Users are core (every module's rows point at a user), so this lives in core/,
 not in a feature module. Same shape as aegis/api.py: Pydantic validates the body,
 the data-access layer in core/users.py does the SQL.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -14,7 +15,12 @@ from pydantic import BaseModel
 
 from athena.core import users
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor, current_actor, is_admin, optional_actor, require_admin
+from athena.core.identity import (
+    admin_actor,
+    current_actor,
+    optional_actor,
+    require_admin,
+)
 
 router = APIRouter(prefix="/users", tags=["core"])
 
@@ -87,8 +93,8 @@ def show(
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    if not is_admin(actor) and actor["id"] != user_id:
-        raise HTTPException(status_code=403, detail="admin role required")
+    if actor["id"] != user_id:
+        require_admin(actor)
     user = users.get_user(conn, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="no such user")

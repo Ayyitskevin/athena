@@ -20,6 +20,7 @@ None. Endpoints that must stay reachable during first-run bootstrap (e.g.
 creating the very first user, when nobody can possibly be authenticated yet)
 depend on it and decide for themselves when absence is allowed.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -43,7 +44,7 @@ def current_actor(
     or raise 401."""
     # 1. Bearer token — the authenticated path.
     if authorization is not None and authorization.lower().startswith(_BEARER_PREFIX):
-        raw = authorization[len(_BEARER_PREFIX):].strip()
+        raw = authorization[len(_BEARER_PREFIX) :].strip()
         actor = tokens.resolve_token(conn, raw)
         if actor is None:
             raise HTTPException(status_code=401, detail="invalid or revoked token")
@@ -90,10 +91,27 @@ def can_write(actor: dict | None) -> bool:
     return actor is not None and actor.get("role") != users.VIEWER_ROLE
 
 
+def token_has_scope(actor: dict | None, scope: str) -> bool:
+    """Whether this actor's bearer token allows a scope. Non-token auth is not
+    token-scoped, so browser sessions and the trusted actor-header path pass."""
+    if actor is None:
+        return False
+    scopes = actor.get("_token_scopes")
+    if scopes is None:
+        return True
+    return tokens.ADMIN_SCOPE in scopes or scope in scopes
+
+
+def require_token_scope(actor: dict, scope: str) -> dict:
+    if not token_has_scope(actor, scope):
+        raise HTTPException(status_code=403, detail=f"token scope required: {scope}")
+    return actor
+
+
 def require_admin(actor: dict) -> dict:
     if not is_admin(actor):
         raise HTTPException(status_code=403, detail="admin role required")
-    return actor
+    return require_token_scope(actor, tokens.ADMIN_SCOPE)
 
 
 def require_write_role(actor: dict) -> dict:
@@ -110,3 +128,21 @@ def admin_actor(actor: dict = Depends(current_actor)) -> dict:
 def write_actor(actor: dict = Depends(current_actor)) -> dict:
     """FastAPI dependency for authenticated non-viewer write endpoints."""
     return require_write_role(actor)
+
+
+def issue_write_actor(actor: dict = Depends(current_actor)) -> dict:
+    """Authenticated actor allowed to write Aegis issue/project/label state."""
+    require_write_role(actor)
+    return require_token_scope(actor, tokens.ISSUE_WRITE_SCOPE)
+
+
+def docs_write_actor(actor: dict = Depends(current_actor)) -> dict:
+    """Authenticated actor allowed to write Mentor docs state."""
+    require_write_role(actor)
+    return require_token_scope(actor, tokens.DOCS_WRITE_SCOPE)
+
+
+def token_management_actor(actor: dict = Depends(current_actor)) -> dict:
+    """Authenticated actor allowed to mint or revoke API tokens."""
+    require_write_role(actor)
+    return require_token_scope(actor, tokens.ADMIN_SCOPE)
