@@ -17,6 +17,10 @@
    the right behaviour when the filter set changes. #}
 <form method="get" action="/aegis/activity" class="activity-filters">
     <label>
+        Search
+        <input type="search" name="q" value="{{ f_q }}" placeholder="actor, detail, issue #1">
+    </label>
+    <label>
         Actor
         <select name="actor">
             <option value="">Anyone</option>
@@ -43,8 +47,12 @@
             {% endfor %}
         </select>
     </label>
+    <label>
+        Target ID
+        <input type="number" name="target" min="1" value="{{ f_target or '' }}">
+    </label>
     <button type="submit">Filter</button>
-    {% if f_actor or f_verb or f_kind %}
+    {% if f_actor or f_verb or f_kind or f_target or f_q %}
     <a href="/aegis/activity" class="muted">Clear</a>
     {% endif %}
 </form>
@@ -60,6 +68,8 @@
 {% if f_actor %}{% set _ = q.update({"actor": f_actor}) %}{% endif %}
 {% if f_verb %}{% set _ = q.update({"verb": f_verb}) %}{% endif %}
 {% if f_kind %}{% set _ = q.update({"kind": f_kind}) %}{% endif %}
+{% if f_target %}{% set _ = q.update({"target": f_target}) %}{% endif %}
+{% if f_q %}{% set _ = q.update({"q": f_q}) %}{% endif %}
 <p class="activity-pager">
     <a href="/aegis/activity?{{ q | urlencode }}">Older →</a>
 </p>

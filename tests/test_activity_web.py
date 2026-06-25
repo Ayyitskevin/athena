@@ -5,9 +5,10 @@ These encode that the browser feed is a thin client over the SAME data the REST
 feed serves — it renders the recorded facts (who/verb/detail) and, on the global
 page, links each event to its issue. Reads are open, like the rest of the site.
 """
+
 from fastapi.testclient import TestClient
 
-from athena.core import db
+from athena.core import activity, db
 from athena.main import create_app
 
 
@@ -98,6 +99,39 @@ def test_global_feed_offers_filters(tmp_path):
     assert ">created</option>" in page.text
 
 
+def test_global_feed_search_and_target_filter_narrow(tmp_path):
+    # WHY: operators need to find a specific audit fact by text, then narrow to a
+    # concrete target without losing the global feed context.
+    db_file = tmp_path / "feed_search_web.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file, email="kevin@example.com", name="Kevin")
+        _seed_user(db_file, email="grok@example.com", name="Grok")
+        kevin_issue = _make_issue(client, title="kevin-issue", actor="1")
+        grok_issue = _make_issue(client, title="grok-issue", actor="2")
+        client.patch(
+            f"/issues/{grok_issue}",
+            json={"status": "done"},
+            headers={"X-Athena-Actor": "2"},
+        )
+
+        searched = client.get("/aegis/activity?q=done")
+        targeted = client.get(f"/aegis/activity?kind=issue&target={grok_issue}")
+        invalid = client.get(f"/aegis/activity?target={grok_issue}")
+
+    assert searched.status_code == 200
+    assert "changed status" in searched.text
+    assert f'href="/aegis/issues/{grok_issue}"' in searched.text
+    assert f'href="/aegis/issues/{kevin_issue}"' not in searched.text
+    assert 'name="q"' in searched.text
+    assert 'value="done"' in searched.text
+
+    assert targeted.status_code == 200
+    assert f'href="/aegis/issues/{grok_issue}"' in targeted.text
+    assert f'href="/aegis/issues/{kevin_issue}"' not in targeted.text
+    assert invalid.status_code == 400
+
+
 def test_global_feed_actor_filter_narrows(tmp_path):
     # WHY: selecting an actor must actually scope the feed to that actor's events —
     # the web view passing the filter through to the same data layer the API uses.
@@ -133,6 +167,36 @@ def test_global_feed_pages_with_cursor(tmp_path):
         older = client.get("/aegis/activity?before=2")
     assert older.status_code == 200
     assert f'href="/aegis/issues/{ids[0]}"' in older.text
+
+
+def test_global_feed_pager_preserves_search_and_target_filters(tmp_path):
+    # WHY: paging must stay inside the active audit search/filter set, not reset
+    # back to the full feed on page two.
+    db_file = tmp_path / "feed_search_pager.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        conn = db.connect(db_file)
+        try:
+            for _ in range(51):
+                activity.record(
+                    conn,
+                    actor_id=1,
+                    verb="changed_status",
+                    target_kind="issue",
+                    target_id=7,
+                    detail="audit needle",
+                )
+        finally:
+            conn.close()
+
+        page = client.get("/aegis/activity?q=needle&kind=issue&target=7")
+
+    assert page.status_code == 200
+    assert "Older →" in page.text
+    assert "q=needle" in page.text
+    assert "kind=issue" in page.text
+    assert "target=7" in page.text
 
 
 def test_activity_in_nav(tmp_path):

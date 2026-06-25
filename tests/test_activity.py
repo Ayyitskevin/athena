@@ -7,6 +7,7 @@ feed is a privileged read (auth required, like search). And the issue endpoints
 record the lifecycle facts as a side effect: created, status changes (with the
 "old → new" detail), and assign/unassign — only when something actually changed.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -94,7 +95,11 @@ def test_list_filters_by_actor_and_verb(tmp_path):
     activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
     activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
     activity.record(
-        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=2,
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=2,
         detail="open → done",
     )
 
@@ -107,6 +112,34 @@ def test_list_filters_by_actor_and_verb(tmp_path):
     assert [r["verb"] for r in status] == ["changed_status"]
 
 
+def test_list_search_matches_actor_detail_and_target_ref(tmp_path):
+    # WHY: operators need a quick audit search, not only exact dropdown filters.
+    # Search covers the human-visible row text: actor, verb, kind/id, detail, time.
+    db_file = tmp_path / "search.db"
+    conn = _migrated_conn(db_file)
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("g@e.com", "Grok"))
+    conn.commit()
+    activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+    activity.record(
+        conn,
+        actor_id=2,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=2,
+        detail="open → done",
+    )
+
+    by_actor = activity.list_activity(conn, search="grok")
+    by_detail = activity.list_activity(conn, search="DONE")
+    by_target = activity.list_activity(conn, search="issue #2")
+    conn.close()
+
+    assert [r["actor_name"] for r in by_actor] == ["Grok"]
+    assert [r["verb"] for r in by_detail] == ["changed_status"]
+    assert [r["target_id"] for r in by_target] == [2]
+
+
 def test_before_id_cursor_walks_back(tmp_path):
     # WHY: paging back through history must be stable on the append-only ordering —
     # before_id returns only rows older than the cursor, so page 2 picks up exactly
@@ -116,7 +149,9 @@ def test_before_id_cursor_walks_back(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
     conn.commit()
     for _ in range(5):
-        activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
+        activity.record(
+            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+        )
 
     page1 = activity.list_activity(conn, limit=2)
     assert [r["id"] for r in page1] == [5, 4]
@@ -134,7 +169,11 @@ def test_distinct_verbs_reflects_only_recorded(tmp_path):
     conn.commit()
     activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
     activity.record(
-        conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=1,
+        conn,
+        actor_id=1,
+        verb="changed_status",
+        target_kind="issue",
+        target_id=1,
         detail="open → done",
     )
     activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=2)
@@ -180,6 +219,34 @@ def test_feed_kind_alone_filters_by_kind(tmp_path):
         assert [e["verb"] for e in r.json()] == ["created"]
 
 
+def test_feed_search_param_composes_with_filters(tmp_path):
+    # WHY: the REST feed is the fleet/operator API; q must use the same data-layer
+    # search as the web feed and still compose with exact filters.
+    db_file = tmp_path / "feed_search.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file, email="kevin@example.com", name="Kevin")
+        _seed_user(db_file, email="grok@example.com", name="Grok")
+        _make_issue(client, actor="1")
+        grok_issue = _make_issue(client, actor="2")
+        client.patch(
+            f"/issues/{grok_issue}",
+            json={"status": "done"},
+            headers={"X-Athena-Actor": "2"},
+        )
+
+        hit = client.get("/activity?q=done&actor_id=2", headers={"X-Athena-Actor": "1"})
+        miss = client.get(
+            "/activity?q=done&actor_id=1", headers={"X-Athena-Actor": "1"}
+        )
+
+    assert hit.status_code == 200
+    assert [e["verb"] for e in hit.json()] == ["changed_status"]
+    assert [e["target_id"] for e in hit.json()] == [grok_issue]
+    assert miss.status_code == 200
+    assert miss.json() == []
+
+
 def test_feed_actor_and_cursor_params(tmp_path):
     # WHY: the REST feed must expose the same actor filter and paging cursor the
     # web view uses, so the two stay a single source of truth (the thin-client rule).
@@ -191,7 +258,9 @@ def test_feed_actor_and_cursor_params(tmp_path):
         i1 = _make_issue(client, actor="1")
         i2 = _make_issue(client, actor="2")
         # actor filter: only Grok's "created"
-        grok = client.get("/activity?actor_id=2", headers={"X-Athena-Actor": "1"}).json()
+        grok = client.get(
+            "/activity?actor_id=2", headers={"X-Athena-Actor": "1"}
+        ).json()
         assert [e["target_id"] for e in grok] == [i2]
         # cursor: everything older than Grok's event is Kevin's
         older = client.get(

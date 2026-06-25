@@ -6,6 +6,7 @@ is the history the architecture promises — "Grok closed AEGIS-88" as a recorde
 fact, not a guess. All activity SQL lives here, mirroring aegis/issues.py and
 aegis/comments.py.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -13,9 +14,16 @@ import sqlite3
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
 _SELECT = (
-    "SELECT a.*, u.name AS actor_name "
-    "FROM activity a JOIN users u ON u.id = a.actor_id"
+    "SELECT a.*, u.name AS actor_name FROM activity a JOIN users u ON u.id = a.actor_id"
 )
+
+
+def _like_pattern(value: str) -> str:
+    """Return a literal LIKE pattern for operator search text."""
+    escaped = (
+        value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def record(
@@ -51,14 +59,16 @@ def list_activity(
     target_id: int | None = None,
     actor_id: int | None = None,
     verb: str | None = None,
+    search: str | None = None,
     before_id: int | None = None,
     limit: int = 50,
 ) -> list[dict]:
     """Activity newest first. Every filter is optional and independent: pass
     target_kind+target_id for one target's timeline, target_kind alone to scope
-    the global feed to a kind, actor_id/verb to narrow who/what. before_id is the
-    paging cursor — only rows older than it (a.id < before_id), so the caller can
-    walk back through history a page at a time on a stable, append-only ordering."""
+    the global feed to a kind, actor_id/verb/search to narrow who/what. before_id
+    is the paging cursor — only rows older than it (a.id < before_id), so the
+    caller can walk back through history one page at a time on a stable,
+    append-only ordering."""
     clauses: list[str] = []
     params: list = []
     if target_kind is not None:
@@ -73,6 +83,20 @@ def list_activity(
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
+    if search is not None and search.strip():
+        pattern = _like_pattern(search)
+        clauses.append(
+            "("
+            "u.name LIKE ? ESCAPE '\\' OR "
+            "a.verb LIKE ? ESCAPE '\\' OR "
+            "a.target_kind LIKE ? ESCAPE '\\' OR "
+            "CAST(a.target_id AS TEXT) LIKE ? ESCAPE '\\' OR "
+            "a.detail LIKE ? ESCAPE '\\' OR "
+            "a.created_at LIKE ? ESCAPE '\\' OR "
+            "(a.target_kind || ' #' || a.target_id) LIKE ? ESCAPE '\\'"
+            ")"
+        )
+        params.extend([pattern] * 7)
     if before_id is not None:
         clauses.append("a.id < ?")
         params.append(before_id)
@@ -88,9 +112,7 @@ def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
     """The verbs that actually occur in the trail, alphabetical. Powers the feed's
     verb filter from real data — never a hardcoded list that could drift from what
     the recorders emit."""
-    rows = conn.execute(
-        "SELECT DISTINCT verb FROM activity ORDER BY verb"
-    ).fetchall()
+    rows = conn.execute("SELECT DISTINCT verb FROM activity ORDER BY verb").fetchall()
     return [row["verb"] for row in rows]
 
 
