@@ -13,6 +13,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "httpx", "ruff>=0.8,<1"]
 
+[project.scripts]
+athena-backup = "athena.ops:backup_main"
+athena-restore = "athena.ops:restore_main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
