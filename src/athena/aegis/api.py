@@ -339,6 +339,16 @@ def update(
             before=before["status"],
             after=updated["status"],
         )
+    # A title/body edit is its own audit fact, separate from a status move; the
+    # helper no-ops if neither actually changed, so a status/priority-only edit
+    # records nothing here.
+    issue_activity.record_edited(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before,
+        after=updated,
+    )
     return _with_labels(conn, updated)
 
 

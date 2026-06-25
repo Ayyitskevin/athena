@@ -329,3 +329,52 @@ def test_web_noop_status_records_nothing(tmp_path):
         page = client.get(f"/aegis/issues/{issue_id}")
     # The History holds only "created" — no spurious status row.
     assert "changed status" not in page.text
+
+
+def test_web_edit_records_attributed_to_session_user(tmp_path):
+    # WHY: editing an issue's title/body from the detail-page form calls the data
+    # layer directly, bypassing the REST endpoint that records. The trail must show
+    # issue_edited, stamped with the logged-in user and naming the new title.
+    db_file = tmp_path / "web_edit.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client, title="before")
+        r = client.post(
+            f"/aegis/issues/{issue_id}/edit",
+            data={"title": "after", "body": "now with detail"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id, verb, detail FROM activity "
+        "WHERE verb = 'issue_edited' AND target_id = ?",
+        (issue_id,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["actor_id"] == 1  # the logged-in session user, not a default
+    assert row["detail"] == "after"
+
+
+def test_web_noop_edit_records_nothing(tmp_path):
+    # WHY: the edit form resubmits every field on save, so saving with no real
+    # change must record nothing — the same no-op rule the API path follows.
+    db_file = tmp_path / "web_edit_noop.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client, title="unchanged")
+        client.post(
+            f"/aegis/issues/{issue_id}/edit",
+            data={"title": "unchanged", "body": ""},  # identical to created state
+            follow_redirects=False,
+        )
+    conn = db.connect(db_file)
+    rows = conn.execute(
+        "SELECT verb FROM activity WHERE target_id = ? ORDER BY id",
+        (issue_id,),
+    ).fetchall()
+    conn.close()
+    assert [r["verb"] for r in rows] == ["created"]

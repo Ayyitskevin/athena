@@ -377,14 +377,20 @@ def edit_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    before, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
 
-    issues.update_issue(conn, issue_id, title=title, body=body.strip())
+    updated = issues.update_issue(conn, issue_id, title=title, body=body.strip())
+    # Record the content edit (helper no-ops if title+body are unchanged),
+    # attributed to the session user — the browser path leaves the same trail
+    # as the API.
+    issue_activity.record_edited(
+        conn, actor_id=user["id"], issue_id=issue_id, before=before, after=updated
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

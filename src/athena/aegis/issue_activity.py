@@ -30,6 +30,32 @@ def record_created(conn: sqlite3.Connection, *, actor_id: int, issue_id: int) ->
     )
 
 
+def record_edited(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: dict,
+    after: dict,
+) -> None:
+    """An issue's title or body was edited. No-op if neither actually changed — a
+    resubmit of identical content (both surfaces send every field) isn't an audit
+    fact. Detail carries the new title so the feed can name what was edited, since
+    the global feed otherwise links an issue only by number. Status and priority
+    are their own concerns (changed_status; priority is not yet recorded), so this
+    deliberately ignores them."""
+    if before["title"] == after["title"] and before["body"] == after["body"]:
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="issue_edited",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=after["title"],
+    )
+
+
 def record_status_change(
     conn: sqlite3.Connection,
     *,

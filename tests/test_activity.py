@@ -241,9 +241,10 @@ def test_status_change_records_old_and_new(tmp_path):
         assert feed[0]["detail"] == "open → done"
 
 
-def test_noop_edit_records_nothing(tmp_path):
-    # WHY: the trail must reflect real change, not API traffic. Editing only the
-    # title (or re-setting the same status) records no status event.
+def test_noop_status_reset_records_no_status_change(tmp_path):
+    # WHY: the trail must reflect real change, not API traffic. A title edit is its
+    # own fact (issue_edited), never a spurious status transition; re-setting the
+    # SAME status records nothing at all.
     db_file = tmp_path / "noop.db"
     app = create_app(db_file)
     with TestClient(app) as client:
@@ -263,8 +264,53 @@ def test_noop_edit_records_nothing(tmp_path):
             f"/activity?target_kind=issue&target_id={issue_id}",
             headers={"X-Athena-Actor": "1"},
         ).json()
-        # Only the original "created" event — no spurious status rows.
-        assert [r["verb"] for r in feed] == ["created"]
+        # The title edit records issue_edited; the same-status re-set records
+        # nothing. No changed_status row exists.
+        assert [r["verb"] for r in feed] == ["issue_edited", "created"]
+        assert "changed_status" not in [r["verb"] for r in feed]
+
+
+def test_edit_records_issue_edited_with_new_title(tmp_path):
+    # WHY: a content edit (title/body) is an audit fact in its own right, distinct
+    # from a status move. The detail carries the NEW title so the feed can name
+    # which issue changed — the global feed otherwise links an issue only by number.
+    db_file = tmp_path / "issue_edited.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client, title="old name")
+        r = client.patch(
+            f"/issues/{issue_id}",
+            json={"title": "new name"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert r.status_code == 200
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+    assert feed[0]["verb"] == "issue_edited"
+    assert feed[0]["detail"] == "new name"
+
+
+def test_resubmitting_identical_content_records_no_edit(tmp_path):
+    # WHY: the trail reflects real change, not API traffic — re-sending the same
+    # title and body (the web form always resubmits every field) records nothing.
+    db_file = tmp_path / "edit_noop.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        issue_id = _make_issue(client, title="steady")
+        client.patch(
+            f"/issues/{issue_id}",
+            json={"title": "steady", "body": ""},  # identical to created state
+            headers={"X-Athena-Actor": "1"},
+        )
+        feed = client.get(
+            f"/activity?target_kind=issue&target_id={issue_id}",
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+    assert [r["verb"] for r in feed] == ["created"]
 
 
 def test_assign_and_unassign_record_correct_verbs(tmp_path):
