@@ -11,6 +11,8 @@
         <span class="activity-actor">{{ e.actor_name }}</span>
         {% if e.verb == "created" %}
             created
+        {% elif e.verb == "issue_edited" %}
+            edited issue <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "changed_status" %}
             changed status <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "assigned" %}
