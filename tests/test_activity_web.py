@@ -6,6 +6,9 @@ feed serves — it renders the recorded facts (who/verb/detail) and, on the glob
 page, links each event to its issue. Reads are open, like the rest of the site.
 """
 
+import csv
+from io import StringIO
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -197,6 +200,48 @@ def test_global_feed_pager_preserves_search_and_target_filters(tmp_path):
     assert "q=needle" in page.text
     assert "kind=issue" in page.text
     assert "target=7" in page.text
+
+
+def test_global_feed_downloads_filtered_csv(tmp_path):
+    # WHY: operators need a durable audit extract, and it must export the same
+    # filtered facts the browser feed shows rather than a wider, surprising set.
+    db_file = tmp_path / "feed_export.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file, email="kevin@example.com", name="Kevin")
+        _seed_user(db_file, email="grok@example.com", name="Grok")
+        kevin_issue = _make_issue(client, title="kevin-issue", actor="1")
+        grok_issue = _make_issue(client, title="grok-issue", actor="2")
+        client.patch(
+            f"/issues/{grok_issue}",
+            json={"status": "done"},
+            headers={"X-Athena-Actor": "2"},
+        )
+
+        page = client.get(f"/aegis/activity?q=done&kind=issue&target={grok_issue}")
+        exported = client.get(
+            f"/aegis/activity.csv?q=done&kind=issue&target={grok_issue}"
+        )
+        invalid = client.get(f"/aegis/activity.csv?target={grok_issue}")
+
+    assert page.status_code == 200
+    assert "/aegis/activity.csv" in page.text
+    assert "q=done" in page.text
+    assert "kind=issue" in page.text
+    assert f"target={grok_issue}" in page.text
+
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/csv")
+    assert "attachment" in exported.headers["content-disposition"]
+    rows = list(csv.DictReader(StringIO(exported.text)))
+    assert len(rows) == 1
+    assert rows[0]["actor_name"] == "Grok"
+    assert rows[0]["verb"] == "changed_status"
+    assert rows[0]["target_kind"] == "issue"
+    assert rows[0]["target_id"] == str(grok_issue)
+    assert rows[0]["detail"] == "open → done"
+    assert all(row["target_id"] != str(kevin_issue) for row in rows)
+    assert invalid.status_code == 400
 
 
 def test_activity_in_nav(tmp_path):

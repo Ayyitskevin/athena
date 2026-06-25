@@ -9,6 +9,8 @@ aegis/comments.py.
 
 from __future__ import annotations
 
+import csv
+from io import StringIO
 import sqlite3
 
 # Every read returns the actor's display name alongside the row, so a feed can
@@ -24,6 +26,33 @@ def _like_pattern(value: str) -> str:
         value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     )
     return f"%{escaped}%"
+
+
+_CSV_FIELDS = [
+    "id",
+    "created_at",
+    "actor_id",
+    "actor_name",
+    "verb",
+    "target_kind",
+    "target_id",
+    "detail",
+]
+
+
+def to_csv(rows: list[dict]) -> str:
+    """Serialize activity rows to a stable operator-export CSV."""
+    out = StringIO()
+    writer = csv.DictWriter(
+        out,
+        fieldnames=_CSV_FIELDS,
+        extrasaction="ignore",
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return out.getvalue()
 
 
 def record(
