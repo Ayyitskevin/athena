@@ -4,6 +4,7 @@ The first slice of the docs module. Spaces are top-level containers; pages (a
 later slice) will live inside them. Mirrors the shape of the Aegis projects
 router. Mounted by main.py.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from athena.core import links
 from athena.core.deps import get_conn
-from athena.core.identity import write_actor
+from athena.core.identity import docs_write_actor
 from athena.mentor import page_activity, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
@@ -102,7 +103,7 @@ def list_all_spaces(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
 @spaces_router.post("", response_model=SpaceOut, status_code=201)
 def create_space(
     payload: SpaceCreate,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a space (like creating a project).
@@ -130,9 +131,7 @@ def create_space(
 
 
 @spaces_router.get("/{space_id}", response_model=SpaceOut)
-def show_space(
-    space_id: int, conn: sqlite3.Connection = Depends(get_conn)
-) -> dict:
+def show_space(space_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     space = spaces.get_space(conn, space_id)
     if space is None:
         raise HTTPException(status_code=404, detail="no such space")
@@ -143,7 +142,7 @@ def show_space(
 def edit_space(
     space_id: int,
     payload: SpaceUpdate,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing a space is open to any authenticated actor, like creating one or
@@ -178,9 +177,7 @@ def edit_space(
     return after
 
 
-def _space_for_write(
-    conn: sqlite3.Connection, space_id: int, actor: dict
-) -> dict:
+def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> dict:
     """Fetch a space the actor may DELETE, or raise: 404 if no such space, 403 if
     the actor isn't its creator. Deleting a space is creator-only — tighter than
     Mentor's otherwise-open write model (any signed-in actor may create spaces and
@@ -199,7 +196,7 @@ def _space_for_write(
 @spaces_router.delete("/{space_id}", status_code=204)
 def delete_space(
     space_id: int,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Creator only (404 if missing, 403 if not permitted).
@@ -208,9 +205,7 @@ def delete_space(
     # first. 409, mirroring project-delete-on-issues and page-delete-on-children —
     # a delete must not silently wipe a documentation tree.
     if pages.count_pages_in_space(conn, space_id) > 0:
-        raise HTTPException(
-            status_code=409, detail="delete or move its pages first"
-        )
+        raise HTTPException(status_code=409, detail="delete or move its pages first")
     spaces.delete_space(conn, space_id)
     space_activity.record_space_deleted(
         conn, actor_id=actor["id"], space_id=space_id, name=space["name"]
@@ -224,7 +219,7 @@ def delete_space(
 def create_page(
     space_id: int,
     payload: PageCreate,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a page (like creating an issue). The
@@ -269,9 +264,7 @@ def list_pages(
 
 
 @pages_router.get("/{page_id}", response_model=PageOut)
-def show_page(
-    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
-) -> dict:
+def show_page(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
     page = pages.get_page(conn, page_id)
     if page is None:
         raise HTTPException(status_code=404, detail="no such page")
@@ -282,7 +275,7 @@ def show_page(
 def edit_page(
     page_id: int,
     payload: PageUpdate,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing is open to any authenticated actor, mirroring create (a page has no
@@ -311,7 +304,7 @@ def edit_page(
 def move_page(
     page_id: int,
     payload: ParentUpdate,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Re-parent a page within its space. Open to any authenticated actor, like
@@ -337,7 +330,7 @@ def move_page(
 @pages_router.delete("/{page_id}", status_code=204)
 def delete_page(
     page_id: int,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Delete a page. Authed like edit/move. 404 if missing; 409 if it still has
@@ -357,9 +350,7 @@ def delete_page(
 
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])
-def backlinks(
-    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
-) -> list[dict]:
+def backlinks(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
     # "What references this page?" — open like other reads. 404 if the page
     # itself is missing, so a typo'd id reads as not-found, not empty.
     if pages.get_page(conn, page_id) is None:
@@ -392,7 +383,7 @@ def show_version(
 def restore_version(
     page_id: int,
     version: int,
-    actor: dict = Depends(write_actor),
+    actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Restoring is an EDIT, not a destruction (the current content is preserved as
