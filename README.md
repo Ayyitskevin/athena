@@ -38,10 +38,18 @@ uvicorn athena.main:app --reload
 
 ## Operations
 
-- `/healthz` is a cheap liveness check.
-- `/readyz` checks that SQLite is reachable and migrated.
-- `ATHENA_MAX_REQUEST_BODY_BYTES` caps request bodies; it defaults to 1 MiB.
+Athena is currently intended for local or tailnet deployment. The app migrates
+SQLite on startup and exposes:
+
+- `/healthz` — cheap liveness check.
+- `/readyz` — SQLite reachability and migration readiness check.
+
+First-run bootstrap creates the first user as `admin`. Browser admins can manage
+users at `/admin/users` and scoped API tokens at `/settings/tokens`. See the
+operations runbook for deployment settings, role behavior, token scopes, and
+headless bootstrap commands.
 
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the full design and phased roadmap.
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, bootstrap, roles, and token scopes.
