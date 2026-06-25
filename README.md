@@ -45,3 +45,4 @@ uvicorn athena.main:app --reload
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the full design and phased roadmap.
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, health checks, backups, and restore.
