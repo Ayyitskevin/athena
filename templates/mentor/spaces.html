@@ -38,7 +38,7 @@
 {% endif %}
 
 <div class="form-container">
-    {% if request.state.user %}
+    {% if can_write %}
     <h3>New Space</h3>
     <form method="post" action="/mentor/spaces" class="issue-form">
         {% include "partials/csrf.html" %}
@@ -60,6 +60,8 @@
             <button type="submit" class="button">Create Space</button>
         </div>
     </form>
+    {% elif request.state.user %}
+    <p class="note-small">Viewer role is read-only.</p>
     {% else %}
     <p class="note-small"><a href="/login">Sign in</a> to create a space.</p>
     {% endif %}

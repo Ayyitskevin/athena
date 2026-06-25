@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from athena.core import links
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import write_actor
 from athena.mentor import page_activity, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
@@ -102,7 +102,7 @@ def list_all_spaces(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
 @spaces_router.post("", response_model=SpaceOut, status_code=201)
 def create_space(
     payload: SpaceCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a space (like creating a project).
@@ -143,7 +143,7 @@ def show_space(
 def edit_space(
     space_id: int,
     payload: SpaceUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing a space is open to any authenticated actor, like creating one or
@@ -199,7 +199,7 @@ def _space_for_write(
 @spaces_router.delete("/{space_id}", status_code=204)
 def delete_space(
     space_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Creator only (404 if missing, 403 if not permitted).
@@ -224,7 +224,7 @@ def delete_space(
 def create_page(
     space_id: int,
     payload: PageCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a page (like creating an issue). The
@@ -282,7 +282,7 @@ def show_page(
 def edit_page(
     page_id: int,
     payload: PageUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing is open to any authenticated actor, mirroring create (a page has no
@@ -311,7 +311,7 @@ def edit_page(
 def move_page(
     page_id: int,
     payload: ParentUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Re-parent a page within its space. Open to any authenticated actor, like
@@ -337,7 +337,7 @@ def move_page(
 @pages_router.delete("/{page_id}", status_code=204)
 def delete_page(
     page_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # Delete a page. Authed like edit/move. 404 if missing; 409 if it still has
@@ -392,7 +392,7 @@ def show_version(
 def restore_version(
     page_id: int,
     version: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Restoring is an EDIT, not a destruction (the current content is preserved as

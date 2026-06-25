@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from athena.core import tokens
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import current_actor, write_actor
 
 router = APIRouter(prefix="/tokens", tags=["core"])
 
@@ -44,7 +44,7 @@ class TokenCreatedOut(TokenOut):
 @router.post("", response_model=TokenCreatedOut, status_code=201)
 def create(
     payload: TokenCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # The token belongs to the authenticated actor — not a user id from the body.
@@ -63,7 +63,7 @@ def index(
 @router.delete("/{token_id}", status_code=204)
 def revoke(
     token_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> Response:
     if not tokens.revoke_token(conn, user_id=actor["id"], token_id=token_id):

@@ -12,16 +12,42 @@ import sqlite3
 
 from athena.core import passwords
 
+ADMIN_ROLE = "admin"
+MEMBER_ROLE = "member"
+VIEWER_ROLE = "viewer"
+ROLES = (ADMIN_ROLE, MEMBER_ROLE, VIEWER_ROLE)
+DEFAULT_ROLE = MEMBER_ROLE
+BOOTSTRAP_ROLE = ADMIN_ROLE
+
+
+def normalize_role(role: str | None) -> str:
+    """Return a canonical role or raise ValueError for an unknown one."""
+    value = (role or DEFAULT_ROLE).strip().lower()
+    if value not in ROLES:
+        raise ValueError(f"role must be one of: {', '.join(ROLES)}")
+    return value
+
 
 def create_user(
-    conn: sqlite3.Connection, *, email: str, name: str, password: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    email: str,
+    name: str,
+    password: str | None = None,
+    role: str | None = None,
 ) -> dict:
     """Insert a user and return it. An optional password enables browser login;
     without one the user exists as an actor but can only act via API tokens.
     Raises sqlite3.IntegrityError if the email is already taken."""
+    role = normalize_role(role)
     cur = conn.execute(
-        "INSERT INTO users (email, name, password_hash) VALUES (?, ?, ?)",
-        (email, name, passwords.hash_password(password) if password else None),
+        "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
+        (
+            email,
+            name,
+            passwords.hash_password(password) if password else None,
+            role,
+        ),
     )
     conn.commit()
     return get_user(conn, cur.lastrowid)

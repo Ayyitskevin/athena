@@ -19,7 +19,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.core import activity, links
+from athena.core import activity, identity, links
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -35,6 +35,21 @@ def _signin_required(verb: str) -> HTMLResponse:
         f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
         status_code=401,
     )
+
+
+def _readonly_response() -> HTMLResponse:
+    return HTMLResponse(
+        '<div class="blocked">Viewer role is read-only.</div>',
+        status_code=403,
+    )
+
+
+def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
+    if user is None:
+        return _signin_required(verb)
+    if not identity.can_write(user):
+        return _readonly_response()
+    return None
 
 
 def _tree_rows(page_rows: list[dict]) -> list[dict]:
@@ -80,10 +95,12 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     counts = {
         s["id"]: pages.count_pages_in_space(conn, s["id"]) for s in all_spaces
     }
+    user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
         name="mentor/spaces.html",
-        context={"spaces": all_spaces, "counts": counts},
+        context={"spaces": all_spaces, "counts": counts, "can_write": can_write},
     )
 
 
@@ -99,8 +116,9 @@ def create_space(
     key normalized to UPPERCASE (so "eng" == "ENG"), key + name required, duplicate
     key → 409. Actor is the session, never a form field."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("create spaces")
+    err = _write_required(user, "create spaces")
+    if err is not None:
+        return err
 
     key = key.strip().upper()
     name = name.strip()
@@ -130,8 +148,9 @@ def delete_space(
     409 if the space still holds pages: we don't cascade, so the pages must be moved
     or deleted first. On success the space is gone, so we 303 back to /mentor."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("delete spaces")
+    err = _write_required(user, "delete spaces")
+    if err is not None:
+        return err
 
     space = spaces.get_space(conn, space_id)
     if space is None:
@@ -164,8 +183,9 @@ def edit_space_form(
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("edit spaces")
+    err = _write_required(user, "edit spaces")
+    if err is not None:
+        return err
 
     space = spaces.get_space(conn, space_id)
     if space is None:
@@ -189,8 +209,9 @@ def edit_space(
     uppercased, key + name required, a key clash with a DIFFERENT space → 409.
     303 back to the space detail on success."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("edit spaces")
+    err = _write_required(user, "edit spaces")
+    if err is not None:
+        return err
 
     before = spaces.get_space(conn, space_id)
     if before is None:
@@ -231,13 +252,18 @@ def space_detail(
         return templates.TemplateResponse(
             request=request,
             name="mentor/spaces.html",
-            context={"spaces": spaces.list_spaces(conn), "counts": {},
-                     "error": f"Space #{space_id} not found"},
+            context={
+                "spaces": spaces.list_spaces(conn),
+                "counts": {},
+                "can_write": False,
+                "error": f"Space #{space_id} not found",
+            },
             status_code=404,
         )
 
     page_rows = pages.list_pages_in_space(conn, space_id)
     user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
         name="mentor/space_detail.html",
@@ -249,7 +275,8 @@ def space_detail(
             # Drives the danger zone: only the creator sees Delete (creator-only,
             # tighter than Mentor's open write model), and it's disabled while the
             # space still holds pages (the API would refuse that delete with 409).
-            "can_delete": user is not None and user["id"] == space["created_by"],
+            "can_write": can_write,
+            "can_delete": can_write and user["id"] == space["created_by"],
             "page_count": len(page_rows),
             "activity": activity.list_activity(
                 conn, target_kind="space", target_id=space_id
@@ -272,8 +299,9 @@ def create_page(
     THIS SAME SPACE (the cross-space tree rule the FK can't express). 303 to the new
     page on success."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("create pages")
+    err = _write_required(user, "create pages")
+    if err is not None:
+        return err
 
     if spaces.get_space(conn, space_id) is None:
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
@@ -327,6 +355,8 @@ def page_detail(
     # excluded — you can't be your own parent). Descendants are left in the list and
     # rejected by validate_move if chosen, rather than computing the subtree here.
     siblings = [p for p in pages.list_pages_in_space(conn, page["space_id"]) if p["id"] != page_id]
+    user = getattr(request.state, "user", None)
+    can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_detail.html",
@@ -340,6 +370,7 @@ def page_detail(
                 conn, target_kind="page", target_id=page_id
             ),
             "move_candidates": siblings,
+            "can_write": can_write,
             # Drives the Delete button: a page with children can't be deleted.
             "child_count": pages.count_child_pages(conn, page_id),
         },
@@ -356,8 +387,9 @@ def edit_page_form(
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("edit pages")
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
 
     page = pages.get_page(conn, page_id)
     if page is None:
@@ -381,8 +413,9 @@ def edit_page(
     rejected. update_page snapshots the prior revision into history before
     overwriting (see mentor/pages.py), then we 303 back to the page."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("edit pages")
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
 
     before = pages.get_page(conn, page_id)
     if before is None:
@@ -413,8 +446,9 @@ def move_page(
     string today but we HTML-escape it on the way out so this stays safe even if
     the predicate ever grows to echo user input. 303 back so the new breadcrumb shows."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("move pages")
+    err = _write_required(user, "move pages")
+    if err is not None:
+        return err
 
     page = pages.get_page(conn, page_id)
     if page is None:
@@ -454,8 +488,9 @@ def delete_page(
     if the page still has children — same no-cascade rule as the API. On success the
     page is gone, so we 303 to the space it lived in (captured before the delete)."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("delete pages")
+    err = _write_required(user, "delete pages")
+    if err is not None:
+        return err
 
     page = pages.get_page(conn, page_id)
     if page is None:
@@ -489,8 +524,9 @@ def restore_version(
     page or that version is missing; 303 back to the page, which now shows the
     restored content with the previously-live revision added to its history."""
     user = getattr(request.state, "user", None)
-    if user is None:
-        return _signin_required("restore pages")
+    err = _write_required(user, "restore pages")
+    if err is not None:
+        return err
 
     before = pages.get_page(conn, page_id)
     restored = pages.restore_version(conn, page_id, version, editor_id=user["id"])

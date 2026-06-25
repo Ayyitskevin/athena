@@ -78,3 +78,35 @@ def optional_actor(
         return current_actor(authorization, x_athena_actor, conn)
     except HTTPException:
         return None
+
+
+def is_admin(actor: dict | None) -> bool:
+    """Whether the actor may perform administration-only operations."""
+    return actor is not None and actor.get("role") == users.ADMIN_ROLE
+
+
+def can_write(actor: dict | None) -> bool:
+    """Whether the actor may perform ordinary state-changing work."""
+    return actor is not None and actor.get("role") != users.VIEWER_ROLE
+
+
+def require_admin(actor: dict) -> dict:
+    if not is_admin(actor):
+        raise HTTPException(status_code=403, detail="admin role required")
+    return actor
+
+
+def require_write_role(actor: dict) -> dict:
+    if not can_write(actor):
+        raise HTTPException(status_code=403, detail="viewer role is read-only")
+    return actor
+
+
+def admin_actor(actor: dict = Depends(current_actor)) -> dict:
+    """FastAPI dependency for administration-only endpoints."""
+    return require_admin(actor)
+
+
+def write_actor(actor: dict = Depends(current_actor)) -> dict:
+    """FastAPI dependency for authenticated non-viewer write endpoints."""
+    return require_write_role(actor)

@@ -9,7 +9,7 @@
         <h1>{{ space.name }} <code class="muted">{{ space.key }}</code></h1>
         {% if space.description %}<p class="subtitle">{{ space.description }}</p>{% endif %}
     </div>
-    {% if request.state.user %}
+    {% if can_write %}
     <div>
         <a href="/mentor/spaces/{{ space.id }}/edit" class="button secondary">Edit</a>
     </div>
@@ -38,7 +38,7 @@
 {% endif %}
 
 <div class="form-container">
-    {% if request.state.user %}
+    {% if can_write %}
     <h3>New Page</h3>
     <form method="post" action="/mentor/spaces/{{ space.id }}/pages" class="issue-form">
         {% include "partials/csrf.html" %}
@@ -63,6 +63,8 @@
             <button type="submit" class="button">Create Page</button>
         </div>
     </form>
+    {% elif request.state.user %}
+    <p class="note-small">Viewer role is read-only.</p>
     {% else %}
     <p class="note-small"><a href="/login">Sign in</a> to create a page.</p>
     {% endif %}
