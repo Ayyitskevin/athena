@@ -172,7 +172,7 @@
                             </form>
                         </details>
                         <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/delete"
-                              onsubmit="return confirm('Delete this comment?');">
+                              data-confirm="Delete this comment?">
                             {% include "partials/csrf.html" %}
                             <button type="submit" class="button small secondary">Delete</button>
                         </form>

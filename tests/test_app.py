@@ -3,12 +3,58 @@
 TestClient used as a context manager (`with TestClient(app)`) runs the app's
 startup/shutdown — so this also proves migrate-on-startup actually fires.
 """
+
+import asyncio
+import json
 import os
 import sqlite3
 
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
+
+
+async def _raw_asgi_request(
+    app, *, method: str, path: str, body: bytes, headers: list[tuple[bytes, bytes]]
+):
+    messages = []
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "method": method,
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": b"",
+        "headers": headers,
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "root_path": "",
+    }
+    await app(scope, receive, send)
+    status = next(
+        message["status"]
+        for message in messages
+        if message["type"] == "http.response.start"
+    )
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return status, response_body
 
 
 def test_healthz_returns_ok(tmp_path):
@@ -51,7 +97,10 @@ def test_security_headers_are_attached(tmp_path):
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
     assert response.headers["referrer-policy"] == "same-origin"
-    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    csp = response.headers["content-security-policy"]
+    assert "frame-ancestors 'none'" in csp
+    assert "script-src 'self';" in csp
+    assert "script-src 'self' 'unsafe-inline'" not in csp
     assert response.headers["permissions-policy"] == (
         "camera=(), geolocation=(), microphone=()"
     )
@@ -69,6 +118,28 @@ def test_request_body_limit_rejects_large_payload(tmp_path):
     assert response.status_code == 413
     assert response.json() == {"detail": "request body too large"}
     assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_request_body_limit_counts_streamed_payload_without_content_length(tmp_path):
+    # WHY: clients can stream a body without Content-Length. The app limit must
+    # count bytes actually received, not only trust the optional header.
+    app = create_app(tmp_path / "body_limit_streamed.db", max_request_body_bytes=8)
+    body = json.dumps(
+        {"email": "kevin@example.com", "name": "Kevin", "password": "secret"}
+    ).encode()
+    with TestClient(app):
+        status, response_body = asyncio.run(
+            _raw_asgi_request(
+                app,
+                method="POST",
+                path="/users",
+                body=body,
+                headers=[(b"content-type", b"application/json")],
+            )
+        )
+
+    assert status == 413
+    assert json.loads(response_body) == {"detail": "request body too large"}
 
 
 def test_startup_migrates_the_database(tmp_path):

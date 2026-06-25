@@ -4,11 +4,14 @@
 Tests call it with a throwaway database; the server calls it once for real.
 No global app state, no surprises.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import json
 from pathlib import Path
 import sqlite3
+from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -27,7 +30,7 @@ from athena.web import init_templates, router as web_router
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
@@ -43,6 +46,96 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
 }
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized request bodies even when Content-Length is absent.
+
+    The header check catches honest clients before any body is read. The receive
+    pre-read is the real enforcement path for chunked or otherwise streamed
+    requests, where there may be no trustworthy Content-Length header at all. It
+    buffers only up to the configured cap, then replays the body downstream.
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or self.max_bytes <= 0:
+            await self.app(scope, receive, send)
+            return
+
+        for name, value in scope.get("headers", []):
+            if name.lower() != b"content-length":
+                continue
+            try:
+                content_length = int(value.decode("ascii"))
+            except ValueError:
+                await _send_json_response(
+                    send, {"detail": "invalid content-length"}, status_code=400
+                )
+                return
+            if content_length > self.max_bytes:
+                await _send_json_response(
+                    send, {"detail": "request body too large"}, status_code=413
+                )
+                return
+            break
+
+        consumed = 0
+        messages = []
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.request":
+                consumed += len(message.get("body", b""))
+                if consumed > self.max_bytes:
+                    await _send_json_response(
+                        send, {"detail": "request body too large"}, status_code=413
+                    )
+                    return
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                break
+
+        replay_index = 0
+
+        async def replay_receive():
+            nonlocal replay_index
+            if replay_index < len(messages):
+                message = messages[replay_index]
+                replay_index += 1
+                return message
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+
+async def _send_json_response(
+    send: Callable[[dict], Awaitable[None]], body: dict, *, status_code: int
+) -> None:
+    payload = json.dumps(body).encode("utf-8")
+    headers = [
+        (b"content-type", b"application/json"),
+        (b"content-length", str(len(payload)).encode("ascii")),
+    ]
+    headers.extend(
+        (name.lower().encode("ascii"), value.encode("ascii"))
+        for name, value in SECURITY_HEADERS.items()
+    )
+    if config.COOKIE_SECURE:
+        headers.append(
+            (
+                b"strict-transport-security",
+                b"max-age=63072000; includeSubDomains",
+            )
+        )
+    await send(
+        {"type": "http.response.start", "status": status_code, "headers": headers}
+    )
+    await send({"type": "http.response.body", "body": payload})
 
 
 def _attach_security_headers(response):
@@ -79,6 +172,7 @@ def create_app(
         # Shutdown: nothing to clean up yet.
 
     app = FastAPI(title="Athena", lifespan=lifespan)
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
@@ -102,21 +196,6 @@ def create_app(
 
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
-        if body_limit > 0:
-            raw_length = request.headers.get("content-length")
-            if raw_length is not None:
-                try:
-                    content_length = int(raw_length)
-                except ValueError:
-                    response = JSONResponse(
-                        {"detail": "invalid content-length"}, status_code=400
-                    )
-                    return _attach_security_headers(response)
-                if content_length > body_limit:
-                    response = JSONResponse(
-                        {"detail": "request body too large"}, status_code=413
-                    )
-                    return _attach_security_headers(response)
         response = await call_next(request)
         return _attach_security_headers(response)
 

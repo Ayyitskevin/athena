@@ -51,7 +51,7 @@
     {% else %}
     <p class="note-small">This permanently removes the project. This cannot be undone.</p>
     <form method="post" action="/aegis/projects/{{ project.id }}/delete"
-          onsubmit="return confirm('Delete project “{{ project.name }}”? This cannot be undone.');">
+          data-confirm="Delete project {{ project.name }}? This cannot be undone.">
         {% include "partials/csrf.html" %}
         <button type="submit" class="button danger">Delete Project</button>
     </form>

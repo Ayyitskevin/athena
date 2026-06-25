@@ -87,7 +87,7 @@
     {% else %}
     <p class="note-small">This permanently removes the space. This cannot be undone.</p>
     <form method="post" action="/mentor/spaces/{{ space.id }}/delete"
-          onsubmit="return confirm('Delete space “{{ space.name }}”? This cannot be undone.');">
+          data-confirm="Delete space {{ space.name }}? This cannot be undone.">
         {% include "partials/csrf.html" %}
         <button type="submit" class="button danger">Delete Space</button>
     </form>

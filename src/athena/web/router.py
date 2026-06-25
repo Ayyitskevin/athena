@@ -363,10 +363,10 @@ def create_issue(
     # Record onto the audit trail — same fact the REST create records, so a
     # browser-created issue and an API-created one read identically in the feed.
     issue_activity.record_created(conn, actor_id=user["id"], issue_id=issue["id"])
-    # HTMX swaps this into #create-result; nudge the browser to the new issue.
+    # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
-        f'<div class="success">Created issue #{issue["id"]}.</div>'
-        f'<script>window.location.href="/aegis/issues/{issue["id"]}";</script>'
+        f'<div class="success">Created issue #{issue["id"]}.</div>',
+        headers={"HX-Redirect": f'/aegis/issues/{issue["id"]}'},
     )
 
 
