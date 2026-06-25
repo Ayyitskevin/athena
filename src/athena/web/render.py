@@ -47,6 +47,13 @@ def render_snippet(snippet: str | None) -> Markup:
     return Markup(marked)
 
 
+def render_plaintext(text: str | None) -> Markup:
+    """Render untrusted plain text as safe HTML, preserving line breaks."""
+    if not text:
+        return Markup("")
+    return Markup(str(escape(text)).replace("\n", "<br>"))
+
+
 def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
     """Render a body to safe HTML with cross-references linked. A reference to a
     real target becomes an <a class="xref">title</a>; a broken one (target not

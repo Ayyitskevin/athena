@@ -7,9 +7,19 @@ callers don't have to check first.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 _DEFAULT_COLOR = "#6b7280"
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def normalize_color(color: str = _DEFAULT_COLOR) -> str:
+    """Return a canonical safe label color or reject unsafe CSS text."""
+    candidate = (color or _DEFAULT_COLOR).strip()
+    if not _HEX_COLOR_RE.fullmatch(candidate):
+        raise ValueError("label color must be a #RRGGBB hex color")
+    return candidate.lower()
 
 
 def create_label(
@@ -17,6 +27,7 @@ def create_label(
 ) -> dict:
     """Insert a label and return it. Raises sqlite3.IntegrityError if a label
     with this name already exists (name is UNIQUE, case-insensitive)."""
+    color = normalize_color(color)
     cur = conn.execute(
         "INSERT INTO labels (name, color) VALUES (?, ?)", (name, color)
     )

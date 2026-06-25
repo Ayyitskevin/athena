@@ -160,7 +160,7 @@
                         <strong>{{ c.author_name }}</strong>
                         <span class="muted">{{ c.created_at }}</span>
                     </div>
-                    <div class="comment-body">{{ c.body | replace('\n', '<br>') | safe }}</div>
+                    <div class="comment-body">{{ c.body_html }}</div>
                     {% if request.state.user and c.author_id == request.state.user.id %}
                     <div class="comment-actions">
                         <details class="comment-edit">
@@ -172,7 +172,7 @@
                             </form>
                         </details>
                         <form method="post" action="/aegis/issues/{{ issue.id }}/comments/{{ c.id }}/delete"
-                              onsubmit="return confirm('Delete this comment?');">
+                              data-confirm="Delete this comment?">
                             {% include "partials/csrf.html" %}
                             <button type="submit" class="button small secondary">Delete</button>
                         </form>

@@ -13,7 +13,6 @@ single nullable column (issues.project_id). These tests encode the contract:
     the issue list can be filtered to one project.
 """
 import re
-import sqlite3
 
 from fastapi.testclient import TestClient
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -16,7 +17,7 @@ from athena.aegis import comments, dependencies, issue_activity, issues, labels,
 from athena.core import activity, links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_snippet
+from athena.web.render import render_body, render_plaintext, render_snippet
 
 router = APIRouter()
 
@@ -33,6 +34,33 @@ def init_templates(templates: Jinja2Templates) -> None:
 def get_templates() -> Jinja2Templates | None:
     """The configured templates instance, for other web routers (e.g. auth)."""
     return _templates
+
+
+def _issues_url(
+    *,
+    status: str = "",
+    label: str = "",
+    project: str = "",
+    search: str = "",
+    sort: str = "created_at",
+    order: str = "desc",
+    page: int = 1,
+    per_page: int = 20,
+) -> str:
+    """Build an encoded issue-list URL for HTMX links and pagination."""
+    query = urlencode(
+        {
+            "status": status,
+            "label": label,
+            "project": project,
+            "search": search,
+            "sort": sort,
+            "order": order,
+            "page": page,
+            "per_page": per_page,
+        }
+    )
+    return f"/aegis/issues?{query}"
 
 
 def _attach_labels(conn, rows: list[dict]) -> list[dict]:
@@ -173,6 +201,27 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     start = (page - 1) * per_page
     paged = filtered[start : start + per_page]  # labels already attached
 
+    def page_url(page_num: int, *, sort_by: str = sort, order_by: str = order) -> str:
+        return _issues_url(
+            status=status_filter or "",
+            label=label_filter,
+            project=project_raw,
+            search=search,
+            sort=sort_by,
+            order=order_by,
+            page=page_num,
+            per_page=per_page,
+        )
+
+    sort_urls = {
+        column: page_url(
+            1,
+            sort_by=column,
+            order_by="asc" if sort == column and order == "desc" else "desc",
+        )
+        for column in ("id", "title", "status", "priority", "created_at")
+    }
+
     template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
     return _templates.TemplateResponse(
         request=request,
@@ -190,6 +239,9 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "page": page,
             "per_page": per_page,
             "total": total,
+            "sort_urls": sort_urls,
+            "prev_page_url": page_url(page - 1),
+            "next_page_url": page_url(page + 1),
         },
     )
 
@@ -311,10 +363,10 @@ def create_issue(
     # Record onto the audit trail — same fact the REST create records, so a
     # browser-created issue and an API-created one read identically in the feed.
     issue_activity.record_created(conn, actor_id=user["id"], issue_id=issue["id"])
-    # HTMX swaps this into #create-result; nudge the browser to the new issue.
+    # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
-        f'<div class="success">Created issue #{issue["id"]}.</div>'
-        f'<script>window.location.href="/aegis/issues/{issue["id"]}";</script>'
+        f'<div class="success">Created issue #{issue["id"]}.</div>',
+        headers={"HX-Redirect": f'/aegis/issues/{issue["id"]}'},
     )
 
 
@@ -459,13 +511,20 @@ def change_issue_priority(
             '<div class="blocked">Please <a href="/login">sign in</a> to change priority.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     if priority not in issues.PRIORITIES:
         return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
 
     issues.update_issue(conn, issue_id, priority=priority)
+    issue_activity.record_priority_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["priority"],
+        after=priority,
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -507,12 +566,16 @@ def _render_issue_detail(
     issue_id = issue["id"]
     user = getattr(request.state, "user", None)
     can_modify = bool(user) and issues.can_modify(issue, user["id"])
+    comment_rows = comments.list_comments(conn, issue_id)
+    for comment in comment_rows:
+        comment["body_html"] = render_plaintext(comment["body"])
+
     context = {
         "issue": issue,
         "body_html": render_body(conn, issue["body"]),
         "backlinks": links.backlinks(conn, "issue", issue_id),
         "links": dependencies.list_links(conn, issue_id),
-        "comments": comments.list_comments(conn, issue_id),
+        "comments": comment_rows,
         "users": users.list_users(conn),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),

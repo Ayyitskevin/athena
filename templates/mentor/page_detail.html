@@ -62,7 +62,7 @@
                 {% if request.state.user %}
                 <td>
                     <form method="post" action="/mentor/pages/{{ page.id }}/versions/{{ v.version }}/restore"
-                          onsubmit="return confirm('Restore version {{ v.version }}? The current content is kept in history.');">
+                          data-confirm="Restore version {{ v.version }}? The current content is kept in history.">
                         {% include "partials/csrf.html" %}
                         <button type="submit" class="button secondary small">Restore</button>
                     </form>
@@ -105,7 +105,7 @@
     </form>
 
     <form method="post" action="/mentor/pages/{{ page.id }}/delete"
-          onsubmit="return confirm('Delete this page? Its history is removed too. This cannot be undone.');">
+          data-confirm="Delete this page? Its history is removed too. This cannot be undone.">
         {% include "partials/csrf.html" %}
         {% if child_count > 0 %}
         <button type="submit" class="button danger" disabled>Delete page</button>

@@ -23,6 +23,13 @@ def _bool_env(name: str, default: bool) -> bool:
 # long enough to mint the first bearer token, then turn it back off.
 TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 
+# Maximum accepted request body size. This keeps accidental huge posts from
+# tying up the app process. Set to 0 to disable here when a trusted reverse proxy
+# enforces the limit instead.
+MAX_REQUEST_BODY_BYTES = int(
+    os.environ.get("ATHENA_MAX_REQUEST_BODY_BYTES", str(1024 * 1024))
+)
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.

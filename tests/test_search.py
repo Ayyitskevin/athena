@@ -15,8 +15,6 @@ These tests encode the contract that matters, not just that the FTS query runs:
   * the REST endpoint requires an authenticated actor (a cross-cutting read over
     every issue and page) and can be narrowed to one kind.
 """
-import sqlite3
-
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues

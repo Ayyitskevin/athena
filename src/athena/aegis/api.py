@@ -339,6 +339,14 @@ def update(
             before=before["status"],
             after=updated["status"],
         )
+    if "priority" in fields:
+        issue_activity.record_priority_change(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            before=before["priority"],
+            after=updated["priority"],
+        )
     # A title/body edit is its own audit fact, separate from a status move; the
     # helper no-ops if neither actually changed, so a status/priority-only edit
     # records nothing here.
@@ -682,7 +690,10 @@ def create_label(
         raise HTTPException(status_code=422, detail="label name is required")
     if labels.get_label_by_name(conn, name) is not None:
         raise HTTPException(status_code=409, detail="label already exists")
-    return labels.create_label(conn, name=name, color=payload.color)
+    try:
+        return labels.create_label(conn, name=name, color=payload.color)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # --- Labels on an issue: a write, so creator-or-assignee gated -------------
