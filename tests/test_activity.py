@@ -8,6 +8,9 @@ record the lifecycle facts as a side effect: created, status changes (with the
 "old → new" detail), and assign/unassign — only when something actually changed.
 """
 
+import csv
+from io import StringIO
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -180,6 +183,33 @@ def test_distinct_verbs_reflects_only_recorded(tmp_path):
     verbs = activity.distinct_verbs(conn)
     conn.close()
     assert verbs == ["changed_status", "created"]  # alphabetical, deduped
+
+
+def test_activity_csv_export_has_stable_headers_and_quotes_values(tmp_path):
+    # WHY: CSV exports are consumed outside Athena. Keep a stable schema and let
+    # the csv module quote commas/newlines rather than hand-rolling strings.
+    db_file = tmp_path / "csv.db"
+    conn = _migrated_conn(db_file)
+    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("k@e.com", "Kevin"))
+    conn.commit()
+    activity.record(
+        conn,
+        actor_id=1,
+        verb="commented",
+        target_kind="issue",
+        target_id=1,
+        detail="contains, comma\nand newline",
+    )
+
+    csv_text = activity.to_csv(activity.list_activity(conn))
+    conn.close()
+
+    rows = list(csv.DictReader(StringIO(csv_text)))
+    assert csv_text.splitlines()[0] == (
+        "id,created_at,actor_id,actor_name,verb,target_kind,target_id,detail"
+    )
+    assert rows[0]["actor_name"] == "Kevin"
+    assert rows[0]["detail"] == "contains, comma\nand newline"
 
 
 # --- REST feed ------------------------------------------------------------

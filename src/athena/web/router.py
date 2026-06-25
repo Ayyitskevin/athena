@@ -10,7 +10,7 @@ import sqlite3
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
@@ -261,6 +261,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
 
 _FEED_PAGE = 50
+_EXPORT_LIMIT = 1000
 
 
 def _int_or_none(raw: str | None) -> int | None:
@@ -269,6 +270,24 @@ def _int_or_none(raw: str | None) -> int | None:
     if raw is None or raw.strip() == "" or not raw.strip().lstrip("-").isdigit():
         return None
     return int(raw)
+
+
+def _activity_export_url(
+    *,
+    actor_id: int | None,
+    verb: str | None,
+    kind: str | None,
+    target_id: int | None,
+    q: str,
+) -> str:
+    query = {
+        "actor": actor_id or "",
+        "verb": verb or "",
+        "kind": kind or "",
+        "target": target_id or "",
+        "q": q,
+    }
+    return f"/aegis/activity.csv?{urlencode(query)}"
 
 
 @router.get("/aegis/activity", response_class=HTMLResponse)
@@ -322,6 +341,45 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "f_target": target_id,
             "f_q": q,
             "next_before": next_before,
+            "export_url": _activity_export_url(
+                actor_id=actor_id,
+                verb=verb,
+                kind=kind,
+                target_id=target_id,
+                q=q,
+            ),
+        },
+    )
+
+
+@router.get("/aegis/activity.csv")
+def activity_export_csv(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Download the current activity filters as a CSV audit export."""
+    actor_id = _int_or_none(request.query_params.get("actor"))
+    target_id = _int_or_none(request.query_params.get("target"))
+    verb = (request.query_params.get("verb") or "").strip() or None
+    kind = (request.query_params.get("kind") or "").strip() or None
+    q = (request.query_params.get("q") or "").strip()
+    if target_id is not None and kind is None:
+        return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
+
+    rows = activity.list_activity(
+        conn,
+        target_kind=kind,
+        target_id=target_id,
+        actor_id=actor_id,
+        verb=verb,
+        search=q,
+        limit=_EXPORT_LIMIT,
+    )
+    return Response(
+        activity.to_csv(rows),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="athena-activity.csv"'
         },
     )
 

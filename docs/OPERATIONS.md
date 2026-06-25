@@ -100,6 +100,12 @@ Athena has three user roles:
 
 The last admin cannot be demoted through either the web UI or REST API.
 
+## Activity Export
+
+The browser activity feed at `/aegis/activity` includes a CSV download for the
+current audit filters. The export uses the same actor, event, kind, target, and
+search filters as the page and is capped to the newest 1000 matching rows.
+
 ## Browser Password Management
 
 Signed-in users can change their own browser password at `/settings/password`.
