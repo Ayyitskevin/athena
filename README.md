@@ -11,8 +11,10 @@ Self-hosted **project management + knowledge base** — one platform, two module
 
 ## Status
 
-🚧 **Phase 0 — project setup.** Developed locally, version-controlled on GitHub.
-Not hosted yet; self-hosting on the `flow` node is a later decision.
+**Local alpha.** Athena has a working FastAPI app with Aegis issues/projects/boards,
+Mentor spaces/pages/versioning, auth/sessions, CSRF, search, cross-links, and an
+audited activity trail. It is still developed locally and is not hosted yet;
+self-hosting on the `flow` node is a later decision.
 
 ## Stack
 
@@ -24,6 +26,15 @@ A self-owned replacement for Jira + Confluence: local control, no recurring SaaS
 fees, and — uniquely — designed so **both humans and an AI fleet are first-class
 API actors** (agents can file/triage issues and read/write docs through the same
 audited, token-scoped API humans use through the web UI).
+
+## Local Development
+
+```bash
+pip install -e ".[dev]"
+ruff check .
+pytest -q
+uvicorn athena.main:app --reload
+```
 
 ## Documentation
 

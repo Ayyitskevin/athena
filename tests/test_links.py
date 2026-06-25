@@ -13,8 +13,6 @@ These tests encode the contract that matters, not just that functions run:
   * the web detail pages render live references as links and broken ones visibly,
     and they escape author text (no XSS through a body).
 """
-import sqlite3
-
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues

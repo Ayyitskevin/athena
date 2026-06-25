@@ -12,8 +12,6 @@ matters:
   * the web layer find-or-creates by name (no separate "create label" step) and
     renders chips on list/board/detail — but still owns no data of its own.
 """
-import sqlite3
-
 from fastapi.testclient import TestClient
 
 from athena.aegis import labels
@@ -80,7 +78,7 @@ def test_attach_is_idempotent(tmp_path):
     lab = labels.create_label(conn, name="bug")
     labels.add_label_to_issue(conn, 1, lab["id"])
     labels.add_label_to_issue(conn, 1, lab["id"])  # again
-    assert [l["name"] for l in labels.labels_for_issue(conn, 1)] == ["bug"]
+    assert [label["name"] for label in labels.labels_for_issue(conn, 1)] == ["bug"]
     conn.close()
 
 
@@ -113,8 +111,8 @@ def test_labels_for_issues_bulk_groups_by_issue(tmp_path):
     labels.add_label_to_issue(conn, 1, feat["id"])
     labels.add_label_to_issue(conn, 2, bug["id"])
     out = labels.labels_for_issues(conn, [1, 2, 3])
-    assert {l["name"] for l in out[1]} == {"bug", "feature"}
-    assert {l["name"] for l in out[2]} == {"bug"}
+    assert {label["name"] for label in out[1]} == {"bug", "feature"}
+    assert {label["name"] for label in out[2]} == {"bug"}
     assert 3 not in out  # i3 has no labels
     assert labels.labels_for_issues(conn, []) == {}
     conn.close()
@@ -164,7 +162,7 @@ def test_create_and_list_labels(tmp_path):
         _seed_three_users(db_file)
         _create_label(client, "feature")
         _create_label(client, "bug")
-        names = [l["name"] for l in client.get("/labels").json()]
+        names = [label["name"] for label in client.get("/labels").json()]
         assert names == ["bug", "feature"]  # alphabetical
 
 
@@ -288,10 +286,10 @@ def test_attach_label_appears_in_issue_reads(tmp_path):
             headers={"X-Athena-Actor": "1"},
         )
         assert r.status_code == 201, r.text
-        assert [l["name"] for l in r.json()["labels"]] == ["bug"]
+        assert [label["name"] for label in r.json()["labels"]] == ["bug"]
         # and it shows up in the list view too
         listed = client.get("/issues").json()
-        assert [l["name"] for l in listed[0]["labels"]] == ["bug"]
+        assert [label["name"] for label in listed[0]["labels"]] == ["bug"]
 
 
 def test_attach_unknown_label_is_422(tmp_path):
@@ -438,7 +436,7 @@ def test_web_add_label_by_name_find_or_creates(tmp_path):
         )
         assert r.status_code == 303
         # label now exists in the shared vocabulary and is attached
-        assert [l["name"] for l in client.get("/labels").json()] == ["frontend"]
+        assert [label["name"] for label in client.get("/labels").json()] == ["frontend"]
         page = client.get(f"/aegis/issues/{issue['id']}").text
         assert "frontend" in page
 
@@ -514,7 +512,7 @@ def test_web_list_filters_by_label(tmp_path):
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
         bug_issue = _make_issue(client, actor="1", title="alpha-the-bug")
-        other = _make_issue(client, actor="1", title="beta-no-label")
+        _make_issue(client, actor="1", title="beta-no-label")
         client.post(
             f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"}
         )

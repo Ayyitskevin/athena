@@ -15,8 +15,6 @@ These encode the contract behind the feature, not just HTTP shapes:
   * a [[ATH-12]] cross-link resolves to that issue (and records a backlink); an
     unresolvable key ref renders broken and records no backlink.
 """
-import re
-
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues, projects
@@ -91,7 +89,7 @@ def test_moving_an_issue_retires_its_number(tmp_path):
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
     mise = projects.create_project(conn, name="Mise", key="MISE", created_by=1)
-    a1 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
     a2 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
     assert a2["key"] == "ATH-2"
     # Move ATH-2 to Mise: it gives up 2 and is handed a fresh MISE number.
@@ -282,7 +280,7 @@ def test_web_detail_addressable_by_key(tmp_path):
         _login(client, "ann@e.com", "Ann")
         client.post("/aegis/projects", data={"name": "Athena", "key": "ATH"})
         proj = client.get("/projects").json()[0]
-        issue = _make_issue(client, actor="1", project_id=proj["id"])
+        _make_issue(client, actor="1", project_id=proj["id"])
         page = client.get("/aegis/issues/ATH-1")
         assert page.status_code == 200
         assert "ATH-1" in page.text
