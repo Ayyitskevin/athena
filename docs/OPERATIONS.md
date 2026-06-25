@@ -50,6 +50,28 @@ Migrations run automatically during app startup. A failing `/readyz` usually
 means the app cannot open the configured `ATHENA_DB` path or the schema did not
 finish migrating.
 
+## Backup and Restore
+
+Use the packaged commands for SQLite snapshots:
+
+```bash
+athena-backup /var/lib/athena/athena.db /backups/athena-$(date +%F).db
+```
+
+`athena-backup` uses SQLite's online backup API, so Athena may stay running
+while the backup is taken. It refuses to overwrite an existing backup unless
+`--overwrite` is passed.
+
+Restore while Athena is stopped:
+
+```bash
+athena-restore /backups/athena-YYYY-MM-DD.db /var/lib/athena/athena.db
+```
+
+`athena-restore` refuses to overwrite an existing database unless `--force` is
+passed. When forcing a restore, it also removes stale `-wal` and `-shm` sidecar
+files for the target database after replacing the main file.
+
 ## First User Bootstrap
 
 The first user in an empty database can be created without authentication. Athena
@@ -160,5 +182,5 @@ Before leaving laptop-only development:
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
 - Keep `/readyz` in the service or reverse-proxy health check.
-- Back up the SQLite database path and any adjacent WAL/shm files while Athena is
-  stopped, or use SQLite's online backup tooling.
+- Run `athena-backup` on the configured SQLite database path and store the
+  snapshot somewhere outside the service host.
