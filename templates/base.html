@@ -26,6 +26,7 @@
                 <a href="/mentor">Mentor</a>
                 {% if request.state.user %}
                 <a href="/settings/tokens">Tokens</a>
+                <a href="/settings/password">Password</a>
                 {% if request.state.user.role == "admin" %}<a href="/admin/users">Admin</a>{% endif %}
                 <span class="nav-user">{{ request.state.user.name }}</span>
                 <form method="post" action="/logout" class="nav-logout">

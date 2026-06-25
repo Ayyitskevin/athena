@@ -100,6 +100,11 @@ Athena has three user roles:
 
 The last admin cannot be demoted through either the web UI or REST API.
 
+## Browser Password Management
+
+Signed-in users can change their own browser password at `/settings/password`.
+They must provide the current password and confirm the replacement password.
+
 ## Browser Token Management
 
 Signed-in users can open `/settings/tokens` to inspect their API tokens. Members
