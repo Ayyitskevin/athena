@@ -479,7 +479,6 @@ footer {
 }
 
 .issue-detail .body p {
-    white-space: pre-wrap;
     color: #333;
 }
 
@@ -633,7 +632,6 @@ footer {
 }
 
 .body-text {
-    white-space: pre-wrap;
     background: white;
     padding: 1rem;
     border-radius: 4px;
@@ -646,6 +644,86 @@ footer {
     border-radius: 4px;
     border: 1px solid #eee;
     line-height: 1.6;
+}
+
+/* Rendered Markdown body content (issue descriptions + Mentor pages). The body
+   is rendered to real block elements now, so style them sensibly and trim the
+   stray margins on the first/last child so the padded card stays tight. */
+.body-text > :first-child,
+.doc-body > :first-child {
+    margin-top: 0;
+}
+
+.body-text > :last-child,
+.doc-body > :last-child {
+    margin-bottom: 0;
+}
+
+.body-text h1, .doc-body h1,
+.body-text h2, .doc-body h2,
+.body-text h3, .doc-body h3,
+.body-text h4, .doc-body h4,
+.body-text h5, .doc-body h5,
+.body-text h6, .doc-body h6 {
+    margin: 1rem 0 0.5rem;
+    line-height: 1.25;
+}
+
+.body-text p, .doc-body p {
+    margin: 0.5rem 0;
+}
+
+.body-text ul, .doc-body ul,
+.body-text ol, .doc-body ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+.body-text li, .doc-body li {
+    margin: 0.2rem 0;
+}
+
+.body-text code, .doc-body code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: #f3f4f6;
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.body-text pre, .doc-body pre {
+    background: #f6f8fa;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+.body-text pre code, .doc-body pre code {
+    background: none;
+    padding: 0;
+    font-size: 0.85rem;
+}
+
+.body-text blockquote, .doc-body blockquote {
+    margin: 0.5rem 0;
+    padding-left: 1rem;
+    border-left: 3px solid #d1d5db;
+    color: #555;
+}
+
+.body-text table, .doc-body table {
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+}
+
+.body-text th, .doc-body th,
+.body-text td, .doc-body td {
+    border: 1px solid #d1d5db;
+    padding: 0.3rem 0.6rem;
+}
+
+.body-text img, .doc-body img {
+    max-width: 100%;
 }
 
 /* A live cross-reference ([[issue:N]]/[[page:N]] resolved to a real target). */

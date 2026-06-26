@@ -1,5 +1,5 @@
-"""Inline rendering for page/issue bodies — turns [[issue:N]]/[[page:N]] tokens
-into safe HTML links.
+"""Inline rendering for page/issue bodies — Markdown plus [[issue:N]]/[[page:N]]
+cross-link tokens, turned into safe HTML.
 
 This is the *presentation* half of the cross-link feature: core/links.py owns the
 token grammar and resolves what a reference points at; this module knows the web
@@ -7,20 +7,35 @@ URLs (/aegis/issues/N, /mentor/pages/N) and the markup, which core has no busine
 owning. Both halves share core.links.REF_RE so the index and the rendered links
 can never disagree on what counts as a reference.
 
-XSS rule: the body is author-supplied text, so we escape EVERYTHING first, then
-substitute link markup into the already-escaped string. A resolved title is
-escaped again before it goes into the anchor. Tokens like [[issue:5]] contain no
-HTML-special characters, so they survive escaping intact and the regex still
-matches.
+XSS rule (render_body): the body is author-supplied (and may come from an agent),
+so we never trust it. We render Markdown with raw HTML DISABLED (`html=False`), so
+an author's `<script>` becomes escaped text rather than live markup, and dangerous
+link schemes (javascript:, data:) are dropped by the Markdown link validator. We
+then run the rendered HTML through nh3 (a sanitizer with a strict tag/attribute
+allowlist) as a second, independent layer, and only afterwards substitute our own
+cross-link markup. The `[[issue:5]]`-style tokens contain no Markdown- or
+HTML-special characters, so they survive both passes intact and the regex still
+matches. `breaks=True` keeps a single newline as a line break, so plain-text
+bodies written before Markdown landed still read the way their authors intended.
+
+render_plaintext / render_snippet stay escape-first (no Markdown): comments and
+search snippets are short, untrusted, and want literal text, not formatting.
 """
 from __future__ import annotations
 
 import re
 import sqlite3
 
+from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
+import nh3
 
 from athena.core import links
+
+# One configured Markdown renderer for every body. `html=False` is the security
+# linchpin (raw HTML is escaped, not emitted); `breaks=True` preserves authored
+# line breaks. The default link validator already rejects javascript:/data: URLs.
+_MD = MarkdownIt("commonmark", {"html": False, "breaks": True})
 
 # Where each kind is addressable in the web UI. Keys match the resolver's kinds.
 _HREF = {"issue": "/aegis/issues/{}", "page": "/mentor/pages/{}"}
@@ -55,15 +70,24 @@ def render_plaintext(text: str | None) -> Markup:
 
 
 def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
-    """Render a body to safe HTML with cross-references linked. A reference to a
-    real target becomes an <a class="xref">title</a>; a broken one (target not
-    created, or deleted) renders the literal token in <span class="xref broken">
-    so the author sees it's dangling rather than having it silently vanish.
-    Newlines become <br> so plain-text paragraphs survive — this is the single
-    safe path for body rendering (the body is escaped first, never trusted raw)."""
+    """Render a body (Markdown) to safe HTML with cross-references linked. A
+    reference to a real target becomes an <a class="xref">title</a>; a broken one
+    (target not created, or deleted) renders the literal token in
+    <span class="xref broken"> so the author sees it's dangling rather than having
+    it silently vanish.
+
+    The body is rendered as Markdown with raw HTML disabled, then sanitized with
+    nh3, then the cross-link tokens are substituted — the single safe path for body
+    rendering (the body is never trusted raw). A token inside a code span/block is
+    still linkified (the substitution runs over the rendered HTML); that edge is
+    accepted in exchange for keeping one obvious render path."""
     if not text:
         return Markup("")
-    escaped = str(escape(text))
+    # Markdown (raw HTML escaped by html=False), then an independent sanitizer
+    # pass. nh3 keeps a strict allowlist of formatting tags and drops anything
+    # dangerous; the [[ref]] tokens are plain text, so they pass through to the
+    # cross-link substitution below.
+    safe = nh3.clean(_MD.render(text))
 
     def _link(match) -> str:
         kind, num = match.group(1), int(match.group(2))
@@ -88,6 +112,6 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
             return f'<a href="{href}" class="xref">{label}</a>'
         return f'<span class="xref broken">{escape(match.group(0))}</span>'
 
-    linked = links.REF_RE.sub(_link, escaped)
+    linked = links.REF_RE.sub(_link, safe)
     linked = links.KEY_REF_RE.sub(_key_link, linked)
-    return Markup(linked.replace("\n", "<br>"))
+    return Markup(linked)
