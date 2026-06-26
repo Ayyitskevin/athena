@@ -693,6 +693,34 @@ footer {
     line-height: 1.6;
 }
 
+/* Breadcrumb trail on a page: space › ancestor › … › current page. */
+.breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+}
+
+.breadcrumb a {
+    color: #555;
+    text-decoration: none;
+}
+
+.breadcrumb a:hover {
+    color: #000;
+    text-decoration: underline;
+}
+
+.breadcrumb-sep {
+    color: #bbb;
+}
+
+.breadcrumb-current {
+    color: #888;
+}
+
 /* "Pages in this space" navigation tree on a page — jump to any page in the space
    without going back to its index. Capped height so a big space scrolls in place. */
 .doc-tree {
