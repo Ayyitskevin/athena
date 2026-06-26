@@ -150,6 +150,37 @@
             {% endif %}
         </div>
 
+        <div class="attachments">
+            <h3>Attachments</h3>
+            {% if attachments %}
+            <ul class="attachment-list">
+                {% for a in attachments %}
+                <li>
+                    <a href="/attachments/{{ a.id }}">{{ a.filename }}</a>
+                    <span class="muted">({{ a.byte_size }} bytes)</span>
+                    {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
+                    <form method="post" action="/aegis/issues/{{ issue.id }}/attachments/{{ a.id }}/delete"
+                          data-confirm="Remove {{ a.filename }}?" style="display:inline">
+                        {% include "partials/csrf.html" %}
+                        <button type="submit" class="button danger small">Remove</button>
+                    </form>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="note-small">No attachments yet.</p>
+            {% endif %}
+            {% if can_write %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/attachments"
+                  enctype="multipart/form-data" class="attachment-form">
+                {% include "partials/csrf.html" %}
+                <input type="file" name="file" required>
+                <button type="submit" class="button secondary">Upload</button>
+            </form>
+            {% endif %}
+        </div>
+
         <div class="comments">
             <h3>Comments</h3>
             {% if comments %}

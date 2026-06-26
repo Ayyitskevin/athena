@@ -28,3 +28,10 @@ def webhook_delivery_disabled(monkeypatch):
     # drive webhooks.deliver_pending directly with a stub poster instead. A test that
     # specifically wants the live loop can flip this back on.
     monkeypatch.setattr(config, "WEBHOOK_DELIVERY_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_attachment_dir(tmp_path, monkeypatch):
+    # Attachments write blobs to config.ATTACH_DIR; point it at a per-test temp dir
+    # so uploads never land in the repo and tests can't see each other's files.
+    monkeypatch.setattr(config, "ATTACH_DIR", tmp_path / "attachments")

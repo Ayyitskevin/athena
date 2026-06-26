@@ -23,6 +23,7 @@ from athena import config
 from athena.aegis import api as aegis_api
 from athena.core import (
     activity_api,
+    attachments_api,
     db,
     events_api,
     search_api,
@@ -249,6 +250,7 @@ def create_app(
     app.include_router(activity_api.router)
     app.include_router(events_api.router)
     app.include_router(webhooks_api.router)
+    app.include_router(attachments_api.router)
 
     # Aegis REST API (issues + labels + projects).
     app.include_router(aegis_api.router)

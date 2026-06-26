@@ -745,6 +745,25 @@ footer {
     cursor: help;
 }
 
+.attachment-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.75rem;
+}
+
+.attachment-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+}
+
+.attachment-form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .backlink-list {
     list-style: none;
     padding: 0;
