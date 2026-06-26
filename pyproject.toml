@@ -14,10 +14,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "httpx", "ruff>=0.8,<1"]
+# The MCP server is optional — it lets an AI agent drive Athena over MCP. Install
+# with `pip install athena[mcp]`. Kept out of the base install so the core app
+# (and its CI) stay lean; nothing in the core imports these.
+mcp = ["mcp>=1.2", "httpx"]
 
 [project.scripts]
 athena-backup = "athena.ops:backup_main"
 athena-restore = "athena.ops:restore_main"
+athena-mcp = "athena.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
