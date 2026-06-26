@@ -106,3 +106,31 @@ def test_unknown_priority_matches_nothing_like_the_api(tmp_path):
         assert client.get("/issues?priority=nope").json() == []
         body = client.get("/aegis/issues?priority=nope").text
         assert "real issue" not in body
+
+
+def test_status_filter_lists_statuses_in_use_including_custom(tmp_path):
+    # WHY: the status select used to be a hardcoded open/in_progress/done trio, so a
+    # project's custom status was unfilterable from the list. Now it offers the
+    # statuses actually in use — including custom ones — and drops defaults nothing
+    # uses, exactly like the board filter.
+    with TestClient(create_app(tmp_path / "st.db")) as client:
+        _admin(client)
+        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=H1).json()
+        client.post(
+            f"/projects/{proj['id']}/statuses",
+            json={"name": "review", "category": "doing"},
+            headers=H1,
+        )
+        reviewing = _issue(client, "in review", project_id=proj["id"])
+        client.patch(f"/issues/{reviewing['id']}", json={"status": "review"}, headers=H1)
+        _issue(client, "still open")  # backlog, status "open"
+
+        body = client.get("/aegis/issues").text
+        assert '<option value="review"' in body  # the custom status is offered
+        assert '<option value="open"' in body  # an in-use default is offered
+        assert '<option value="in_progress"' not in body  # not in use → not listed
+
+        # and filtering by the custom status narrows correctly
+        f = client.get("/aegis/issues?status=review").text
+        assert "in review" in f and "still open" not in f
+        assert '<option value="review" selected>' in f

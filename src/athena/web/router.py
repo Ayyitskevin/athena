@@ -95,6 +95,20 @@ def _attach_labels(conn, rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _statuses_in_use(conn) -> list[str]:
+    """The distinct statuses currently on any issue, ordered todo → doing → done then
+    name. This is the option set BOTH status filters (the issue list and the board)
+    offer, so a filter only ever lists statuses that really exist on issues —
+    including a project's custom statuses — instead of a hardcoded open/in_progress/
+    done trio. (Empty when there are no issues; the "All statuses" option always
+    remains, so the control still renders.)"""
+    cat_rank = {"todo": 0, "doing": 1, "done": 2}
+    names = {i["status"] for i in issues.list_issues(conn)}
+    return sorted(
+        names, key=lambda n: (cat_rank.get(statuses.global_category(conn, n), 1), n)
+    )
+
+
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
     """Simple landing page. No dynamic data yet — just the foundation."""
@@ -416,6 +430,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
+            "all_statuses": _statuses_in_use(conn),
             "priority_filter": priority_filter,
             "priorities": issues.PRIORITIES,
             "assignee_filter": assignee_raw,
@@ -1541,10 +1556,9 @@ def _render_board(
         {"name": name, "label": name.replace("_", " ").title(), "issues": grouped[name]}
         for name in sorted(grouped, key=_sort_key)
     ]
-    # The status filter offers every status currently in use (across all issues).
-    all_statuses = sorted(
-        {i["status"] for i in issues.list_issues(conn)}, key=_sort_key
-    )
+    # The status filter offers every status currently in use (across all issues) —
+    # the same option set the issue list uses.
+    all_statuses = _statuses_in_use(conn)
 
     template = "aegis/partials/boards_content.html" if request.headers.get("HX-Request") else "aegis/boards.html"
     return _templates.TemplateResponse(
