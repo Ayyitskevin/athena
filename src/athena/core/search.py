@@ -4,8 +4,12 @@ Because Aegis and Mentor share one database, a single FTS5 index (`search_index`
 migration 0013) can rank issue and page hits together. This module:
 
   * keeps that derived index current (index_document, called from the issue/page
-    data-access layer on every write, exactly like core/links.sync_links), and
-  * answers a query, ranked best-first across both kinds (search).
+    data-access layer on every write, exactly like core/links.sync_links),
+  * answers a query, ranked best-first across both kinds, paged (search), and
+  * enriches each hit with the little context that makes a result scannable — an
+    issue's key (ATH-12) and status, a page's space key — by reading the source
+    tables directly (the same direct-read contract used everywhere here, so still
+    no aegis/mentor import and no dependency cycle).
 
 It lives in core/ for the same reason links does: it is the one place that
 deliberately knows about BOTH issues and pages. It reads those tables directly
@@ -67,21 +71,69 @@ def _to_match(query: str) -> str:
     return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"*' for t in terms)
 
 
+def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
+    """Attach per-kind context to each hit so a result is scannable at a glance: an
+    issue gets its key (ATH-12, or None for a backlog issue) and status; a page gets
+    its space key. Resolved with ONE batch query per kind — not per hit — reading the
+    source tables directly, the same contract index_document uses, so this stays free
+    of any aegis/mentor import. A hit whose source row vanished between the FTS read
+    and this read just gets no context and still renders by title."""
+    issue_ids = [h["source_id"] for h in hits if h["kind"] == "issue"]
+    page_ids = [h["source_id"] for h in hits if h["kind"] == "page"]
+    issue_ctx: dict[int, dict] = {}
+    if issue_ids:
+        ph = ",".join("?" for _ in issue_ids)
+        for row in conn.execute(
+            f"SELECT i.id, i.status, i.project_seq, p.key AS project_key "
+            f"FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
+            f"WHERE i.id IN ({ph})",
+            issue_ids,
+        ).fetchall():
+            key = (
+                f"{row['project_key']}-{row['project_seq']}"
+                if row["project_key"] and row["project_seq"] is not None
+                else None
+            )
+            issue_ctx[row["id"]] = {"key": key, "status": row["status"]}
+    page_ctx: dict[int, dict] = {}
+    if page_ids:
+        ph = ",".join("?" for _ in page_ids)
+        for row in conn.execute(
+            f"SELECT pg.id, s.key AS space_key "
+            f"FROM pages pg JOIN spaces s ON s.id = pg.space_id "
+            f"WHERE pg.id IN ({ph})",
+            page_ids,
+        ).fetchall():
+            page_ctx[row["id"]] = {"space_key": row["space_key"]}
+    for h in hits:
+        if h["kind"] == "issue":
+            ctx = issue_ctx.get(h["source_id"], {})
+            h["key"] = ctx.get("key")
+            h["status"] = ctx.get("status")
+        elif h["kind"] == "page":
+            ctx = page_ctx.get(h["source_id"], {})
+            h["space_key"] = ctx.get("space_key")
+    return hits
+
+
 def search(
     conn: sqlite3.Connection,
     query: str,
     *,
     kind: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[dict]:
     """Best-first hits for `query` across issues and pages.
 
-    Each hit is {kind, source_id, title, snippet}: the snippet is a short body
-    excerpt with the matched terms wrapped in [..] for highlighting. Ranking is
-    bm25 with the title column weighted above the body, so a title match outranks
-    a body-only match. An empty/whitespace query returns [] (a search box with no
-    input shows nothing, it does not dump the table). `kind` optionally narrows to
-    one side ('issue' | 'page'); an unknown kind simply matches nothing."""
+    Each hit is {kind, source_id, title, snippet} plus the per-kind context _enrich
+    adds (an issue's key/status, a page's space_key). The snippet is a short body
+    excerpt with the matched terms wrapped in [..] for highlighting. Ranking is bm25
+    with the title column weighted above the body, so a title match outranks a
+    body-only match. An empty/whitespace query returns [] (a search box with no input
+    shows nothing, it does not dump the table). `kind` optionally narrows to one side
+    ('issue' | 'page'); an unknown kind simply matches nothing. `limit`/`offset` page
+    the ranked result set, so a caller can fetch one window at a time."""
     if not query or not query.strip():
         return []
     match = _to_match(query)
@@ -95,7 +147,7 @@ def search(
         sql += "AND kind = ? "
         params.append(kind)
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
-    sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ?"
-    params.append(limit)
+    sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
     rows = conn.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
+    return _enrich(conn, [dict(r) for r in rows])

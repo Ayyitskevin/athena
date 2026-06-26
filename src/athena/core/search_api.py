@@ -28,6 +28,11 @@ class SearchHit(BaseModel):
     source_id: int
     title: str
     snippet: str
+    # Per-kind context (null for the other kind): an issue carries its project key
+    # (ATH-12, or null for a backlog issue) and status; a page carries its space key.
+    key: str | None = None
+    status: str | None = None
+    space_key: str | None = None
 
 
 @router.get("", response_model=list[SearchHit])
@@ -35,9 +40,10 @@ def query(
     q: str = Query(..., description="free text; prefix-matched, terms AND together"),
     kind: str | None = Query(None, description="narrow to 'issue' or 'page'"),
     limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, description="skip this many ranked hits (paging)"),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # An empty/whitespace q legitimately returns [] (the search layer handles it);
     # no need to 422 — a blank search box is "no results", not an error.
-    return search.search(conn, q, kind=kind, limit=limit)
+    return search.search(conn, q, kind=kind, limit=limit, offset=offset)

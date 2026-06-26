@@ -102,17 +102,42 @@ def home(request: Request):
     )
 
 
+_SEARCH_PAGE = 20
+
+
 @router.get("/find", response_class=HTMLResponse)
 def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Human-facing search across issues and pages — the browser twin of the JSON
     API at /search (which serves the fleet). It runs the SAME core.search query, so
     the two never disagree on what matches or how it ranks; this route only adds the
-    presentation: an <a> per hit to its detail page and a highlighted snippet.
-    Reading is open, like every other web read; a blank box just shows the form."""
+    presentation: a scope filter (All/Issues/Pages), a result card per hit linking to
+    its detail page with a highlighted snippet and a little context (issue key+status,
+    page space), and Prev/Next paging. Reading is open, like every other web read; a
+    blank box just shows the form."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     q = (request.query_params.get("q") or "").strip()
-    hits = search.search(conn, q) if q else []
+    # Scope to one kind, or all. An unrecognised value (e.g. a hand-edited URL) falls
+    # back to "all" rather than erroring — the same forgiving rule the issue list uses
+    # for its sort/order params.
+    kind_raw = (request.query_params.get("kind") or "").strip().lower()
+    kind = kind_raw if kind_raw in ("issue", "page") else None
+    try:
+        page = max(1, int(request.query_params.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+
+    # Fetch one extra hit to know whether a next page exists without a count query —
+    # the same trick the activity feed uses. Trim it off before rendering.
+    hits = (
+        search.search(
+            conn, q, kind=kind, limit=_SEARCH_PAGE + 1, offset=(page - 1) * _SEARCH_PAGE
+        )
+        if q
+        else []
+    )
+    has_next = len(hits) > _SEARCH_PAGE
+    hits = hits[:_SEARCH_PAGE]
     for h in hits:
         # render_snippet escapes then turns search's [..] match markers into <mark>;
         # the href maps a hit's kind to where it lives in the web UI.
@@ -121,10 +146,29 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             f"/aegis/issues/{h['source_id']}" if h["kind"] == "issue"
             else f"/mentor/pages/{h['source_id']}"
         )
+
+    def find_url(*, scope: str | None, page_num: int) -> str:
+        return "/find?" + urlencode(
+            {"q": q, "kind": scope or "", "page": page_num}
+        )
+
     return _templates.TemplateResponse(
         request=request,
         name="search.html",
-        context={"q": q, "hits": hits},
+        context={
+            "q": q,
+            "hits": hits,
+            "kind": kind,
+            "page": page,
+            "has_next": has_next,
+            "scope_urls": {
+                "all": find_url(scope=None, page_num=1),
+                "issue": find_url(scope="issue", page_num=1),
+                "page": find_url(scope="page", page_num=1),
+            },
+            "prev_url": find_url(scope=kind, page_num=page - 1) if page > 1 else None,
+            "next_url": find_url(scope=kind, page_num=page + 1) if has_next else None,
+        },
     )
 
 
