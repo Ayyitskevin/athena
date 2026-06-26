@@ -693,6 +693,42 @@ footer {
     line-height: 1.6;
 }
 
+/* "Pages in this space" navigation tree on a page — jump to any page in the space
+   without going back to its index. Capped height so a big space scrolls in place. */
+.doc-tree {
+    margin-bottom: 1rem;
+    padding: 0.5rem 0.75rem;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    max-height: 14rem;
+    overflow-y: auto;
+}
+
+.doc-tree h3 {
+    margin: 0 0 0.4rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+}
+
+.doc-tree ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.9rem;
+}
+
+.doc-tree li {
+    padding: 0.1rem 0;
+}
+
+.doc-tree-current {
+    font-weight: 600;
+    color: #111;
+}
+
 /* Rendered Markdown body content (issue descriptions + Mentor pages). The body
    is rendered to real block elements now, so style them sensibly and trim the
    stray margins on the first/last child so the padded card stays tight. */
