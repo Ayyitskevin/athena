@@ -25,6 +25,23 @@
     </div>
 </div>
 
+{% if tree %}
+<nav class="doc-tree" aria-label="Pages in this space">
+    <h3>{% if space %}Pages in {{ space.name }}{% else %}Pages in this space{% endif %}</h3>
+    <ul>
+    {% for p in tree %}
+        <li style="padding-left: {{ p.depth * 1.25 }}rem;">
+            {% if p.id == page.id %}
+            <span class="doc-tree-current" aria-current="page">{{ p.title }}</span>
+            {% else %}
+            <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
+            {% endif %}
+        </li>
+    {% endfor %}
+    </ul>
+</nav>
+{% endif %}
+
 <div class="page-body">
     {% if page.body %}
     <div class="doc-body">{{ body_html }}</div>

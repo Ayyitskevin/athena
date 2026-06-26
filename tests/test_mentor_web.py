@@ -146,6 +146,34 @@ def test_web_page_tree_renders_nesting(tmp_path):
         assert "└" in html  # the nesting marker only renders for depth > 0
 
 
+def test_page_detail_shows_space_nav_tree(tmp_path):
+    # WHY: a page should let you navigate the whole space without going back to its
+    # index — the page renders the space's page tree, links every OTHER page, and
+    # marks the current one as current (not a link).
+    app = create_app(tmp_path / "nav.db")
+    with TestClient(app) as client:
+        _login(client)
+        space = _make_space(client)
+        client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Runbooks"})
+        parent = client.get(f"/spaces/{space['id']}/pages").json()[0]
+        client.post(
+            f"/mentor/spaces/{space['id']}/pages",
+            data={"title": "Deploy guide", "parent_id": str(parent["id"])},
+        )
+        client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Onboarding"})
+        by_title = {p["title"]: p for p in client.get(f"/spaces/{space['id']}/pages").json()}
+        child, sibling = by_title["Deploy guide"], by_title["Onboarding"]
+
+        html = client.get(f"/mentor/pages/{child['id']}").text
+        assert 'class="doc-tree"' in html  # the nav tree is present
+        # other pages are reachable as links...
+        assert f'href="/mentor/pages/{parent["id"]}"' in html
+        assert f'href="/mentor/pages/{sibling["id"]}"' in html
+        # ...and the current page is highlighted, NOT a self-link
+        assert 'aria-current="page">Deploy guide<' in html
+        assert f'href="/mentor/pages/{child["id"]}"' not in html
+
+
 def test_web_cross_space_parent_is_rejected(tmp_path):
     # WHY: a page's parent must live in the SAME space — the tree can't span spaces.
     app = create_app(tmp_path / "xspace.db")
