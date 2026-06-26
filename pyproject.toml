@@ -6,6 +6,8 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi",
     "jinja2",
+    "markdown-it-py",
+    "nh3",
     "python-multipart",
     "uvicorn[standard]",
 ]
