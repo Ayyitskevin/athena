@@ -14,14 +14,39 @@
     <input type="search" name="q" value="{{ q }}" placeholder="Search issues and pages…"
            class="search-input search-input-wide" autofocus>
     <button type="submit" class="button">Search</button>
+    <div class="search-filters">
+        <select class="filter-select" name="status">
+            <option value="">Any status</option>
+            {% for s in all_statuses %}
+            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
+            {% endfor %}
+        </select>
+        <select class="filter-select" name="label">
+            <option value="">Any label</option>
+            {% for l in all_labels %}
+            <option value="{{ l.name }}" {% if label_filter == l.name %}selected{% endif %}>{{ l.name }}</option>
+            {% endfor %}
+        </select>
+        <select class="filter-select" name="project">
+            <option value="">Any project</option>
+            <option value="none" {% if project_filter == 'none' %}selected{% endif %}>No project (backlog)</option>
+            {% for p in all_projects %}
+            <option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
 </form>
 
 {% if q %}
+    {% if filtered_mode %}
+    <p class="note-small">Showing issues that match the filters. <a href="/find?q={{ q | urlencode }}">Clear filters</a> to search pages too.</p>
+    {% else %}
     <div class="search-scope">
         <a href="{{ scope_urls.all }}" class="search-scope-tab {{ 'active' if not kind }}">All</a>
         <a href="{{ scope_urls.issue }}" class="search-scope-tab {{ 'active' if kind == 'issue' }}">Issues</a>
         <a href="{{ scope_urls.page }}" class="search-scope-tab {{ 'active' if kind == 'page' }}">Pages</a>
     </div>
+    {% endif %}
 
     {% if hits %}
     <ul class="search-results">

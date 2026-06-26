@@ -123,6 +123,7 @@ def search(
     kind: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    ids: list[int] | None = None,
 ) -> list[dict]:
     """Best-first hits for `query` across issues and pages.
 
@@ -133,8 +134,16 @@ def search(
     body-only match. An empty/whitespace query returns [] (a search box with no input
     shows nothing, it does not dump the table). `kind` optionally narrows to one side
     ('issue' | 'page'); an unknown kind simply matches nothing. `limit`/`offset` page
-    the ranked result set, so a caller can fetch one window at a time."""
+    the ranked result set, so a caller can fetch one window at a time.
+
+    `ids` optionally restricts the hits to these source ids — the generic hook that
+    lets a caller intersect full-text relevance with a structured pre-filter (e.g.
+    aegis narrows an issue search to the issues that match status/label/project).
+    source_ids are per-kind, so a caller passing `ids` must also fix `kind`; an empty
+    list matches nothing (an "IN ()" is both invalid SQL and the right answer)."""
     if not query or not query.strip():
+        return []
+    if ids is not None and not ids:
         return []
     match = _to_match(query)
     sql = (
@@ -146,6 +155,10 @@ def search(
     if kind is not None:
         sql += "AND kind = ? "
         params.append(kind)
+    if ids is not None:
+        placeholders = ",".join("?" for _ in ids)
+        sql += f"AND source_id IN ({placeholders}) "
+        params.extend(ids)
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"
     params.extend([limit, offset])
