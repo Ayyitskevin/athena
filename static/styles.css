@@ -525,6 +525,23 @@ footer {
     font-size: 0.9rem;
 }
 
+/* Drag-to-change-status affordances (board-dnd.js). A draggable card shows a grab
+   cursor; the one being dragged fades; the column under the pointer highlights as a
+   drop target. */
+.board-card[draggable="true"] {
+    cursor: grab;
+}
+
+.board-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.board-column.drag-over {
+    border-color: #2563eb;
+    background: #eff6ff;
+}
+
 .board-card a {
     text-decoration: none;
     color: #222;
