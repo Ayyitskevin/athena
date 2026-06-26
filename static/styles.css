@@ -764,6 +764,46 @@ footer {
     gap: 0.5rem;
 }
 
+/* Notification nav badge + inbox list. */
+.badge {
+    display: inline-block;
+    background: #ef4444;
+    color: #fff;
+    border-radius: 999px;
+    padding: 0 0.45em;
+    font-size: 0.72rem;
+    line-height: 1.5;
+    margin-left: 0.15em;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.inbox-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.inbox-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.5rem;
+    border-bottom: 1px solid #eee;
+}
+
+.inbox-list li.unread {
+    background: #eff6ff;
+}
+
+.inbox-list li a {
+    flex: 1;
+}
+
 .backlink-list {
     list-style: none;
     padding: 0;

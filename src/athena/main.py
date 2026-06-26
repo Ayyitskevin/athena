@@ -26,6 +26,8 @@ from athena.core import (
     attachments_api,
     db,
     events_api,
+    notifications,
+    notifications_api,
     search_api,
     sessions,
     tokens_api,
@@ -209,6 +211,8 @@ def create_app(
         # check it. No cookie → no DB hit; both stay None.
         request.state.user = None
         request.state.csrf_token = None
+        # Unread-inbox count for the nav badge; 0 when logged out.
+        request.state.unread_count = 0
         raw = request.cookies.get(config.SESSION_COOKIE)
         if raw:
             conn = db.connect(request.app.state.db_path)
@@ -216,6 +220,9 @@ def create_app(
                 request.state.user = sessions.resolve_session(conn, raw)
                 if request.state.user is not None:
                     request.state.csrf_token = sessions.csrf_token_for(conn, raw)
+                    request.state.unread_count = notifications.unread_count(
+                        conn, request.state.user["id"]
+                    )
             finally:
                 conn.close()
         return await call_next(request)
@@ -251,6 +258,7 @@ def create_app(
     app.include_router(events_api.router)
     app.include_router(webhooks_api.router)
     app.include_router(attachments_api.router)
+    app.include_router(notifications_api.router)
 
     # Aegis REST API (issues + labels + projects).
     app.include_router(aegis_api.router)

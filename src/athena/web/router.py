@@ -15,7 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
-from athena.core import activity, attachments, identity, links, search, users
+from athena.core import activity, attachments, identity, links, notifications, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_plaintext, render_snippet
@@ -117,6 +117,59 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         name="search.html",
         context={"q": q, "hits": hits},
     )
+
+
+@router.get("/inbox", response_class=HTMLResponse)
+def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """The signed-in user's notification inbox — what changed on things they watch."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to see your inbox.</div>',
+            status_code=401,
+        )
+    items = notifications.list_notifications(conn, user["id"], limit=100)
+    for it in items:
+        it["href"] = (
+            f"/aegis/issues/{it['target_id']}"
+            if it["target_kind"] == "issue"
+            else f"/mentor/pages/{it['target_id']}"
+        )
+    return _templates.TemplateResponse(
+        request=request, name="inbox.html", context={"items": items}
+    )
+
+
+@router.post("/inbox/{notification_id}/read", dependencies=[Depends(verify_csrf)])
+def mark_inbox_read(
+    request: Request, notification_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Mark one notification read, then back to the inbox."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    notifications.mark_read(conn, user["id"], notification_id)
+    return RedirectResponse("/inbox", status_code=303)
+
+
+@router.post("/inbox/read-all", dependencies=[Depends(verify_csrf)])
+def mark_inbox_all_read(
+    request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Mark every notification read, then back to the inbox."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    notifications.mark_all_read(conn, user["id"])
+    return RedirectResponse("/inbox", status_code=303)
 
 
 @router.get("/aegis", response_class=HTMLResponse)
@@ -666,6 +719,8 @@ def _render_issue_detail(
         "links": dependencies.list_links(conn, issue_id),
         "comments": comment_rows,
         "attachments": attachments.list_for(conn, "issue", issue_id),
+        "is_watching": user is not None
+        and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
@@ -1064,6 +1119,37 @@ def remove_issue_attachment(
         target_id=issue_id,
         detail=att["filename"],
     )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/watch", dependencies=[Depends(verify_csrf)])
+def watch_issue(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Start watching an issue (any signed-in user, including viewers — it's a
+    personal subscription, not a write to shared state)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
+            status_code=401,
+        )
+    notifications.watch(conn, user["id"], "issue", issue_id)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/unwatch", dependencies=[Depends(verify_csrf)])
+def unwatch_issue(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Stop watching an issue."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    notifications.unwatch(conn, user["id"], "issue", issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

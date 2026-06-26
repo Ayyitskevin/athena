@@ -25,6 +25,8 @@
                 <a href="/aegis/activity">Activity</a>
                 <a href="/mentor">Mentor</a>
                 {% if request.state.user %}
+                <a href="/inbox" class="nav-inbox">Inbox{% if request.state.unread_count %}
+                    <span class="badge">{{ request.state.unread_count }}</span>{% endif %}</a>
                 <a href="/settings/tokens">Tokens</a>
                 <a href="/settings/password">Password</a>
                 {% if request.state.user.role == "admin" %}<a href="/admin/users">Admin</a>{% endif %}

@@ -13,6 +13,8 @@ import csv
 from io import StringIO
 import sqlite3
 
+from athena.core import notifications
+
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
 _SELECT = (
@@ -71,6 +73,16 @@ def record(
         "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail) "
         "VALUES (?, ?, ?, ?, ?)",
         (actor_id, verb, target_kind, target_id, detail),
+    )
+    # Fan the event out to the inbox of anyone watching this target (not the actor).
+    # notify_watchers doesn't commit, so the event row and its notifications land in
+    # one commit — they appear together or not at all.
+    notifications.notify_watchers(
+        conn,
+        event_id=cur.lastrowid,
+        actor_id=actor_id,
+        target_kind=target_kind,
+        target_id=target_id,
     )
     conn.commit()
     return get_activity(conn, cur.lastrowid)

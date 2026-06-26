@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Inbox — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Inbox</h1>
+    {% if items %}
+    <form method="post" action="/inbox/read-all">
+        {% include "partials/csrf.html" %}
+        <button type="submit" class="button secondary">Mark all read</button>
+    </form>
+    {% endif %}
+</div>
+
+{% if items %}
+<ul class="inbox-list">
+    {% for it in items %}
+    <li class="{% if not it.read_at %}unread{% endif %}">
+        <a href="{{ it.href }}">
+            {{ it.actor_name }} {{ it.verb }} {{ it.target_kind }} #{{ it.target_id }}{% if it.detail %} — {{ it.detail }}{% endif %}
+        </a>
+        <span class="muted">{{ it.event_at }}</span>
+        {% if not it.read_at %}
+        <form method="post" action="/inbox/{{ it.id }}/read" style="display:inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button small">Mark read</button>
+        </form>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="empty-state">Nothing in your inbox yet. Watch an issue or page — or get assigned
+    one — to receive updates here.</p>
+{% endif %}
+{% endblock %}
