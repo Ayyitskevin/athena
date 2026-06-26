@@ -24,6 +24,26 @@
                     · <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>
                     · {{ issue.created_at }}
                 </div>
+                {% if request.state.user %}
+                {# Keyboard-accessible twin of the drag gesture: pick a status, Move.
+                   With HTMX it swaps the board in place; without JS the native POST
+                   redirects back to the board. #}
+                <form class="board-move" method="post"
+                      action="/aegis/boards/move/{{ issue.id }}"
+                      hx-post="/aegis/boards/move/{{ issue.id }}"
+                      hx-target=".board" hx-swap="outerHTML">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="search" value="{{ search }}">
+                    <input type="hidden" name="status" value="{{ status_filter }}">
+                    <label class="visually-hidden" for="move-{{ issue.id }}">Move {{ issue.key or "#" ~ issue.id }} to status</label>
+                    <select id="move-{{ issue.id }}" name="new_status" class="board-move-select">
+                        {% for s in issue.status_options %}
+                        <option value="{{ s }}" {% if s == issue.status %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="button secondary small">Move</button>
+                </form>
+                {% endif %}
             </div>
             {% else %}
             <div class="empty small">No issues</div>

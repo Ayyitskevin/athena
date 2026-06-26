@@ -168,3 +168,100 @@ def test_move_preserves_active_filter(tmp_path):
         assert r.status_code == 200
         assert "keepme alpha" in r.text
         assert "other beta" not in r.text  # the search filter survived the move
+
+
+# --- keyboard / no-JS move (the accessible twin of the drag gesture) ---------
+
+
+def test_board_renders_keyboard_move_form(tmp_path):
+    # WHY: drag is mouse-only. A signed-in user must also get a real form — a status
+    # select plus a Move button — so the board is operable from the keyboard and
+    # without JS. Logged-out users get neither.
+    with TestClient(create_app(tmp_path / "kf.db")) as client:
+        _admin(client)
+        _issue(client, "kbd card")
+        csrf = _login(client)
+        body = client.get("/aegis/boards").text
+        assert 'class="board-move"' in body
+        assert 'name="new_status"' in body
+        assert 'action="/aegis/boards/move/' in body  # native POST fallback (no JS)
+        # the select offers this card's project statuses (backlog → defaults)
+        assert '<option value="open" selected>' in body
+        assert 'value="in_progress"' in body and 'value="done"' in body
+
+        # logged out: no move control at all
+        client.post("/logout", data={}, headers={"X-CSRF-Token": csrf})
+        out = client.get("/aegis/boards").text
+        assert 'class="board-move"' not in out
+
+
+def test_keyboard_move_via_form_redirects_and_applies(tmp_path):
+    # WHY: the no-JS path posts a plain form (no HX header). It must apply the move,
+    # record it, and 303 back to the board (so a refresh re-reads, not re-posts).
+    with TestClient(create_app(tmp_path / "km.db")) as client:
+        _admin(client)
+        iss = _issue(client, "shipit")
+        csrf = _login(client)
+        r = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={"new_status": "in_progress", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert r.headers["location"].startswith("/aegis/boards")
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "in_progress"
+        acts = client.get(
+            f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+        ).json()
+        assert any(a["verb"] == "changed_status" for a in acts)
+
+
+def test_keyboard_move_redirect_preserves_filter(tmp_path):
+    with TestClient(create_app(tmp_path / "kpf.db")) as client:
+        _admin(client)
+        iss = _issue(client, "card")
+        csrf = _login(client)
+        r = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={"new_status": "done", "csrf_token": csrf, "search": "card", "status": "open"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert "search=card" in r.headers["location"]
+
+
+def test_keyboard_move_write_gate_snaps_back(tmp_path):
+    # WHY: same write gate as the drag path — a non-owner's form post must not apply.
+    # The no-JS path still 303s (back to an unchanged board), it doesn't error-page.
+    with TestClient(create_app(tmp_path / "kg.db")) as client:
+        _admin(client)
+        _bob(client)
+        iss = _issue(client, "alice owns this")
+        csrf = _login(client, email="b@e.com")  # act as Bob
+        r = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={"new_status": "done", "csrf_token": csrf},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "open"
+
+
+def test_card_move_options_are_the_cards_project_statuses(tmp_path):
+    # WHY: each card's menu should be ITS project's statuses, so a keyboard user is
+    # only offered valid targets. A project with a custom status shows it; a backlog
+    # card shows the default set.
+    with TestClient(create_app(tmp_path / "ko.db")) as client:
+        _admin(client)
+        csrf = _login(client)
+        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=H1).json()
+        client.post(
+            f"/projects/{proj['id']}/statuses",
+            json={"name": "review", "category": "doing"},
+            headers=H1,
+        )
+        client.post("/issues", json={"title": "in project", "project_id": proj["id"]}, headers=H1)
+        body = client.get("/aegis/boards").text
+        # the custom status is an option on the board (for the project card's menu)
+        assert 'value="review"' in body
+        assert csrf in body  # board still carries the session token for the move
