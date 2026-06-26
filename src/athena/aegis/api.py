@@ -278,6 +278,8 @@ def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
 @router.get("", response_model=list[IssueOut])
 def index(
     status: str | None = None,
+    priority: str | None = None,
+    assignee: int | None = None,
     label: str | None = None,
     search: str | None = None,
     project: str | None = None,
@@ -287,12 +289,15 @@ def index(
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
     # project is a direct column on the issue: an id restricts to that project,
-    # "none" restricts to the backlog (no project).
+    # "none" restricts to the backlog (no project). priority/assignee are direct
+    # columns too — the same dimensions a saved filter persists.
     project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
         conn,
         status=status,
+        priority=priority,
+        assignee_id=assignee,
         search=search,
         project_id=project_id,
         backlog=backlog,

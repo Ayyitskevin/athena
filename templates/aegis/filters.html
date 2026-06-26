@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Saved filters — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Saved filters</h1>
+        <p class="subtitle">Your named, reusable issue queries</p>
+    </div>
+    <div class="header-actions">
+        <a href="/aegis/issues" class="button secondary">Back to issues</a>
+    </div>
+</div>
+
+{% if filters %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Criteria</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for f in filters %}
+        <tr>
+            <td class="issue-title"><a href="/aegis/filters/{{ f.id }}">{{ f.name }}</a></td>
+            <td class="muted">{{ f.summary }}</td>
+            <td class="muted">
+                <a href="/aegis/filters/{{ f.id }}">Run</a>
+                <form method="post" action="/aegis/filters/{{ f.id }}/delete"
+                      data-confirm="Delete saved filter {{ f.name }}?" style="display:inline">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button danger small">Delete</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No saved filters yet. Create one below, or use “★ Save current view” on the issues list.</p>
+{% endif %}
+
+<div class="form-container">
+    <h3>New filter</h3>
+    <form method="post" action="/aegis/filters" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="filter-name">Name</label>
+            <input type="text" id="filter-name" name="name" required
+                   value="{{ prefill.name }}" placeholder="e.g. My open bugs">
+        </div>
+        <div class="form-group">
+            <label for="filter-status">Status</label>
+            <input type="text" id="filter-status" name="status"
+                   value="{{ prefill.status }}" placeholder="e.g. open (exact match)">
+        </div>
+        <div class="form-group">
+            <label for="filter-priority">Priority</label>
+            <select id="filter-priority" name="priority">
+                <option value="">Any priority</option>
+                {% for p in priorities %}
+                <option value="{{ p }}" {% if prefill.priority == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="filter-assignee">Assignee</label>
+            <select id="filter-assignee" name="assignee_id">
+                <option value="">Anyone</option>
+                {% for u in all_users %}
+                <option value="{{ u.id }}" {% if prefill.assignee_id == u.id|string %}selected{% endif %}>{{ u.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="filter-label">Label</label>
+            <select id="filter-label" name="label">
+                <option value="">Any label</option>
+                {% for l in all_labels %}
+                <option value="{{ l.name }}" {% if prefill.label == l.name %}selected{% endif %}>{{ l.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="filter-project">Project</label>
+            <select id="filter-project" name="project">
+                <option value="">Any project</option>
+                <option value="none" {% if prefill.project == 'none' %}selected{% endif %}>No project (backlog)</option>
+                {% for p in all_projects %}
+                <option value="{{ p.id }}" {% if prefill.project == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="filter-search">Search text</label>
+            <input type="text" id="filter-search" name="search"
+                   value="{{ prefill.search }}" placeholder="substring in title or body">
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Save filter</button>
+        </div>
+    </form>
+</div>
+
+<p class="note">Filters are private to you. Running one returns issues from the same query the API serves.</p>
+{% endblock %}

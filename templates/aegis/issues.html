@@ -10,6 +10,10 @@
     </div>
     <div class="header-actions">
         {% if can_write %}<a href="/aegis/issues/new" class="button">+ New Issue</a>{% endif %}
+        {% if request.state.user %}
+        <a href="/aegis/filters" class="button secondary">Saved filters</a>
+        <a href="{{ save_filter_url }}" class="button secondary">★ Save current view</a>
+        {% endif %}
         <input 
             type="text" 
             name="search" 
