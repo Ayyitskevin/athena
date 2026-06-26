@@ -198,6 +198,58 @@ def set_project(
     return get_issue(conn, issue_id)
 
 
+def set_parent(
+    conn: sqlite3.Connection, issue_id: int, parent_id: int | None
+) -> dict | None:
+    """Nest an issue under a parent (parent_id=None clears it to top-level).
+    Returns the updated issue, or None if no issue has that id. Validation
+    (existence, no self-parent, no cycle) is the boundary's job — see
+    validate_parent; the FK is the backstop for a non-NULL unknown parent."""
+    cur = conn.execute(
+        "UPDATE issues SET parent_id = ? WHERE id = ?", (parent_id, issue_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_issue(conn, issue_id)
+
+
+def list_children(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
+    """The direct children of an issue (one level), oldest first."""
+    rows = conn.execute(
+        f"{_SELECT} WHERE i.parent_id = ? ORDER BY i.id", (issue_id,)
+    ).fetchall()
+    return [_to_issue(row) for row in rows]
+
+
+def validate_parent(
+    conn: sqlite3.Connection, issue_id: int, parent_id: int | None
+) -> str | None:
+    """Whether parent_id is a legal parent for issue_id. Returns None if OK, else a
+    human reason the boundary turns into a 422. Clearing (None) is always legal.
+    Rejects a self-parent and any choice that would form a cycle — walking UP from
+    the proposed parent must never reach the issue itself."""
+    if parent_id is None:
+        return None
+    if parent_id == issue_id:
+        return "an issue can't be its own parent"
+    if get_issue(conn, parent_id) is None:
+        return "no such parent issue"
+    seen: set[int] = set()
+    cursor: int | None = parent_id
+    while cursor is not None:
+        if cursor == issue_id:
+            return "that would create a cycle"
+        if cursor in seen:  # safety net against any pre-existing bad data
+            break
+        seen.add(cursor)
+        row = conn.execute(
+            "SELECT parent_id FROM issues WHERE id = ?", (cursor,)
+        ).fetchone()
+        cursor = row["parent_id"] if row else None
+    return None
+
+
 def count_issues_in_project(conn: sqlite3.Connection, project_id: int) -> int:
     """How many issues currently belong to this project. The project-delete path
     uses it to refuse deleting a project that still owns issues (deleting would

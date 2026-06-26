@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import labels, projects
+from athena.aegis import issues, labels, projects
 from athena.core import activity, notifications, users
 
 
@@ -179,6 +179,40 @@ def record_project_change(
         target_kind="issue",
         target_id=issue_id,
         detail=new["name"] if new else "",
+    )
+
+
+def record_parent_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: int | None,
+    after: int | None,
+) -> None:
+    """Record a parent (hierarchy) change. No-op if the parent didn't change.
+    Clearing records "removed_parent"; setting records "set_parent" with the new
+    parent's key (or #id) as the human specifics."""
+    if before == after:
+        return
+    if after is None:
+        activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="removed_parent",
+            target_kind="issue",
+            target_id=issue_id,
+        )
+        return
+    parent = issues.get_issue(conn, after)
+    detail = (parent.get("key") or f"#{after}") if parent else f"#{after}"
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="set_parent",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=detail,
     )
 
 

@@ -73,6 +73,11 @@ class ProjectUpdate(BaseModel):
     project_id: int | None
 
 
+class ParentUpdate(BaseModel):
+    # None clears the parent (top-level); an int nests the issue under that issue.
+    parent_id: int | None
+
+
 class ProjectCreate(BaseModel):
     name: str
     # The issue-key prefix (e.g. "ATH" -> ATH-1, ATH-2). Required on create and
@@ -139,6 +144,7 @@ class IssueOut(BaseModel):
     assignee_name: str | None = None
     project_id: int | None = None
     project_name: str | None = None
+    parent_id: int | None = None
     labels: list[LabelOut] = []
 
 
@@ -458,6 +464,41 @@ def set_project(
         after=updated["project_id"],
     )
     return _with_labels(conn, updated)
+
+
+@router.put("/{issue_id}/parent", response_model=IssueOut)
+def set_parent(
+    issue_id: int,
+    payload: ParentUpdate,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Nesting an issue is a write on it — creator-or-assignee only (404/403), same
+    # gate as status/assign/project. The parent is validated for existence, self,
+    # and cycles (422); clearing (None) is always allowed.
+    before = _issue_for_write(conn, issue_id, actor)
+    reason = issues.validate_parent(conn, issue_id, payload.parent_id)
+    if reason is not None:
+        raise HTTPException(status_code=422, detail=reason)
+    updated = issues.set_parent(conn, issue_id, payload.parent_id)
+    issue_activity.record_parent_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["parent_id"],
+        after=payload.parent_id,
+    )
+    return _with_labels(conn, updated)
+
+
+@router.get("/{issue_id}/children", response_model=list[IssueOut])
+def list_children(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Open read, like backlinks/comments. 404 if the issue itself is missing.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return _with_labels_many(conn, issues.list_children(conn, issue_id))
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
