@@ -331,6 +331,8 @@ def list_issues(
     conn: sqlite3.Connection,
     *,
     status: str | None = None,
+    priority: str | None = None,
+    assignee_id: int | None = None,
     search: str | None = None,
     project_id: int | None = None,
     backlog: bool = False,
@@ -340,6 +342,10 @@ def list_issues(
     and the web list both use, so the two never disagree on what matches.
 
     - status: exact status match.
+    - priority: exact priority match (a direct column on the issue).
+    - assignee_id: exact assignee match (a direct column). Restricts to issues
+      assigned to this user; None means "don't filter by assignee at all" (use
+      the dedicated unassigned view via project/backlog semantics if needed).
     - search: case-insensitive substring in title or body (SQLite LIKE).
     - project_id: restrict to issues in this project (a direct column on the
       issue, so unlike labels this module filters it itself).
@@ -358,6 +364,12 @@ def list_issues(
     if status:
         clauses.append("i.status = ?")
         params.append(status)
+    if priority:
+        clauses.append("i.priority = ?")
+        params.append(priority)
+    if assignee_id is not None:
+        clauses.append("i.assignee_id = ?")
+        params.append(assignee_id)
     if search:
         clauses.append("(i.title LIKE ? OR i.body LIKE ?)")
         like = f"%{search}%"

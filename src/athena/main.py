@@ -21,6 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import api as aegis_api
+from athena.aegis import filters_api as aegis_filters_api
 from athena.core import (
     activity_api,
     attachments_api,
@@ -260,10 +261,11 @@ def create_app(
     app.include_router(attachments_api.router)
     app.include_router(notifications_api.router)
 
-    # Aegis REST API (issues + labels + projects).
+    # Aegis REST API (issues + labels + projects + saved filters).
     app.include_router(aegis_api.router)
     app.include_router(aegis_api.labels_router)
     app.include_router(aegis_api.projects_router)
+    app.include_router(aegis_filters_api.router)
 
     # Mentor REST API (spaces + pages; versions later).
     app.include_router(mentor_api.spaces_router)

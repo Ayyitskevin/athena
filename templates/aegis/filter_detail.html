@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+
+{% block title %}{{ filter.name }} — Saved filter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{{ filter.name }}</h1>
+        <p class="subtitle">{{ filter.summary }}</p>
+    </div>
+    <div class="header-actions">
+        <a href="/aegis/filters" class="button secondary">All filters</a>
+    </div>
+</div>
+
+{% if issues %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Assignee</th>
+            <th>Project</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for issue in issues %}
+        <tr>
+            <td class="issue-id">{{ issue.key or "#" ~ issue.id }}</td>
+            <td class="issue-title">
+                <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
+                {% for l in issue.labels %}
+                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                {% endfor %}
+            </td>
+            <td><span class="status {{ issue.status }}">{{ issue.status }}</span></td>
+            <td><span class="priority {{ issue.priority }}">{{ issue.priority }}</span></td>
+            <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
+            <td class="{{ 'muted' if not issue.project_name else '' }}">{{ issue.project_name or "—" }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+<p class="note">{{ total }} issue{{ "s" if total != 1 }} match this filter.</p>
+{% else %}
+<p class="empty-state">No issues match this filter.</p>
+{% endif %}
+{% endblock %}
