@@ -723,6 +723,7 @@ def _render_issue_detail(
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])
+    children = issues.list_children(conn, issue_id)
 
     context = {
         "issue": issue,
@@ -738,6 +739,11 @@ def _render_issue_detail(
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
         "issue_statuses": statuses.list_statuses(conn, issue["project_id"]),
+        "parent": issues.get_issue(conn, issue["parent_id"]) if issue.get("parent_id") else None,
+        "children": children,
+        "children_done": sum(
+            1 for c in children if statuses.is_done(conn, c["project_id"], c["status"])
+        ),
         "can_modify": can_modify,
         "can_write": can_write,
         # This issue's own audit trail (newest first) — the same data-layer read
@@ -835,6 +841,46 @@ def change_issue_project(
         issue_id=issue_id,
         before=issue["project_id"],
         after=updated["project_id"],
+    )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/parent", dependencies=[Depends(verify_csrf)])
+def change_issue_parent(
+    request: Request,
+    issue_id: int,
+    parent_ref: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Nest an issue under a parent (by id or key), or clear it (empty value). Same
+    write gate as status/labels. Self/cycle/unknown parents are rejected with a 400."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to set a parent.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    parent_ref = parent_ref.strip()
+    if parent_ref == "":
+        parent_id: int | None = None
+    else:
+        parent = issues.get_by_ref(conn, parent_ref)
+        if parent is None:
+            return HTMLResponse('<div class="error">No such parent issue.</div>', status_code=400)
+        parent_id = parent["id"]
+    reason = issues.validate_parent(conn, issue_id, parent_id)
+    if reason is not None:
+        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+    issues.set_parent(conn, issue_id, parent_id)
+    issue_activity.record_parent_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["parent_id"],
+        after=parent_id,
     )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 

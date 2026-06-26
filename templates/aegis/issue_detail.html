@@ -50,6 +50,13 @@
             <span class="muted">No project</span>
             {% endif %}
         </div>
+        <div class="meta-item"><strong>Parent</strong>
+            {% if parent %}
+            <a href="/aegis/issues/{{ parent.id }}" class="xref">{{ parent.key or "#" ~ parent.id }} {{ parent.title }}</a>
+            {% else %}
+            <span class="muted">None</span>
+            {% endif %}
+        </div>
         <div class="meta-item label-block">
             <strong>Labels</strong>
             <div class="label-list">
@@ -154,6 +161,26 @@
                 <input type="text" name="target_ref" placeholder="Issue id or key (e.g. ATH-15)" required>
                 <button type="submit" class="button small">Link</button>
             </form>
+            {% endif %}
+        </div>
+
+        <div class="sub-issues">
+            <h3>Sub-issues
+                {% if children %}
+                <span class="count">({{ children_done }}/{{ children | length }} done)</span>
+                {% endif %}
+            </h3>
+            {% if children %}
+            <ul class="child-list">
+                {% for c in children %}
+                <li>
+                    <span class="status {{ c.status }}">{{ c.status.replace("_", " ").title() }}</span>
+                    <a href="/aegis/issues/{{ c.id }}">{{ c.key or "#" ~ c.id }} {{ c.title }}</a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="note-small">No sub-issues. Add one by setting this issue as another's parent.</p>
             {% endif %}
         </div>
 
@@ -289,6 +316,14 @@
                     {% endfor %}
                 </select>
                 <button type="submit" class="button small">Set Project</button>
+            </form>
+            <form method="post" action="/aegis/issues/{{ issue.id }}/parent" class="parent-form">
+                {% include "partials/csrf.html" %}
+                <label for="parent-ref">Parent</label>
+                <input type="text" id="parent-ref" name="parent_ref"
+                       value="{{ parent.key or ('#' ~ parent.id) if parent else '' }}"
+                       placeholder="Issue id or key, or blank to clear">
+                <button type="submit" class="button small">Set Parent</button>
             </form>
             {% elif request.state.user and not can_write %}
             <p class="note-small">Viewer role is read-only.</p>
