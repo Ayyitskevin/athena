@@ -57,6 +57,8 @@ def _readonly_response() -> HTMLResponse:
 def _issues_url(
     *,
     status: str = "",
+    priority: str = "",
+    assignee: str = "",
     label: str = "",
     project: str = "",
     search: str = "",
@@ -69,6 +71,8 @@ def _issues_url(
     query = urlencode(
         {
             "status": status,
+            "priority": priority,
+            "assignee": assignee,
             "label": label,
             "project": project,
             "search": search,
@@ -298,6 +302,13 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     status_filter = request.query_params.get("status")
+    # Priority is passed straight through (an unknown value matches nothing), exactly
+    # as the API does — so the list and GET /issues stay aligned. Assignee is a user
+    # id; a non-numeric value means "no assignee filter" (the dropdown only ever
+    # submits real ids, so this only guards a hand-edited URL).
+    priority_filter = (request.query_params.get("priority") or "").strip()
+    assignee_raw = (request.query_params.get("assignee") or "").strip()
+    assignee_id = int(assignee_raw) if assignee_raw.lstrip("-").isdigit() else None
     label_filter = (request.query_params.get("label") or "").strip()
     project_raw = (request.query_params.get("project") or "").strip()
     # "none" selects the backlog (issues with no project); a number selects that
@@ -330,6 +341,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     filtered = issues.list_issues(
         conn,
         status=status_filter,
+        priority=priority_filter or None,
+        assignee_id=assignee_id,
         search=search,
         project_id=project_id,
         backlog=backlog,
@@ -359,6 +372,8 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     def page_url(page_num: int, *, sort_by: str = sort, order_by: str = order) -> str:
         return _issues_url(
             status=status_filter or "",
+            priority=priority_filter,
+            assignee=assignee_raw,
             label=label_filter,
             project=project_raw,
             search=search,
@@ -382,10 +397,12 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     # Pre-fill link for "Save current view" — carries the active filters to the
     # saved-filters create form so an ad-hoc search becomes a named filter in one
-    # click. Only the dimensions a saved filter persists are passed along.
+    # click. The create form's assignee field is named assignee_id, so map to that.
     save_filter_url = "/aegis/filters?" + urlencode(
         {
             "status": status_filter or "",
+            "priority": priority_filter,
+            "assignee_id": assignee_raw,
             "label": label_filter,
             "project": project_raw,
             "search": search,
@@ -399,6 +416,10 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
+            "priority_filter": priority_filter,
+            "priorities": issues.PRIORITIES,
+            "assignee_filter": assignee_raw,
+            "all_users": users.list_users(conn),
             "label_filter": label_filter,
             "all_labels": labels.list_labels(conn),
             "project_filter": project_raw,
