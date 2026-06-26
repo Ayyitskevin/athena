@@ -249,7 +249,11 @@ def create_page(
         created_by=actor["id"],
     )
     page_activity.record_page_created(
-        conn, actor_id=actor["id"], page_id=page["id"], title=page["title"]
+        conn,
+        actor_id=actor["id"],
+        page_id=page["id"],
+        title=page["title"],
+        body=page["body"],
     )
     return page
 

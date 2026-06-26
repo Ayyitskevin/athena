@@ -804,6 +804,12 @@ footer {
     flex: 1;
 }
 
+/* An @mention of a user in a body or comment. */
+.mention {
+    color: #2563eb;
+    font-weight: 500;
+}
+
 .backlink-list {
     list-style: none;
     padding: 0;

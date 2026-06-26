@@ -17,11 +17,18 @@ core.activity can call into here without an import cycle.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
 # rejects unknown kinds.
 WATCHABLE_KINDS = ("issue", "page")
+
+# A mention is [[user:N]] in body/comment text — the same bracket grammar as the
+# [[issue:N]]/[[page:N]] cross-links, but for people. The links/backlinks system
+# only indexes issue/page kinds, so this token is invisible to it; it exists only
+# to notify the named user.
+_MENTION_RE = re.compile(r"\[\[user:(\d+)\]\]")
 
 
 # --- watches ----------------------------------------------------------------
@@ -89,6 +96,58 @@ def notify_watchers(
             "INSERT OR IGNORE INTO notifications (user_id, event_id) VALUES (?, ?)",
             (row["user_id"], event_id),
         )
+
+
+# --- mentions ---------------------------------------------------------------
+
+
+def parse_mentions(text: str | None) -> list[int]:
+    """The distinct user ids named by [[user:N]] in text, in first-seen order.
+    Pure text parsing — it doesn't check the ids are real users (that's the
+    caller's job at write time)."""
+    if not text:
+        return []
+    seen: list[int] = []
+    for match in _MENTION_RE.finditer(text):
+        uid = int(match.group(1))
+        if uid not in seen:
+            seen.append(uid)
+    return seen
+
+
+def process_mentions(
+    conn: sqlite3.Connection, *, event_id: int, actor_id: int, text: str | None
+) -> None:
+    """Notify every real user named by [[user:N]] in `text` (except the actor) about
+    this event, and start them watching its target so they follow the thread.
+
+    The mention notification is created HERE rather than via notify_watchers: at the
+    moment the event was recorded the mentioned user wasn't watching yet, so the
+    generic fan-out missed them. The UNIQUE (user_id, event_id) makes this safe even
+    if they were already a watcher (no double notification)."""
+    uids = parse_mentions(text)
+    if not uids:
+        return
+    event = conn.execute(
+        "SELECT target_kind, target_id FROM activity WHERE id = ?", (event_id,)
+    ).fetchone()
+    if event is None:
+        return
+    for uid in uids:
+        if uid == actor_id:
+            continue  # mentioning yourself isn't a notification
+        if conn.execute("SELECT 1 FROM users WHERE id = ?", (uid,)).fetchone() is None:
+            continue  # a mention of a non-existent user is just text
+        conn.execute(
+            "INSERT OR IGNORE INTO notifications (user_id, event_id) VALUES (?, ?)",
+            (uid, event_id),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO watches (user_id, target_kind, target_id) "
+            "VALUES (?, ?, ?)",
+            (uid, event["target_kind"], event["target_id"]),
+        )
+    conn.commit()
 
 
 # --- inbox reads + state ----------------------------------------------------

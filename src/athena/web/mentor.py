@@ -330,7 +330,11 @@ def create_page(
         parent_id=parent, created_by=user["id"],
     )
     page_activity.record_page_created(
-        conn, actor_id=user["id"], page_id=page["id"], title=page["title"]
+        conn,
+        actor_id=user["id"],
+        page_id=page["id"],
+        title=page["title"],
+        body=page["body"],
     )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 

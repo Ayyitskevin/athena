@@ -18,7 +18,7 @@ from athena.aegis import comments, dependencies, issue_activity, issues, labels,
 from athena.core import activity, attachments, identity, links, notifications, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_plaintext, render_snippet
+from athena.web.render import render_body, render_comment, render_snippet
 
 router = APIRouter()
 
@@ -501,7 +501,9 @@ def create_issue(
     )
     # Record onto the audit trail — same fact the REST create records, so a
     # browser-created issue and an API-created one read identically in the feed.
-    issue_activity.record_created(conn, actor_id=user["id"], issue_id=issue["id"])
+    issue_activity.record_created(
+        conn, actor_id=user["id"], issue_id=issue["id"], body=issue["body"]
+    )
     # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>',
@@ -710,7 +712,7 @@ def _render_issue_detail(
     can_modify = can_write and issues.can_modify(issue, user["id"])
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
-        comment["body_html"] = render_plaintext(comment["body"])
+        comment["body_html"] = render_comment(conn, comment["body"])
 
     context = {
         "issue": issue,
@@ -968,7 +970,9 @@ def add_issue_comment(
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
 
     comments.add_comment(conn, issue_id=issue_id, author_id=user["id"], body=body)
-    issue_activity.record_commented(conn, actor_id=user["id"], issue_id=issue_id)
+    issue_activity.record_commented(
+        conn, actor_id=user["id"], issue_id=issue_id, body=body
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
