@@ -16,11 +16,12 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import labels, projects
-from athena.core import activity, users
+from athena.core import activity, notifications, users
 
 
 def record_created(conn: sqlite3.Connection, *, actor_id: int, issue_id: int) -> None:
-    """An issue was created. The first audit fact in its history."""
+    """An issue was created. The first audit fact in its history. The creator starts
+    watching it, so they hear about later activity without opting in."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -28,6 +29,7 @@ def record_created(conn: sqlite3.Connection, *, actor_id: int, issue_id: int) ->
         target_kind="issue",
         target_id=issue_id,
     )
+    notifications.watch(conn, actor_id, "issue", issue_id)
 
 
 def record_edited(
@@ -122,6 +124,9 @@ def record_assignee_change(
         )
         return
     assignee = users.get_user(conn, after)
+    # The new assignee starts watching BEFORE we record the event, so the
+    # assignment itself lands in their inbox (they're a watcher when it fans out).
+    notifications.watch(conn, after, "issue", issue_id)
     activity.record(
         conn,
         actor_id=actor_id,
@@ -212,6 +217,8 @@ def record_commented(
         target_kind="issue",
         target_id=issue_id,
     )
+    # Commenting is participation — the commenter starts watching the issue.
+    notifications.watch(conn, actor_id, "issue", issue_id)
 
 
 def record_comment_deleted(

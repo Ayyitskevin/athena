@@ -8,8 +8,15 @@
         <a href="/aegis/issues" class="muted">← Back to issues</a>
         <h1>{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</h1>
     </div>
-    <div>
+    <div class="header-actions">
         <span class="status {{ issue.status }} large">{{ issue.status }}</span>
+        {% if request.state.user %}
+        <form method="post" action="/aegis/issues/{{ issue.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
+              style="display:inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
+        </form>
+        {% endif %}
     </div>
 </div>
 

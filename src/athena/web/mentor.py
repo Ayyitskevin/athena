@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.core import activity, attachments, identity, links
+from athena.core import activity, attachments, identity, links, notifications
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -365,6 +365,8 @@ def page_detail(
             "page": page,
             "body_html": render_body(conn, page["body"]),
             "attachments": attachments.list_for(conn, "page", page_id),
+            "is_watching": user is not None
+            and notifications.is_watching(conn, user["id"], "page", page_id),
             "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
             "versions": pages.list_page_versions(conn, page_id),
@@ -583,6 +585,32 @@ def remove_page_attachment(
         target_id=page_id,
         detail=att["filename"],
     )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/watch", dependencies=[Depends(verify_csrf)])
+def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
+    """Start watching a page (any signed-in user — a personal subscription)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
+            status_code=401,
+        )
+    notifications.watch(conn, user["id"], "page", page_id)
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/unwatch", dependencies=[Depends(verify_csrf)])
+def unwatch_page(request: Request, page_id: int, conn=Depends(get_conn)):
+    """Stop watching a page."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    notifications.unwatch(conn, user["id"], "page", page_id)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

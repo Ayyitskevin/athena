@@ -11,11 +11,18 @@
         <h1>{{ page.title }}</h1>
         <p class="subtitle muted">Updated {{ page.updated_at }}</p>
     </div>
-    {% if can_write %}
-    <div>
+    <div class="header-actions">
+        {% if request.state.user %}
+        <form method="post" action="/mentor/pages/{{ page.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
+              style="display:inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
+        </form>
+        {% endif %}
+        {% if can_write %}
         <a href="/mentor/pages/{{ page.id }}/edit" class="button secondary">Edit</a>
+        {% endif %}
     </div>
-    {% endif %}
 </div>
 
 <div class="page-body">

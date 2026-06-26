@@ -19,14 +19,15 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import activity
+from athena.core import activity, notifications
 from athena.mentor import pages
 
 
 def record_page_created(
     conn: sqlite3.Connection, *, actor_id: int, page_id: int, title: str
 ) -> None:
-    """A page was created — the first audit fact in its history."""
+    """A page was created — the first audit fact in its history. The creator starts
+    watching it (Mentor is a shared wiki, but you follow what you start)."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -35,6 +36,7 @@ def record_page_created(
         target_id=page_id,
         detail=title,
     )
+    notifications.watch(conn, actor_id, "page", page_id)
 
 
 def record_page_edited(
@@ -53,6 +55,8 @@ def record_page_edited(
         target_id=after["id"],
         detail=after["title"],
     )
+    # Editing is participation — the editor starts watching the page.
+    notifications.watch(conn, actor_id, "page", after["id"])
 
 
 def record_page_deleted(
