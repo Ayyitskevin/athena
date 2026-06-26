@@ -228,7 +228,9 @@ def create(
         project_id=payload.project_id,
         created_by=actor["id"],
     )
-    issue_activity.record_created(conn, actor_id=actor["id"], issue_id=issue["id"])
+    issue_activity.record_created(
+        conn, actor_id=actor["id"], issue_id=issue["id"], body=issue["body"]
+    )
     return _with_labels(conn, issue)
 
 
@@ -442,7 +444,9 @@ def add_comment(
     comment = comments.add_comment(
         conn, issue_id=issue_id, author_id=actor["id"], body=body
     )
-    issue_activity.record_commented(conn, actor_id=actor["id"], issue_id=issue_id)
+    issue_activity.record_commented(
+        conn, actor_id=actor["id"], issue_id=issue_id, body=body
+    )
     return comment
 
 

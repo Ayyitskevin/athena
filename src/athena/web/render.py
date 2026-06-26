@@ -30,7 +30,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 import nh3
 
-from athena.core import links
+from athena.core import links, users
 
 # One configured Markdown renderer for every body. `html=False` is the security
 # linchpin (raw HTML is escaped, not emitted); `breaks=True` preserves authored
@@ -39,6 +39,24 @@ _MD = MarkdownIt("commonmark", {"html": False, "breaks": True})
 
 # Where each kind is addressable in the web UI. Keys match the resolver's kinds.
 _HREF = {"issue": "/aegis/issues/{}", "page": "/mentor/pages/{}"}
+
+# A mention token [[user:N]] renders as @Name (a plain span — there is no user
+# page to link to). Shares the grammar with notifications._MENTION_RE so the thing
+# that NOTIFIES and the thing that RENDERS can never disagree on what a mention is.
+_MENTION_RE = re.compile(r"\[\[user:(\d+)\]\]")
+
+
+def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
+    """Replace [[user:N]] tokens in already-safe HTML with @Name spans. An unknown
+    id renders as its literal (escaped) token, so a typo is visible, not hidden."""
+
+    def _one(match) -> str:
+        user = users.get_user(conn, int(match.group(1)))
+        if user is None:
+            return str(escape(match.group(0)))
+        return f'<span class="mention">@{escape(user["name"])}</span>'
+
+    return _MENTION_RE.sub(_one, html)
 
 # core.search builds snippets with the matched terms wrapped in [..] (its chosen
 # delimiters). This pulls a balanced [..] pair out of the ALREADY-escaped snippet
@@ -67,6 +85,17 @@ def render_plaintext(text: str | None) -> Markup:
     if not text:
         return Markup("")
     return Markup(str(escape(text)).replace("\n", "<br>"))
+
+
+def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:
+    """Render a comment: escaped plain text (not Markdown — comments are short and
+    untrusted) with [[user:N]] mentions turned into @Name and newlines preserved.
+    Same escape-first safety as render_plaintext, plus the mention pass."""
+    if not text:
+        return Markup("")
+    escaped = str(escape(text))
+    linked = _sub_mentions(conn, escaped)
+    return Markup(linked.replace("\n", "<br>"))
 
 
 def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
@@ -114,4 +143,5 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
 
     linked = links.REF_RE.sub(_link, safe)
     linked = links.KEY_REF_RE.sub(_key_link, linked)
+    linked = _sub_mentions(conn, linked)
     return Markup(linked)

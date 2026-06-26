@@ -24,11 +24,17 @@ from athena.mentor import pages
 
 
 def record_page_created(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int, title: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    title: str,
+    body: str = "",
 ) -> None:
     """A page was created — the first audit fact in its history. The creator starts
-    watching it (Mentor is a shared wiki, but you follow what you start)."""
-    activity.record(
+    watching it (Mentor is a shared wiki, but you follow what you start); anyone
+    named by [[user:N]] in the body is mentioned (notified + auto-watched)."""
+    event = activity.record(
         conn,
         actor_id=actor_id,
         verb="page_created",
@@ -37,6 +43,9 @@ def record_page_created(
         detail=title,
     )
     notifications.watch(conn, actor_id, "page", page_id)
+    notifications.process_mentions(
+        conn, event_id=event["id"], actor_id=actor_id, text=body
+    )
 
 
 def record_page_edited(
@@ -47,7 +56,7 @@ def record_page_edited(
     and Mentor itself cuts no new version for an unchanged save)."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
-    activity.record(
+    event = activity.record(
         conn,
         actor_id=actor_id,
         verb="page_edited",
@@ -57,6 +66,10 @@ def record_page_edited(
     )
     # Editing is participation — the editor starts watching the page.
     notifications.watch(conn, actor_id, "page", after["id"])
+    # A newly-added [[user:N]] in the edited body mentions that person.
+    notifications.process_mentions(
+        conn, event_id=event["id"], actor_id=actor_id, text=after["body"]
+    )
 
 
 def record_page_deleted(

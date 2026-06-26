@@ -19,10 +19,13 @@ from athena.aegis import labels, projects
 from athena.core import activity, notifications, users
 
 
-def record_created(conn: sqlite3.Connection, *, actor_id: int, issue_id: int) -> None:
+def record_created(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, body: str = ""
+) -> None:
     """An issue was created. The first audit fact in its history. The creator starts
-    watching it, so they hear about later activity without opting in."""
-    activity.record(
+    watching it, so they hear about later activity without opting in; anyone named
+    by [[user:N]] in the body is mentioned (notified + auto-watched)."""
+    event = activity.record(
         conn,
         actor_id=actor_id,
         verb="created",
@@ -30,6 +33,9 @@ def record_created(conn: sqlite3.Connection, *, actor_id: int, issue_id: int) ->
         target_id=issue_id,
     )
     notifications.watch(conn, actor_id, "issue", issue_id)
+    notifications.process_mentions(
+        conn, event_id=event["id"], actor_id=actor_id, text=body
+    )
 
 
 def record_edited(
@@ -48,13 +54,17 @@ def record_edited(
     deliberately ignores them."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
-    activity.record(
+    event = activity.record(
         conn,
         actor_id=actor_id,
         verb="issue_edited",
         target_kind="issue",
         target_id=issue_id,
         detail=after["title"],
+    )
+    # A newly-added [[user:N]] in the edited body mentions that person.
+    notifications.process_mentions(
+        conn, event_id=event["id"], actor_id=actor_id, text=after["body"]
     )
 
 
@@ -205,12 +215,13 @@ def record_label_removed(
 
 
 def record_commented(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, body: str = ""
 ) -> None:
     """Record that someone commented on the issue. The event targets the issue (so
     it lands on the issue's History and the global feed links there); the comment
-    body itself lives on the issue, not duplicated into the trail's detail."""
-    activity.record(
+    body itself lives on the issue, not duplicated into the trail's detail. Anyone
+    named by [[user:N]] in the comment is mentioned (notified + auto-watched)."""
+    event = activity.record(
         conn,
         actor_id=actor_id,
         verb="commented",
@@ -219,6 +230,9 @@ def record_commented(
     )
     # Commenting is participation — the commenter starts watching the issue.
     notifications.watch(conn, actor_id, "issue", issue_id)
+    notifications.process_mentions(
+        conn, event_id=event["id"], actor_id=actor_id, text=body
+    )
 
 
 def record_comment_deleted(
