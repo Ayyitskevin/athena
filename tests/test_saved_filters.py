@@ -333,3 +333,54 @@ def test_web_delete(tmp_path):
         fid = client.get("/filters", headers=H1).json()[0]["id"]
         client.post(f"/aegis/filters/{fid}/delete", headers={"X-CSRF-Token": csrf})
         assert "gone" not in client.get("/aegis/filters").text
+
+
+# --- search within a saved filter -------------------------------------------
+
+
+def test_search_within_filter_intersects_text_and_criteria(tmp_path):
+    """A ?q= on the filter page narrows the filter's issues to those matching the
+    text — honoring the WHOLE filter (here priority=high), so a low-priority issue
+    that matches the text is still excluded, as is a high one that doesn't."""
+    with TestClient(create_app(tmp_path / "swf.db")) as client:
+        _admin(client)
+        _login(client)
+        _issue(client, "deploy pipeline", priority="high")  # match: text + priority
+        _issue(client, "deploy docs", priority="low")  # text but wrong priority
+        _issue(client, "unrelated thing", priority="high")  # priority but no text
+        fid = client.post(
+            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+        ).json()["id"]
+        page = client.get(f"/aegis/filters/{fid}?q=deploy").text
+        assert "deploy pipeline" in page
+        assert "deploy docs" not in page  # excluded by the filter's priority
+        assert "unrelated thing" not in page  # excluded by the text
+        assert "result" in page and "within this filter" in page
+
+
+def test_search_within_filter_blank_q_shows_full_run(tmp_path):
+    """No query → the plain filter run (every matching issue), with the search box
+    still offered."""
+    with TestClient(create_app(tmp_path / "swb.db")) as client:
+        _admin(client)
+        _login(client)
+        _issue(client, "alpha", priority="high")
+        _issue(client, "beta", priority="high")
+        fid = client.post(
+            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+        ).json()["id"]
+        page = client.get(f"/aegis/filters/{fid}").text
+        assert "alpha" in page and "beta" in page
+        assert 'name="q"' in page  # the "search within this filter" box is present
+
+
+def test_search_within_filter_no_match_message(tmp_path):
+    with TestClient(create_app(tmp_path / "swn.db")) as client:
+        _admin(client)
+        _login(client)
+        _issue(client, "alpha", priority="high")
+        fid = client.post(
+            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+        ).json()["id"]
+        page = client.get(f"/aegis/filters/{fid}?q=zzznope").text
+        assert "No issues in this filter match" in page
