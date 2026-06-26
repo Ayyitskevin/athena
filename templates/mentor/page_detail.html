@@ -5,9 +5,15 @@
 {% block content %}
 <div class="page-header">
     <div>
-        {% if space %}
-        <a href="/mentor/spaces/{{ space.id }}" class="muted">← {{ space.name }}</a>
-        {% endif %}
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            {% if space %}<a href="/mentor/spaces/{{ space.id }}">{{ space.name }}</a>{% endif %}
+            {% for a in ancestors %}
+            <span class="breadcrumb-sep" aria-hidden="true">›</span>
+            <a href="/mentor/pages/{{ a.id }}">{{ a.title }}</a>
+            {% endfor %}
+            <span class="breadcrumb-sep" aria-hidden="true">›</span>
+            <span class="breadcrumb-current" aria-current="page">{{ page.title }}</span>
+        </nav>
         <h1>{{ page.title }}</h1>
         <p class="subtitle muted">Updated {{ page.updated_at }}</p>
     </div>

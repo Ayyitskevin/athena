@@ -363,6 +363,18 @@ def page_detail(
     page_rows = pages.list_pages_in_space(conn, page["space_id"])
     tree = _tree_rows(page_rows)
     siblings = [p for p in page_rows if p["id"] != page_id]
+    # Breadcrumb trail: walk up parent_id (using the in-memory page map, no extra
+    # queries) to collect this page's ancestors, root-first. The seen-set guards
+    # against any pre-existing cycle so the walk always terminates.
+    by_id = {p["id"]: p for p in page_rows}
+    ancestors: list[dict] = []
+    seen: set[int] = set()
+    cursor = page.get("parent_id")
+    while cursor is not None and cursor in by_id and cursor not in seen:
+        seen.add(cursor)
+        ancestors.append(by_id[cursor])
+        cursor = by_id[cursor].get("parent_id")
+    ancestors.reverse()
     user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
@@ -376,6 +388,7 @@ def page_detail(
             and notifications.is_watching(conn, user["id"], "page", page_id),
             "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
+            "ancestors": ancestors,
             "tree": tree,
             "versions": pages.list_page_versions(conn, page_id),
             "activity": activity.list_activity(
