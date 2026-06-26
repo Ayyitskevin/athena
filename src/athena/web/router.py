@@ -18,6 +18,7 @@ from athena.aegis import (
     comments,
     dependencies,
     issue_activity,
+    issue_search,
     issues,
     labels,
     projects,
@@ -108,12 +109,17 @@ _SEARCH_PAGE = 20
 @router.get("/find", response_class=HTMLResponse)
 def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Human-facing search across issues and pages — the browser twin of the JSON
-    API at /search (which serves the fleet). It runs the SAME core.search query, so
-    the two never disagree on what matches or how it ranks; this route only adds the
-    presentation: a scope filter (All/Issues/Pages), a result card per hit linking to
-    its detail page with a highlighted snippet and a little context (issue key+status,
-    page space), and Prev/Next paging. Reading is open, like every other web read; a
-    blank box just shows the form."""
+    search APIs. It runs the SAME queries (core.search for the cross-kind case,
+    aegis.issue_search for the filtered case), so the page never disagrees with the
+    API on what matches or how it ranks; this route only adds presentation: a scope
+    filter (All/Issues/Pages), structured issue filters (status/label/project), a
+    result card per hit with a highlighted snippet and context, and Prev/Next paging.
+
+    Filters are issue-only (a page has no status/label/project), so setting any of
+    them switches into FILTERED ISSUE-SEARCH mode: results are ranked issues that also
+    satisfy the filters, and pages drop out. With no filter set it is the plain
+    cross-kind search, honouring the scope tab. Reading is open, like every other web
+    read; a blank box just shows the form."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     q = (request.query_params.get("q") or "").strip()
@@ -122,20 +128,38 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # for its sort/order params.
     kind_raw = (request.query_params.get("kind") or "").strip().lower()
     kind = kind_raw if kind_raw in ("issue", "page") else None
+    # Structured issue filters. Any one of them puts us in filtered issue-search mode.
+    status_filter = (request.query_params.get("status") or "").strip()
+    label_filter = (request.query_params.get("label") or "").strip()
+    project_filter = (request.query_params.get("project") or "").strip()
+    if project_filter and issues.parse_project_filter(project_filter) is None:
+        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+    filtered_mode = bool(status_filter or label_filter or project_filter)
     try:
         page = max(1, int(request.query_params.get("page", 1)))
     except (TypeError, ValueError):
         page = 1
 
     # Fetch one extra hit to know whether a next page exists without a count query —
-    # the same trick the activity feed uses. Trim it off before rendering.
-    hits = (
-        search.search(
-            conn, q, kind=kind, limit=_SEARCH_PAGE + 1, offset=(page - 1) * _SEARCH_PAGE
+    # the same trick the activity feed uses. Trim it off before rendering. In filtered
+    # mode the issue_search path applies the structured filters; otherwise it is the
+    # plain cross-kind search honouring the scope tab.
+    fetch = _SEARCH_PAGE + 1
+    skip = (page - 1) * _SEARCH_PAGE
+    if not q:
+        hits = []
+    elif filtered_mode:
+        hits = issue_search.search_issues(
+            conn,
+            q,
+            status=status_filter or None,
+            label=label_filter or None,
+            project=project_filter or None,
+            limit=fetch,
+            offset=skip,
         )
-        if q
-        else []
-    )
+    else:
+        hits = search.search(conn, q, kind=kind, limit=fetch, offset=skip)
     has_next = len(hits) > _SEARCH_PAGE
     hits = hits[:_SEARCH_PAGE]
     for h in hits:
@@ -149,7 +173,14 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     def find_url(*, scope: str | None, page_num: int) -> str:
         return "/find?" + urlencode(
-            {"q": q, "kind": scope or "", "page": page_num}
+            {
+                "q": q,
+                "kind": scope or "",
+                "status": status_filter,
+                "label": label_filter,
+                "project": project_filter,
+                "page": page_num,
+            }
         )
 
     return _templates.TemplateResponse(
@@ -161,6 +192,13 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "kind": kind,
             "page": page,
             "has_next": has_next,
+            "filtered_mode": filtered_mode,
+            "status_filter": status_filter,
+            "label_filter": label_filter,
+            "project_filter": project_filter,
+            "all_statuses": sorted({i["status"] for i in issues.list_issues(conn)}),
+            "all_labels": labels.list_labels(conn),
+            "all_projects": projects.list_projects(conn),
             "scope_urls": {
                 "all": find_url(scope=None, page_num=1),
                 "issue": find_url(scope="issue", page_num=1),

@@ -17,6 +17,7 @@ from athena.aegis import (
     comments,
     dependencies,
     issue_activity,
+    issue_search,
     issues,
     labels,
     projects,
@@ -304,6 +305,51 @@ def index(
         ids=ids,
     )
     return _with_labels_many(conn, rows)
+
+
+class IssueSearchHit(BaseModel):
+    # A ranked issue hit: the FTS relevance fields plus the per-issue context
+    # core.search enriches (key/status). All hits are issues, so kind is always
+    # "issue"; it's kept for shape-parity with the cross-kind /search response.
+    kind: str
+    source_id: int
+    title: str
+    snippet: str
+    key: str | None = None
+    status: str | None = None
+
+
+@router.get("/search", response_model=list[IssueSearchHit])
+def search_issues_endpoint(
+    q: str,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee: int | None = None,
+    label: str | None = None,
+    project: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Full-text issue search narrowed by the structured filters — the ranked twin of
+    # GET /issues. Open like the issue list (it returns issue data only, no pages), so
+    # no actor. project is validated the same way the list does (422 on garbage); the
+    # rest are passed through (an unknown status/label/assignee simply matches none).
+    # A blank q legitimately returns [] — the issue_search layer handles it. Declared
+    # BEFORE GET /{ref} so the literal path wins over the issue-ref parameter.
+    if project is not None:
+        _parse_project_filter(project)  # raises 422 on an unparseable filter
+    return issue_search.search_issues(
+        conn,
+        q,
+        status=status,
+        priority=priority,
+        assignee_id=assignee,
+        label=label,
+        project=project,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{ref}", response_model=IssueOut)
