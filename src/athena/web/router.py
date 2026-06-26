@@ -1454,14 +1454,23 @@ def create_filter(
     return RedirectResponse("/aegis/filters", status_code=303)
 
 
+_FILTER_SEARCH_LIMIT = 100
+
+
 @router.get("/aegis/filters/{filter_id}", response_class=HTMLResponse)
 def filter_detail(
     request: Request, filter_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     """Run one saved filter and show the matching issues. Owner-only — a filter that
-    isn't yours reads as 404, never revealing it exists. Runs through run_filter (the
-    same path the REST /filters/{id}/issues endpoint uses), so the browser and the
-    API can't disagree on what a saved filter returns."""
+    isn't yours reads as 404, never revealing it exists.
+
+    With a ?q= present this becomes "search WITHIN this filter": the filter's full
+    criteria are handed to issue_search.search_issues along with the query, so the
+    results are the filter's issues narrowed to those matching the text, ranked by
+    relevance with snippets — the same intersection (filter ∩ text) the /find page
+    runs, but anchored to a saved filter's exact criteria. Without a query it's the
+    plain run (run_filter), the same path the REST /filters/{id}/issues uses, so the
+    browser and the API can't disagree on what a saved filter returns."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
@@ -1473,13 +1482,32 @@ def filter_detail(
     flt = saved_filters.get_filter(conn, filter_id)
     if flt is None or flt["owner_id"] != user["id"]:
         return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
-    matches = saved_filters.run_filter(conn, flt["criteria"])
-    _attach_labels(conn, matches)
     flt["summary"] = _describe_criteria(conn, flt["criteria"])
+    crit = flt["criteria"]
+    q = (request.query_params.get("q") or "").strip()
+    context: dict = {"filter": flt, "q": q, "searching": bool(q)}
+    if q:
+        # Search within the filter: text query intersected with the filter's criteria.
+        hits = issue_search.search_issues(
+            conn,
+            q,
+            status=crit.get("status"),
+            priority=crit.get("priority"),
+            assignee_id=crit.get("assignee_id"),
+            label=crit.get("label"),
+            project=crit.get("project"),
+            limit=_FILTER_SEARCH_LIMIT,
+        )
+        for h in hits:
+            h["snippet_html"] = render_snippet(h.get("snippet"))
+            h["href"] = f"/aegis/issues/{h['source_id']}"
+        context.update(hits=hits, total=len(hits))
+    else:
+        matches = saved_filters.run_filter(conn, flt["criteria"])
+        _attach_labels(conn, matches)
+        context.update(issues=matches, total=len(matches))
     return _templates.TemplateResponse(
-        request=request,
-        name="aegis/filter_detail.html",
-        context={"filter": flt, "issues": matches, "total": len(matches)},
+        request=request, name="aegis/filter_detail.html", context=context
     )
 
 
