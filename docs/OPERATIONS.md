@@ -184,6 +184,33 @@ Never expose an instance that trusts `X-Athena-Actor` to untrusted clients. If a
 reverse proxy sits in front of Athena, strip inbound `X-Athena-Actor` unless the
 proxy itself is intentionally providing that identity on a private network.
 
+## AI Agent Access (MCP)
+
+Athena ships an optional **MCP server** so an AI agent can drive it through the
+Model Context Protocol. It is a thin client over the REST API: every tool call
+becomes an authenticated API call, so an agent acting over MCP is bound by the
+same token scopes and leaves the same audit trail as any other client.
+
+Install the extra and run it with a scoped token for a running Athena:
+
+```bash
+pip install -e ".[mcp]"
+
+ATHENA_BASE_URL=http://127.0.0.1:8000 \
+ATHENA_TOKEN=ath_... \
+athena-mcp
+```
+
+The server speaks MCP over stdio (how desktop/agent clients launch tool servers).
+Point your MCP client at the `athena-mcp` command with those two environment
+variables. Give the agent the **narrowest token** that fits its job (e.g. a triage
+bot gets `read`, `issue:write`); the MCP server never widens what the token allows.
+
+It exposes tools for searching, reading and writing issues (create/update/assign/
+comment), reading and writing Mentor pages, listing projects/users/spaces, and
+reading the event feed. The `mcp` extra is kept out of the base install, so the
+core app and its tests do not depend on it.
+
 ## Exposure Checklist
 
 Before leaving laptop-only development:
