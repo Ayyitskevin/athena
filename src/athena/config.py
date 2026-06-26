@@ -40,3 +40,16 @@ SESSION_COOKIE = "athena_session"
 # same-origin script/HTMX can echo it in an X-CSRF-Token header. Server-rendered
 # forms embed the token directly, so this cookie is a convenience, not required.
 CSRF_COOKIE = "athena_csrf"
+
+# Outbound webhook delivery. The app runs a single in-process background loop that
+# pushes new events to registered webhooks. It defaults ON, but a deployment that
+# runs MULTIPLE worker processes must run exactly one delivery worker (each loop
+# would otherwise double-deliver), so disable it (ATHENA_WEBHOOK_DELIVERY=0) in the
+# extra workers. Tests disable it too and drive delivery directly. The interval is
+# how often the loop wakes; the timeout caps each outbound POST so one slow
+# receiver can't stall the loop.
+WEBHOOK_DELIVERY_ENABLED = _bool_env("ATHENA_WEBHOOK_DELIVERY", True)
+WEBHOOK_DELIVERY_INTERVAL_SECONDS = float(
+    os.environ.get("ATHENA_WEBHOOK_INTERVAL", "5")
+)
+WEBHOOK_TIMEOUT_SECONDS = float(os.environ.get("ATHENA_WEBHOOK_TIMEOUT", "5"))

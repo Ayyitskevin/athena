@@ -7,7 +7,8 @@ No global app state, no surprises.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import json
 from pathlib import Path
 import sqlite3
@@ -28,6 +29,8 @@ from athena.core import (
     sessions,
     tokens_api,
     users_api,
+    webhooks,
+    webhooks_api,
 )
 from athena.mentor import api as mentor_api
 from athena.web import admin as web_admin
@@ -177,8 +180,21 @@ def create_app(
         db.migrate(conn)
         conn.close()
         app.state.db_path = resolved_db
-        yield
-        # Shutdown: nothing to clean up yet.
+        # Start the single in-process webhook delivery loop (unless disabled — e.g.
+        # in tests, or in extra worker processes that must not double-deliver).
+        delivery_task = (
+            asyncio.create_task(webhooks.delivery_loop(resolved_db))
+            if config.WEBHOOK_DELIVERY_ENABLED
+            else None
+        )
+        try:
+            yield
+        finally:
+            # Shutdown: stop the delivery loop cleanly.
+            if delivery_task is not None:
+                delivery_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await delivery_task
 
     app = FastAPI(title="Athena", lifespan=lifespan)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
@@ -232,6 +248,7 @@ def create_app(
     app.include_router(search_api.router)
     app.include_router(activity_api.router)
     app.include_router(events_api.router)
+    app.include_router(webhooks_api.router)
 
     # Aegis REST API (issues + labels + projects).
     app.include_router(aegis_api.router)
