@@ -1447,19 +1447,21 @@ def delete_filter(
     return RedirectResponse("/aegis/filters", status_code=303)
 
 
-@router.get("/aegis/boards", response_class=HTMLResponse)
-def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Boards view (Aegis) using real list_issues with search/filter."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
-
+def _render_board(
+    request: Request,
+    conn: sqlite3.Connection,
+    *,
+    search: str,
+    status_filter: str,
+):
+    """Render the board for the current search/status filter — the ONE place the
+    board's column-grouping lives, shared by the GET view and the drag-move POST so
+    a move re-renders exactly the board a fresh load would. Returns the full page on
+    a normal request and just the .board partial on an HTMX request (so a swap
+    replaces only the board, keeping the filter chrome)."""
     # Same data-layer path as the issues list and the API: filtering (status +
-    # search) is done by list_issues, NOT re-implemented in Python here. The old
-    # code re-filtered a full table scan with its own pre-lowered substring match,
-    # which both diverged from the API's casing and duplicated the filter logic.
-    search = (request.query_params.get("search") or "").strip()
-    status_filter = request.query_params.get("status")
-    filtered = issues.list_issues(conn, status=status_filter, search=search)
+    # search) is done by list_issues, NOT re-implemented in Python here.
+    filtered = issues.list_issues(conn, status=status_filter or None, search=search)
     _attach_labels(conn, filtered)
 
     # Statuses are per-project now, so the board's columns are dynamic: the union of
@@ -1493,9 +1495,66 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "board_columns": board_columns,
             "all_statuses": all_statuses,
             "search": search,
-            "status_filter": status_filter or "",
+            "status_filter": status_filter,
         },
     )
+
+
+@router.get("/aegis/boards", response_class=HTMLResponse)
+def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Boards view (Aegis) using real list_issues with search/filter."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    search = (request.query_params.get("search") or "").strip()
+    status_filter = (request.query_params.get("status") or "").strip()
+    return _render_board(request, conn, search=search, status_filter=status_filter)
+
+
+@router.post("/aegis/boards/move/{issue_id}", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+def board_move_issue(
+    request: Request,
+    issue_id: int,
+    new_status: str = Form(...),
+    search: str = Form(""),
+    status: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Change an issue's status by dragging its card to another column, then
+    re-render the board (preserving the current search + status filter) so the card
+    lands in its new column. Gated like every other write — a logged-out caller is
+    a 401 (the UI only makes cards draggable when signed in), and the move applies
+    only if the session user is the issue's creator or assignee.
+
+    A move that isn't allowed or doesn't apply — the actor can't write this issue,
+    or the target status isn't valid for the issue's project (boards can mix projects
+    with different status sets) — re-renders the board UNCHANGED, so the dragged card
+    simply snaps back. This quick-move path deliberately skips the open-blockers
+    advisory nudge that the detail page shows: dependencies are advisory, and that
+    warning belongs on the focused view, not a drag gesture."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to move cards.</div>',
+            status_code=401,
+        )
+    issue = issues.get_issue(conn, issue_id)
+    # Apply only when the move is both permitted and valid; otherwise fall through
+    # to a clean re-render (snap-back). A missing issue likewise just re-renders.
+    if (
+        issue is not None
+        and issues.can_modify(issue, user["id"])
+        and new_status != issue["status"]
+        and statuses.is_valid(conn, issue["project_id"], new_status)
+    ):
+        issues.update_status(conn, issue_id, new_status)
+        issue_activity.record_status_change(
+            conn,
+            actor_id=user["id"],
+            issue_id=issue_id,
+            before=issue["status"],
+            after=new_status,
+        )
+    return _render_board(request, conn, search=search.strip(), status_filter=status.strip())
 
 
 @router.get("/aegis/projects", response_class=HTMLResponse)

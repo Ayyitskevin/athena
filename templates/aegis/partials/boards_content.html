@@ -1,10 +1,10 @@
-<div class="board">
+<div class="board" data-csrf="{{ request.state.csrf_token or '' }}">
     {% for col in board_columns %}
-    <div class="board-column">
+    <div class="board-column" data-status="{{ col.name }}">
         <h3>{{ col.label }} <span class="count">({{ col.issues | length }})</span></h3>
         <div class="board-cards">
             {% for issue in col.issues %}
-            <div class="board-card">
+            <div class="board-card" data-issue-id="{{ issue.id }}"{% if request.state.user %} draggable="true"{% endif %}>
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</a>
                 {% if issue.project_name %}
                 <div class="project"><a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a></div>
