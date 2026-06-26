@@ -33,9 +33,9 @@
             hx-swap="outerHTML"
             hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All statuses</option>
-            <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
-            <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
-            <option value="done" {% if status_filter == 'done' %}selected{% endif %}>Done</option>
+            {% for s in all_statuses %}
+            <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
+            {% endfor %}
         </select>
         <select
             class="filter-select"
