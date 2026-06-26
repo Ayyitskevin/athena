@@ -9,9 +9,10 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from athena import config
 from athena.aegis import (
     comments,
     dependencies,
@@ -20,7 +21,8 @@ from athena.aegis import (
     labels,
     projects,
 )
-from athena.core import links, users
+from athena.core import activity, attachments, links, users
+from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor
 
@@ -494,6 +496,56 @@ def delete_comment(
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     comments.delete_comment(conn, comment_id)
     issue_activity.record_comment_deleted(conn, actor_id=actor["id"], issue_id=issue_id)
+
+
+# --- Attachments on an issue ----------------------------------------------
+
+
+@router.post("/{issue_id}/attachments", response_model=AttachmentOut, status_code=201)
+def upload_issue_attachment(
+    issue_id: int,
+    file: UploadFile = File(...),
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Attaching is additive, like commenting: any issue writer may do it (not just
+    # the creator/assignee). 404 if the issue is missing.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="empty file")
+    if len(data) > config.ATTACH_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="attachment too large")
+    att = attachments.store(
+        conn,
+        target_kind="issue",
+        target_id=issue_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        data=data,
+        uploaded_by=actor["id"],
+        attach_dir=config.ATTACH_DIR,
+    )
+    activity.record(
+        conn,
+        actor_id=actor["id"],
+        verb="added_attachment",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=att["filename"],
+    )
+    return att
+
+
+@router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])
+def list_issue_attachments(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Open read, like listing comments. 404 if the issue itself is missing.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return attachments.list_for(conn, "issue", issue_id)
 
 
 # --- Links: typed dependencies between issues -----------------------------

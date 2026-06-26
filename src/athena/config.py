@@ -53,3 +53,14 @@ WEBHOOK_DELIVERY_INTERVAL_SECONDS = float(
     os.environ.get("ATHENA_WEBHOOK_INTERVAL", "5")
 )
 WEBHOOK_TIMEOUT_SECONDS = float(os.environ.get("ATHENA_WEBHOOK_TIMEOUT", "5"))
+
+# Where uploaded attachment blobs are stored on disk. Keep this OUTSIDE any
+# web-served directory (it is, by default — nothing serves it statically); the
+# only way to read a file is the authenticated/audited download route, which maps
+# an attachment id to its random stored name. ATTACH_MAX_BYTES caps a single
+# upload. Note it is also bounded by MAX_REQUEST_BODY_BYTES (the whole-request cap
+# the middleware enforces first) — raise that too if you need larger attachments.
+ATTACH_DIR = Path(os.environ.get("ATHENA_ATTACH_DIR", "attachments"))
+ATTACH_MAX_BYTES = int(
+    os.environ.get("ATHENA_ATTACH_MAX_BYTES", str(10 * 1024 * 1024))
+)

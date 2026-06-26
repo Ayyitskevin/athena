@@ -9,12 +9,13 @@ import html
 import sqlite3
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
+from athena import config
 from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
-from athena.core import activity, identity, links, search, users
+from athena.core import activity, attachments, identity, links, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_plaintext, render_snippet
@@ -664,6 +665,7 @@ def _render_issue_detail(
         "backlinks": links.backlinks(conn, "issue", issue_id),
         "links": dependencies.list_links(conn, issue_id),
         "comments": comment_rows,
+        "attachments": attachments.list_for(conn, "issue", issue_id),
         "users": users.list_users(conn),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
@@ -977,6 +979,91 @@ def delete_issue_comment(
         return err
     comments.delete_comment(conn, comment_id)
     issue_activity.record_comment_deleted(conn, actor_id=user["id"], issue_id=issue_id)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/attachments", dependencies=[Depends(verify_csrf)])
+def add_issue_attachment(
+    request: Request,
+    issue_id: int,
+    file: UploadFile = File(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Attach a file to an issue from the detail page. Same write gate as comments.
+    Empty file → 400, oversize → 413; otherwise 303 back to the issue."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to attach files.</div>',
+            status_code=401,
+        )
+    if not identity.can_write(user):
+        return _readonly_response()
+    if issues.get_issue(conn, issue_id) is None:
+        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    data = file.file.read()
+    if not data:
+        return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
+    if len(data) > config.ATTACH_MAX_BYTES:
+        return HTMLResponse('<div class="error">File is too large.</div>', status_code=413)
+    att = attachments.store(
+        conn,
+        target_kind="issue",
+        target_id=issue_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        data=data,
+        uploaded_by=user["id"],
+        attach_dir=config.ATTACH_DIR,
+    )
+    activity.record(
+        conn,
+        actor_id=user["id"],
+        verb="added_attachment",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=att["filename"],
+    )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/attachments/{attachment_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_issue_attachment(
+    request: Request,
+    issue_id: int,
+    attachment_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete an attachment from the issue detail page. Uploader-only (mirrors
+    comment ownership). POST, not DELETE, because HTML forms can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to remove files.</div>',
+            status_code=401,
+        )
+    if not identity.can_write(user):
+        return _readonly_response()
+    att = attachments.get(conn, attachment_id)
+    if att is None or att["target_kind"] != "issue" or att["target_id"] != issue_id:
+        return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
+    if att["uploaded_by"] != user["id"]:
+        return HTMLResponse(
+            '<div class="error">Only the uploader may remove this file.</div>',
+            status_code=403,
+        )
+    attachments.delete(conn, attachment_id, config.ATTACH_DIR)
+    activity.record(
+        conn,
+        actor_id=user["id"],
+        verb="removed_attachment",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=att["filename"],
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

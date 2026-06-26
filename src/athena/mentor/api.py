@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from athena.core import links
+from athena import config
+from athena.core import activity, attachments, links
+from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
 from athena.mentor import page_activity, pages, space_activity, spaces
@@ -356,6 +358,55 @@ def backlinks(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> lis
     if pages.get_page(conn, page_id) is None:
         raise HTTPException(status_code=404, detail="no such page")
     return links.backlinks(conn, target_kind="page", target_id=page_id)
+
+
+@pages_router.post(
+    "/{page_id}/attachments", response_model=AttachmentOut, status_code=201
+)
+def upload_page_attachment(
+    page_id: int,
+    file: UploadFile = File(...),
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Attaching to a page is an open write like editing it (Mentor's shared-wiki
+    # model). 404 if the page is missing.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="empty file")
+    if len(data) > config.ATTACH_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="attachment too large")
+    att = attachments.store(
+        conn,
+        target_kind="page",
+        target_id=page_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        data=data,
+        uploaded_by=actor["id"],
+        attach_dir=config.ATTACH_DIR,
+    )
+    activity.record(
+        conn,
+        actor_id=actor["id"],
+        verb="added_attachment",
+        target_kind="page",
+        target_id=page_id,
+        detail=att["filename"],
+    )
+    return att
+
+
+@pages_router.get("/{page_id}/attachments", response_model=list[AttachmentOut])
+def list_page_attachments(
+    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Open read, like listing versions. 404 if the page itself is missing.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    return attachments.list_for(conn, "page", page_id)
 
 
 @pages_router.get("/{page_id}/versions", response_model=list[PageVersionOut])

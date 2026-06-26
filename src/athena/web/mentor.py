@@ -16,10 +16,11 @@ from __future__ import annotations
 import html
 import sqlite3
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.core import activity, identity, links
+from athena import config
+from athena.core import activity, attachments, identity, links
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -363,6 +364,7 @@ def page_detail(
         context={
             "page": page,
             "body_html": render_body(conn, page["body"]),
+            "attachments": attachments.list_for(conn, "page", page_id),
             "backlinks": links.backlinks(conn, "page", page_id),
             "space": spaces.get_space(conn, page["space_id"]),
             "versions": pages.list_page_versions(conn, page_id),
@@ -506,6 +508,82 @@ def delete_page(
         conn, actor_id=user["id"], page_id=page_id, title=page["title"]
     )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/attachments", dependencies=[Depends(verify_csrf)])
+def add_page_attachment(
+    request: Request,
+    page_id: int,
+    file: UploadFile = File(...),
+    conn=Depends(get_conn),
+):
+    """Attach a file to a page from its detail page. Open write like editing a page.
+    Empty → 400, oversize → 413; otherwise 303 back to the page."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "attach files")
+    if err is not None:
+        return err
+    if pages.get_page(conn, page_id) is None:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    data = file.file.read()
+    if not data:
+        return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
+    if len(data) > config.ATTACH_MAX_BYTES:
+        return HTMLResponse('<div class="error">File is too large.</div>', status_code=413)
+    att = attachments.store(
+        conn,
+        target_kind="page",
+        target_id=page_id,
+        filename=file.filename,
+        content_type=file.content_type,
+        data=data,
+        uploaded_by=user["id"],
+        attach_dir=config.ATTACH_DIR,
+    )
+    activity.record(
+        conn,
+        actor_id=user["id"],
+        verb="added_attachment",
+        target_kind="page",
+        target_id=page_id,
+        detail=att["filename"],
+    )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post(
+    "/mentor/pages/{page_id}/attachments/{attachment_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_page_attachment(
+    request: Request,
+    page_id: int,
+    attachment_id: int,
+    conn=Depends(get_conn),
+):
+    """Delete a page attachment. Uploader-only. POST because forms can't DELETE."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "remove files")
+    if err is not None:
+        return err
+    att = attachments.get(conn, attachment_id)
+    if att is None or att["target_kind"] != "page" or att["target_id"] != page_id:
+        return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
+    if att["uploaded_by"] != user["id"]:
+        return HTMLResponse(
+            '<div class="error">Only the uploader may remove this file.</div>',
+            status_code=403,
+        )
+    attachments.delete(conn, attachment_id, config.ATTACH_DIR)
+    activity.record(
+        conn,
+        actor_id=user["id"],
+        verb="removed_attachment",
+        target_kind="page",
+        target_id=page_id,
+        detail=att["filename"],
+    )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
 @router.post(
