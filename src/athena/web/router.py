@@ -1523,6 +1523,16 @@ def _render_board(
     filtered = issues.list_issues(conn, status=status_filter or None, search=search)
     _attach_labels(conn, filtered)
 
+    # Each card carries its OWN project's status menu, so the keyboard "Move" control
+    # offers exactly the valid targets for that issue (the backlog uses the default
+    # set). Cache per project so a board of N issues across M projects costs M lookups.
+    status_opts: dict = {}
+    for issue in filtered:
+        pid = issue.get("project_id")
+        if pid not in status_opts:
+            status_opts[pid] = statuses.status_names(conn, pid)
+        issue["status_options"] = status_opts[pid]
+
     # Statuses are per-project now, so the board's columns are dynamic: the union of
     # statuses present, ordered by category (todo → doing → done) then name, so a
     # board that mixes projects with different status sets still reads coherently.
@@ -1578,18 +1588,23 @@ def board_move_issue(
     status: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    """Change an issue's status by dragging its card to another column, then
-    re-render the board (preserving the current search + status filter) so the card
-    lands in its new column. Gated like every other write — a logged-out caller is
-    a 401 (the UI only makes cards draggable when signed in), and the move applies
-    only if the session user is the issue's creator or assignee.
+    """Change an issue's status from the board, then show the board with the card in
+    its new column. Two callers share this endpoint: the drag gesture (board-dnd.js,
+    an HTMX request that swaps just the .board) and the per-card keyboard "Move" form
+    (a plain POST when JS is off). Both send new_status plus the active search/status
+    filter; the response shape follows the request — an HTMX swap of the re-rendered
+    board, or a 303 back to /aegis/boards (so a refresh doesn't re-POST) for the form.
 
-    A move that isn't allowed or doesn't apply — the actor can't write this issue,
-    or the target status isn't valid for the issue's project (boards can mix projects
-    with different status sets) — re-renders the board UNCHANGED, so the dragged card
-    simply snaps back. This quick-move path deliberately skips the open-blockers
-    advisory nudge that the detail page shows: dependencies are advisory, and that
-    warning belongs on the focused view, not a drag gesture."""
+    Gated like every other write — a logged-out caller is a 401 (the UI only offers
+    the move when signed in), and the move applies only if the session user is the
+    issue's creator or assignee.
+
+    A move that isn't allowed or doesn't apply — the actor can't write this issue, or
+    the target status isn't valid for the issue's project (boards can mix projects
+    with different status sets) — leaves the board UNCHANGED, so the card simply snaps
+    back. This quick-move path deliberately skips the open-blockers advisory nudge the
+    detail page shows: dependencies are advisory, and that warning belongs on the
+    focused view, not a quick board move."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -1613,7 +1628,15 @@ def board_move_issue(
             before=issue["status"],
             after=new_status,
         )
-    return _render_board(request, conn, search=search.strip(), status_filter=status.strip())
+    search, status = search.strip(), status.strip()
+    if request.headers.get("HX-Request"):
+        return _render_board(request, conn, search=search, status_filter=status)
+    # No-JS keyboard form: redirect to the board (preserving filters) so the URL is a
+    # GET and a refresh re-reads rather than re-submitting the move.
+    return RedirectResponse(
+        "/aegis/boards?" + urlencode({"search": search, "status": status}),
+        status_code=303,
+    )
 
 
 @router.get("/aegis/projects", response_class=HTMLResponse)
