@@ -137,6 +137,52 @@ def list_activity(
     return [dict(row) for row in rows]
 
 
+def list_events(
+    conn: sqlite3.Connection,
+    *,
+    after_id: int | None = None,
+    target_kind: str | None = None,
+    target_id: int | None = None,
+    actor_id: int | None = None,
+    verb: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Events in FORWARD (oldest-first) order for cursor consumption — the agent/
+    integration view of the same append-only trail `list_activity` serves to humans.
+
+    The audit log IS the event log: every recorded action already has a monotonic
+    id, an actor, a verb, and a target. This inverts list_activity's cursor so a
+    consumer can resume exactly where it left off: only rows with a.id > after_id,
+    ordered ASC, so processing them in order and remembering the last id seen is a
+    complete, gap-free subscription. (list_activity pages BACKWARD with before_id /
+    DESC for a human scrolling recent history; an agent draining a stream wants the
+    opposite.) Filters mirror list_activity so a consumer can narrow to one kind,
+    one target, one actor, or one verb."""
+    clauses: list[str] = []
+    params: list = []
+    if after_id is not None:
+        clauses.append("a.id > ?")
+        params.append(after_id)
+    if target_kind is not None:
+        clauses.append("a.target_kind = ?")
+        params.append(target_kind)
+    if target_id is not None:
+        clauses.append("a.target_id = ?")
+        params.append(target_id)
+    if actor_id is not None:
+        clauses.append("a.actor_id = ?")
+        params.append(actor_id)
+    if verb is not None:
+        clauses.append("a.verb = ?")
+        params.append(verb)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    rows = conn.execute(
+        f"{_SELECT}{where} ORDER BY a.id ASC LIMIT ?", params
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
     """The verbs that actually occur in the trail, alphabetical. Powers the feed's
     verb filter from real data — never a hardcoded list that could drift from what
