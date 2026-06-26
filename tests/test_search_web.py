@@ -97,3 +97,59 @@ def test_find_is_open_without_login(tmp_path):
     app = create_app(tmp_path / "open.db")
     with TestClient(app) as client:
         assert client.get("/find", params={"q": "anything"}).status_code == 200
+
+
+def test_find_shows_scope_filter_and_context(tmp_path):
+    # WHY: a result must be triageable from the list. An issue hit shows its key and
+    # status; a page hit shows its space; and a scope filter lets the searcher narrow
+    # to one kind.
+    app = create_app(tmp_path / "ctx.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "ctx.db")
+        h = {"X-Athena-Actor": "1"}
+        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=h).json()
+        iss = client.post(
+            "/issues",
+            json={"title": "obelisk export", "project_id": proj["id"]},
+            headers=h,
+        ).json()
+        client.patch(f"/issues/{iss['id']}", json={"status": "done"}, headers=h)
+        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        client.post(f"/spaces/{sp['id']}/pages", json={"title": "obelisk guide"}, headers=h)
+
+        body = client.get("/find", params={"q": "obelisk"}).text
+        assert "search-scope" in body  # the All/Issues/Pages filter is present
+        assert "WEB-1" in body  # issue key
+        assert 'class="status done"' in body  # issue status badge
+        assert ">ENG<" in body  # page's space key
+
+
+def test_find_scope_narrows_to_one_kind(tmp_path):
+    # WHY: choosing the Issues scope must drop page hits (and vice versa), the web
+    # mirror of the API's kind filter.
+    app = create_app(tmp_path / "scope.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "scope.db")
+        h = {"X-Athena-Actor": "1"}
+        client.post("/issues", json={"title": "widget alpha"}, headers=h)
+        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        client.post(f"/spaces/{sp['id']}/pages", json={"title": "widget beta"}, headers=h)
+        body = client.get("/find", params={"q": "widget", "kind": "issue"}).text
+        assert "widget alpha" in body and "widget beta" not in body
+
+
+def test_find_paginates_when_results_overflow_a_page(tmp_path):
+    # WHY: search must not silently cap at one window. With more than a page of hits,
+    # page 1 offers Next and page 2 offers Prev — the result set is walkable.
+    app = create_app(tmp_path / "pagi.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "pagi.db")
+        h = {"X-Athena-Actor": "1"}
+        for i in range(21):  # one more than the 20-per-page window
+            client.post("/issues", json={"title": f"falcon {i}"}, headers=h)
+        page1 = client.get("/find", params={"q": "falcon"}).text
+        assert "Next →" in page1
+        assert "← Prev" not in page1
+        page2 = client.get("/find", params={"q": "falcon", "page": 2}).text
+        assert "← Prev" in page2
+        assert "Next →" not in page2  # only 21 hits, so page 2 is the last

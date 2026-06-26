@@ -17,7 +17,7 @@ These tests encode the contract that matters, not just that the FTS query runs:
 """
 from fastapi.testclient import TestClient
 
-from athena.aegis import issues
+from athena.aegis import issues, projects
 from athena.core import db, search
 from athena.main import create_app
 from athena.mentor import pages, spaces
@@ -195,6 +195,65 @@ def test_backfill_makes_preexisting_rows_findable(tmp_path):
     assert [h["kind"] for h in search.search(conn, "runes")] == ["issue"]
 
 
+# --- enrichment: hits carry the context that makes them scannable -----------
+
+
+def test_issue_hit_carries_key_and_status(tmp_path):
+    # WHY: a bare title is a weak result. An issue hit should carry its key (ATH-12)
+    # and status so the searcher can triage from the results list without opening it.
+    conn = _migrated_conn(tmp_path / "ctx.db")
+    _seed_user(conn)
+    proj = projects.create_project(conn, name="Web", key="WEB", created_by=1)
+    iss = issues.create_issue(
+        conn, title="zephyr handling", body="", created_by=1, project_id=proj["id"]
+    )
+    issues.update_issue(conn, iss["id"], status="done")
+    hit = search.search(conn, "zephyr")[0]
+    assert hit["key"] == "WEB-1"
+    assert hit["status"] == "done"
+
+
+def test_backlog_issue_hit_has_null_key(tmp_path):
+    # WHY: an issue with no project has no key — the context resolves to None rather
+    # than inventing one, and status is still present.
+    conn = _migrated_conn(tmp_path / "blkey.db")
+    _seed_user(conn)
+    issues.create_issue(conn, title="orphan unicorn", body="", created_by=1)
+    hit = search.search(conn, "unicorn")[0]
+    assert hit["key"] is None
+    assert hit["status"] == "open"
+
+
+def test_page_hit_carries_space_key(tmp_path):
+    # WHY: a page hit should say which space it lives in, so two same-named pages in
+    # different spaces are distinguishable from the results list.
+    conn = _migrated_conn(tmp_path / "pgctx.db")
+    _seed_user(conn)
+    sp = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    pages.create_page(conn, space_id=sp["id"], title="kraken runbook", body="", created_by=1)
+    hit = search.search(conn, "kraken")[0]
+    assert hit["space_key"] == "OPS"
+
+
+def test_offset_pages_the_ranked_set(tmp_path):
+    # WHY: a result set larger than one window must be walkable. limit+offset slice
+    # the SAME ranked order, so page 2 continues where page 1 stopped — no repeats,
+    # no gaps.
+    conn = _migrated_conn(tmp_path / "page.db")
+    _seed_user(conn)
+    # Five issues all matching "lantern"; title hits, so a stable bm25 order.
+    made = [
+        issues.create_issue(conn, title=f"lantern {i}", body="", created_by=1)["id"]
+        for i in range(5)
+    ]
+    first_two = [h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=0)]
+    next_two = [h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=2)]
+    assert len(first_two) == 2 and len(next_two) == 2
+    # The two windows are disjoint and all come from the set we made.
+    assert not set(first_two) & set(next_two)
+    assert set(first_two + next_two) <= set(made)
+
+
 # --- API: the REST endpoint -------------------------------------------------
 
 
@@ -252,3 +311,31 @@ def test_search_endpoint_missing_q_is_422(tmp_path):
         _seed_api_user(tmp_path / "apiq.db")
         h = {"X-Athena-Actor": "1"}
         assert client.get("/search", headers=h).status_code == 422
+
+
+def test_search_endpoint_carries_context_and_pages(tmp_path):
+    # WHY: the JSON surface exposes the same enrichment (issue key/status, page
+    # space_key) and the same offset paging the web search uses, so an agent can
+    # triage and walk results without a second round-trip per hit.
+    app = create_app(tmp_path / "apictx.db")
+    with TestClient(app) as client:
+        _seed_api_user(tmp_path / "apictx.db")
+        h = {"X-Athena-Actor": "1"}
+        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=h).json()
+        client.post(
+            "/issues",
+            json={"title": "obelisk alpha", "project_id": proj["id"]},
+            headers=h,
+        )
+        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        client.post(f"/spaces/{sp['id']}/pages", json={"title": "obelisk beta"}, headers=h)
+        hits = client.get("/search", params={"q": "obelisk"}, headers=h).json()
+        by_kind = {x["kind"]: x for x in hits}
+        assert by_kind["issue"]["key"] == "WEB-1"
+        assert by_kind["issue"]["status"] == "open"
+        assert by_kind["page"]["space_key"] == "ENG"
+        # offset paging: limit 1 yields disjoint single-hit windows.
+        p0 = client.get("/search", params={"q": "obelisk", "limit": 1, "offset": 0}, headers=h).json()
+        p1 = client.get("/search", params={"q": "obelisk", "limit": 1, "offset": 1}, headers=h).json()
+        assert len(p0) == 1 and len(p1) == 1
+        assert p0[0]["source_id"] != p1[0]["source_id"] or p0[0]["kind"] != p1[0]["kind"]

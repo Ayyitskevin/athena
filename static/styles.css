@@ -1024,6 +1024,40 @@ footer {
     border-radius: 2px;
 }
 
+/* Scope filter (All / Issues / Pages) above the results. */
+.search-scope {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+}
+
+.search-scope-tab {
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    color: #555;
+    text-decoration: none;
+    border: 1px solid #e5e7eb;
+}
+
+.search-scope-tab:hover {
+    background: #f3f4f6;
+}
+
+.search-scope-tab.active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+}
+
+/* A hit's title line: title plus inline context/kind badges. */
+.search-hit-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
 /* Activity timeline (issue history + global feed). */
 .activity {
     margin-top: 1.5rem;

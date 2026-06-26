@@ -17,18 +17,40 @@
 </form>
 
 {% if q %}
+    <div class="search-scope">
+        <a href="{{ scope_urls.all }}" class="search-scope-tab {{ 'active' if not kind }}">All</a>
+        <a href="{{ scope_urls.issue }}" class="search-scope-tab {{ 'active' if kind == 'issue' }}">Issues</a>
+        <a href="{{ scope_urls.page }}" class="search-scope-tab {{ 'active' if kind == 'page' }}">Pages</a>
+    </div>
+
     {% if hits %}
     <ul class="search-results">
     {% for h in hits %}
         <li class="search-hit">
-            <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
-            <span class="search-hit-kind">{{ h.kind }}</span>
+            <div class="search-hit-head">
+                <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
+                {% if h.kind == 'issue' %}
+                    {% if h.key %}<span class="issue-id">{{ h.key }}</span>{% endif %}
+                    {% if h.status %}<span class="status {{ h.status }}">{{ h.status }}</span>{% endif %}
+                {% elif h.kind == 'page' and h.space_key %}
+                    <span class="search-hit-kind">{{ h.space_key }}</span>
+                {% endif %}
+                <span class="search-hit-kind">{{ h.kind }}</span>
+            </div>
             {% if h.snippet_html %}<p class="search-hit-snippet">{{ h.snippet_html }}</p>{% endif %}
         </li>
     {% endfor %}
     </ul>
+
+    {% if prev_url or next_url %}
+    <div class="pagination">
+        {% if prev_url %}<a href="{{ prev_url }}" class="button secondary small">← Prev</a>{% endif %}
+        <span>Page {{ page }}</span>
+        {% if next_url %}<a href="{{ next_url }}" class="button secondary small">Next →</a>{% endif %}
+    </div>
+    {% endif %}
     {% else %}
-    <p class="empty-state">No matches for “{{ q }}”.</p>
+    <p class="empty-state">No matches for “{{ q }}”{% if kind %} in {{ kind }}s{% endif %}.</p>
     {% endif %}
 {% else %}
 <p class="note">Type a query above to search every issue and page.</p>
