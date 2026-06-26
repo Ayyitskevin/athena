@@ -14,7 +14,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from athena import config
-from athena.aegis import comments, dependencies, issue_activity, issues, labels, projects
+from athena.aegis import (
+    comments,
+    dependencies,
+    issue_activity,
+    issues,
+    labels,
+    projects,
+    statuses,
+)
 from athena.core import activity, attachments, identity, links, notifications, search, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -458,14 +466,15 @@ def create_issue(
     request: Request,
     title: str = Form(""),
     body: str = Form(""),
-    status: str = Form("open"),
     priority: str = Form("medium"),
     project_id: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Create an issue as the logged-in user. The actor is the browser session
     (request.state.user), never a field in the form — same rule as the REST API.
-    Logged-out callers get a prompt to sign in instead of a write."""
+    Logged-out callers get a prompt to sign in instead of a write. A new issue
+    starts at its project's first status (statuses are per-project now, and the
+    project is chosen on this same form), so the form doesn't pick a status."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
@@ -481,8 +490,6 @@ def create_issue(
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
-    if status not in issues.STATUSES:
-        return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
     if priority not in issues.PRIORITIES:
         return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
     # Project is optional ("" = no project); if given it must be a real project.
@@ -494,6 +501,9 @@ def create_issue(
             return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         project = int(project_id)
     body = body.strip()
+    # New issues start at the chosen project's first status (the backlog uses the
+    # default set).
+    status = statuses.first_status(conn, project)
 
     issue = issues.create_issue(
         conn, title=title, body=body, status=status, priority=priority,
@@ -614,10 +624,10 @@ def change_issue_status(
     issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    if status not in issues.STATUSES:
+    if not statuses.is_valid(conn, issue["project_id"], status):
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
 
-    if status == "done" and not confirm.strip():
+    if statuses.is_done(conn, issue["project_id"], status) and not confirm.strip():
         blockers = dependencies.open_blockers(conn, issue_id)
         if blockers:
             # Don't apply the close — show the warning and let the user confirm.
@@ -727,6 +737,7 @@ def _render_issue_detail(
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
+        "issue_statuses": statuses.list_statuses(conn, issue["project_id"]),
         "can_modify": can_modify,
         "can_write": can_write,
         # This issue's own audit trail (newest first) — the same data-layer read
@@ -1170,19 +1181,38 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     search = (request.query_params.get("search") or "").strip()
     status_filter = request.query_params.get("status")
     filtered = issues.list_issues(conn, status=status_filter, search=search)
-
     _attach_labels(conn, filtered)
+
+    # Statuses are per-project now, so the board's columns are dynamic: the union of
+    # statuses present, ordered by category (todo → doing → done) then name, so a
+    # board that mixes projects with different status sets still reads coherently.
     from collections import defaultdict
-    columns = defaultdict(list)
+
+    grouped: dict[str, list] = defaultdict(list)
     for issue in filtered:
-        columns[issue.get("status", "open")].append(issue)
+        grouped[issue.get("status", "")].append(issue)
+
+    cat_rank = {"todo": 0, "doing": 1, "done": 2}
+
+    def _sort_key(name: str) -> tuple[int, str]:
+        return (cat_rank.get(statuses.global_category(conn, name), 1), name)
+
+    board_columns = [
+        {"name": name, "label": name.replace("_", " ").title(), "issues": grouped[name]}
+        for name in sorted(grouped, key=_sort_key)
+    ]
+    # The status filter offers every status currently in use (across all issues).
+    all_statuses = sorted(
+        {i["status"] for i in issues.list_issues(conn)}, key=_sort_key
+    )
 
     template = "aegis/partials/boards_content.html" if request.headers.get("HX-Request") else "aegis/boards.html"
     return _templates.TemplateResponse(
         request=request,
         name=template,
         context={
-            "columns": dict(columns),
+            "board_columns": board_columns,
+            "all_statuses": all_statuses,
             "search": search,
             "status_filter": status_filter or "",
         },
@@ -1293,12 +1323,24 @@ def project_edit_form(
     project, err = _authorize_project_write(conn, project_id, user)
     if err is not None:
         return err
+    proj_statuses = statuses.list_statuses(conn, project_id)
+    # How many issues use each status, so the template can disable removing one
+    # that's still in use (the API/data layer refuses it too).
+    status_usage = {
+        s["name"]: len(
+            issues.list_issues(conn, project_id=project_id, status=s["name"])
+        )
+        for s in proj_statuses
+    }
     return _templates.TemplateResponse(
         request=request,
         name="aegis/project_edit.html",
         context={
             "project": project,
             "issue_count": issues.count_issues_in_project(conn, project_id),
+            "statuses": proj_statuses,
+            "status_usage": status_usage,
+            "status_categories": statuses.CATEGORIES,
         },
     )
 
@@ -1368,3 +1410,55 @@ def project_delete(
         )
     projects.delete_project(conn, project_id)
     return RedirectResponse("/aegis/projects", status_code=303)
+
+
+@router.post("/aegis/projects/{project_id}/statuses", dependencies=[Depends(verify_csrf)])
+def add_project_status_web(
+    request: Request,
+    project_id: int,
+    name: str = Form(""),
+    category: str = Form("todo"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Add a status to a project from its edit page. Creator-only, like editing the
+    project. The data layer rejects duplicates/bad categories; we surface the reason."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    reason = statuses.add_status(conn, project_id, name, category)
+    if reason is not None:
+        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+    return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/statuses/{name}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_project_status_web(
+    request: Request,
+    project_id: int,
+    name: str,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Remove a status from a project. Creator-only. Refused (with a reason) if it's
+    the last status or still in use by issues."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    reason = statuses.remove_status(conn, project_id, name)
+    if reason is not None:
+        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+    return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)

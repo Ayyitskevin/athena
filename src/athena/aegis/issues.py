@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from athena.aegis import projects
+from athena.aegis import projects, statuses
 from athena.core import links, search
 
 # The lifecycle an issue moves through. This is the canonical set the whole app
@@ -176,16 +176,23 @@ def set_project(
     it from a project (project_id=None) clears the number too: a backlog issue has
     no key."""
     current = conn.execute(
-        "SELECT project_id FROM issues WHERE id = ?", (issue_id,)
+        "SELECT project_id, status FROM issues WHERE id = ?", (issue_id,)
     ).fetchone()
     if current is None:
         return None
     if current["project_id"] == project_id:
         return get_issue(conn, issue_id)  # same project — keep the existing number
     project_seq = projects.next_seq(conn, project_id) if project_id is not None else None
+    # The destination may not offer the issue's current status (projects can have
+    # different status sets). If so, remap to the destination's first status — a
+    # defined, predictable rule — rather than leaving the issue in a status its new
+    # project doesn't know. If the status is valid there, keep it.
+    new_status = current["status"]
+    if not statuses.is_valid(conn, project_id, new_status):
+        new_status = statuses.first_status(conn, project_id)
     conn.execute(
-        "UPDATE issues SET project_id = ?, project_seq = ? WHERE id = ?",
-        (project_id, project_seq, issue_id),
+        "UPDATE issues SET project_id = ?, project_seq = ?, status = ? WHERE id = ?",
+        (project_id, project_seq, new_status, issue_id),
     )
     conn.commit()
     return get_issue(conn, issue_id)

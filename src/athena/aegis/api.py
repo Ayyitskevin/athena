@@ -20,6 +20,7 @@ from athena.aegis import (
     issues,
     labels,
     projects,
+    statuses,
 )
 from athena.core import activity, attachments, links, users
 from athena.core.attachments_api import AttachmentOut
@@ -36,26 +37,29 @@ labels_router = APIRouter(prefix="/labels", tags=["aegis"])
 # and lives on `router` below.
 projects_router = APIRouter(prefix="/projects", tags=["aegis"])
 
-# Reject any status outside the lifecycle at the boundary (422), so bad input
-# never reaches the DB. Built from the one canonical list in issues.py.
-Status = Literal[issues.STATUSES]
+# Priority is still a fixed global lifecycle (validated at the boundary). Status is
+# now PER-PROJECT (aegis/statuses), so it can't be a static Literal — it's a free
+# string validated against the target project's status set in the handlers below.
 Priority = Literal[issues.PRIORITIES]
 
 
 class IssueCreate(BaseModel):
     title: str
     body: str = ""
-    status: Status = "open"
+    # None => the target project's first (default) status. A given status is
+    # validated against that project's set in the handler.
+    status: str | None = None
     priority: Priority = "medium"
     project_id: int | None = None
 
 
 class IssueUpdate(BaseModel):
-    # A partial edit: send any subset. Unset fields are left unchanged. status
-    # and priority are still constrained to their lifecycles when present.
+    # A partial edit: send any subset. Unset fields are left unchanged. priority is
+    # constrained to its lifecycle when present; status is validated against the
+    # issue's project's set in the handler.
     title: str | None = None
     body: str | None = None
-    status: Status | None = None
+    status: str | None = None
     priority: Priority | None = None
 
 
@@ -92,6 +96,17 @@ class ProjectOut(BaseModel):
     description: str
     created_by: int
     created_at: str
+
+
+class StatusCreate(BaseModel):
+    name: str
+    category: str  # 'todo' | 'doing' | 'done'
+
+
+class StatusOut(BaseModel):
+    name: str
+    category: str
+    position: int
 
 
 class LabelCreate(BaseModel):
@@ -219,11 +234,21 @@ def create(
         and projects.get_project(conn, payload.project_id) is None
     ):
         raise HTTPException(status_code=422, detail="no such project")
+    # Status is validated against the TARGET project's set (the backlog uses the
+    # default set). Unset means "start at the project's first status".
+    if payload.status is None:
+        status = statuses.first_status(conn, payload.project_id)
+    elif not statuses.is_valid(conn, payload.project_id, payload.status):
+        raise HTTPException(
+            status_code=422, detail="no such status for this project"
+        )
+    else:
+        status = payload.status
     issue = issues.create_issue(
         conn,
         title=title,
         body=payload.body,
-        status=payload.status,
+        status=status,
         priority=payload.priority,
         project_id=payload.project_id,
         created_by=actor["id"],
@@ -327,6 +352,13 @@ def update(
     title = payload.title.strip() if payload.title is not None else None
     if title is not None and not title:
         raise HTTPException(status_code=422, detail="title cannot be empty")
+    # A new status must belong to the issue's project's set (backlog uses defaults).
+    if payload.status is not None and not statuses.is_valid(
+        conn, before["project_id"], payload.status
+    ):
+        raise HTTPException(
+            status_code=422, detail="no such status for this project"
+        )
     updated = issues.update_issue(
         conn,
         issue_id,
@@ -722,6 +754,54 @@ def delete_project(
             status_code=409, detail="reassign or delete its issues first"
         )
     projects.delete_project(conn, project_id)
+
+
+# --- Per-project statuses: the configurable lifecycle ---------------------
+
+
+@projects_router.get("/{project_id}/statuses", response_model=list[StatusOut])
+def list_project_statuses(
+    project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Reading a project's statuses is open, like listing its issues. 404 if the
+    # project itself is missing.
+    if projects.get_project(conn, project_id) is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    return statuses.list_statuses(conn, project_id)
+
+
+@projects_router.post(
+    "/{project_id}/statuses", response_model=list[StatusOut], status_code=201
+)
+def add_project_status(
+    project_id: int,
+    payload: StatusCreate,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Configuring statuses is project config — creator-only, like editing the
+    # project itself.
+    _project_for_write(conn, project_id, actor)
+    reason = statuses.add_status(conn, project_id, payload.name, payload.category)
+    if reason is not None:
+        status = 409 if "already exists" in reason else 422
+        raise HTTPException(status_code=status, detail=reason)
+    return statuses.list_statuses(conn, project_id)
+
+
+@projects_router.delete("/{project_id}/statuses/{name}", response_model=list[StatusOut])
+def remove_project_status(
+    project_id: int,
+    name: str,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    _project_for_write(conn, project_id, actor)
+    reason = statuses.remove_status(conn, project_id, name)
+    if reason is not None:
+        status = 404 if reason == "no such status" else 409
+        raise HTTPException(status_code=status, detail=reason)
+    return statuses.list_statuses(conn, project_id)
 
 
 # --- Labels: a top-level shared vocabulary --------------------------------

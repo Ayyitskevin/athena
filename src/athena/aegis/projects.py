@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from athena.aegis import statuses
+
 # A valid issue-key prefix: a leading letter, then up to 9 more letters/digits.
 # This is the shape both the [[ATH-12]] cross-link grammar and the addressable
 # URL depend on, so it's defined once here and shared by every boundary (REST API
@@ -46,6 +48,9 @@ def create_project(
         (name, key.upper(), description, created_by),
     )
     conn.commit()
+    # Give the new project the default status set, so it has a working lifecycle
+    # immediately and can be customized from there.
+    statuses.seed_defaults(conn, cur.lastrowid)
     return get_project(conn, cur.lastrowid)
 
 

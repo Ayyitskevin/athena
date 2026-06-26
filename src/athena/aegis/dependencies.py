@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import issues
+from athena.aegis import issues, statuses
 
 # What a form / API may ask for. The stored kinds are just {'blocks','relates'}.
 RELATIONS = ("blocks", "blocked_by", "relates")
@@ -171,14 +171,22 @@ def list_links(conn: sqlite3.Connection, issue_id: int) -> dict:
 
 
 def open_blockers(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
-    """Issues that block this one AND are not yet done — the reason a close should
-    warn. Returns summaries (possibly empty). 'done' is the closed state in
-    issues.STATUSES; anything else still counts as an open blocker."""
+    """Issues that block this one AND are not yet closed — the reason a close should
+    warn. Returns summaries (possibly empty). "Closed" is category-based now
+    (statuses.is_done), so a blocker in any project's done-category status counts as
+    resolved, and anything else is still an open blocker. Each blocker's done-ness
+    depends on its OWN project's status set, so we resolve it per row rather than in
+    one SQL comparison."""
     rows = conn.execute(
-        "SELECT l.from_id AS blocker FROM issue_links l "
+        "SELECT l.from_id AS blocker, i.status, i.project_id FROM issue_links l "
         "JOIN issues i ON i.id = l.from_id "
-        "WHERE l.to_id = ? AND l.kind = 'blocks' AND i.status != 'done' "
+        "WHERE l.to_id = ? AND l.kind = 'blocks' "
         "ORDER BY l.from_id",
         (issue_id,),
     ).fetchall()
-    return _others(conn, [r["blocker"] for r in rows])
+    open_ids = [
+        r["blocker"]
+        for r in rows
+        if not statuses.is_done(conn, r["project_id"], r["status"])
+    ]
+    return _others(conn, open_ids)
