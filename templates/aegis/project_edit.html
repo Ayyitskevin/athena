@@ -40,6 +40,40 @@
     </form>
 </div>
 
+<div class="form-container">
+    <h3>Statuses</h3>
+    <p class="note-small">The workflow for this project's issues. Category drives the
+        board column and whether an issue counts as closed.</p>
+    <ul class="status-list">
+        {% for s in statuses %}
+        <li>
+            <span class="status-name">{{ s.name.replace("_", " ").title() }}</span>
+            <span class="muted">({{ s.category }})</span>
+            {% set used = status_usage.get(s.name, 0) %}
+            {% if used %}
+            <span class="note-small">— {{ used }} issue{{ "s" if used != 1 }}</span>
+            {% elif statuses|length > 1 %}
+            <form method="post" action="/aegis/projects/{{ project.id }}/statuses/{{ s.name }}/delete"
+                  data-confirm="Remove status {{ s.name }}?" style="display:inline">
+                {% include "partials/csrf.html" %}
+                <button type="submit" class="button danger small">Remove</button>
+            </form>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    <form method="post" action="/aegis/projects/{{ project.id }}/statuses" class="status-add">
+        {% include "partials/csrf.html" %}
+        <input type="text" name="name" placeholder="New status…" required>
+        <select name="category">
+            {% for c in status_categories %}
+            <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="button secondary">Add status</button>
+    </form>
+</div>
+
 <div class="form-container danger-zone">
     <h3>Delete project</h3>
     {% if issue_count > 0 %}

@@ -311,7 +311,9 @@ def test_boards_page_renders(tmp_path):
     assert response.status_code == 200
     assert "Boards" in response.text
     assert "Kanban" in response.text or "board" in response.text.lower()
-    assert "Open" in response.text
+    # Board columns are per-project/dynamic now, so an EMPTY board has no status
+    # columns; the page chrome (the status filter) still renders.
+    assert "All statuses" in response.text
 
 
 def test_issues_list_htmx_fragment_vs_full_page(tmp_path):

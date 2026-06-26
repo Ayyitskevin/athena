@@ -764,6 +764,30 @@ footer {
     gap: 0.5rem;
 }
 
+/* Per-project status management on the project edit page. */
+.status-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.75rem;
+}
+
+.status-list li {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+}
+
+.status-list .status-name {
+    font-weight: 500;
+}
+
+.status-add {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 /* Notification nav badge + inbox list. */
 .badge {
     display: inline-block;

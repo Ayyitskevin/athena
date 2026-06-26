@@ -252,8 +252,8 @@
                 {% include "partials/csrf.html" %}
                 <label for="status-select">Status</label>
                 <select id="status-select" name="status">
-                    {% for val, label in [("open", "Open"), ("in_progress", "In Progress"), ("done", "Done")] %}
-                    <option value="{{ val }}" {% if val == issue.status %}selected{% endif %}>{{ label }}</option>
+                    {% for s in issue_statuses %}
+                    <option value="{{ s.name }}" {% if s.name == issue.status %}selected{% endif %}>{{ s.name.replace("_", " ").title() }}</option>
                     {% endfor %}
                 </select>
                 <button type="submit" class="button small">Change Status</button>
