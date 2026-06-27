@@ -163,6 +163,75 @@ def test_admin_webhooks_requires_admin(tmp_path):
         assert "Admin role required" in denied.text
 
 
+def test_web_register_reapplies_the_ssrf_guard(tmp_path):
+    # WHY: the web form re-implements the SSRF check inline, separate from the REST
+    # boundary — so it needs its own test. A private/loopback URL must be refused
+    # WITHOUT minting a secret or persisting a row (an admin can still be phished
+    # into pointing Athena at cloud metadata / an internal host).
+    db_file = tmp_path / "ssrf.db"
+    with TestClient(create_app(db_file)) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        _login(client)
+        for bad in ("http://127.0.0.1/x", "http://169.254.169.254/latest/meta-data"):
+            resp = client.post(
+                "/admin/webhooks", data={"url": bad, "event_kind": ""}, follow_redirects=False
+            )
+            assert resp.status_code == 400, bad
+            assert "token-secret" not in resp.text  # no secret minted
+        assert _webhook_count(db_file) == 0  # nothing persisted
+
+
+def test_member_cannot_toggle_or_delete_webhook(tmp_path):
+    # WHY: the destructive web routes are admin-gated only by an in-handler check
+    # (verify_csrf runs first but checks no role). A logged-in member with a valid
+    # CSRF token must still be refused — and the webhook left untouched.
+    db_file = tmp_path / "memguard.db"
+    with TestClient(create_app(db_file)) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        client.post(
+            "/users",
+            json={"email": "m@e.com", "name": "M", "password": "pw", "role": "member"},
+            headers=H1,
+        )
+        wid = client.post("/webhooks", json={"url": HOOK}, headers=H1).json()["id"]
+
+        _login(client, "m@e.com", "pw")  # a valid member session + CSRF token
+        toggle = client.post(
+            f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False
+        )
+        assert toggle.status_code == 403
+        delete = client.post(f"/admin/webhooks/{wid}/delete", follow_redirects=False)
+        assert delete.status_code == 403
+        # The webhook is untouched: still active, still present.
+        assert _webhook_active(db_file, wid) == 1
+        assert _webhook_count(db_file) == 1
+
+
+def test_csrf_required_on_webhook_web_routes(tmp_path):
+    # WHY: the _login helper auto-supplies the CSRF token, so the happy-path tests
+    # never prove the guard is wired. Strip the token and every mutating route must
+    # refuse (403) inside the authenticated session — pinning verify_csrf onto each.
+    db_file = tmp_path / "csrf.db"
+    with TestClient(create_app(db_file)) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        wid = client.post("/webhooks", json={"url": HOOK}, headers=H1).json()["id"]
+        _login(client)
+        client.headers.pop("X-CSRF-Token", None)  # drop the token the helper set
+
+        assert client.post(
+            "/admin/webhooks", data={"url": HOOK}, follow_redirects=False
+        ).status_code == 403
+        assert client.post(
+            f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False
+        ).status_code == 403
+        assert client.post(
+            f"/admin/webhooks/{wid}/delete", follow_redirects=False
+        ).status_code == 403
+        # Nothing changed: exactly the one REST-created webhook, still active.
+        assert _webhook_count(db_file) == 1
+        assert _webhook_active(db_file, wid) == 1
+
+
 def _only_webhook_id(db_file):
     conn = db.connect(db_file)
     try:
