@@ -467,9 +467,18 @@ def _int_or_none(raw: str | None) -> int | None:
     return int(raw)
 
 
+def _actor_type_or_none(raw: str | None) -> str | None:
+    """Normalize the actor-type lens to 'agent', 'human', or None. An unknown value
+    (e.g. a hand-edited URL) falls back to no filter rather than erroring — the same
+    lenient stance the verb/kind selects take with input outside their option set."""
+    value = (raw or "").strip().lower()
+    return value if value in ("agent", "human") else None
+
+
 def _activity_export_url(
     *,
     actor_id: int | None,
+    actor_type: str | None,
     verb: str | None,
     kind: str | None,
     target_id: int | None,
@@ -477,6 +486,7 @@ def _activity_export_url(
 ) -> str:
     query = {
         "actor": actor_id or "",
+        "actor_type": actor_type or "",
         "verb": verb or "",
         "kind": kind or "",
         "target": target_id or "",
@@ -498,6 +508,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
+    actor_type = _actor_type_or_none(request.query_params.get("actor_type"))
     before_id = _int_or_none(request.query_params.get("before"))
     target_id = _int_or_none(request.query_params.get("target"))
     verb = (request.query_params.get("verb") or "").strip() or None
@@ -513,6 +524,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         target_kind=kind,
         target_id=target_id,
         actor_id=actor_id,
+        actor_is_agent=None if actor_type is None else actor_type == "agent",
         verb=verb,
         search=q,
         before_id=before_id,
@@ -531,6 +543,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "all_verbs": activity.distinct_verbs(conn),
             "all_kinds": activity.distinct_target_kinds(conn),
             "f_actor": actor_id,
+            "f_actor_type": actor_type,
             "f_verb": verb,
             "f_kind": kind,
             "f_target": target_id,
@@ -538,6 +551,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "next_before": next_before,
             "export_url": _activity_export_url(
                 actor_id=actor_id,
+                actor_type=actor_type,
                 verb=verb,
                 kind=kind,
                 target_id=target_id,
@@ -554,6 +568,7 @@ def activity_export_csv(
 ):
     """Download the current activity filters as a CSV audit export."""
     actor_id = _int_or_none(request.query_params.get("actor"))
+    actor_type = _actor_type_or_none(request.query_params.get("actor_type"))
     target_id = _int_or_none(request.query_params.get("target"))
     verb = (request.query_params.get("verb") or "").strip() or None
     kind = (request.query_params.get("kind") or "").strip() or None
@@ -566,6 +581,7 @@ def activity_export_csv(
         target_kind=kind,
         target_id=target_id,
         actor_id=actor_id,
+        actor_is_agent=None if actor_type is None else actor_type == "agent",
         verb=verb,
         search=q,
         limit=_EXPORT_LIMIT,
