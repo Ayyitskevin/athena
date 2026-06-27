@@ -1319,6 +1319,17 @@ footer {
     white-space: nowrap;
 }
 
+/* A deterministic (tagged) run carries its X-Athena-Run id as a small badge. */
+.run-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: #ede9fe;
+    color: #6d28d9;
+    white-space: nowrap;
+}
+
 .run-card .activity-list {
     padding: 0.25rem 0.8rem 0.6rem;
 }

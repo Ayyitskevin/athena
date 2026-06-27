@@ -238,11 +238,13 @@ def _parse_ts(value: str) -> datetime | None:
 
 def _run_summary(events: list[dict]) -> dict:
     """Wrap a contiguous group of one actor's events as a run: its span, its size,
+    its run id (the X-Athena-Run all its events share, or None for a heuristic run),
     and the events themselves (oldest-first) so a caller can replay the sequence."""
     first, last = events[0], events[-1]
     return {
         "actor_id": first["actor_id"],
         "actor_name": first["actor_name"],
+        "run_id": first["run_id"],
         "started_at": first["created_at"],
         "ended_at": last["created_at"],
         "first_id": first["id"],
@@ -250,6 +252,23 @@ def _run_summary(events: list[dict]) -> dict:
         "event_count": len(events),
         "events": events,
     }
+
+
+def _starts_new_run(
+    prev: dict, prev_ts: datetime | None, cur: dict, cur_ts: datetime | None, gap_seconds: int
+) -> bool:
+    """Whether `cur` begins a NEW run after `prev`. An explicit run id is
+    authoritative: if EITHER event carries one, they continue the same run only when
+    BOTH carry the SAME id — so a tagged run holds together across any pause, two
+    different ids split, and a tagged event never shares a run with an untagged one.
+    Only when both events are untagged does the boundary fall back to the time gap."""
+    prev_run, cur_run = prev["run_id"], cur["run_id"]
+    if prev_run is not None or cur_run is not None:
+        return not (prev_run is not None and cur_run is not None and prev_run == cur_run)
+    if prev_ts is None or cur_ts is None:
+        # No measurable gap → keep them together rather than split on a bad stamp.
+        return False
+    return (cur_ts - prev_ts).total_seconds() > gap_seconds
 
 
 def reconstruct_runs(
@@ -260,37 +279,36 @@ def reconstruct_runs(
     limit: int = 200,
 ) -> list[dict]:
     """Reconstruct one actor's recent activity into RUNS — a reading lens over the
-    append-only log, NOT a stored concept. A run is a maximal sequence of that
-    actor's events with no gap longer than gap_seconds between consecutive events:
-    the work the actor did in one sitting before going quiet. This is the first step
-    toward replaying "what did this agent do" as discrete sessions, derived from the
-    audit trail we already keep — no run id is recorded (yet), so the boundary is the
-    gap, not a persisted marker.
+    append-only log. A run is a maximal sequence of that actor's events that belong
+    to one unit of work.
+
+    Where events carry an explicit run id (the X-Athena-Run header, see migration
+    0029), that id is AUTHORITATIVE: a run is a contiguous block of the actor's
+    events sharing one run id, however far apart in time — deterministic replay, not
+    a guess. Untagged events fall back to the gap heuristic: a run is a stretch with
+    no quiet pause longer than gap_seconds. A tagged and an untagged event never
+    share a run, nor do two different run ids.
 
     Reconstructed from the actor's most recent `limit` events, newest run first;
     WITHIN a run, events stay oldest-first so the run reads in the order it happened.
     Because list_activity already scopes to this actor, other actors' events neither
-    appear in a run nor split one — a run is one actor's uninterrupted stretch of
-    work, regardless of what anyone else did in between."""
+    appear in a run nor split one — a run is one actor's stretch of work, regardless
+    of what anyone else did in between."""
     # Pull the actor's most recent events (newest-first), then walk them oldest-first
-    # so each gap compares an event to the one immediately before it in real time.
+    # so each comparison weighs an event against the one immediately before it.
     ascending = list(reversed(list_activity(conn, actor_id=actor_id, limit=limit)))
 
     runs: list[dict] = []
     current: list[dict] = []
+    prev: dict | None = None
     prev_ts: datetime | None = None
     for event in ascending:
         ts = _parse_ts(event["created_at"])
-        if (
-            current
-            and prev_ts is not None
-            and ts is not None
-            and (ts - prev_ts).total_seconds() > gap_seconds
-        ):
+        if current and _starts_new_run(prev, prev_ts, event, ts, gap_seconds):
             runs.append(_run_summary(current))
             current = []
         current.append(event)
-        prev_ts = ts
+        prev, prev_ts = event, ts
     if current:
         runs.append(_run_summary(current))
     # Newest run first, matching how the feeds present recent activity.

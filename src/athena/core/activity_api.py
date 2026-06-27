@@ -37,10 +37,12 @@ class ActivityOut(BaseModel):
 
 
 class RunOut(BaseModel):
-    # A reconstructed run: one actor's uninterrupted stretch of work, with the events
-    # (oldest-first) so a consumer can replay the sequence it represents.
+    # A reconstructed run: one actor's stretch of work, with the events (oldest-first)
+    # so a consumer can replay the sequence it represents. run_id is the X-Athena-Run
+    # the run's events share (deterministic run), or None for a gap-reconstructed one.
     actor_id: int
     actor_name: str
+    run_id: str | None = None
     started_at: str
     ended_at: str
     first_id: int
