@@ -36,22 +36,36 @@ def create_user(
     name: str,
     password: str | None = None,
     role: str | None = None,
+    is_agent: bool = False,
 ) -> dict:
     """Insert a user and return it. An optional password enables browser login;
     without one the user exists as an actor but can only act via API tokens.
+    is_agent marks the user as an agent rather than a person — a display/audit
+    distinction only (roles, not this flag, govern what a user may do).
     Raises sqlite3.IntegrityError if the email is already taken."""
     role = normalize_role(role)
     cur = conn.execute(
-        "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (email, name, password_hash, role, is_agent) "
+        "VALUES (?, ?, ?, ?, ?)",
         (
             email,
             name,
             passwords.hash_password(password) if password else None,
             role,
+            1 if is_agent else 0,
         ),
     )
     conn.commit()
     return get_user(conn, cur.lastrowid)
+
+
+def _row_to_user(row: sqlite3.Row) -> dict:
+    """Turn a users row into a dict, coercing SQLite's 0/1 is_agent into a real
+    bool so every caller (templates, JSON, tests) sees a proper boolean."""
+    user = dict(row)
+    if "is_agent" in user:
+        user["is_agent"] = bool(user["is_agent"])
+    return user
 
 
 def _with_password_state(user: dict) -> dict:
@@ -80,23 +94,39 @@ def verify_credentials(
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if row is None or not passwords.verify_password(password, row["password_hash"]):
         return None
-    return dict(row)
+    return _row_to_user(row)
 
 
 def get_user(conn: sqlite3.Connection, user_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    return dict(row) if row else None
+    return _row_to_user(row) if row else None
 
 
 def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    return dict(row) if row else None
+    return _row_to_user(row) if row else None
 
 
 def set_role(conn: sqlite3.Connection, user_id: int, role: str) -> dict | None:
     """Change a user's role and return the updated row, or None if missing."""
     role = normalize_role(role)
     cur = conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_user(conn, user_id)
+
+
+def set_agent(
+    conn: sqlite3.Connection, user_id: int, is_agent: bool
+) -> dict | None:
+    """Mark (or unmark) a user as an agent and return the updated row, or None if
+    the user doesn't exist. A display/audit distinction only — it changes nothing
+    about what the user is allowed to do."""
+    cur = conn.execute(
+        "UPDATE users SET is_agent = ? WHERE id = ?",
+        (1 if is_agent else 0, user_id),
+    )
     conn.commit()
     if cur.rowcount == 0:
         return None
@@ -111,7 +141,7 @@ def count_admins(conn: sqlite3.Connection) -> int:
 
 def list_users(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
-    return [_with_password_state(dict(row)) for row in rows]
+    return [_with_password_state(_row_to_user(row)) for row in rows]
 
 
 def count_users(conn: sqlite3.Connection) -> int:

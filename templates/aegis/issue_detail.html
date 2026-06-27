@@ -90,7 +90,7 @@
             <div class="contributor-list">
                 {% for cb in contributors %}
                 <span class="contributor">
-                    {{ cb.name }}
+                    {{ cb.name }}{% if cb.is_agent %} <span class="agent-badge">agent</span>{% endif %}
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/contributors/{{ cb.user_id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}
@@ -107,7 +107,7 @@
                 {% include "partials/csrf.html" %}
                 <select name="user_id" aria-label="Delegate to a contributor">
                     <option value="">Delegate to…</option>
-                    {% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}
+                    {% for u in users %}<option value="{{ u.id }}">{{ u.name }}{% if u.is_agent %} (agent){% endif %}</option>{% endfor %}
                 </select>
                 <button type="submit" class="button small">Add</button>
             </form>

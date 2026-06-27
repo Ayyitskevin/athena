@@ -320,6 +320,19 @@ footer {
     color: #374151;
 }
 
+/* Marks an agent account apart from a person — wherever a user is named. */
+.agent-badge {
+    display: inline-block;
+    padding: 0 0.35rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border-radius: 999px;
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
 .label-remove {
     display: inline;
     margin: 0;

@@ -34,10 +34,16 @@ class UserCreate(BaseModel):
     password: str | None = None
     # Bootstrap ignores this and always creates the first user as admin.
     role: Role | None = None
+    # Mark the account as an agent (display/audit distinction; grants nothing).
+    is_agent: bool = False
 
 
 class UserRoleUpdate(BaseModel):
     role: Role
+
+
+class UserAgentUpdate(BaseModel):
+    is_agent: bool
 
 
 class UserOut(BaseModel):
@@ -45,6 +51,7 @@ class UserOut(BaseModel):
     email: str
     name: str
     role: Role
+    is_agent: bool
     created_at: str
 
 
@@ -73,6 +80,7 @@ def create(
             name=payload.name,
             password=payload.password,
             role=role,
+            is_agent=payload.is_agent,
         )
     except sqlite3.IntegrityError:
         # email collides with an existing user — reject at the boundary.
@@ -122,6 +130,21 @@ def update_role(
         updated = users.set_role(conn, user_id, payload.role)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    return updated
+
+
+@router.put("/{user_id}/agent", response_model=UserOut)
+def update_agent(
+    user_id: int,
+    payload: UserAgentUpdate,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Marking accounts as agents is an admin concern: it shapes how the rest of the
+    # team reads activity and the delegation list, so it shouldn't be self-serve.
+    updated = users.set_agent(conn, user_id, payload.is_agent)
     if updated is None:
         raise HTTPException(status_code=404, detail="no such user")
     return updated
