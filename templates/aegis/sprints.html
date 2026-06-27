@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Sprints — {{ project.name }} — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Projects</a>
+        <h1>Sprints</h1>
+        <p class="subtitle">{{ project.name }} <code>{{ project.key }}</code></p>
+    </div>
+</div>
+
+{% if sprints %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Sprint</th>
+            <th>State</th>
+            <th>Dates</th>
+            <th>Issues</th>
+            {% if can_manage %}<th></th>{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+    {% for s in sprints %}
+        <tr>
+            <td class="issue-title">
+                {{ s.name }}
+                {% if s.goal %}<div class="muted">{{ s.goal }}</div>{% endif %}
+            </td>
+            <td><span class="sprint-state sprint-{{ s.state }}">{{ s.state }}</span></td>
+            <td class="muted">{{ s.start_date or "—" }} → {{ s.end_date or "—" }}</td>
+            <td class="muted">{{ counts[s.id] }}</td>
+            {% if can_manage %}
+            <td class="muted sprint-actions">
+                {% if s.state == "planned" %}
+                <form method="post" action="/aegis/sprints/{{ s.id }}/start" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Start</button>
+                </form>
+                {% elif s.state == "active" %}
+                <form method="post" action="/aegis/sprints/{{ s.id }}/complete" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Complete</button>
+                </form>
+                {% endif %}
+                {% if counts[s.id] == 0 %}
+                <form method="post" action="/aegis/sprints/{{ s.id }}/delete" class="inline-form" data-confirm="Delete {{ s.name }}?">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Delete</button>
+                </form>
+                {% endif %}
+            </td>
+            {% endif %}
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No sprints yet for {{ project.name }}.</p>
+{% endif %}
+
+{% if can_manage %}
+<div class="form-container">
+    <h3>New sprint</h3>
+    <form method="post" action="/aegis/projects/{{ project.id }}/sprints" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="sprint-name">Name</label>
+            <input type="text" id="sprint-name" name="name" required placeholder="e.g. Sprint 7">
+        </div>
+        <div class="form-group">
+            <label for="sprint-goal">Goal</label>
+            <input type="text" id="sprint-goal" name="goal" placeholder="What this sprint is for">
+        </div>
+        <div class="form-group">
+            <label for="sprint-start">Start date</label>
+            <input type="date" id="sprint-start" name="start_date">
+        </div>
+        <div class="form-group">
+            <label for="sprint-end">End date</label>
+            <input type="date" id="sprint-end" name="end_date">
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create sprint</button>
+        </div>
+    </form>
+</div>
+{% elif request.state.user %}
+<p class="note-small">Only the project creator can manage its sprints.</p>
+{% else %}
+<p class="note-small"><a href="/login">Sign in</a> as the project creator to manage sprints.</p>
+{% endif %}
+{% endblock %}
