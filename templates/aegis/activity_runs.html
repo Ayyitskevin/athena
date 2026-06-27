@@ -44,6 +44,7 @@
     <details class="run-card" {% if loop.first %}open{% endif %}>
         <summary>
             <span class="run-span">{{ run.started_at }} → {{ run.ended_at }}</span>
+            {% if run.run_id %}<span class="run-id" title="Tagged run (X-Athena-Run)">run {{ run.run_id }}</span>{% endif %}
             <span class="run-count">{{ run.event_count }} event{{ "s" if run.event_count != 1 }}</span>
         </summary>
         {% with events=run.events, show_target=True %}
