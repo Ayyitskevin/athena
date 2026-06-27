@@ -22,9 +22,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from athena import config
 from athena.core import activity, attachments, identity, links, notifications
 from athena.core.deps import get_conn
-from athena.mentor import page_activity, pages, space_activity, spaces
+from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body
+from athena.web.render import render_body, render_comment
 from athena.web.router import get_templates
 
 router = APIRouter()
@@ -377,12 +377,19 @@ def page_detail(
     ancestors.reverse()
     user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
+    # The discussion thread, oldest first. Each body is rendered the same way an
+    # issue comment is (cross-links + safe HTML), so [[page:N]]/[[issue:N]] mentions
+    # resolve in a page comment exactly as they do everywhere else.
+    comment_rows = page_comments.list_comments(conn, page_id)
+    for comment in comment_rows:
+        comment["body_html"] = render_comment(conn, comment["body"])
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_detail.html",
         context={
             "page": page,
             "body_html": render_body(conn, page["body"]),
+            "comments": comment_rows,
             "attachments": attachments.list_for(conn, "page", page_id),
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
@@ -668,5 +675,108 @@ def restore_version(
         version=version,
         before=before,
         after=restored,
+    )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+# --- Page comments ----------------------------------------------------------
+
+
+@router.post("/mentor/pages/{page_id}/comments", dependencies=[Depends(verify_csrf)])
+def add_page_comment(
+    request: Request,
+    page_id: int,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Post a comment on a page from its detail page. Gated on the session user (the
+    author is the session, never a form field), then 303 back so the new comment
+    shows. Mirrors the Aegis issue-comment web route."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "comment")
+    if err is not None:
+        return err
+    if pages.get_page(conn, page_id) is None:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    body = body.strip()
+    if not body:
+        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+    page_comments.add_comment(conn, page_id=page_id, author_id=user["id"], body=body)
+    page_activity.record_page_commented(
+        conn, actor_id=user["id"], page_id=page_id, body=body
+    )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+def _own_page_comment_or_response(conn, page_id, comment_id, user):
+    """Return the comment if it belongs to this page and the session user is its
+    author; otherwise an HTMLResponse (404/403) to return as-is. Mirrors the API's
+    author-ownership rule on the web write paths."""
+    existing = page_comments.get_comment(conn, comment_id)
+    if existing is None or existing["page_id"] != page_id:
+        return None, HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+    if existing["author_id"] != user["id"]:
+        return None, HTMLResponse(
+            '<div class="error">You can only change your own comments.</div>',
+            status_code=403,
+        )
+    return existing, None
+
+
+@router.post(
+    "/mentor/pages/{page_id}/comments/{comment_id}/edit",
+    dependencies=[Depends(verify_csrf)],
+)
+def edit_page_comment(
+    request: Request,
+    page_id: int,
+    comment_id: int,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Edit a page comment from its detail page. Gated on the session user AND on
+    author-ownership (you may only edit your own), then 303 back to the page."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "edit comments")
+    if err is not None:
+        return err
+    _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
+    if err is not None:
+        return err
+    body = body.strip()
+    if not body:
+        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+    if page_comments.update_comment(conn, comment_id, body=body) is None:
+        # vanished between the author check and the write (a race) — 404, not a
+        # silent "success" redirect.
+        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post(
+    "/mentor/pages/{page_id}/comments/{comment_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def delete_page_comment(
+    request: Request,
+    page_id: int,
+    comment_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delete a page comment from its detail page. Same author-ownership rule as
+    edit. POST (not DELETE) because HTML forms can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "delete comments")
+    if err is not None:
+        return err
+    _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
+    if err is not None:
+        return err
+    if not page_comments.delete_comment(conn, comment_id):
+        # vanished between the author check and the delete (a race) — 404, and don't
+        # record an event for a deletion that didn't happen.
+        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+    page_activity.record_page_comment_deleted(
+        conn, actor_id=user["id"], page_id=page_id
     )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)

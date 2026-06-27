@@ -17,7 +17,7 @@ from athena.core import activity, attachments, links
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
-from athena.mentor import page_activity, pages, space_activity, spaces
+from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
@@ -94,6 +94,19 @@ class LinkOut(BaseModel):
     id: int
     title: str | None = None
     exists: bool
+
+
+class PageCommentCreate(BaseModel):
+    body: str
+
+
+class PageCommentOut(BaseModel):
+    id: int
+    page_id: int
+    author_id: int
+    author_name: str
+    body: str
+    created_at: str
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -362,6 +375,96 @@ def backlinks(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> lis
     if pages.get_page(conn, page_id) is None:
         raise HTTPException(status_code=404, detail="no such page")
     return links.backlinks(conn, target_kind="page", target_id=page_id)
+
+
+# --- Page comments: the discussion thread on a page -----------------------
+
+
+@pages_router.post(
+    "/{page_id}/comments", response_model=PageCommentOut, status_code=201
+)
+def add_page_comment(
+    page_id: int,
+    payload: PageCommentCreate,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Commenting is an open write like editing a page (Mentor's shared-wiki model).
+    # The author is the authenticated actor, never a caller-supplied field.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="comment body is required")
+    comment = page_comments.add_comment(
+        conn, page_id=page_id, author_id=actor["id"], body=body
+    )
+    page_activity.record_page_commented(
+        conn, actor_id=actor["id"], page_id=page_id, body=body
+    )
+    return comment
+
+
+@pages_router.get("/{page_id}/comments", response_model=list[PageCommentOut])
+def list_page_comments(
+    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Open read, like listing versions/attachments. 404 if the page itself is missing.
+    if pages.get_page(conn, page_id) is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    return page_comments.list_comments(conn, page_id)
+
+
+def _author_page_comment_or_error(
+    conn: sqlite3.Connection, page_id: int, comment_id: int, actor: dict
+) -> dict:
+    """Fetch a comment that belongs to this page, requiring the actor to be its
+    author. 404 if the comment is missing or hangs off another page, 403 if someone
+    other than the author tries to change it — the same author-ownership rule the
+    Aegis issue comments enforce."""
+    existing = page_comments.get_comment(conn, comment_id)
+    if existing is None or existing["page_id"] != page_id:
+        raise HTTPException(status_code=404, detail="no such comment")
+    if existing["author_id"] != actor["id"]:
+        raise HTTPException(status_code=403, detail="not the comment author")
+    return existing
+
+
+@pages_router.patch(
+    "/{page_id}/comments/{comment_id}", response_model=PageCommentOut
+)
+def edit_page_comment(
+    page_id: int,
+    comment_id: int,
+    payload: PageCommentCreate,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    _author_page_comment_or_error(conn, page_id, comment_id, actor)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="comment body is required")
+    updated = page_comments.update_comment(conn, comment_id, body=body)
+    if updated is None:  # vanished between the author check and the write (a race)
+        raise HTTPException(status_code=404, detail="no such comment")
+    return updated
+
+
+@pages_router.delete("/{page_id}/comments/{comment_id}", status_code=204)
+def delete_page_comment(
+    page_id: int,
+    comment_id: int,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    _author_page_comment_or_error(conn, page_id, comment_id, actor)
+    if not page_comments.delete_comment(conn, comment_id):
+        # vanished between the author check and the delete (a race) — don't record
+        # an event for a deletion that didn't happen.
+        raise HTTPException(status_code=404, detail="no such comment")
+    page_activity.record_page_comment_deleted(
+        conn, actor_id=actor["id"], page_id=page_id
+    )
 
 
 @pages_router.post(
