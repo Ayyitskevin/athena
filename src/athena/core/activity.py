@@ -10,6 +10,7 @@ aegis/comments.py.
 from __future__ import annotations
 
 import csv
+from datetime import datetime
 from io import StringIO
 import sqlite3
 
@@ -206,6 +207,81 @@ def list_events(
         f"{_SELECT}{where} ORDER BY a.id ASC LIMIT ?", params
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _parse_ts(value: str) -> datetime | None:
+    """Parse the trail's stored timestamp ('YYYY-MM-DD HH:MM:SS', as datetime('now')
+    writes it). Returns None on anything that doesn't match — a malformed stamp must
+    not crash run reconstruction; it just can't contribute a gap."""
+    try:
+        return datetime.strptime(value, _TS_FORMAT)
+    except (ValueError, TypeError):
+        return None
+
+
+def _run_summary(events: list[dict]) -> dict:
+    """Wrap a contiguous group of one actor's events as a run: its span, its size,
+    and the events themselves (oldest-first) so a caller can replay the sequence."""
+    first, last = events[0], events[-1]
+    return {
+        "actor_id": first["actor_id"],
+        "actor_name": first["actor_name"],
+        "started_at": first["created_at"],
+        "ended_at": last["created_at"],
+        "first_id": first["id"],
+        "last_id": last["id"],
+        "event_count": len(events),
+        "events": events,
+    }
+
+
+def reconstruct_runs(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    gap_seconds: int = 1800,
+    limit: int = 200,
+) -> list[dict]:
+    """Reconstruct one actor's recent activity into RUNS — a reading lens over the
+    append-only log, NOT a stored concept. A run is a maximal sequence of that
+    actor's events with no gap longer than gap_seconds between consecutive events:
+    the work the actor did in one sitting before going quiet. This is the first step
+    toward replaying "what did this agent do" as discrete sessions, derived from the
+    audit trail we already keep — no run id is recorded (yet), so the boundary is the
+    gap, not a persisted marker.
+
+    Reconstructed from the actor's most recent `limit` events, newest run first;
+    WITHIN a run, events stay oldest-first so the run reads in the order it happened.
+    Because list_activity already scopes to this actor, other actors' events neither
+    appear in a run nor split one — a run is one actor's uninterrupted stretch of
+    work, regardless of what anyone else did in between."""
+    # Pull the actor's most recent events (newest-first), then walk them oldest-first
+    # so each gap compares an event to the one immediately before it in real time.
+    ascending = list(reversed(list_activity(conn, actor_id=actor_id, limit=limit)))
+
+    runs: list[dict] = []
+    current: list[dict] = []
+    prev_ts: datetime | None = None
+    for event in ascending:
+        ts = _parse_ts(event["created_at"])
+        if (
+            current
+            and prev_ts is not None
+            and ts is not None
+            and (ts - prev_ts).total_seconds() > gap_seconds
+        ):
+            runs.append(_run_summary(current))
+            current = []
+        current.append(event)
+        prev_ts = ts
+    if current:
+        runs.append(_run_summary(current))
+    # Newest run first, matching how the feeds present recent activity.
+    runs.reverse()
+    return runs
 
 
 def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
