@@ -8,6 +8,10 @@ dependencies = [
     "jinja2",
     "markdown-it-py",
     "nh3",
+    # OIDC single sign-on: PyJWT validates the ID token's signature against the
+    # provider's JWKS (the [crypto] extra pulls in `cryptography` for RS256/ES256).
+    # The HTTP calls (discovery, token exchange) use stdlib urllib, like webhooks.
+    "pyjwt[crypto]",
     "python-multipart",
     "uvicorn[standard]",
 ]
