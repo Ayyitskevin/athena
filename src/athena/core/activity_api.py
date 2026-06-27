@@ -32,17 +32,21 @@ class ActivityOut(BaseModel):
     detail: str
     created_at: str
     # The run this event belongs to (the X-Athena-Run it was recorded under), or
-    # None for untagged actions.
+    # None for untagged actions; and the run that spawned that run (lineage), or None
+    # at top level.
     run_id: str | None = None
+    parent_run_id: str | None = None
 
 
 class RunOut(BaseModel):
     # A reconstructed run: one actor's stretch of work, with the events (oldest-first)
     # so a consumer can replay the sequence it represents. run_id is the X-Athena-Run
-    # the run's events share (deterministic run), or None for a gap-reconstructed one.
+    # the run's events share (deterministic run), or None for a gap-reconstructed one;
+    # parent_run_id is the run that spawned it (lineage), or None at top level.
     actor_id: int
     actor_name: str
     run_id: str | None = None
+    parent_run_id: str | None = None
     started_at: str
     ended_at: str
     first_id: int
@@ -63,6 +67,9 @@ def feed(
     ),
     run_id: str | None = Query(
         None, description="replay one run: exactly the events tagged with this id"
+    ),
+    parent_run_id: str | None = Query(
+        None, description="lineage: the events of the child runs this run spawned"
     ),
     verb: str | None = Query(None, description="filter to one event type"),
     q: str | None = Query(
@@ -90,6 +97,7 @@ def feed(
         actor_id=actor_id,
         actor_is_agent=None if actor_type is None else actor_type == "agent",
         run_id=run_id,
+        parent_run_id=parent_run_id,
         verb=verb,
         search=q,
         before_id=before_id,
