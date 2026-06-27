@@ -255,6 +255,9 @@ def create_app(
         request.state.csrf_token = None
         # Unread-inbox count for the nav badge; 0 when logged out.
         request.state.unread_count = 0
+        # Whether SSO is configured, so the nav can show the linked-identities link
+        # only when it's relevant. Evaluated per request so tests/config see it live.
+        request.state.oidc_enabled = config.oidc_enabled()
         raw = request.cookies.get(config.SESSION_COOKIE)
         if raw:
             conn = db.connect(request.app.state.db_path)

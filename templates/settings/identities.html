@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}Linked sign-ins — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Linked sign-ins</h1>
+        <p class="subtitle">Single sign-on identities for {{ request.state.user.name }}</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{% if identities %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Provider</th>
+            <th>Linked</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for id in identities %}
+        <tr>
+            <td class="issue-title">{{ id.issuer }}</td>
+            <td class="muted">{{ id.created_at }}</td>
+            <td class="muted">
+                {% if has_password or identities | length > 1 %}
+                <form method="post" action="/settings/identities/unlink" class="inline-form" data-confirm="Unlink {{ id.issuer }}?">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="issuer" value="{{ id.issuer }}">
+                    <input type="hidden" name="subject" value="{{ id.subject }}">
+                    <button type="submit" class="button secondary small">Unlink</button>
+                </form>
+                {% else %}
+                <span class="muted" title="Set a password first so you don't lose access">only sign-in</span>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% if not has_password %}
+<p class="note-small">SSO is your only way to sign in. <a href="/settings/password">Set a password</a> to be able to unlink your last identity.</p>
+{% endif %}
+{% else %}
+<p class="empty-state">No single sign-on identities are linked to your account. Sign in via SSO to link one.</p>
+{% endif %}
+{% endblock %}

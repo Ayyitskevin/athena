@@ -7,7 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.core import activity, identity, tokens, users, webhooks
+from athena.core import activity, identity, oidc, tokens, users, webhooks
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -157,6 +157,87 @@ def update_own_password(
 
     users.set_password(conn, user["id"], new_password)
     return RedirectResponse("/settings/password?updated=1", status_code=303)
+
+
+def _identities_context(
+    conn: sqlite3.Connection, user: dict, *, error: str | None = None
+) -> dict:
+    identities = oidc.list_identities(conn, user["id"])
+    # request.state.user has no password_hash (sessions strips it), so re-read.
+    target = users.get_user(conn, user["id"])
+    has_password = bool(target and target.get("password_hash"))
+    return {
+        "identities": identities,
+        # A user must keep at least one way to sign in: with no password, the LAST
+        # remaining identity is protected from unlinking (template + handler both
+        # enforce it). With a password, any identity can be unlinked.
+        "has_password": has_password,
+        "error": error,
+    }
+
+
+@router.get("/settings/identities", response_class=HTMLResponse)
+def identities_settings(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage your linked sign-ins")
+    return templates.TemplateResponse(
+        request=request,
+        name="settings/identities.html",
+        context=_identities_context(conn, user),
+    )
+
+
+@router.post(
+    "/settings/identities/unlink",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def unlink_identity(
+    request: Request,
+    issuer: str = Form(""),
+    subject: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage your linked sign-ins")
+
+    identities = oidc.list_identities(conn, user["id"])
+    # Only the current user's OWN identities may be unlinked — confirm the pair is in
+    # their list before deleting (the (issuer, subject) pair maps to exactly one user,
+    # so this is the authorization check, not just a 404 guard).
+    owns_it = any(
+        i["issuer"] == issuer and i["subject"] == subject for i in identities
+    )
+    if not owns_it:
+        return HTMLResponse(
+            '<div class="error">No such linked sign-in.</div>', status_code=404
+        )
+
+    target = users.get_user(conn, user["id"])
+    has_password = bool(target and target.get("password_hash"))
+    # Don't let a user remove their only way back in.
+    if not has_password and len(identities) <= 1:
+        return templates.TemplateResponse(
+            request=request,
+            name="settings/identities.html",
+            context=_identities_context(
+                conn,
+                user,
+                error="You can't unlink your only sign-in method. Set a password first.",
+            ),
+            status_code=409,
+        )
+
+    oidc.unlink_identity(conn, issuer=issuer, subject=subject)
+    return RedirectResponse("/settings/identities", status_code=303)
 
 
 @router.get("/settings/tokens", response_class=HTMLResponse)
