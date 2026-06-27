@@ -31,6 +31,14 @@
         </select>
     </label>
     <label>
+        Actor type
+        <select name="actor_type">
+            <option value="">Anyone</option>
+            <option value="human" {% if f_actor_type == "human" %}selected{% endif %}>Humans</option>
+            <option value="agent" {% if f_actor_type == "agent" %}selected{% endif %}>Agents</option>
+        </select>
+    </label>
+    <label>
         Event
         <select name="verb">
             <option value="">Any event</option>
@@ -53,7 +61,7 @@
         <input type="number" name="target" min="1" value="{{ f_target or '' }}">
     </label>
     <button type="submit">Filter</button>
-    {% if f_actor or f_verb or f_kind or f_target or f_q %}
+    {% if f_actor or f_actor_type or f_verb or f_kind or f_target or f_q %}
     <a href="/aegis/activity" class="muted">Clear</a>
     {% endif %}
 </form>
@@ -67,6 +75,7 @@
    current filter set; before= is the cursor (this page's oldest id). #}
 {% set q = {"before": next_before} %}
 {% if f_actor %}{% set _ = q.update({"actor": f_actor}) %}{% endif %}
+{% if f_actor_type %}{% set _ = q.update({"actor_type": f_actor_type}) %}{% endif %}
 {% if f_verb %}{% set _ = q.update({"verb": f_verb}) %}{% endif %}
 {% if f_kind %}{% set _ = q.update({"kind": f_kind}) %}{% endif %}
 {% if f_target %}{% set _ = q.update({"target": f_target}) %}{% endif %}

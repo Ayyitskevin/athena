@@ -99,6 +99,7 @@ def list_activity(
     target_kind: str | None = None,
     target_id: int | None = None,
     actor_id: int | None = None,
+    actor_is_agent: bool | None = None,
     verb: str | None = None,
     search: str | None = None,
     before_id: int | None = None,
@@ -106,10 +107,11 @@ def list_activity(
 ) -> list[dict]:
     """Activity newest first. Every filter is optional and independent: pass
     target_kind+target_id for one target's timeline, target_kind alone to scope
-    the global feed to a kind, actor_id/verb/search to narrow who/what. before_id
-    is the paging cursor — only rows older than it (a.id < before_id), so the
-    caller can walk back through history one page at a time on a stable,
-    append-only ordering."""
+    the global feed to a kind, actor_id/verb/search to narrow who/what. actor_is_agent
+    is the actor-type lens — True for agents only, False for humans only — answering
+    "what did the agents do?" distinctly from human activity. before_id is the paging
+    cursor — only rows older than it (a.id < before_id), so the caller can walk back
+    through history one page at a time on a stable, append-only ordering."""
     clauses: list[str] = []
     params: list = []
     if target_kind is not None:
@@ -121,6 +123,10 @@ def list_activity(
     if actor_id is not None:
         clauses.append("a.actor_id = ?")
         params.append(actor_id)
+    if actor_is_agent is not None:
+        # u is already joined for actor_name, so the lens is a cheap predicate on it.
+        clauses.append("u.is_agent = ?")
+        params.append(1 if actor_is_agent else 0)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)

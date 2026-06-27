@@ -10,6 +10,7 @@ that cause them, at those endpoints.
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -39,6 +40,9 @@ def feed(
     ),
     target_id: int | None = Query(None),
     actor_id: int | None = Query(None, description="filter to one actor's actions"),
+    actor_type: Literal["agent", "human"] | None = Query(
+        None, description="filter by actor type: agents only, or humans only"
+    ),
     verb: str | None = Query(None, description="filter to one event type"),
     q: str | None = Query(
         None, description="search actor, verb, target, detail, or timestamp text"
@@ -63,6 +67,7 @@ def feed(
         target_kind=target_kind,
         target_id=target_id,
         actor_id=actor_id,
+        actor_is_agent=None if actor_type is None else actor_type == "agent",
         verb=verb,
         search=q,
         before_id=before_id,
