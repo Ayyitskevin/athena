@@ -47,6 +47,9 @@ class RunOut(BaseModel):
     actor_name: str
     run_id: str | None = None
     parent_run_id: str | None = None
+    # True when the run may be clipped by the reconstruction window — its totals are a
+    # lower bound; widen `limit` to see the rest. Only the oldest run can be partial.
+    partial: bool = False
     started_at: str
     ended_at: str
     first_id: int

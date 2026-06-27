@@ -45,7 +45,8 @@
         <summary>
             <span class="run-span">{{ run.started_at }} → {{ run.ended_at }}</span>
             {% if run.run_id %}<span class="run-id" title="Tagged run (X-Athena-Run)">run {{ run.run_id }}</span>{% endif %}
-            <span class="run-count">{{ run.event_count }} event{{ "s" if run.event_count != 1 }}</span>
+            {% if run.partial %}<span class="run-partial" title="Older events of this run fall outside the window — widen the limit to see them">partial</span>{% endif %}
+            <span class="run-count">{{ run.event_count }}{{ "+" if run.partial }} event{{ "s" if run.event_count != 1 }}</span>
         </summary>
         {% with events=run.events, show_target=True %}
         {% include "aegis/partials/activity_list.html" %}

@@ -1330,6 +1330,19 @@ footer {
     white-space: nowrap;
 }
 
+/* The oldest run may be clipped by the window — flag it so its count isn't read
+   as the whole run. */
+.run-partial {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: #fef3c7;
+    color: #92400e;
+    white-space: nowrap;
+}
+
 .run-card .activity-list {
     padding: 0.25rem 0.8rem 0.6rem;
 }
