@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Webhooks — Admin — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Webhooks</h1>
+        <p class="subtitle">Outbound event delivery to registered endpoints</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{% if created %}
+<div class="form-container">
+    <h3>Webhook registered</h3>
+    <p class="note-small">Copy this signing secret now — it is shown once and never again. The receiver verifies the <code>X-Athena-Signature</code> HMAC with it.</p>
+    <pre class="token-secret">{{ created.secret }}</pre>
+</div>
+{% endif %}
+
+{% if webhooks %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>URL</th>
+            <th>Events</th>
+            <th>Status</th>
+            <th>Cursor</th>
+            <th>Health</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for hook in webhooks %}
+        <tr>
+            <td class="issue-title">{{ hook.url }}</td>
+            <td class="muted">{{ hook.event_kind or "all" }}</td>
+            <td>
+                {% if hook.active %}<span class="badge-active">active</span>{% else %}<span class="muted">paused</span>{% endif %}
+                <form method="post" action="/admin/webhooks/{{ hook.id }}/active" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="active" value="{{ 0 if hook.active else 1 }}">
+                    <button type="submit" class="button secondary small">{{ "Pause" if hook.active else "Resume" }}</button>
+                </form>
+            </td>
+            <td class="muted">{{ hook.cursor }}</td>
+            <td class="muted">
+                {% if hook.failure_count %}
+                <span class="webhook-failing" title="{{ hook.last_error }}">{{ hook.failure_count }} fail{{ "s" if hook.failure_count != 1 }}</span>
+                {% elif hook.last_success_at %}
+                delivered {{ hook.last_success_at }}
+                {% else %}
+                —
+                {% endif %}
+            </td>
+            <td class="muted">
+                <form method="post" action="/admin/webhooks/{{ hook.id }}/delete" class="inline-form" data-confirm="Delete webhook {{ hook.url }}? Its cursor is lost.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Delete</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No webhooks yet.</p>
+{% endif %}
+
+<div class="form-container">
+    <h3>Register webhook</h3>
+    <p class="note-small">Athena POSTs each new event to this URL, HMAC-signed. Delivery starts from now (not the backlog). Private/loopback URLs are refused.</p>
+    <form method="post" action="/admin/webhooks" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="hook-url">Endpoint URL</label>
+            <input id="hook-url" type="url" name="url" required placeholder="https://example.com/athena/events">
+        </div>
+        <div class="form-group">
+            <label for="hook-kind">Events</label>
+            <select id="hook-kind" name="event_kind">
+                <option value="">All events</option>
+                {% for kind in event_kinds %}
+                <option value="{{ kind }}">{{ kind }} only</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Register</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -158,6 +158,32 @@ def get_webhook(conn: sqlite3.Connection, webhook_id: int) -> dict | None:
     return _public_row(row) if row else None
 
 
+def set_webhook_active(
+    conn: sqlite3.Connection, webhook_id: int, active: bool
+) -> dict | None:
+    """Pause (active=False) or resume (active=True) a webhook WITHOUT losing its
+    cursor — so a paused endpoint resumes exactly where it left off rather than
+    replaying or skipping events. Resuming also clears the backoff gate
+    (failure_count / last_error / next_attempt_at) so a re-enabled endpoint is
+    retried promptly: an operator flips this back on after fixing the receiver, and
+    shouldn't have to wait out a stale backoff. Returns the updated row, or None if
+    there is no such webhook."""
+    if active:
+        cur = conn.execute(
+            "UPDATE webhooks SET active = 1, failure_count = 0, last_error = NULL, "
+            "next_attempt_at = NULL WHERE id = ?",
+            (webhook_id,),
+        )
+    else:
+        cur = conn.execute(
+            "UPDATE webhooks SET active = 0 WHERE id = ?", (webhook_id,)
+        )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_webhook(conn, webhook_id)
+
+
 def delete_webhook(conn: sqlite3.Connection, webhook_id: int) -> bool:
     cur = conn.execute("DELETE FROM webhooks WHERE id = ?", (webhook_id,))
     conn.commit()

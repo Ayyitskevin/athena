@@ -7,7 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.core import identity, tokens, users
+from athena.core import activity, identity, tokens, users, webhooks
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -419,3 +419,122 @@ def update_user_agent(
     # mark as human), so the button is a deterministic toggle, not a read-then-flip.
     users.set_agent(conn, user_id, is_agent == "1")
     return RedirectResponse("/admin/users", status_code=303)
+
+
+def _webhooks_context(
+    conn: sqlite3.Connection,
+    *,
+    created: dict | None = None,
+    error: str | None = None,
+) -> dict:
+    return {
+        "webhooks": webhooks.list_webhooks(conn),
+        # The signing secret is shown exactly once, right after creation.
+        "created": created,
+        "error": error,
+        # Offer the kinds that actually occur in the trail as filter options (plus
+        # "all"), so the list never drifts from what the recorders emit.
+        "event_kinds": activity.distinct_target_kinds(conn),
+    }
+
+
+@router.get("/admin/webhooks", response_class=HTMLResponse)
+def webhooks_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    return templates.TemplateResponse(
+        request=request, name="admin/webhooks.html", context=_webhooks_context(conn)
+    )
+
+
+@router.post(
+    "/admin/webhooks", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)]
+)
+def create_webhook(
+    request: Request,
+    url: str = Form(""),
+    event_kind: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    url = url.strip()
+    # Same SSRF guard the REST API applies — refuse a private/loopback/malformed URL
+    # at the boundary rather than at delivery time.
+    ok, reason = webhooks.is_safe_url(url)
+    if not ok:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/webhooks.html",
+            context=_webhooks_context(conn, error=reason),
+            status_code=400,
+        )
+    created = webhooks.create_webhook(
+        conn,
+        url=url,
+        event_kind=event_kind.strip() or None,
+        created_by=actor["id"],
+        # Start at the current tip so the endpoint receives only future events.
+        start_cursor=webhooks.current_tip(conn),
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/webhooks.html",
+        context=_webhooks_context(conn, created=created),
+        status_code=201,
+    )
+
+
+@router.post(
+    "/admin/webhooks/{webhook_id}/active",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def toggle_webhook(
+    request: Request,
+    webhook_id: int,
+    active: str = Form("0"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    # The form posts the DESIRED next state ("1" resume, anything else pause) — a
+    # deterministic toggle. Resuming clears the backoff so it retries promptly.
+    if webhooks.set_webhook_active(conn, webhook_id, active == "1") is None:
+        return HTMLResponse(
+            '<div class="error">No such webhook.</div>', status_code=404
+        )
+    return RedirectResponse("/admin/webhooks", status_code=303)
+
+
+@router.post(
+    "/admin/webhooks/{webhook_id}/delete",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def delete_webhook(
+    request: Request,
+    webhook_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    if not webhooks.delete_webhook(conn, webhook_id):
+        return HTMLResponse(
+            '<div class="error">No such webhook.</div>', status_code=404
+        )
+    return RedirectResponse("/admin/webhooks", status_code=303)
