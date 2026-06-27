@@ -354,6 +354,7 @@ def list_issues(
     search: str | None = None,
     project_id: int | None = None,
     backlog: bool = False,
+    sprint_id: int | None = None,
     ids: list[int] | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
@@ -370,6 +371,8 @@ def list_issues(
     - backlog: restrict to issues in NO project (project_id IS NULL). Distinct
       from project_id=None, which means "don't filter by project at all". The two
       are mutually exclusive — the boundary picks one.
+    - sprint_id: restrict to issues in this sprint (a direct column on the issue,
+      like project_id). None means "don't filter by sprint at all".
     - ids: restrict to these issue ids. Generic on purpose — the caller resolves
       *what* the ids mean (e.g. labels.py turns a label name into ids), so this
       module stays decoupled from labels. An empty list means "match nothing".
@@ -397,6 +400,9 @@ def list_issues(
     elif project_id is not None:
         clauses.append("i.project_id = ?")
         params.append(project_id)
+    if sprint_id is not None:
+        clauses.append("i.sprint_id = ?")
+        params.append(sprint_id)
     if ids is not None:
         placeholders = ",".join("?" for _ in ids)
         clauses.append(f"i.id IN ({placeholders})")

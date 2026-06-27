@@ -50,6 +50,13 @@
             <span class="muted">No project</span>
             {% endif %}
         </div>
+        <div class="meta-item"><strong>Sprint</strong>
+            {% if issue_sprint %}
+            <a href="/aegis/issues?sprint={{ issue_sprint.id }}">{{ issue_sprint.name }}</a>
+            {% else %}
+            <span class="muted">Backlog</span>
+            {% endif %}
+        </div>
         <div class="meta-item"><strong>Parent</strong>
             {% if parent %}
             <a href="/aegis/issues/{{ parent.id }}" class="xref">{{ parent.key or "#" ~ parent.id }} {{ parent.title }}</a>
@@ -346,6 +353,19 @@
                 </select>
                 <button type="submit" class="button small">Set Project</button>
             </form>
+            {% if issue_sprints %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/sprint" class="sprint-form">
+                {% include "partials/csrf.html" %}
+                <label for="sprint-select">Sprint</label>
+                <select id="sprint-select" name="sprint_id">
+                    <option value="" {% if not issue.sprint_id %}selected{% endif %}>Backlog</option>
+                    {% for s in issue_sprints %}
+                    <option value="{{ s.id }}" {% if s.id == issue.sprint_id %}selected{% endif %}>{{ s.name }} ({{ s.state }})</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="button small">Set Sprint</button>
+            </form>
+            {% endif %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/parent" class="parent-form">
                 {% include "partials/csrf.html" %}
                 <label for="parent-ref">Parent</label>
