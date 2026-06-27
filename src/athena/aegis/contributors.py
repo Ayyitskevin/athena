@@ -15,7 +15,8 @@ import sqlite3
 # Every read resolves the contributor's display name (and who added them), so the
 # UI never has to look ids up separately.
 _SELECT = (
-    "SELECT ic.user_id, u.name AS name, ic.added_by, ic.added_at "
+    "SELECT ic.user_id, u.name AS name, u.is_agent AS is_agent, "
+    "ic.added_by, ic.added_at "
     "FROM issue_contributors ic JOIN users u ON u.id = ic.user_id"
 )
 

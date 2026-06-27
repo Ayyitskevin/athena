@@ -1,0 +1,11 @@
+-- 0028_user_is_agent: mark which users are agents (vs. humans).
+-- FORWARD-ONLY: once this file has been applied anywhere, never edit it — add 0029.
+--
+-- Athena's actors are people AND agents (ARCHITECTURE: agent-native). Both are rows
+-- in users — an agent acts through API tokens the same way a person acts through a
+-- browser session — but the UI needs to TELL them apart: badge an agent teammate in
+-- the delegation list, and let an operator audit "what did the agents do" distinctly
+-- from human activity. This flag is that distinction, nothing more: it does not grant
+-- or restrict anything (roles still do that). Defaults to 0 (human) so every existing
+-- row stays a person; an admin flips it for agent accounts.
+ALTER TABLE users ADD COLUMN is_agent INTEGER NOT NULL DEFAULT 0;

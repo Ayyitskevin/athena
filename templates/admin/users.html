@@ -19,6 +19,7 @@
             <th>Name</th>
             <th>Email</th>
             <th>Role</th>
+            <th>Type</th>
             <th>Password</th>
             <th>Created</th>
             <th></th>
@@ -38,6 +39,14 @@
                         {% endfor %}
                     </select>
                     <button type="submit" class="button secondary small">Save</button>
+                </form>
+            </td>
+            <td>
+                {% if u.is_agent %}<span class="agent-badge">agent</span>{% else %}<span class="muted">human</span>{% endif %}
+                <form method="post" action="/admin/users/{{ u.id }}/agent" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="is_agent" value="{{ 0 if u.is_agent else 1 }}">
+                    <button type="submit" class="button secondary small">{{ "Mark human" if u.is_agent else "Mark agent" }}</button>
                 </form>
             </td>
             <td>
@@ -78,6 +87,9 @@
                 <option value="{{ role }}" {% if role == "member" %}selected{% endif %}>{{ role }}</option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="form-group form-check">
+            <label><input type="checkbox" name="is_agent" value="1"> This account is an agent</label>
         </div>
         <div class="form-actions">
             <button type="submit" class="button">Create User</button>

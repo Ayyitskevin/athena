@@ -275,6 +275,7 @@ def create_user(
     name: str = Form(""),
     password: str = Form(""),
     role: str = Form(users.DEFAULT_ROLE),
+    is_agent: str | None = Form(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -300,6 +301,7 @@ def create_user(
             name=name,
             password=password.strip() or None,
             role=role,
+            is_agent=is_agent is not None,
         )
     except sqlite3.IntegrityError:
         return templates.TemplateResponse(
@@ -389,4 +391,31 @@ def update_user_role(
             context=_admin_context(conn, error=str(exc)),
             status_code=400,
         )
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@router.post(
+    "/admin/users/{user_id}/agent",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def update_user_agent(
+    request: Request,
+    user_id: int,
+    is_agent: str = Form("0"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    target = users.get_user(conn, user_id)
+    if target is None:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
+    # The form posts the DESIRED next state ("1" to mark as agent, anything else to
+    # mark as human), so the button is a deterministic toggle, not a read-then-flip.
+    users.set_agent(conn, user_id, is_agent == "1")
     return RedirectResponse("/admin/users", status_code=303)
