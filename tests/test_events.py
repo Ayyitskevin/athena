@@ -22,6 +22,15 @@ def _seed_user(db_file, email="a@e.com", name="A"):
     conn.close()
 
 
+def _seed_agent(db_file, email="bot@e.com", name="Bot"):
+    conn = db.connect(db_file)
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES (?, ?, 1)", (email, name)
+    )
+    conn.commit()
+    conn.close()
+
+
 H = {"X-Athena-Actor": "1"}
 
 
@@ -157,3 +166,33 @@ def test_events_filter_one_target(tmp_path):
             f"/events?kind=issue&target={a['id']}", headers=H
         ).json()["events"]
         assert events and all(e["target_id"] == a["id"] for e in events)
+
+
+def test_events_filter_by_actor_type(tmp_path):
+    # WHY: an integration may want to drain only the agents' stream (or only the
+    # humans') — the actor-type lens the activity feed already has, here on the
+    # forward cursor consumers read.
+    db_file = tmp_path / "actortype.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)   # id 1, human "A"
+        _seed_agent(db_file)  # id 2, agent "Bot"
+        _make_issue(client, "by-human")  # actor 1
+        client.post("/issues", json={"title": "by-agent"}, headers={"X-Athena-Actor": "2"})
+
+        agents = client.get("/events?actor_type=agent", headers=H).json()
+        assert agents["events"] and all(e["actor_name"] == "Bot" for e in agents["events"])
+        # The cursor envelope still tracks under the lens.
+        assert agents["next_after"] == agents["events"][-1]["id"]
+
+        humans = client.get("/events?actor_type=human", headers=H).json()["events"]
+        assert humans and all(e["actor_name"] == "A" for e in humans)
+
+
+def test_events_rejects_unknown_actor_type(tmp_path):
+    # WHY: consumers get a strict contract — a bad lens value is a 422, never a
+    # silently-dropped filter handing back the wrong stream.
+    app = create_app(tmp_path / "badtype.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "badtype.db")
+        assert client.get("/events?actor_type=robot", headers=H).status_code == 422

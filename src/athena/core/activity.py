@@ -162,6 +162,7 @@ def list_events(
     target_kind: str | None = None,
     target_id: int | None = None,
     actor_id: int | None = None,
+    actor_is_agent: bool | None = None,
     verb: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
@@ -175,7 +176,9 @@ def list_events(
     complete, gap-free subscription. (list_activity pages BACKWARD with before_id /
     DESC for a human scrolling recent history; an agent draining a stream wants the
     opposite.) Filters mirror list_activity so a consumer can narrow to one kind,
-    one target, one actor, or one verb."""
+    one target, one actor, one verb, or one actor type (actor_is_agent: True for
+    agents only, False for humans only) — so an integration can subscribe to just
+    the agents' stream, or just the humans'."""
     clauses: list[str] = []
     params: list = []
     if after_id is not None:
@@ -190,6 +193,10 @@ def list_events(
     if actor_id is not None:
         clauses.append("a.actor_id = ?")
         params.append(actor_id)
+    if actor_is_agent is not None:
+        # u is already joined for actor_name, so the lens is a cheap predicate on it.
+        clauses.append("u.is_agent = ?")
+        params.append(1 if actor_is_agent else 0)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
