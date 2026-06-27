@@ -595,6 +595,38 @@ def activity_export_csv(
     )
 
 
+@router.get("/aegis/activity/runs", response_class=HTMLResponse)
+def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """The run-timeline view — the browser twin of GET /activity/runs. It reads one
+    actor's recent activity reconstructed into runs (work sessions) from the SAME
+    data-layer function the API serves, so the two never disagree. A run is a derived
+    lens over the append-only trail, not a stored thing (see reconstruct_runs).
+
+    Requires picking an actor (?actor=N) — a "runs" view mixing actors is meaningless,
+    since a run is by definition one actor's uninterrupted stretch. With no actor it
+    renders the picker and a hint; an unknown actor renders empty."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+
+    actor_id = _int_or_none(request.query_params.get("actor"))
+    selected_actor = users.get_user(conn, actor_id) if actor_id is not None else None
+    runs = (
+        activity.reconstruct_runs(conn, actor_id=actor_id)
+        if selected_actor is not None
+        else []
+    )
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/activity_runs.html",
+        context={
+            "all_users": users.list_users(conn),
+            "f_actor": actor_id,
+            "selected_actor": selected_actor,
+            "runs": runs,
+        },
+    )
+
+
 @router.get("/aegis/issues/new", response_class=HTMLResponse)
 def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Render the new issue creation form."""
