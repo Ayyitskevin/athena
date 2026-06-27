@@ -33,6 +33,19 @@ class ActivityOut(BaseModel):
     created_at: str
 
 
+class RunOut(BaseModel):
+    # A reconstructed run: one actor's uninterrupted stretch of work, with the events
+    # (oldest-first) so a consumer can replay the sequence it represents.
+    actor_id: int
+    actor_name: str
+    started_at: str
+    ended_at: str
+    first_id: int
+    last_id: int
+    event_count: int
+    events: list[ActivityOut]
+
+
 @router.get("", response_model=list[ActivityOut])
 def feed(
     target_kind: str | None = Query(
@@ -72,4 +85,27 @@ def feed(
         search=q,
         before_id=before_id,
         limit=limit,
+    )
+
+
+@router.get("/runs", response_model=list[RunOut])
+def runs(
+    actor_id: int = Query(..., description="reconstruct this actor's runs"),
+    gap_seconds: int = Query(
+        1800,
+        ge=1,
+        le=86400,
+        description="max seconds between consecutive events within one run",
+    ),
+    limit: int = Query(
+        200, ge=1, le=500, description="how many recent events to reconstruct from"
+    ),
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # A reading lens over the trail: group one actor's recent events into work
+    # sessions (runs). actor_id is required — a "runs" feed mixing actors would be
+    # meaningless, since a run is by definition one actor's uninterrupted stretch.
+    return activity.reconstruct_runs(
+        conn, actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
     )
