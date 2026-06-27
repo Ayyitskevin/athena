@@ -56,6 +56,56 @@
     {% endif %}
 </div>
 
+<div class="form-container comments">
+    <h3>Comments</h3>
+    {% if comments %}
+    <ul class="comment-list">
+        {% for c in comments %}
+        <li class="comment">
+            <div class="comment-meta">
+                <strong>{{ c.author_name }}</strong>
+                <span class="muted">{{ c.created_at }}</span>
+            </div>
+            <div class="comment-body">{{ c.body_html }}</div>
+            {% if can_write and request.state.user and c.author_id == request.state.user.id %}
+            <div class="comment-actions">
+                <details class="comment-edit">
+                    <summary class="muted">Edit</summary>
+                    <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/edit">
+                        {% include "partials/csrf.html" %}
+                        <textarea name="body" rows="2" required>{{ c.body }}</textarea>
+                        <button type="submit" class="button small">Save</button>
+                    </form>
+                </details>
+                <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/delete"
+                      data-confirm="Delete this comment?">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button small secondary">Delete</button>
+                </form>
+            </div>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="note-small">No comments yet.</p>
+    {% endif %}
+
+    {% if can_write %}
+    <form method="post" action="/mentor/pages/{{ page.id }}/comments" class="comment-form">
+        {% include "partials/csrf.html" %}
+        <label for="comment-body">Add a comment</label>
+        <textarea id="comment-body" name="body" rows="3" required
+                  placeholder="Leave a comment…"></textarea>
+        <button type="submit" class="button small">Comment</button>
+    </form>
+    {% elif request.state.user %}
+    <p class="note-small">Viewer role is read-only.</p>
+    {% else %}
+    <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
+    {% endif %}
+</div>
+
 <div class="form-container">
     <h3>Attachments</h3>
     {% if attachments %}
