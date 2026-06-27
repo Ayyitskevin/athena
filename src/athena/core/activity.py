@@ -14,7 +14,7 @@ from datetime import datetime
 from io import StringIO
 import sqlite3
 
-from athena.core import notifications
+from athena.core import notifications, run_context
 
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
@@ -69,11 +69,15 @@ def record(
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
-    a controlled verb; this layer only writes."""
+    a controlled verb; this layer only writes.
+
+    The event is stamped with the ambient run id (the X-Athena-Run header for the
+    request in flight, via run_context) so the caller never threads it through — it
+    is NULL when no run was supplied, which is every untagged action."""
     cur = conn.execute(
-        "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (actor_id, verb, target_kind, target_id, detail),
+        "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail, run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (actor_id, verb, target_kind, target_id, detail, run_context.get_run_id()),
     )
     # Fan the event out to the inbox of anyone watching this target (not the actor).
     # notify_watchers doesn't commit, so the event row and its notifications land in
@@ -101,6 +105,7 @@ def list_activity(
     target_id: int | None = None,
     actor_id: int | None = None,
     actor_is_agent: bool | None = None,
+    run_id: str | None = None,
     verb: str | None = None,
     search: str | None = None,
     before_id: int | None = None,
@@ -110,9 +115,10 @@ def list_activity(
     target_kind+target_id for one target's timeline, target_kind alone to scope
     the global feed to a kind, actor_id/verb/search to narrow who/what. actor_is_agent
     is the actor-type lens — True for agents only, False for humans only — answering
-    "what did the agents do?" distinctly from human activity. before_id is the paging
-    cursor — only rows older than it (a.id < before_id), so the caller can walk back
-    through history one page at a time on a stable, append-only ordering."""
+    "what did the agents do?" distinctly from human activity. run_id is deterministic
+    replay: exactly the events tagged with that run. before_id is the paging cursor —
+    only rows older than it (a.id < before_id), so the caller can walk back through
+    history one page at a time on a stable, append-only ordering."""
     clauses: list[str] = []
     params: list = []
     if target_kind is not None:
@@ -128,6 +134,9 @@ def list_activity(
         # u is already joined for actor_name, so the lens is a cheap predicate on it.
         clauses.append("u.is_agent = ?")
         params.append(1 if actor_is_agent else 0)
+    if run_id is not None:
+        clauses.append("a.run_id = ?")
+        params.append(run_id)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
@@ -164,6 +173,7 @@ def list_events(
     target_id: int | None = None,
     actor_id: int | None = None,
     actor_is_agent: bool | None = None,
+    run_id: str | None = None,
     verb: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
@@ -177,9 +187,10 @@ def list_events(
     complete, gap-free subscription. (list_activity pages BACKWARD with before_id /
     DESC for a human scrolling recent history; an agent draining a stream wants the
     opposite.) Filters mirror list_activity so a consumer can narrow to one kind,
-    one target, one actor, one verb, or one actor type (actor_is_agent: True for
-    agents only, False for humans only) — so an integration can subscribe to just
-    the agents' stream, or just the humans'."""
+    one target, one actor, one verb, one actor type (actor_is_agent: True for agents
+    only, False for humans only — so an integration can subscribe to just the agents'
+    stream, or just the humans'), or one run_id (the exact events of a known run, for
+    deterministic replay)."""
     clauses: list[str] = []
     params: list = []
     if after_id is not None:
@@ -198,6 +209,9 @@ def list_events(
         # u is already joined for actor_name, so the lens is a cheap predicate on it.
         clauses.append("u.is_agent = ?")
         params.append(1 if actor_is_agent else 0)
+    if run_id is not None:
+        clauses.append("a.run_id = ?")
+        params.append(run_id)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)

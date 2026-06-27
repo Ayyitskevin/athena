@@ -31,6 +31,9 @@ class ActivityOut(BaseModel):
     target_id: int
     detail: str
     created_at: str
+    # The run this event belongs to (the X-Athena-Run it was recorded under), or
+    # None for untagged actions.
+    run_id: str | None = None
 
 
 class RunOut(BaseModel):
@@ -55,6 +58,9 @@ def feed(
     actor_id: int | None = Query(None, description="filter to one actor's actions"),
     actor_type: Literal["agent", "human"] | None = Query(
         None, description="filter by actor type: agents only, or humans only"
+    ),
+    run_id: str | None = Query(
+        None, description="replay one run: exactly the events tagged with this id"
     ),
     verb: str | None = Query(None, description="filter to one event type"),
     q: str | None = Query(
@@ -81,6 +87,7 @@ def feed(
         target_id=target_id,
         actor_id=actor_id,
         actor_is_agent=None if actor_type is None else actor_type == "agent",
+        run_id=run_id,
         verb=verb,
         search=q,
         before_id=before_id,
