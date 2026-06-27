@@ -22,3 +22,6 @@ venv*/
 # OS / editor noise
 .DS_Store
 *.swp
+
+# Tooling lockfiles we do not track (project uses pip + venv, not uv)
+uv.lock
