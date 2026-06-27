@@ -10,18 +10,28 @@ request.state.user — these routes only mint and tear down the session.
 """
 from __future__ import annotations
 
+import secrets
 import sqlite3
+import urllib.error
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+import jwt
 
 from athena import config
-from athena.core import sessions, users
+from athena.core import oidc, oidc_flow, sessions, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 router = APIRouter()
+
+# Pins an in-flight SSO login to the browser that started it: set at /login/sso,
+# required to match the returned `state` at /auth/callback (login CSRF/fixation
+# defense). HttpOnly + SameSite=Lax (Lax, not Strict — the IdP returns via a
+# top-level cross-site GET, which Strict would strip the cookie from). Short-lived.
+_OIDC_STATE_COOKIE = "athena_oidc_state"
+_OIDC_STATE_TTL_SECONDS = 600
 
 
 def _set_session_cookie(response, raw: str) -> None:
@@ -61,7 +71,11 @@ def login_form(request: Request):
     # Already signed in? Skip the form.
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse("/aegis", status_code=303)
-    return templates.TemplateResponse(request=request, name="login.html")
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"oidc_enabled": config.oidc_enabled()},
+    )
 
 
 @router.post("/login", response_class=HTMLResponse)
@@ -81,7 +95,11 @@ def login(
         return templates.TemplateResponse(
             request=request,
             name="login.html",
-            context={"error": "Invalid email or password.", "email": email},
+            context={
+                "error": "Invalid email or password.",
+                "email": email,
+                "oidc_enabled": config.oidc_enabled(),
+            },
             status_code=401,
         )
 
@@ -107,4 +125,143 @@ def logout(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(config.SESSION_COOKIE, path="/")
     response.delete_cookie(config.CSRF_COOKIE, path="/")
+    return response
+
+
+# --- SSO (OpenID Connect) login -------------------------------------------
+
+
+def _set_oidc_state_cookie(response, state: str) -> None:
+    response.set_cookie(
+        _OIDC_STATE_COOKIE,
+        state,
+        max_age=_OIDC_STATE_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=config.COOKIE_SECURE,
+        path="/",
+    )
+
+
+def _sso_error(request, templates, message: str, *, status: int = 400):
+    """Re-render the login page with an SSO error and clear the in-flight state
+    cookie. The message is deliberately generic — never leak which step failed."""
+    response = templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"error": message, "oidc_enabled": config.oidc_enabled()},
+        status_code=status,
+    )
+    response.delete_cookie(_OIDC_STATE_COOKIE, path="/")
+    return response
+
+
+@router.get("/login/sso")
+def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Begin an SSO login: generate the per-login secrets, stash them, and redirect
+    the browser to the IdP. 404 when SSO isn't configured, so an unconfigured deploy
+    exposes nothing."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    if not config.oidc_enabled():
+        return HTMLResponse("Not found", status_code=404)
+    if getattr(request.state, "user", None) is not None:
+        return RedirectResponse("/aegis", status_code=303)
+
+    try:
+        discovery = oidc_flow.discover(config.OIDC_ISSUER)
+    except (oidc_flow.OidcError, urllib.error.URLError, ValueError):
+        return _sso_error(
+            request, templates, "SSO is unavailable right now.", status=502
+        )
+
+    state = oidc_flow.new_state()
+    nonce = oidc_flow.new_nonce()
+    verifier = oidc_flow.new_pkce_verifier()
+    oidc.start_login(conn, state=state, nonce=nonce, code_verifier=verifier)
+
+    url = oidc_flow.build_authorization_url(
+        discovery["authorization_endpoint"],
+        client_id=config.OIDC_CLIENT_ID,
+        redirect_uri=config.OIDC_REDIRECT_URL,
+        state=state,
+        nonce=nonce,
+        code_challenge=oidc_flow.pkce_challenge(verifier),
+    )
+    response = RedirectResponse(url, status_code=302)
+    _set_oidc_state_cookie(response, state)
+    return response
+
+
+@router.get("/auth/callback")
+def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Finish an SSO login: verify the callback is the one we started, exchange the
+    code, validate the ID token, map it to a user, and mint a session — the same
+    session a password login produces."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    if not config.oidc_enabled():
+        return HTMLResponse("Not found", status_code=404)
+
+    params = request.query_params
+    if params.get("error"):
+        return _sso_error(request, templates, "SSO sign-in was cancelled or failed.")
+
+    state = params.get("state") or ""
+    code = params.get("code") or ""
+    cookie_state = request.cookies.get(_OIDC_STATE_COOKIE) or ""
+    # The returned state must match the cookie we set at the start — this binds the
+    # callback to THIS browser (defeating a forged/replayed callback / login CSRF).
+    if not (state and cookie_state and secrets.compare_digest(state, cookie_state)):
+        return _sso_error(
+            request, templates, "SSO sign-in could not be verified. Please try again."
+        )
+    pending = oidc.take_login_state(conn, state, max_age_seconds=_OIDC_STATE_TTL_SECONDS)
+    if pending is None or not code:
+        return _sso_error(
+            request, templates, "SSO sign-in expired. Please try again."
+        )
+
+    try:
+        discovery = oidc_flow.discover(config.OIDC_ISSUER)
+        token = oidc_flow.exchange_code(
+            discovery["token_endpoint"],
+            code=code,
+            redirect_uri=config.OIDC_REDIRECT_URL,
+            client_id=config.OIDC_CLIENT_ID,
+            client_secret=config.OIDC_CLIENT_SECRET,
+            code_verifier=pending["code_verifier"],
+        )
+        claims = oidc_flow.verify_id_token(
+            token["id_token"],
+            jwks_uri=discovery["jwks_uri"],
+            issuer=config.OIDC_ISSUER,
+            client_id=config.OIDC_CLIENT_ID,
+            nonce=pending["nonce"],
+        )
+        user = oidc_flow.provision_or_link(
+            conn,
+            issuer=config.OIDC_ISSUER,
+            claims=claims,
+            allowed_domains=config.OIDC_ALLOWED_DOMAINS,
+        )
+    except (
+        oidc_flow.OidcError,
+        jwt.InvalidTokenError,
+        urllib.error.URLError,
+        KeyError,
+        ValueError,
+    ):
+        # One generic message — don't reveal which step (exchange/verify/policy) failed.
+        return _sso_error(request, templates, "SSO sign-in failed.")
+
+    # Mint the session exactly as a password login does (rotate, then issue).
+    sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
+    raw = sessions.create_session(conn, user["id"])
+    response = RedirectResponse("/aegis", status_code=303)
+    _set_session_cookie(response, raw)
+    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw))
+    response.delete_cookie(_OIDC_STATE_COOKIE, path="/")
     return response

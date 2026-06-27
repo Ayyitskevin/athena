@@ -1363,3 +1363,20 @@ footer {
 .run-card .activity-list {
     padding: 0.25rem 0.8rem 0.6rem;
 }
+
+/* SSO option on the login page (shown only when OIDC is configured). */
+.auth-sso {
+    margin-top: 1rem;
+}
+
+.auth-divider {
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.85rem;
+    margin: 0.75rem 0;
+}
+
+.auth-sso-button {
+    display: block;
+    text-align: center;
+}
