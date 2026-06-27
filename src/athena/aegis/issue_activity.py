@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import issues, labels, projects
+from athena.aegis import issues, labels, projects, sprints
 from athena.core import activity, notifications, users
 
 
@@ -176,6 +176,41 @@ def record_project_change(
         conn,
         actor_id=actor_id,
         verb="changed_project",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=new["name"] if new else "",
+    )
+
+
+def record_sprint_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: int | None,
+    after: int | None,
+) -> None:
+    """Record a sprint move. No-op if the sprint didn't change. Clearing records
+    "removed_from_sprint" with the old sprint's name; setting records "moved_to_sprint"
+    with the new sprint's name as the human specifics."""
+    if before == after:
+        return
+    if after is None:
+        old = sprints.get_sprint(conn, before)
+        activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="removed_from_sprint",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=old["name"] if old else "",
+        )
+        return
+    new = sprints.get_sprint(conn, after)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="moved_to_sprint",
         target_kind="issue",
         target_id=issue_id,
         detail=new["name"] if new else "",

@@ -22,6 +22,7 @@ from athena.aegis import (
     issues,
     labels,
     projects,
+    sprints,
     statuses,
 )
 from athena.core import activity, attachments, links, users
@@ -68,6 +69,12 @@ class IssueUpdate(BaseModel):
 class AssigneeUpdate(BaseModel):
     # None clears the assignee (unassign); an int assigns to that user.
     assignee_id: int | None
+
+
+class SprintAssign(BaseModel):
+    # None moves the issue to the backlog; an int puts it in that sprint (which must
+    # belong to the issue's project).
+    sprint_id: int | None
 
 
 class ProjectUpdate(BaseModel):
@@ -147,6 +154,8 @@ class IssueOut(BaseModel):
     project_id: int | None = None
     project_name: str | None = None
     parent_id: int | None = None
+    # The sprint this issue is in, or null for the backlog.
+    sprint_id: int | None = None
     labels: list[LabelOut] = []
 
 
@@ -486,6 +495,39 @@ def set_assignee(
         issue_id=issue_id,
         before=before["assignee_id"],
         after=payload.assignee_id,
+    )
+    return _with_labels(conn, updated)
+
+
+@router.put("/{issue_id}/sprint", response_model=IssueOut)
+def set_sprint(
+    issue_id: int,
+    payload: SprintAssign,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Putting an issue in a sprint is a write on the issue — creator-or-assignee only
+    # (404 if missing, 403 if not permitted), same gate as assign/project.
+    before = _issue_for_write(conn, issue_id, actor)
+    if payload.sprint_id is not None:
+        sprint = sprints.get_sprint(conn, payload.sprint_id)
+        if sprint is None:
+            raise HTTPException(status_code=422, detail="no such sprint")
+        # A sprint belongs to one project; an issue can only join a sprint in its OWN
+        # project (a backlog issue with no project can't be in any sprint).
+        if sprint["project_id"] != before["project_id"]:
+            raise HTTPException(
+                status_code=422,
+                detail="sprint belongs to a different project than the issue",
+            )
+    updated = issues.set_sprint(conn, issue_id, payload.sprint_id)
+    # Records "moved_to_sprint"/"removed_from_sprint" only on a real change.
+    issue_activity.record_sprint_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["sprint_id"],
+        after=payload.sprint_id,
     )
     return _with_labels(conn, updated)
 
