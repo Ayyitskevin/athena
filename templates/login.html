@@ -23,5 +23,12 @@
         </label>
         <button type="submit">Sign in</button>
     </form>
+
+    {% if oidc_enabled %}
+    <div class="auth-sso">
+        <div class="auth-divider"><span>or</span></div>
+        <a href="/login/sso" class="button secondary auth-sso-button">Sign in with SSO</a>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

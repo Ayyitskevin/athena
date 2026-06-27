@@ -73,3 +73,42 @@ def unlink_identity(
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+# --- in-flight login state (the /login/sso ↔ /auth/callback handoff) --------
+
+
+def start_login(
+    conn: sqlite3.Connection, *, state: str, nonce: str, code_verifier: str
+) -> None:
+    """Stash the secrets for one in-flight SSO login, keyed by its (unguessable)
+    state. Recorded at /login/sso; consumed once at /auth/callback."""
+    conn.execute(
+        "INSERT INTO oidc_login_states (state, nonce, code_verifier) VALUES (?, ?, ?)",
+        (state, nonce, code_verifier),
+    )
+    conn.commit()
+
+
+def take_login_state(
+    conn: sqlite3.Connection, state: str, *, max_age_seconds: int = 600
+) -> dict | None:
+    """Consume the login state for `state`: return its {nonce, code_verifier} and
+    DELETE it (single-use — a code/state pair can't be replayed), or None if there is
+    no such state or it has expired. Also sweeps any other expired rows, so abandoned
+    logins don't accumulate. Time is compared in SQLite so it matches created_at's
+    clock exactly."""
+    row = conn.execute(
+        "SELECT nonce, code_verifier FROM oidc_login_states "
+        "WHERE state = ? AND created_at >= datetime('now', ?)",
+        (state, f"-{int(max_age_seconds)} seconds"),
+    ).fetchone()
+    # Delete this state (whether fresh or expired) plus anything else stale, in one
+    # commit, so the row is gone before we trust it and abandoned rows don't linger.
+    conn.execute("DELETE FROM oidc_login_states WHERE state = ?", (state,))
+    conn.execute(
+        "DELETE FROM oidc_login_states WHERE created_at < datetime('now', ?)",
+        (f"-{int(max_age_seconds)} seconds",),
+    )
+    conn.commit()
+    return dict(row) if row else None
