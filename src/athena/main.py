@@ -29,6 +29,7 @@ from athena.core import (
     events_api,
     notifications,
     notifications_api,
+    run_context,
     search_api,
     sessions,
     tokens_api,
@@ -129,6 +130,35 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
+class RunContextMiddleware:
+    """Capture the X-Athena-Run header into the request-scoped run context, so every
+    activity event recorded while handling this request is stamped with that run id.
+
+    A pure-ASGI middleware (not @app.middleware) ON PURPOSE: it runs in the same task
+    as the endpoint, so the contextvar it sets reliably propagates into the handler
+    (including sync handlers run in the threadpool, which copy the current context) —
+    the propagation that BaseHTTPMiddleware does not guarantee. The token is reset in
+    a finally so a run id never outlives its request."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        raw = None
+        for name, value in scope.get("headers", []):
+            if name.lower() == b"x-athena-run":
+                raw = value.decode("latin-1")
+                break
+        token = run_context.set_run_id(raw)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            run_context.reset_run_id(token)
+
+
 async def _send_json_response(
     send: Callable[[dict], Awaitable[None]], body: dict, *, status_code: int
 ) -> None:
@@ -202,6 +232,8 @@ def create_app(
 
     app = FastAPI(title="Athena", lifespan=lifespan)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
+    # Stamp the ambient run id (X-Athena-Run) for every event recorded this request.
+    app.add_middleware(RunContextMiddleware)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
