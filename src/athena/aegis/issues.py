@@ -159,6 +159,24 @@ def set_assignee(
     return get_issue(conn, issue_id)
 
 
+def set_sprint(
+    conn: sqlite3.Connection, issue_id: int, sprint_id: int | None
+) -> dict | None:
+    """Put the issue in a sprint, or move it back to the backlog (sprint_id=None).
+    Returns the updated issue, or None if no issue has that id. Like set_assignee:
+    a single nullable column, so a dedicated op keeps None ('backlog') distinct from
+    PATCH's 'leave unchanged'. Checking that the sprint exists and belongs to the
+    issue's project is the boundary's job; the foreign key is the backstop (raises
+    sqlite3.IntegrityError on an unknown non-NULL id)."""
+    cur = conn.execute(
+        "UPDATE issues SET sprint_id = ? WHERE id = ?", (sprint_id, issue_id)
+    )
+    conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_issue(conn, issue_id)
+
+
 def set_project(
     conn: sqlite3.Connection, issue_id: int, project_id: int | None
 ) -> dict | None:
