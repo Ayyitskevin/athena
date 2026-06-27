@@ -101,6 +101,80 @@ def build_server(client: AthenaClient) -> FastMCP:
         """Add a comment to an issue, authored by the token's user."""
         return client.comment_on_issue(issue_id, body)
 
+    # --- hierarchy (epics & sub-tasks) --------------------------------------
+
+    @mcp.tool()
+    def set_issue_parent(issue_id: int, parent_id: int | None = None) -> dict:
+        """Nest an issue under a parent issue (making it a sub-task), or pass no
+        parent_id to move it back to the top level. The parent must not create a
+        cycle. Returns the updated issue."""
+        return client.set_issue_parent(issue_id, parent_id)
+
+    @mcp.tool()
+    def list_subtasks(issue_id: int) -> list:
+        """List the direct child issues (sub-tasks) nested under this issue."""
+        return client.list_subtasks(issue_id)
+
+    # --- dependencies (blocks / relates) ------------------------------------
+
+    @mcp.tool()
+    def list_issue_links(issue_id: int) -> dict:
+        """Read an issue's dependency links — what it blocks, what blocks it, and
+        what it relates to. Returns {blocks, blocked_by, relates}."""
+        return client.list_issue_links(issue_id)
+
+    @mcp.tool()
+    def link_issues(issue_id: int, target_ref: str, relation: str) -> dict:
+        """Declare a dependency FROM this issue to another (by id or key, e.g.
+        'ATH-15'). relation is one of: 'blocks', 'blocked_by', 'relates'. Returns
+        the issue's updated link summary."""
+        return client.link_issues(issue_id, target_ref, relation)
+
+    @mcp.tool()
+    def unlink_issues(issue_id: int, relation: str, target_id: int) -> dict:
+        """Remove a dependency from this issue: the same relation used to add it
+        ('blocks'/'blocked_by'/'relates') and the other issue's numeric id."""
+        return client.unlink_issues(issue_id, relation, target_id)
+
+    # --- sprints ------------------------------------------------------------
+
+    @mcp.tool()
+    def list_sprints(project_id: int, state: str | None = None) -> list:
+        """List a project's sprints, optionally filtered by state
+        (planned/active/completed)."""
+        return client.list_sprints(project_id, state=state)
+
+    @mcp.tool()
+    def set_issue_sprint(issue_id: int, sprint_id: int | None = None) -> dict:
+        """Put an issue into a sprint (which must belong to the issue's own
+        project), or pass no sprint_id to move it back to the backlog. Returns the
+        updated issue."""
+        return client.set_issue_sprint(issue_id, sprint_id)
+
+    # --- labels -------------------------------------------------------------
+
+    @mcp.tool()
+    def list_labels() -> list:
+        """List the shared label vocabulary (id, name, color)."""
+        return client.list_labels()
+
+    @mcp.tool()
+    def create_label(name: str, color: str = "#6b7280") -> dict:
+        """Create a label in the shared vocabulary. color is a #RRGGBB hex string.
+        Fails if a label with that name already exists (names are case-insensitive)."""
+        return client.create_label(name, color=color)
+
+    @mcp.tool()
+    def attach_label(issue_id: int, label_id: int) -> dict:
+        """Attach an existing label (by id — see list_labels) to an issue.
+        Idempotent. Returns the updated issue."""
+        return client.attach_label(issue_id, label_id)
+
+    @mcp.tool()
+    def detach_label(issue_id: int, label_id: int) -> dict:
+        """Remove a label from an issue. Returns the updated issue."""
+        return client.detach_label(issue_id, label_id)
+
     # --- projects & users ---------------------------------------------------
 
     @mcp.tool()
