@@ -216,6 +216,42 @@ def record_parent_change(
     )
 
 
+def record_contributor_added(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+) -> None:
+    """Record that someone was delegated/added as a contributor, stamped with their
+    display name. The new contributor starts watching the issue BEFORE we record the
+    event, so the delegation itself lands in their inbox (they're a watcher when it
+    fans out) — exactly how a new assignee is brought in. Caller records only when
+    the add actually created a new pairing."""
+    notifications.watch(conn, user_id, "issue", issue_id)
+    contributor = users.get_user(conn, user_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="added_contributor",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=contributor["name"] if contributor else "",
+    )
+
+
+def record_contributor_removed(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+) -> None:
+    """Record that a contributor was removed, stamped with their display name. Caller
+    records only when a pairing was actually removed."""
+    contributor = users.get_user(conn, user_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="removed_contributor",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=contributor["name"] if contributor else "",
+    )
+
+
 def record_label_added(
     conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
 ) -> None:

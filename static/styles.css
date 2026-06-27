@@ -301,6 +301,25 @@ footer {
     margin: 0.25rem 0;
 }
 
+/* Issue contributors — neutral chips (a contributor is a teammate, not a label). */
+.contributor-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin: 0.25rem 0;
+}
+
+.contributor {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.05rem 0.5rem;
+    font-size: 0.78rem;
+    border-radius: 999px;
+    background: #eef1f4;
+    color: #374151;
+}
+
 .label-remove {
     display: inline;
     margin: 0;

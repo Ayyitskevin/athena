@@ -85,6 +85,35 @@
             </datalist>
             {% endif %}
         </div>
+        <div class="meta-item contributors-block">
+            <strong>Contributors</strong>
+            <div class="contributor-list">
+                {% for cb in contributors %}
+                <span class="contributor">
+                    {{ cb.name }}
+                    {% if can_modify %}
+                    <form method="post" action="/aegis/issues/{{ issue.id }}/contributors/{{ cb.user_id }}/delete" class="label-remove">
+                        {% include "partials/csrf.html" %}
+                        <button type="submit" title="Remove contributor" aria-label="Remove contributor">×</button>
+                    </form>
+                    {% endif %}
+                </span>
+                {% else %}
+                <span class="muted">None</span>
+                {% endfor %}
+            </div>
+            {% if can_modify %}
+            <form method="post" action="/aegis/issues/{{ issue.id }}/contributors" class="label-add">
+                {% include "partials/csrf.html" %}
+                <select name="user_id" aria-label="Delegate to a contributor">
+                    <option value="">Delegate to…</option>
+                    {% for u in users %}<option value="{{ u.id }}">{{ u.name }}</option>{% endfor %}
+                </select>
+                <button type="submit" class="button small">Add</button>
+            </form>
+            <p class="note-small">The assignee stays accountable; contributors (people or agents) are added teammates.</p>
+            {% endif %}
+        </div>
     </div>
 
     <div class="main-content">
