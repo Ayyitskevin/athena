@@ -272,6 +272,10 @@ def _run_summary(events: list[dict]) -> dict:
         "first_id": first["id"],
         "last_id": last["id"],
         "event_count": len(events),
+        # True when this run may be clipped by the reconstruction window — i.e. older
+        # events of it exist beyond the `limit` we loaded, so the count/start describe
+        # only the part we can see. Set on the oldest run when the window was full.
+        "partial": False,
         "events": events,
     }
 
@@ -315,10 +319,21 @@ def reconstruct_runs(
     WITHIN a run, events stay oldest-first so the run reads in the order it happened.
     Because list_activity already scopes to this actor, other actors' events neither
     appear in a run nor split one — a run is one actor's stretch of work, regardless
-    of what anyone else did in between."""
+    of what anyone else did in between.
+
+    The window is bounded by `limit`, so the OLDEST run may extend further back than
+    we loaded. When the window came back full, that oldest run is marked
+    "partial": True — its count/start describe only the events inside the window, not
+    necessarily the whole run. Every other run is complete (a newer run cannot be
+    clipped by an older boundary). Callers should treat a partial run's totals as a
+    lower bound and widen `limit` to see the rest."""
     # Pull the actor's most recent events (newest-first), then walk them oldest-first
     # so each comparison weighs an event against the one immediately before it.
     ascending = list(reversed(list_activity(conn, actor_id=actor_id, limit=limit)))
+    # A full window means there may be older events we didn't load, so the oldest
+    # run could be clipped. A short window means we've seen all of this actor's
+    # history — every run is whole.
+    window_full = len(ascending) == limit
 
     runs: list[dict] = []
     current: list[dict] = []
@@ -333,6 +348,10 @@ def reconstruct_runs(
         prev, prev_ts = event, ts
     if current:
         runs.append(_run_summary(current))
+    # The oldest run (first built, since we walked ascending) is the only one the
+    # window can clip — flag it when the window was full.
+    if window_full and runs:
+        runs[0]["partial"] = True
     # Newest run first, matching how the feeds present recent activity.
     runs.reverse()
     return runs

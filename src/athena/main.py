@@ -151,10 +151,14 @@ class RunContextMiddleware:
         parent_raw = None
         for name, value in scope.get("headers", []):
             lname = name.lower()
+            # Decode as UTF-8 (errors replaced, never raised) to match how Starlette
+            # decodes the ?run_id= / ?parent_run_id= query params used to replay and
+            # walk lineage — so a run id stored from a header matches when filtered
+            # back. latin-1 here would make a non-ASCII id round-trip as mojibake.
             if lname == b"x-athena-run":
-                run_raw = value.decode("latin-1")
+                run_raw = value.decode("utf-8", "replace")
             elif lname == b"x-athena-parent-run":
-                parent_raw = value.decode("latin-1")
+                parent_raw = value.decode("utf-8", "replace")
         run_token = run_context.set_run_id(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
         try:
