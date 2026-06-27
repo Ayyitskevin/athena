@@ -71,13 +71,23 @@ def record(
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
     a controlled verb; this layer only writes.
 
-    The event is stamped with the ambient run id (the X-Athena-Run header for the
-    request in flight, via run_context) so the caller never threads it through — it
-    is NULL when no run was supplied, which is every untagged action."""
+    The event is stamped with the ambient run id and its parent run id (the
+    X-Athena-Run / X-Athena-Parent-Run headers for the request in flight, via
+    run_context) so the caller never threads them through — both are NULL when not
+    supplied, which is every untagged or top-level action."""
     cur = conn.execute(
-        "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail, run_id) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (actor_id, verb, target_kind, target_id, detail, run_context.get_run_id()),
+        "INSERT INTO activity "
+        "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            actor_id,
+            verb,
+            target_kind,
+            target_id,
+            detail,
+            run_context.get_run_id(),
+            run_context.get_parent_run_id(),
+        ),
     )
     # Fan the event out to the inbox of anyone watching this target (not the actor).
     # notify_watchers doesn't commit, so the event row and its notifications land in
@@ -106,6 +116,7 @@ def list_activity(
     actor_id: int | None = None,
     actor_is_agent: bool | None = None,
     run_id: str | None = None,
+    parent_run_id: str | None = None,
     verb: str | None = None,
     search: str | None = None,
     before_id: int | None = None,
@@ -116,9 +127,10 @@ def list_activity(
     the global feed to a kind, actor_id/verb/search to narrow who/what. actor_is_agent
     is the actor-type lens — True for agents only, False for humans only — answering
     "what did the agents do?" distinctly from human activity. run_id is deterministic
-    replay: exactly the events tagged with that run. before_id is the paging cursor —
-    only rows older than it (a.id < before_id), so the caller can walk back through
-    history one page at a time on a stable, append-only ordering."""
+    replay: exactly the events tagged with that run. parent_run_id walks lineage the
+    other way: the events of the CHILD runs a given run spawned. before_id is the
+    paging cursor — only rows older than it (a.id < before_id), so the caller can walk
+    back through history one page at a time on a stable, append-only ordering."""
     clauses: list[str] = []
     params: list = []
     if target_kind is not None:
@@ -137,6 +149,9 @@ def list_activity(
     if run_id is not None:
         clauses.append("a.run_id = ?")
         params.append(run_id)
+    if parent_run_id is not None:
+        clauses.append("a.parent_run_id = ?")
+        params.append(parent_run_id)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
@@ -174,6 +189,7 @@ def list_events(
     actor_id: int | None = None,
     actor_is_agent: bool | None = None,
     run_id: str | None = None,
+    parent_run_id: str | None = None,
     verb: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
@@ -189,8 +205,9 @@ def list_events(
     opposite.) Filters mirror list_activity so a consumer can narrow to one kind,
     one target, one actor, one verb, one actor type (actor_is_agent: True for agents
     only, False for humans only — so an integration can subscribe to just the agents'
-    stream, or just the humans'), or one run_id (the exact events of a known run, for
-    deterministic replay)."""
+    stream, or just the humans'), one run_id (the exact events of a known run, for
+    deterministic replay), or one parent_run_id (the events of the child runs a run
+    spawned, for walking lineage)."""
     clauses: list[str] = []
     params: list = []
     if after_id is not None:
@@ -212,6 +229,9 @@ def list_events(
     if run_id is not None:
         clauses.append("a.run_id = ?")
         params.append(run_id)
+    if parent_run_id is not None:
+        clauses.append("a.parent_run_id = ?")
+        params.append(parent_run_id)
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
@@ -239,12 +259,14 @@ def _parse_ts(value: str) -> datetime | None:
 def _run_summary(events: list[dict]) -> dict:
     """Wrap a contiguous group of one actor's events as a run: its span, its size,
     its run id (the X-Athena-Run all its events share, or None for a heuristic run),
-    and the events themselves (oldest-first) so a caller can replay the sequence."""
+    its parent run id (the run that spawned it, for lineage), and the events
+    themselves (oldest-first) so a caller can replay the sequence."""
     first, last = events[0], events[-1]
     return {
         "actor_id": first["actor_id"],
         "actor_name": first["actor_name"],
         "run_id": first["run_id"],
+        "parent_run_id": first["parent_run_id"],
         "started_at": first["created_at"],
         "ended_at": last["created_at"],
         "first_id": first["id"],

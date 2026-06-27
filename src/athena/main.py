@@ -147,16 +147,21 @@ class RunContextMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        raw = None
+        run_raw = None
+        parent_raw = None
         for name, value in scope.get("headers", []):
-            if name.lower() == b"x-athena-run":
-                raw = value.decode("latin-1")
-                break
-        token = run_context.set_run_id(raw)
+            lname = name.lower()
+            if lname == b"x-athena-run":
+                run_raw = value.decode("latin-1")
+            elif lname == b"x-athena-parent-run":
+                parent_raw = value.decode("latin-1")
+        run_token = run_context.set_run_id(run_raw)
+        parent_token = run_context.set_parent_run_id(parent_raw)
         try:
             await self.app(scope, receive, send)
         finally:
-            run_context.reset_run_id(token)
+            run_context.reset_parent_run_id(parent_token)
+            run_context.reset_run_id(run_token)
 
 
 async def _send_json_response(

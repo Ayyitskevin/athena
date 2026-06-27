@@ -36,9 +36,11 @@ class EventOut(BaseModel):
     target_id: int
     detail: str
     created_at: str
-    # The run this event belongs to (the X-Athena-Run it was recorded under), or
-    # None for untagged actions — so a consumer can group a stream into runs by id.
+    # The run this event belongs to (the X-Athena-Run it was recorded under), or None
+    # for untagged actions — so a consumer can group a stream into runs by id; and the
+    # run that spawned that run (lineage), or None at top level.
     run_id: str | None = None
+    parent_run_id: str | None = None
 
 
 class EventFeed(BaseModel):
@@ -70,6 +72,9 @@ def events(
     run_id: str | None = Query(
         None, description="replay one run: exactly the events tagged with this id"
     ),
+    parent_run_id: str | None = Query(
+        None, description="lineage: the events of the child runs this run spawned"
+    ),
     verb: str | None = Query(None, description="filter to one event type"),
     limit: int = Query(50, ge=1, le=200),
     actor: dict = Depends(current_actor),
@@ -89,6 +94,7 @@ def events(
         actor_id=actor_id,
         actor_is_agent=None if actor_type is None else actor_type == "agent",
         run_id=run_id,
+        parent_run_id=parent_run_id,
         verb=verb,
         limit=limit + 1,
     )

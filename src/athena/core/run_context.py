@@ -20,6 +20,13 @@ _run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "athena_run_id", default=None
 )
 
+# The PARENT run id — the run that spawned the current one (lineage). None for a
+# top-level run, or any untagged request. Set/reset alongside _run_id by the
+# middleware, so every event records both which run it is and which run begot it.
+_parent_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "athena_parent_run_id", default=None
+)
+
 # An opaque client string; bound its length so a hostile/huge header can't bloat
 # every activity row. Long enough for any UUID/ULID/job id a caller would use.
 _MAX_RUN_ID_LEN = 200
@@ -52,3 +59,19 @@ def reset_run_id(token: contextvars.Token) -> None:
 def get_run_id() -> str | None:
     """The run id in force for the current request, or None if untagged."""
     return _run_id.get()
+
+
+def set_parent_run_id(raw: str | None) -> contextvars.Token:
+    """Set the current parent run id from a raw header value; return the reset token.
+    The caller (the ASGI middleware) MUST reset with it when the request ends."""
+    return _parent_run_id.set(normalize(raw))
+
+
+def reset_parent_run_id(token: contextvars.Token) -> None:
+    """Restore the previous parent run id, so it never outlives its request."""
+    _parent_run_id.reset(token)
+
+
+def get_parent_run_id() -> str | None:
+    """The parent run id in force for the current request, or None at top level."""
+    return _parent_run_id.get()
