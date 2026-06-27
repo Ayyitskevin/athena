@@ -48,6 +48,12 @@ class WebhookCreated(WebhookOut):
     secret: str
 
 
+class WebhookUpdate(BaseModel):
+    # Pause (false) or resume (true) delivery without deleting the row (and its
+    # cursor). The only mutable field — url/secret/event_kind are fixed at creation.
+    active: bool
+
+
 @router.get("", response_model=list[WebhookOut])
 def list_all(
     actor: dict = Depends(admin_actor),
@@ -88,6 +94,21 @@ def show(
     if webhook is None:
         raise HTTPException(status_code=404, detail="no such webhook")
     return webhook
+
+
+@router.patch("/{webhook_id}", response_model=WebhookOut)
+def update(
+    webhook_id: int,
+    payload: WebhookUpdate,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Pause/resume is the one supported edit: it keeps the cursor (no replay/skip) and
+    # lets an operator stop a misbehaving endpoint without losing where it was up to.
+    updated = webhooks.set_webhook_active(conn, webhook_id, payload.active)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="no such webhook")
+    return updated
 
 
 @router.delete("/{webhook_id}", status_code=204)

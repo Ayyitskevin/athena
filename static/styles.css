@@ -364,6 +364,23 @@ footer {
     font-size: 0.85rem;
 }
 
+/* Webhook delivery state on the admin list. */
+.badge-active {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: #dcfce7;
+    color: #166534;
+}
+
+.webhook-failing {
+    font-weight: 600;
+    color: #b91c1c;
+    cursor: help;
+}
+
 .empty-state {
     padding: 2rem;
     text-align: center;
