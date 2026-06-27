@@ -138,6 +138,76 @@ class AthenaClient:
             self._client.post(f"/issues/{issue_id}/comments", json={"body": body})
         )
 
+    # --- hierarchy (parent / children) --------------------------------------
+
+    def set_issue_parent(self, issue_id: int, parent_id: int | None) -> Any:
+        # Send parent_id even when None (clear the parent) — _params would drop it.
+        return self._result(
+            self._client.put(
+                f"/issues/{issue_id}/parent", json={"parent_id": parent_id}
+            )
+        )
+
+    def list_subtasks(self, issue_id: int) -> Any:
+        return self._result(self._client.get(f"/issues/{issue_id}/children"))
+
+    # --- dependencies (blocks / blocked_by / relates) -----------------------
+
+    def list_issue_links(self, issue_id: int) -> Any:
+        return self._result(self._client.get(f"/issues/{issue_id}/links"))
+
+    def link_issues(self, issue_id: int, target_ref: str, relation: str) -> Any:
+        return self._result(
+            self._client.post(
+                f"/issues/{issue_id}/links",
+                json={"target_ref": target_ref, "relation": relation},
+            )
+        )
+
+    def unlink_issues(self, issue_id: int, relation: str, target_id: int) -> Any:
+        return self._result(
+            self._client.delete(f"/issues/{issue_id}/links/{relation}/{target_id}")
+        )
+
+    # --- sprints ------------------------------------------------------------
+
+    def list_sprints(self, project_id: int, *, state: str | None = None) -> Any:
+        return self._result(
+            self._client.get(
+                f"/projects/{project_id}/sprints", params=self._params(state=state)
+            )
+        )
+
+    def set_issue_sprint(self, issue_id: int, sprint_id: int | None) -> Any:
+        # Send sprint_id even when None (move to the backlog) — _params would drop it.
+        return self._result(
+            self._client.put(
+                f"/issues/{issue_id}/sprint", json={"sprint_id": sprint_id}
+            )
+        )
+
+    # --- labels -------------------------------------------------------------
+
+    def list_labels(self) -> Any:
+        return self._result(self._client.get("/labels"))
+
+    def create_label(self, name: str, *, color: str = "#6b7280") -> Any:
+        return self._result(
+            self._client.post("/labels", json={"name": name, "color": color})
+        )
+
+    def attach_label(self, issue_id: int, label_id: int) -> Any:
+        return self._result(
+            self._client.post(
+                f"/issues/{issue_id}/labels", json={"label_id": label_id}
+            )
+        )
+
+    def detach_label(self, issue_id: int, label_id: int) -> Any:
+        return self._result(
+            self._client.delete(f"/issues/{issue_id}/labels/{label_id}")
+        )
+
     # --- projects & users ---------------------------------------------------
 
     def list_projects(self) -> Any:

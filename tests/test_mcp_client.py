@@ -96,6 +96,46 @@ def test_recent_events_envelope(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
+    # WHY: these surfaces (parent/child, dependencies, sprints, labels) all have
+    # REST endpoints + data layers, but were unreachable via MCP — an agent could
+    # create an issue but not organize it. This drives the full path for each.
+    tc, ath = _client(tmp_path, "cover.db")
+    try:
+        proj = tc.post("/projects", json={"name": "Ops", "key": "OPS"}).json()
+        epic = ath.create_issue(title="Epic", project_id=proj["id"])
+        task = ath.create_issue(title="Task", project_id=proj["id"])
+
+        # Hierarchy: nest the task under the epic, list it, then unnest it.
+        ath.set_issue_parent(task["id"], epic["id"])
+        assert [c["id"] for c in ath.list_subtasks(epic["id"])] == [task["id"]]
+        assert ath.set_issue_parent(task["id"], None)["parent_id"] is None
+
+        # Dependencies: the epic blocks the task; read it back, then remove it.
+        linked = ath.link_issues(epic["id"], str(task["id"]), "blocks")
+        assert [b["id"] for b in linked["blocks"]] == [task["id"]]
+        assert [b["id"] for b in ath.list_issue_links(epic["id"])["blocks"]] == [task["id"]]
+        ath.unlink_issues(epic["id"], "blocks", task["id"])
+        assert ath.list_issue_links(epic["id"])["blocks"] == []
+
+        # Labels: create one in the shared vocabulary, attach + detach it.
+        label = ath.create_label("bug", color="#ff0000")
+        assert label["name"] == "bug" and label["id"] in [
+            la["id"] for la in ath.list_labels()
+        ]
+        attached = ath.attach_label(task["id"], label["id"])
+        assert label["id"] in [la["id"] for la in attached["labels"]]
+        assert ath.detach_label(task["id"], label["id"])["labels"] == []
+
+        # Sprints: create one in the project, put the task in it, list it, clear it.
+        sprint = tc.post(f"/projects/{proj['id']}/sprints", json={"name": "S1"}).json()
+        assert ath.set_issue_sprint(task["id"], sprint["id"])["sprint_id"] == sprint["id"]
+        assert [s["id"] for s in ath.list_sprints(proj["id"])] == [sprint["id"]]
+        assert ath.set_issue_sprint(task["id"], None)["sprint_id"] is None
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_error_surfaces_status_and_detail(tmp_path):
     tc, ath = _client(tmp_path, "err.db")
     try:
@@ -136,6 +176,18 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_page",
             "create_page",
             "update_page",
+            # The newly-added organize-an-issue surface.
+            "set_issue_parent",
+            "list_subtasks",
+            "list_issue_links",
+            "link_issues",
+            "unlink_issues",
+            "list_sprints",
+            "set_issue_sprint",
+            "list_labels",
+            "create_label",
+            "attach_label",
+            "detach_label",
         } <= names
 
         # A tool call goes all the way through to the API and creates real data.
