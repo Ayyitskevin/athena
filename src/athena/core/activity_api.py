@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from athena.core import activity
@@ -20,6 +20,11 @@ from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/activity", tags=["core"])
+
+# How many rows one CSV export may return. Higher than the JSON feed's 200 cap
+# because an operator/compliance export wants bulk; bounded so one request can't
+# pull an unbounded trail into memory. Page the whole trail with before_id.
+_EXPORT_MAX = 10000
 
 
 class ActivityOut(BaseModel):
@@ -105,6 +110,54 @@ def feed(
         search=q,
         before_id=before_id,
         limit=limit,
+    )
+
+
+@router.get("/export.csv")
+def export_csv(
+    target_kind: str | None = Query(None, description="filter by kind"),
+    target_id: int | None = Query(None),
+    actor_id: int | None = Query(None, description="filter to one actor's actions"),
+    actor_type: Literal["agent", "human"] | None = Query(
+        None, description="filter by actor type: agents only, or humans only"
+    ),
+    run_id: str | None = Query(None, description="only events tagged with this run"),
+    parent_run_id: str | None = Query(
+        None, description="lineage: events of the child runs this run spawned"
+    ),
+    verb: str | None = Query(None, description="filter to one event type"),
+    q: str | None = Query(None, description="search actor, verb, target, or detail"),
+    before_id: int | None = Query(
+        None, description="paging cursor: only events older than this id"
+    ),
+    limit: int = Query(1000, ge=1, le=_EXPORT_MAX),
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> Response:
+    # The audit trail as a CSV download — the REST twin of the web Activity page's
+    # export, for compliance/archival tooling. Same authenticated gate and the SAME
+    # filter set as the JSON feed, over the same data-access read, so the two can
+    # never disagree on what matches; only the representation (CSV) and the higher
+    # row cap differ. Page the full trail by passing the oldest id back as before_id.
+    if target_id is not None and target_kind is None:
+        raise HTTPException(status_code=422, detail="target_id requires target_kind")
+    rows = activity.list_activity(
+        conn,
+        target_kind=target_kind,
+        target_id=target_id,
+        actor_id=actor_id,
+        actor_is_agent=None if actor_type is None else actor_type == "agent",
+        run_id=run_id,
+        parent_run_id=parent_run_id,
+        verb=verb,
+        search=q,
+        before_id=before_id,
+        limit=limit,
+    )
+    return Response(
+        activity.to_csv(rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="athena-activity.csv"'},
     )
 
 
