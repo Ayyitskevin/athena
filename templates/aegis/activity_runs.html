@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Runs — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/activity" class="muted">← Back to Activity</a>
+        <h1>Runs</h1>
+    </div>
+</div>
+
+<p class="muted">
+    One actor's recent activity, reconstructed into runs — the work they did in a
+    sitting before going quiet. A reading lens over the audit trail, newest run first.
+</p>
+
+{# Pick whose runs to view. Plain GET so the choice lives in the URL (shareable).
+   A run is one actor's work, so this is required — there is no "everyone" view. #}
+<form method="get" action="/aegis/activity/runs" class="activity-filters">
+    <label>
+        Actor
+        <select name="actor" onchange="this.form.submit()">
+            <option value="">Choose an actor…</option>
+            {% for u in all_users %}
+            <option value="{{ u.id }}" {% if f_actor == u.id %}selected{% endif %}>{{ u.name }}{% if u.is_agent %} (agent){% endif %}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">View runs</button>
+</form>
+
+{% if selected_actor is none %}
+    {% if f_actor %}
+    <p class="muted">No such actor.</p>
+    {% else %}
+    <p class="muted">Pick an actor above to reconstruct their runs.</p>
+    {% endif %}
+{% elif not runs %}
+    <p class="muted">No activity yet for {{ selected_actor.name }}.</p>
+{% else %}
+    <p class="muted">{{ runs | length }} run{{ "s" if runs | length != 1 }} for <strong>{{ selected_actor.name }}</strong>{% if selected_actor.is_agent %} <span class="agent-badge">agent</span>{% endif %}.</p>
+    {% for run in runs %}
+    <details class="run-card" {% if loop.first %}open{% endif %}>
+        <summary>
+            <span class="run-span">{{ run.started_at }} → {{ run.ended_at }}</span>
+            <span class="run-count">{{ run.event_count }} event{{ "s" if run.event_count != 1 }}</span>
+        </summary>
+        {% with events=run.events, show_target=True %}
+        {% include "aegis/partials/activity_list.html" %}
+        {% endwith %}
+    </details>
+    {% endfor %}
+{% endif %}
+
+<p class="note">Runs from the API.</p>
+{% endblock %}

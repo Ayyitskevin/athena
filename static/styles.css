@@ -1278,3 +1278,47 @@ footer {
     margin-top: 1rem;
     text-align: center;
 }
+
+/* Two header buttons side by side (e.g. "View as runs" + "Download CSV"). */
+.page-header-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* A reconstructed run: a collapsible card whose summary is its span + size. */
+.run-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+    background: #fff;
+}
+
+.run-card > summary {
+    cursor: pointer;
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.run-card[open] > summary {
+    border-bottom: 1px solid #eef1f4;
+}
+
+.run-span {
+    font-variant-numeric: tabular-nums;
+    color: #374151;
+}
+
+.run-count {
+    color: #6b7280;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.run-card .activity-list {
+    padding: 0.25rem 0.8rem 0.6rem;
+}
