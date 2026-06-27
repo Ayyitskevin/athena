@@ -63,6 +63,7 @@ def _issues_url(
     assignee: str = "",
     label: str = "",
     project: str = "",
+    sprint: str = "",
     search: str = "",
     sort: str = "created_at",
     order: str = "desc",
@@ -77,6 +78,7 @@ def _issues_url(
             "assignee": assignee,
             "label": label,
             "project": project,
+            "sprint": sprint,
             "search": search,
             "sort": sort,
             "order": order,
@@ -336,6 +338,11 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     if parsed is None:
         return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
     project_id, backlog = parsed
+    # Sprint is a plain issue column; a numeric value restricts to that sprint, and
+    # anything else (incl. blank) means "don't filter by sprint" — the same lenient
+    # parse the assignee filter uses, since the dropdown only ever submits real ids.
+    sprint_raw = (request.query_params.get("sprint") or "").strip()
+    sprint_id = int(sprint_raw) if sprint_raw.isdigit() else None
     # Do NOT pre-lower the needle: SQLite LIKE is already case-insensitive for
     # ASCII, and lowering here would diverge from the API (which passes the raw
     # search straight to list_issues) on non-ASCII text. Let LIKE own casing.
@@ -362,6 +369,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         search=search,
         project_id=project_id,
         backlog=backlog,
+        sprint_id=sprint_id,
         ids=ids,
     )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
@@ -392,6 +400,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             assignee=assignee_raw,
             label=label_filter,
             project=project_raw,
+            sprint=sprint_raw,
             search=search,
             sort=sort_by,
             order=order_by,
@@ -410,6 +419,16 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
+
+    # Sprint-filter options. A sprint belongs to one project, so each option is
+    # labelled with its project's key to disambiguate same-named sprints across
+    # projects (e.g. "ATH · Sprint 1"). One pass over projects builds the key map.
+    all_projects = projects.list_projects(conn)
+    project_keys = {p["id"]: p["key"] for p in all_projects}
+    all_sprints = [
+        {"id": s["id"], "name": s["name"], "project_key": project_keys.get(s["project_id"], "?")}
+        for s in sprints.list_sprints(conn)
+    ]
 
     # Pre-fill link for "Save current view" — carries the active filters to the
     # saved-filters create form so an ad-hoc search becomes a named filter in one
@@ -440,7 +459,9 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "label_filter": label_filter,
             "all_labels": labels.list_labels(conn),
             "project_filter": project_raw,
-            "all_projects": projects.list_projects(conn),
+            "all_projects": all_projects,
+            "sprint_filter": sprint_raw,
+            "all_sprints": all_sprints,
             "search": search,
             "sort": sort,
             "order": order,
@@ -921,6 +942,19 @@ def _render_issue_detail(
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
+        # Sprints the issue could join — only its own project's, since a sprint
+        # belongs to one project (and a backlog issue with no project has none).
+        "issue_sprints": (
+            sprints.list_sprints(conn, project_id=issue["project_id"])
+            if issue["project_id"]
+            else []
+        ),
+        # The sprint the issue is currently in (for the read-view label), or None.
+        "issue_sprint": (
+            sprints.get_sprint(conn, issue["sprint_id"])
+            if issue.get("sprint_id")
+            else None
+        ),
         "issue_statuses": statuses.list_statuses(conn, issue["project_id"]),
         "parent": issues.get_issue(conn, issue["parent_id"]) if issue.get("parent_id") else None,
         "children": children,
@@ -1024,6 +1058,57 @@ def change_issue_project(
         issue_id=issue_id,
         before=issue["project_id"],
         after=updated["project_id"],
+    )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/sprint", dependencies=[Depends(verify_csrf)])
+def change_issue_sprint(
+    request: Request,
+    issue_id: int,
+    sprint_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Move an issue into a sprint, or back to the backlog, from the detail page.
+    Same write gate as status/assign. An empty value means "no sprint" (None);
+    otherwise the sprint must exist AND belong to the issue's OWN project — the
+    same rule the REST PUT /issues/{id}/sprint enforces (there a 422), surfaced
+    here as a 400."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to change sprint.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+
+    sprint_id = sprint_id.strip()
+    if sprint_id == "":
+        target: int | None = None
+    else:
+        if not sprint_id.isdigit():
+            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
+        sprint = sprints.get_sprint(conn, int(sprint_id))
+        if sprint is None:
+            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
+        # A sprint belongs to one project; an issue can only join a sprint in its
+        # own project (a backlog issue with no project can't be in any sprint).
+        if sprint["project_id"] != issue["project_id"]:
+            return HTMLResponse(
+                '<div class="error">That sprint belongs to a different project.</div>',
+                status_code=400,
+            )
+        target = int(sprint_id)
+
+    issues.set_sprint(conn, issue_id, target)
+    issue_activity.record_sprint_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["sprint_id"],
+        after=target,
     )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 

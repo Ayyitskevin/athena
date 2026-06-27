@@ -294,6 +294,7 @@ def index(
     label: str | None = None,
     search: str | None = None,
     project: str | None = None,
+    sprint: int | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Optional filters, same semantics the web list uses (one shared path in
@@ -301,7 +302,8 @@ def index(
     # issues.py stays decoupled from the join; an unknown label matches nothing.
     # project is a direct column on the issue: an id restricts to that project,
     # "none" restricts to the backlog (no project). priority/assignee are direct
-    # columns too — the same dimensions a saved filter persists.
+    # columns too — the same dimensions a saved filter persists. sprint is a direct
+    # column too: an id restricts to that sprint (an unknown id matches nothing).
     project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
@@ -312,6 +314,7 @@ def index(
         search=search,
         project_id=project_id,
         backlog=backlog,
+        sprint_id=sprint,
         ids=ids,
     )
     return _with_labels_many(conn, rows)
