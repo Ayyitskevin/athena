@@ -24,6 +24,7 @@ from athena.aegis import (
     labels,
     projects,
     saved_filters,
+    sprints,
     statuses,
 )
 from athena.core import activity, attachments, identity, links, notifications, search, users
@@ -1982,6 +1983,155 @@ def project_delete(
         )
     projects.delete_project(conn, project_id)
     return RedirectResponse("/aegis/projects", status_code=303)
+
+
+# --- Sprints: a project's iterations --------------------------------------
+
+
+def _sprints_signin(verb: str = "manage sprints") -> HTMLResponse:
+    return HTMLResponse(
+        f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
+        status_code=401,
+    )
+
+
+def _authorize_sprint_write(conn, sprint_id: int, user: dict):
+    """Resolve a sprint the user may manage, or an error response. Returns
+    (sprint, None) on success, or (None, HTMLResponse). Managing a sprint is the
+    project creator's call — it reuses the project gate."""
+    sprint = sprints.get_sprint(conn, sprint_id)
+    if sprint is None:
+        return None, HTMLResponse(
+            '<div class="error">No such sprint.</div>', status_code=404
+        )
+    _, err = _authorize_project_write(conn, sprint["project_id"], user)
+    if err is not None:
+        return None, err
+    return sprint, None
+
+
+@router.get("/aegis/projects/{project_id}/sprints", response_class=HTMLResponse)
+def project_sprints(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """A project's sprints — open read, like the issue list. The create form and the
+    start/complete/delete controls render only for the project creator."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        return HTMLResponse('<div class="error">No such project.</div>', status_code=404)
+    sprint_list = sprints.list_sprints(conn, project_id=project_id)
+    counts = {s["id"]: sprints.count_issues_in_sprint(conn, s["id"]) for s in sprint_list}
+    user = getattr(request.state, "user", None)
+    can_manage = (
+        user is not None
+        and identity.can_write(user)
+        and project["created_by"] == user["id"]
+    )
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/sprints.html",
+        context={
+            "project": project,
+            "sprints": sprint_list,
+            "counts": counts,
+            "can_manage": can_manage,
+        },
+    )
+
+
+@router.post(
+    "/aegis/projects/{project_id}/sprints", dependencies=[Depends(verify_csrf)]
+)
+def create_sprint_web(
+    request: Request,
+    project_id: int,
+    name: str = Form(""),
+    goal: str = Form(""),
+    start_date: str = Form(""),
+    end_date: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _sprints_signin()
+    _, err = _authorize_project_write(conn, project_id, user)
+    if err is not None:
+        return err
+    name = name.strip()
+    if not name:
+        return HTMLResponse(
+            '<div class="error">Sprint name is required.</div>', status_code=400
+        )
+    sprints.create_sprint(
+        conn,
+        project_id=project_id,
+        name=name,
+        goal=goal.strip(),
+        start_date=start_date.strip() or None,
+        end_date=end_date.strip() or None,
+    )
+    return RedirectResponse(f"/aegis/projects/{project_id}/sprints", status_code=303)
+
+
+@router.post("/aegis/sprints/{sprint_id}/start", dependencies=[Depends(verify_csrf)])
+def start_sprint_web(
+    request: Request, sprint_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _sprints_signin()
+    sprint, err = _authorize_sprint_write(conn, sprint_id, user)
+    if err is not None:
+        return err
+    try:
+        sprints.start_sprint(conn, sprint_id)
+    except sprints.SprintStateError as exc:
+        return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+    return RedirectResponse(
+        f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
+    )
+
+
+@router.post("/aegis/sprints/{sprint_id}/complete", dependencies=[Depends(verify_csrf)])
+def complete_sprint_web(
+    request: Request, sprint_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _sprints_signin()
+    sprint, err = _authorize_sprint_write(conn, sprint_id, user)
+    if err is not None:
+        return err
+    try:
+        sprints.complete_sprint(conn, sprint_id)
+    except sprints.SprintStateError as exc:
+        return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+    return RedirectResponse(
+        f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
+    )
+
+
+@router.post("/aegis/sprints/{sprint_id}/delete", dependencies=[Depends(verify_csrf)])
+def delete_sprint_web(
+    request: Request, sprint_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _sprints_signin()
+    sprint, err = _authorize_sprint_write(conn, sprint_id, user)
+    if err is not None:
+        return err
+    if sprints.count_issues_in_sprint(conn, sprint_id) > 0:
+        return HTMLResponse(
+            '<div class="error">Move its issues out of the sprint first.</div>',
+            status_code=409,
+        )
+    sprints.delete_sprint(conn, sprint_id)
+    return RedirectResponse(
+        f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
+    )
 
 
 @router.post("/aegis/projects/{project_id}/statuses", dependencies=[Depends(verify_csrf)])

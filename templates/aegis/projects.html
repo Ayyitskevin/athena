@@ -31,8 +31,9 @@
             <td class="muted">{{ p.description or "—" }}</td>
             <td class="muted">{{ counts[p.id] }}</td>
             <td class="muted">
+                <a href="/aegis/projects/{{ p.id }}/sprints">Sprints</a>
                 {% if can_write and request.state.user.id == p.created_by %}
-                <a href="/aegis/projects/{{ p.id }}/edit">Edit</a>
+                · <a href="/aegis/projects/{{ p.id }}/edit">Edit</a>
                 {% endif %}
             </td>
         </tr>

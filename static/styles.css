@@ -1380,3 +1380,34 @@ footer {
     display: block;
     text-align: center;
 }
+
+/* Sprint state badges + the row's action buttons. */
+.sprint-state {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    text-transform: capitalize;
+    font-weight: 500;
+}
+
+.sprint-planned {
+    background: #eef1f4;
+    color: #5a6570;
+}
+
+.sprint-active {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.sprint-completed {
+    background: #e7f0fb;
+    color: #1f5fa8;
+}
+
+.sprint-actions {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+}
