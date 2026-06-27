@@ -55,6 +55,15 @@ class UserOut(BaseModel):
     created_at: str
 
 
+class UserMeOut(UserOut):
+    # The acting bearer token's effective scopes, already normalized (an admin
+    # token collapses to ["admin"]). None when the request is NOT token-authenticated
+    # — a browser session or the trusted actor-header path is not scope-limited, the
+    # same semantics token_has_scope relies on, so the caller can tell "no token cap"
+    # apart from "a token that happens to allow everything".
+    scopes: list[str] | None = None
+
+
 @router.post("", response_model=UserOut, status_code=201)
 def create(
     payload: UserCreate,
@@ -97,6 +106,24 @@ def index(
     # Listing users is an authenticated operation — don't let an exposed instance
     # be enumerated anonymously.
     return users.list_users(conn)
+
+
+@router.get("/me", response_model=UserMeOut)
+def me(actor: dict = Depends(current_actor)) -> dict:
+    """Who am I? Returns the authenticated user's identity, role, and agent flag,
+    plus the acting token's effective scopes — so an agent holding only a bearer
+    token can discover who it is and what it may do without first provoking a 403.
+
+    No DB read: current_actor has already resolved the full actor (and tokens.py
+    stamped the token's scopes onto it), so this just reshapes what is in hand.
+    `scopes` is null for non-token auth (a browser session or the trusted
+    actor-header path), which is not scope-limited. The response_model trims the
+    actor dict to the declared fields, so internal keys (_token_id, _token_scopes)
+    and the password hash never leak.
+
+    Declared before /{user_id} so "me" is matched here, not as a user id."""
+    scopes = actor.get("_token_scopes")
+    return {**actor, "scopes": list(scopes) if scopes is not None else None}
 
 
 @router.get("/{user_id}", response_model=UserOut)
