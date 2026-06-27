@@ -64,3 +64,31 @@ ATTACH_DIR = Path(os.environ.get("ATHENA_ATTACH_DIR", "attachments"))
 ATTACH_MAX_BYTES = int(
     os.environ.get("ATHENA_ATTACH_MAX_BYTES", str(10 * 1024 * 1024))
 )
+
+# OpenID Connect single sign-on. SSO is OFF unless all four connection settings are
+# present (see oidc_enabled): the IdP's issuer URL (its
+# /.well-known/openid-configuration is discovered from it), the client id/secret
+# registered with the IdP, and this app's own callback URL (must exactly match what
+# the IdP has registered). Local email+password login is unaffected — SSO is an
+# additional way to authenticate.
+OIDC_ISSUER = os.environ.get("ATHENA_OIDC_ISSUER", "").strip() or None
+OIDC_CLIENT_ID = os.environ.get("ATHENA_OIDC_CLIENT_ID", "").strip() or None
+OIDC_CLIENT_SECRET = os.environ.get("ATHENA_OIDC_CLIENT_SECRET", "").strip() or None
+OIDC_REDIRECT_URL = os.environ.get("ATHENA_OIDC_REDIRECT_URL", "").strip() or None
+# Optional allow-list of email domains that may auto-provision an account on first
+# SSO login (comma-separated, e.g. "acme.com,acme.io"). Empty = any domain the IdP
+# asserts. Set it to lock SSO to your organization.
+OIDC_ALLOWED_DOMAINS = tuple(
+    d.strip().lower()
+    for d in os.environ.get("ATHENA_OIDC_ALLOWED_DOMAINS", "").split(",")
+    if d.strip()
+)
+
+
+def oidc_enabled() -> bool:
+    """SSO is configured only when all four connection settings are present. Until
+    then the routes 404 and the login page shows no SSO button — an unconfigured
+    deploy behaves exactly as it did before."""
+    return all(
+        (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URL)
+    )
