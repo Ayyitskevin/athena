@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from athena import config
 from athena.aegis import (
     comments,
+    contributors,
     dependencies,
     issue_activity,
     issue_search,
@@ -958,3 +959,65 @@ def detach_label(
         conn, actor_id=actor["id"], issue_id=issue_id, label_id=label_id
     )
     return _with_labels(conn, issue)
+
+
+# --- Contributors on an issue: delegating teammates (humans or agents) ------
+# The single assignee stays the accountable owner; contributors are additional
+# actors working the issue. Adding one is a write on the issue (creator-or-assignee
+# gated, same as labels). Reading the list is open, like comments/labels.
+
+
+class ContributorOut(BaseModel):
+    user_id: int
+    name: str
+    added_by: int
+    added_at: str
+
+
+class ContributorAdd(BaseModel):
+    user_id: int
+
+
+@router.get("/{issue_id}/contributors", response_model=list[ContributorOut])
+def list_issue_contributors(
+    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+) -> list[dict]:
+    # Open read, like listing comments/labels. 404 if the issue itself is missing.
+    if issues.get_issue(conn, issue_id) is None:
+        raise HTTPException(status_code=404, detail="no such issue")
+    return contributors.list_contributors(conn, issue_id)
+
+
+@router.post("/{issue_id}/contributors", response_model=list[ContributorOut], status_code=201)
+def add_issue_contributor(
+    issue_id: int,
+    payload: ContributorAdd,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Delegating is a write — same creator-or-assignee gate as labels/status.
+    _issue_for_write(conn, issue_id, actor)
+    if users.get_user(conn, payload.user_id) is None:
+        raise HTTPException(status_code=422, detail="no such user")
+    # Idempotent: record (and auto-watch) only when a NEW pairing was created.
+    if contributors.add_contributor(conn, issue_id, payload.user_id, actor["id"]):
+        issue_activity.record_contributor_added(
+            conn, actor_id=actor["id"], issue_id=issue_id, user_id=payload.user_id
+        )
+    return contributors.list_contributors(conn, issue_id)
+
+
+@router.delete("/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut])
+def remove_issue_contributor(
+    issue_id: int,
+    user_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    _issue_for_write(conn, issue_id, actor)
+    if not contributors.remove_contributor(conn, issue_id, user_id):
+        raise HTTPException(status_code=404, detail="not a contributor on this issue")
+    issue_activity.record_contributor_removed(
+        conn, actor_id=actor["id"], issue_id=issue_id, user_id=user_id
+    )
+    return contributors.list_contributors(conn, issue_id)

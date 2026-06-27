@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 from athena import config
 from athena.aegis import (
     comments,
+    contributors,
     dependencies,
     issue_activity,
     issue_search,
@@ -867,6 +868,7 @@ def _render_issue_detail(
         "is_watching": user is not None
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
+        "contributors": contributors.list_contributors(conn, issue_id),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": projects.list_projects(conn),
@@ -1068,6 +1070,66 @@ def remove_issue_label(
     if labels.remove_label_from_issue(conn, issue_id, label_id):
         issue_activity.record_label_removed(
             conn, actor_id=user["id"], issue_id=issue_id, label_id=label_id
+        )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/contributors", dependencies=[Depends(verify_csrf)])
+def add_issue_contributor(
+    request: Request,
+    issue_id: int,
+    user_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Delegate the issue to a teammate (human or agent) by adding them as a
+    contributor — the assignee stays the accountable owner. Same write gate as
+    labels/status. An unknown user is a 400; idempotent re-add is a no-op."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to add contributors.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    try:
+        target = int(user_id)
+    except ValueError:
+        return HTMLResponse('<div class="error">Pick a user.</div>', status_code=400)
+    if users.get_user(conn, target) is None:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+    if contributors.add_contributor(conn, issue_id, target, user["id"]):  # idempotent
+        issue_activity.record_contributor_added(
+            conn, actor_id=user["id"], issue_id=issue_id, user_id=target
+        )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/contributors/{user_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_issue_contributor(
+    request: Request,
+    issue_id: int,
+    user_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Remove a contributor. Same write gate. POST (not DELETE) because HTML forms
+    can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to manage contributors.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    if contributors.remove_contributor(conn, issue_id, user_id):
+        issue_activity.record_contributor_removed(
+            conn, actor_id=user["id"], issue_id=issue_id, user_id=user_id
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
