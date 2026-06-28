@@ -20,12 +20,11 @@ from athena.aegis import (
     issue_activity,
     issue_search,
     issues,
-    labels,
     projects,
     sprints,
     statuses,
 )
-from athena.core import activity, attachments, links, users
+from athena.core import activity, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor

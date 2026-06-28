@@ -15,8 +15,8 @@ that intersection, the things it must NOT change, and the boundaries:
     /issues/{ref} read), and the web /find drops into filtered issue mode when any
     filter is set.
 """
-from athena.aegis import issue_search, issues, labels, projects
-from athena.core import db
+from athena.aegis import issue_search, issues, projects
+from athena.core import db, labels
 from athena.main import create_app
 from athena.mentor import pages, spaces
 from fastapi.testclient import TestClient

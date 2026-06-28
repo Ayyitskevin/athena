@@ -23,7 +23,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from athena.aegis import issues, labels
+from athena.aegis import issues
+from athena.core import labels
 
 # The legal criteria keys. Anything else in a submitted criteria object is dropped
 # by normalize_criteria — a filter can only constrain the dimensions the issue list
