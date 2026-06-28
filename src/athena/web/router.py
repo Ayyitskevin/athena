@@ -1855,7 +1855,9 @@ def filter_detail(
             h["href"] = f"/aegis/issues/{h['source_id']}"
         context.update(hits=hits, total=len(hits))
     else:
-        matches = saved_filters.run_filter(conn, flt["criteria"])
+        matches = saved_filters.run_filter(
+            conn, flt["criteria"], visible_project_ids=access.visible_project_filter(conn, user)
+        )
         _attach_labels(conn, matches)
         context.update(issues=matches, total=len(matches))
     return _templates.TemplateResponse(
@@ -2254,12 +2256,13 @@ def project_sprints(
     start/complete/delete controls render only for the project creator."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
     project = projects.get_project(conn, project_id)
-    if project is None:
+    # A private project the viewer can't see is a 404, like a missing one.
+    if project is None or not access.can_see_project(conn, user, project_id):
         return HTMLResponse('<div class="error">No such project.</div>', status_code=404)
     sprint_list = sprints.list_sprints(conn, project_id=project_id)
     counts = {s["id"]: sprints.count_issues_in_sprint(conn, s["id"]) for s in sprint_list}
-    user = getattr(request.state, "user", None)
     can_manage = (
         user is not None
         and identity.can_write(user)

@@ -83,13 +83,22 @@ def validate_criteria(criteria: dict) -> str | None:
     return None
 
 
-def run_filter(conn: sqlite3.Connection, criteria: dict) -> list[dict]:
+def run_filter(
+    conn: sqlite3.Connection,
+    criteria: dict,
+    *,
+    visible_project_ids: set[int] | None = None,
+) -> list[dict]:
     """Resolve criteria into the issues that match, via issues.list_issues.
 
     Re-normalizes defensively (stored criteria is already clean, but a caller may
     hand in a raw dict). A label name is resolved to issue ids here so issues.py
     stays decoupled from the label join; the project string is parsed into the
-    (project_id, backlog) the list path expects."""
+    (project_id, backlog) the list path expects. visible_project_ids is the
+    visibility gate, threaded straight to list_issues — None means no gating (an
+    admin or an internal caller); the callers get it from
+    access.visible_project_filter, so a saved filter never surfaces an issue in a
+    project the runner can't see."""
     crit = normalize_criteria(criteria)
     project_id: int | None = None
     backlog = False
@@ -107,6 +116,7 @@ def run_filter(conn: sqlite3.Connection, criteria: dict) -> list[dict]:
         project_id=project_id,
         backlog=backlog,
         ids=ids,
+        visible_project_ids=visible_project_ids,
     )
 
 
