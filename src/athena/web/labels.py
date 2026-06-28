@@ -32,10 +32,18 @@ def labels_index(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     templates = get_templates()
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    # The per-label counts reflect only what this viewer may see, so a label's count
+    # never reveals how many hidden issues/pages carry it.
+    user = getattr(request.state, "user", None)
+    usage = labels.label_usage(
+        conn,
+        visible_project_ids=access.visible_project_filter(conn, user),
+        visible_space_ids=access.visible_space_filter(conn, user),
+    )
     return templates.TemplateResponse(
         request=request,
         name="labels/index.html",
-        context={"labels": labels.label_usage(conn)},
+        context={"labels": usage},
     )
 
 
