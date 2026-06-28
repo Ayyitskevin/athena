@@ -65,6 +65,7 @@ def _issues_url(
     project: str = "",
     sprint: str = "",
     search: str = "",
+    archived: str = "",
     sort: str = "created_at",
     order: str = "desc",
     page: int = 1,
@@ -80,6 +81,7 @@ def _issues_url(
             "project": project,
             "sprint": sprint,
             "search": search,
+            "archived": archived,
             "sort": sort,
             "order": order,
             "page": page,
@@ -343,6 +345,10 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # parse the assignee filter uses, since the dropdown only ever submits real ids.
     sprint_raw = (request.query_params.get("sprint") or "").strip()
     sprint_id = int(sprint_raw) if sprint_raw.isdigit() else None
+    # Archived issues are hidden by default (the soft-delete semantics every list
+    # wants); the "Show archived" toggle submits a truthy value to include them.
+    archived_raw = (request.query_params.get("archived") or "").strip()
+    include_archived = archived_raw.lower() in ("1", "true", "on", "yes")
     # Do NOT pre-lower the needle: SQLite LIKE is already case-insensitive for
     # ASCII, and lowering here would diverge from the API (which passes the raw
     # search straight to list_issues) on non-ASCII text. Let LIKE own casing.
@@ -370,6 +376,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         project_id=project_id,
         backlog=backlog,
         sprint_id=sprint_id,
+        include_archived=include_archived,
         ids=ids,
     )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
@@ -402,6 +409,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             project=project_raw,
             sprint=sprint_raw,
             search=search,
+            archived=archived_raw,
             sort=sort_by,
             order=order_by,
             page=page_num,
@@ -462,6 +470,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "all_projects": all_projects,
             "sprint_filter": sprint_raw,
             "all_sprints": all_sprints,
+            "include_archived": include_archived,
             "search": search,
             "sort": sort,
             "order": order,
@@ -1327,6 +1336,63 @@ def remove_issue_link(
     if err is not None:
         return err
     dependencies.remove_link(conn, from_id=issue_id, to_id=target_id, relation=relation)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/archive", dependencies=[Depends(verify_csrf)])
+def archive_issue_web(
+    request: Request,
+    issue_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Archive (soft-delete) an issue from its detail page. Same creator-or-assignee
+    gate as status/assign. The row is kept; it just drops out of the default lists
+    and boards until restored. 303 back to the issue (now shown as archived)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to archive.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    updated = issues.set_archived(conn, issue_id, True)
+    issue_activity.record_archive_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["archived_at"],
+        after=updated["archived_at"],
+    )
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/unarchive", dependencies=[Depends(verify_csrf)])
+def unarchive_issue_web(
+    request: Request,
+    issue_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Restore an archived issue to the active lists, from its detail page. Same
+    gate as archive."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to restore.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    updated = issues.set_archived(conn, issue_id, False)
+    issue_activity.record_archive_change(
+        conn,
+        actor_id=user["id"],
+        issue_id=issue_id,
+        before=issue["archived_at"],
+        after=updated["archived_at"],
+    )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

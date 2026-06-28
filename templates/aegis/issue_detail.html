@@ -39,6 +39,9 @@
     <div class="meta-sidebar">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
         <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+        {% if issue.archived_at %}
+        <div class="meta-item"><strong>Archived</strong> <span class="archived-badge" title="{{ issue.archived_at }}">archived</span></div>
+        {% endif %}
         <div class="meta-item"><strong>Priority</strong> <span class="priority {{ issue.priority }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
@@ -383,6 +386,15 @@
             {% endif %}
             <div class="action-buttons">
                 <a href="/aegis/issues?status={{ issue.status }}" class="button small secondary">View same status</a>
+                {% if can_modify %}
+                <form method="post"
+                      action="/aegis/issues/{{ issue.id }}/{{ 'unarchive' if issue.archived_at else 'archive' }}"
+                      class="inline-form"
+                      {% if not issue.archived_at %}data-confirm="Archive this issue? It will be hidden from the default lists until restored."{% endif %}>
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button small secondary">{{ 'Restore' if issue.archived_at else 'Archive' }}</button>
+                </form>
+                {% endif %}
             </div>
         </div>
     </div>

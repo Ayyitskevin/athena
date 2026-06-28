@@ -1411,3 +1411,22 @@ footer {
     gap: 0.3rem;
     flex-wrap: wrap;
 }
+
+/* Archived (soft-deleted) issue badge + the "Show archived" list toggle. */
+.archived-badge {
+    background: #6b7280;
+    color: #fff;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.filter-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+    color: #374151;
+}

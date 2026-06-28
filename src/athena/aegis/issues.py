@@ -177,6 +177,26 @@ def set_sprint(
     return get_issue(conn, issue_id)
 
 
+def set_archived(
+    conn: sqlite3.Connection, issue_id: int, archived: bool
+) -> dict | None:
+    """Archive (soft-delete) an issue or restore it. Returns the updated issue, or
+    None if no issue has that id. The row is never destroyed — archiving only stamps
+    archived_at (and clearing it restores the issue), so the history is preserved and
+    the default lists simply hide it. Idempotent: re-archiving an archived issue just
+    re-stamps the time; the boundary records the audit fact only on a real change."""
+    if archived:
+        conn.execute(
+            "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (issue_id,)
+        )
+    else:
+        conn.execute(
+            "UPDATE issues SET archived_at = NULL WHERE id = ?", (issue_id,)
+        )
+    conn.commit()
+    return get_issue(conn, issue_id)
+
+
 def set_project(
     conn: sqlite3.Connection, issue_id: int, project_id: int | None
 ) -> dict | None:
@@ -355,6 +375,7 @@ def list_issues(
     project_id: int | None = None,
     backlog: bool = False,
     sprint_id: int | None = None,
+    include_archived: bool = False,
     ids: list[int] | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
@@ -373,6 +394,9 @@ def list_issues(
       are mutually exclusive — the boundary picks one.
     - sprint_id: restrict to issues in this sprint (a direct column on the issue,
       like project_id). None means "don't filter by sprint at all".
+    - include_archived: by default (False) archived issues are hidden — the soft-
+      delete semantics every list/board wants. Pass True to include them (an
+      "archived too" view). A single-issue read (get_issue) is never filtered.
     - ids: restrict to these issue ids. Generic on purpose — the caller resolves
       *what* the ids mean (e.g. labels.py turns a label name into ids), so this
       module stays decoupled from labels. An empty list means "match nothing".
@@ -403,6 +427,8 @@ def list_issues(
     if sprint_id is not None:
         clauses.append("i.sprint_id = ?")
         params.append(sprint_id)
+    if not include_archived:
+        clauses.append("i.archived_at IS NULL")
     if ids is not None:
         placeholders = ",".join("?" for _ in ids)
         clauses.append(f"i.id IN ({placeholders})")
