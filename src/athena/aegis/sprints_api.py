@@ -52,11 +52,16 @@ class SprintEdit(BaseModel):
 def _project_for_sprint_write(
     conn: sqlite3.Connection, project_id: int, actor: dict
 ) -> dict:
-    """The project whose sprints the actor may manage, or raise: 404 if no such
-    project, 403 if the actor isn't its creator. Managing a project's cadence is the
-    creator's call, matching project edit/delete."""
+    """The project whose sprints the actor may manage, or raise: 404 if no such project
+    OR one the actor can't see, 403 if it's visible but the actor isn't its creator.
+    Managing a project's cadence is the creator's call, matching project edit/delete.
+
+    Visibility is checked first and collapses to a 404, so a private project the actor
+    can't see is indistinguishable from a missing one — its existence never leaks
+    through a sprint-write 403. (A member who CAN see the project but isn't its creator
+    still gets the honest 403; they already know it exists.)"""
     project = projects.get_project(conn, project_id)
-    if project is None:
+    if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     if project["created_by"] != actor["id"]:
         raise HTTPException(
