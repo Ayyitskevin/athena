@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import access, activity, attachments, labels, links
+from athena.core import access, activity, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
-from athena.core.identity import docs_write_actor, optional_actor
+from athena.core.identity import docs_write_actor, is_admin, optional_actor
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
@@ -45,6 +45,29 @@ class SpaceOut(BaseModel):
     description: str
     created_by: int
     created_at: str
+    # 'public' (anyone may read) or 'private' (creator, admins, members only).
+    # Defaults 'public' for every space until explicitly flipped.
+    visibility: str = "public"
+
+
+class VisibilityUpdate(BaseModel):
+    # The space privacy flag: 'public' | 'private'. Defined here (not imported from
+    # Aegis) so Mentor keeps no dependency on a sibling feature module — same reason
+    # LabelOut is redefined above.
+    visibility: str
+
+
+class MemberAdd(BaseModel):
+    user_id: int
+
+
+class MemberOut(BaseModel):
+    # One membership row on a private space: who, plus who granted it and when.
+    user_id: int
+    name: str
+    is_agent: bool
+    added_by: int | None = None
+    added_at: str
 
 
 class PageCreate(BaseModel):
@@ -269,6 +292,119 @@ def delete_space(
     )
 
 
+# --- Space access control: privacy toggle + membership --------------------
+#
+# The Mentor twin of the Aegis project access endpoints. Toggling a space private and
+# managing its roster is creator-OR-admin (wider than delete, which is creator-only),
+# so an admin can administer any space and the creator can't lock themselves out.
+# Reading the roster is gated by plain visibility.
+
+
+def _space_for_privacy(conn: sqlite3.Connection, space_id: int, actor: dict) -> dict:
+    """Fetch a space whose privacy/membership the actor may MANAGE, or raise: 404 if no
+    such space, 403 if the actor is neither its creator nor an admin. The access-admin
+    twin of _space_for_write (creator-only delete)."""
+    space = spaces.get_space(conn, space_id)
+    if space is None:
+        raise HTTPException(status_code=404, detail="no such space")
+    if space["created_by"] != actor["id"] and not is_admin(actor):
+        raise HTTPException(
+            status_code=403,
+            detail="only the space creator or an admin may manage access",
+        )
+    return space
+
+
+@spaces_router.put("/{space_id}/visibility", response_model=SpaceOut)
+def set_space_visibility(
+    space_id: int,
+    payload: VisibilityUpdate,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Creator or admin only (404 if missing, 403 otherwise).
+    space = _space_for_privacy(conn, space_id, actor)
+    visibility = payload.visibility.strip().lower()
+    if visibility not in ("public", "private"):
+        raise HTTPException(
+            status_code=422, detail="visibility must be 'public' or 'private'"
+        )
+    if visibility == space["visibility"]:
+        return space  # no-op set-to-same — no write, no event
+    updated = spaces.set_visibility(conn, space_id, visibility)
+    # Going private: record the creator as an explicit member so they show in the
+    # roster (they keep access via created_by regardless).
+    if visibility == "private":
+        access.add_space_member(
+            conn, space_id, space["created_by"], added_by=actor["id"]
+        )
+    space_activity.record_space_visibility_changed(
+        conn,
+        actor_id=actor["id"],
+        space_id=space_id,
+        name=updated["name"],
+        visibility=visibility,
+    )
+    return updated
+
+
+@spaces_router.get("/{space_id}/members", response_model=list[MemberOut])
+def list_space_members(
+    space_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Reading the roster is gated by plain visibility: anyone who can see the space sees
+    # its members. A private space the caller can't see is a 404.
+    space = spaces.get_space(conn, space_id)
+    if space is None or not access.can_see_space(conn, actor, space_id):
+        raise HTTPException(status_code=404, detail="no such space")
+    return access.list_space_members(conn, space_id)
+
+
+@spaces_router.post(
+    "/{space_id}/members", response_model=list[MemberOut], status_code=201
+)
+def add_space_member(
+    space_id: int,
+    payload: MemberAdd,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Creator or admin only. 422 if the user id isn't real. Idempotent — a re-add
+    # records no event.
+    _space_for_privacy(conn, space_id, actor)
+    member = users.get_user(conn, payload.user_id)
+    if member is None:
+        raise HTTPException(status_code=422, detail="no such user")
+    if access.add_space_member(conn, space_id, payload.user_id, added_by=actor["id"]):
+        space_activity.record_space_member_added(
+            conn, actor_id=actor["id"], space_id=space_id, member_name=member["name"]
+        )
+    return access.list_space_members(conn, space_id)
+
+
+@spaces_router.delete("/{space_id}/members/{user_id}", response_model=list[MemberOut])
+def remove_space_member(
+    space_id: int,
+    user_id: int,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Creator or admin only. 404 if the user wasn't a member.
+    _space_for_privacy(conn, space_id, actor)
+    member = users.get_user(conn, user_id)
+    if not access.remove_space_member(conn, space_id, user_id):
+        raise HTTPException(status_code=404, detail="user is not a member")
+    space_activity.record_space_member_removed(
+        conn,
+        actor_id=actor["id"],
+        space_id=space_id,
+        member_name=member["name"] if member else str(user_id),
+    )
+    return access.list_space_members(conn, space_id)
+
+
 # --- Pages: documents within a space --------------------------------------
 
 
@@ -333,11 +469,20 @@ def show_page(
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    page = _page_for_read(conn, page_id, actor)
+    return _with_labels(conn, page)
+
+
+def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -> dict:
+    """Fetch a page the actor may READ, or raise 404. A page in a private space the
+    actor can't see is the SAME 404 as a missing one, so a page sub-resource
+    (comments/versions/attachments/backlinks) never leaks for a hidden page. The Mentor
+    twin of aegis _issue_for_read — every per-page GET funnels through here, the way the
+    issue sub-resources funnel through theirs, so visibility can't be forgotten on one."""
     page = pages.get_page(conn, page_id)
-    # A page in a private space the caller can't see is a 404 — gated by its space.
     if page is None or not access.can_see_space(conn, actor, page["space_id"]):
         raise HTTPException(status_code=404, detail="no such page")
-    return _with_labels(conn, page)
+    return page
 
 
 @pages_router.patch("/{page_id}", response_model=PageOut)
@@ -426,9 +571,9 @@ def backlinks(
 ) -> list[dict]:
     # "What references this page?" — open like other reads, but the sources are gated
     # by the viewer: a private project's issue / a private space's page linking here
-    # never reveals itself. 404 if the page itself is missing.
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # never reveals itself. 404 if the page is missing OR in a space the caller can't
+    # see (so a hidden page's backlink list never reveals the page exists).
+    _page_for_read(conn, page_id, actor)
     return links.backlinks(conn, target_kind="page", target_id=page_id, actor=actor)
 
 
@@ -462,11 +607,13 @@ def add_page_comment(
 
 @pages_router.get("/{page_id}/comments", response_model=list[PageCommentOut])
 def list_page_comments(
-    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Open read, like listing versions/attachments. 404 if the page itself is missing.
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Open read, like listing versions/attachments — but gated by space visibility: a
+    # private page's discussion never leaks. 404 if the page is missing or hidden.
+    _page_for_read(conn, page_id, actor)
     return page_comments.list_comments(conn, page_id)
 
 
@@ -563,29 +710,39 @@ def upload_page_attachment(
 
 @pages_router.get("/{page_id}/attachments", response_model=list[AttachmentOut])
 def list_page_attachments(
-    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Open read, like listing versions. 404 if the page itself is missing.
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Open read, like listing versions — gated by space visibility. 404 if the page is
+    # missing or in a space the caller can't see.
+    _page_for_read(conn, page_id, actor)
     return attachments.list_for(conn, "page", page_id)
 
 
 @pages_router.get("/{page_id}/versions", response_model=list[PageVersionOut])
 def list_versions(
-    page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Reads are open. 404 if the page itself is missing (distinct from a real page
-    # that has never been edited, which returns []).
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Reads are open but gated by space visibility — a private page's body history is
+    # exactly its content, so it must not leak. 404 if the page is missing or hidden
+    # (distinct from a real visible page never edited, which returns []).
+    _page_for_read(conn, page_id, actor)
     return pages.list_page_versions(conn, page_id)
 
 
 @pages_router.get("/{page_id}/versions/{version}", response_model=PageVersionOut)
 def show_version(
-    page_id: int, version: int, conn: sqlite3.Connection = Depends(get_conn)
+    page_id: int,
+    version: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    # Gate by the page's space first: a historical snapshot is the page's content, so a
+    # hidden page's version must 404 like the live page does — never leak the old body.
+    _page_for_read(conn, page_id, actor)
     snapshot = pages.get_page_version(conn, page_id, version)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="no such version")

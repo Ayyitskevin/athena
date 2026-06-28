@@ -20,6 +20,7 @@ from athena.aegis import (
     issue_activity,
     issue_search,
     issues,
+    project_activity,
     projects,
     sprints,
     statuses,
@@ -27,7 +28,7 @@ from athena.aegis import (
 from athena.core import access, activity, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
-from athena.core.identity import issue_write_actor, optional_actor
+from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
@@ -138,6 +139,30 @@ class ProjectOut(BaseModel):
     description: str
     created_by: int
     created_at: str
+    # 'public' (anyone may read) or 'private' (creator, admins, and members only).
+    # Defaults 'public' for every project until explicitly flipped.
+    visibility: str = "public"
+
+
+class VisibilityUpdate(BaseModel):
+    # The privacy flag for a project/space: 'public' | 'private'. A dedicated body
+    # (not folded into the project edit) because flipping privacy is creator-OR-admin,
+    # while editing name/key/description stays creator-only — different gates.
+    visibility: str
+
+
+class MemberAdd(BaseModel):
+    user_id: int
+
+
+class MemberOut(BaseModel):
+    # One membership row on a private project/space: who, plus who granted it and when.
+    # Excludes the creator/admins, who get in implicitly (see access.list_*_members).
+    user_id: int
+    name: str
+    is_agent: bool
+    added_by: int | None = None
+    added_at: str
 
 
 class StatusCreate(BaseModel):
@@ -1046,9 +1071,16 @@ def create_project(
 
 
 @projects_router.get("/{project_id}", response_model=ProjectOut)
-def show_project(project_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def show_project(
+    project_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
     project = projects.get_project(conn, project_id)
-    if project is None:
+    # A private project the caller can't see is a 404, indistinguishable from a missing
+    # one, so visibility never leaks through existence — the gate its Mentor twin
+    # show_space already applied.
+    if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     return project
 
@@ -1124,16 +1156,139 @@ def delete_project(
     projects.delete_project(conn, project_id)
 
 
+# --- Project access control: privacy toggle + membership ------------------
+#
+# Turning a project private and managing its member roster is creator-OR-admin —
+# deliberately WIDER than edit/delete (creator-only, via _project_for_write), because
+# an admin must be able to administer access on any project, and the creator must never
+# be able to lock themselves out. Reads of the roster are gated by plain visibility:
+# anyone who can SEE the project can see who's in it.
+
+
+def _project_for_privacy(conn: sqlite3.Connection, project_id: int, actor: dict) -> dict:
+    """Fetch a project whose privacy/membership the actor may MANAGE, or raise: 404 if
+    no such project, 403 if the actor is neither its creator nor an admin. The wider
+    twin of _project_for_write (creator-only): access administration is creator-OR-admin
+    per the access model."""
+    project = projects.get_project(conn, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    if project["created_by"] != actor["id"] and not is_admin(actor):
+        raise HTTPException(
+            status_code=403,
+            detail="only the project creator or an admin may manage access",
+        )
+    return project
+
+
+@projects_router.put("/{project_id}/visibility", response_model=ProjectOut)
+def set_project_visibility(
+    project_id: int,
+    payload: VisibilityUpdate,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Creator or admin only (404 if missing, 403 otherwise).
+    project = _project_for_privacy(conn, project_id, actor)
+    visibility = payload.visibility.strip().lower()
+    if visibility not in ("public", "private"):
+        raise HTTPException(
+            status_code=422, detail="visibility must be 'public' or 'private'"
+        )
+    # Setting it to what it already is is a no-op — no write, no audit event.
+    if visibility == project["visibility"]:
+        return project
+    updated = projects.set_visibility(conn, project_id, visibility)
+    # Going private: record the creator as an explicit member so they appear in the
+    # roster (they always keep access via created_by regardless — this is for the UI).
+    if visibility == "private":
+        access.add_project_member(
+            conn, project_id, project["created_by"], added_by=actor["id"]
+        )
+    project_activity.record_project_visibility_changed(
+        conn,
+        actor_id=actor["id"],
+        project_id=project_id,
+        name=updated["name"],
+        visibility=visibility,
+    )
+    return updated
+
+
+@projects_router.get("/{project_id}/members", response_model=list[MemberOut])
+def list_project_members(
+    project_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Reading the roster is gated by plain visibility: anyone who can see the project
+    # sees its members. A private project the caller can't see is a 404 — the roster
+    # never reveals that the project (or its members) exist.
+    project = projects.get_project(conn, project_id)
+    if project is None or not access.can_see_project(conn, actor, project_id):
+        raise HTTPException(status_code=404, detail="no such project")
+    return access.list_project_members(conn, project_id)
+
+
+@projects_router.post(
+    "/{project_id}/members", response_model=list[MemberOut], status_code=201
+)
+def add_project_member(
+    project_id: int,
+    payload: MemberAdd,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Creator or admin only. 422 if the user id isn't real (rather than letting the FK
+    # surface a 500). Idempotent: re-adding an existing member records no event.
+    _project_for_privacy(conn, project_id, actor)
+    member = users.get_user(conn, payload.user_id)
+    if member is None:
+        raise HTTPException(status_code=422, detail="no such user")
+    if access.add_project_member(conn, project_id, payload.user_id, added_by=actor["id"]):
+        project_activity.record_project_member_added(
+            conn, actor_id=actor["id"], project_id=project_id, member_name=member["name"]
+        )
+    return access.list_project_members(conn, project_id)
+
+
+@projects_router.delete("/{project_id}/members/{user_id}", response_model=list[MemberOut])
+def remove_project_member(
+    project_id: int,
+    user_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Creator or admin only. 404 if the user wasn't a member (so a no-op delete is an
+    # honest miss, not a silent success). The member keeps no access they had via
+    # created_by/admin — this only removes the explicit grant.
+    _project_for_privacy(conn, project_id, actor)
+    member = users.get_user(conn, user_id)
+    if not access.remove_project_member(conn, project_id, user_id):
+        raise HTTPException(status_code=404, detail="user is not a member")
+    project_activity.record_project_member_removed(
+        conn,
+        actor_id=actor["id"],
+        project_id=project_id,
+        member_name=member["name"] if member else str(user_id),
+    )
+    return access.list_project_members(conn, project_id)
+
+
 # --- Per-project statuses: the configurable lifecycle ---------------------
 
 
 @projects_router.get("/{project_id}/statuses", response_model=list[StatusOut])
 def list_project_statuses(
-    project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    project_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Reading a project's statuses is open, like listing its issues. 404 if the
-    # project itself is missing.
-    if projects.get_project(conn, project_id) is None:
+    # Reading a project's statuses is open, like listing its issues — but gated by the
+    # same visibility: a private project the caller can't see is a 404, so its status
+    # vocabulary doesn't leak.
+    project = projects.get_project(conn, project_id)
+    if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     return statuses.list_statuses(conn, project_id)
 
