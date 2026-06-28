@@ -24,10 +24,17 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.core import access
+
 # The searchable kinds and the table each lives in. Both tables expose `title`
 # and `body`. Values are fixed literals, never caller input, so building a query
 # string from them is safe.
 _SOURCE = {"issue": "issues", "page": "pages"}
+
+# Sentinel for search()'s `actor`: "no visibility gating at all" (an internal caller,
+# or a test exercising ranking). Distinct from actor=None, which is a real anonymous
+# viewer who may see only public projects/spaces.
+_UNGATED = object()
 
 
 def index_document(conn: sqlite3.Connection, *, kind: str, source_id: int) -> None:
@@ -116,6 +123,40 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
     return hits
 
 
+def _visibility_clause(
+    conn: sqlite3.Connection, actor: dict | None
+) -> tuple[str, list]:
+    """Build the SQL fragment (with a leading AND) + params that keep only hits the
+    actor may see: an issue hit whose project is visible (or backlog), a page hit whose
+    space is visible. Returns ('', []) for an admin (who sees all — no gate needed).
+    The subqueries resolve the visible source ids from the visible project/space sets,
+    so we never enumerate them in Python. An actor with no visible spaces matches no
+    pages; backlog issues (no project) always pass."""
+    vis_projects = access.visible_project_filter(conn, actor)
+    if vis_projects is None:  # admin → unrestricted
+        return "", []
+    vis_spaces = access.visible_space_filter(conn, actor)
+
+    params: list = []
+    if vis_projects:
+        ph = ",".join("?" for _ in vis_projects)
+        issue_src = f"SELECT id FROM issues WHERE project_id IS NULL OR project_id IN ({ph})"
+        params.extend(vis_projects)
+    else:
+        issue_src = "SELECT id FROM issues WHERE project_id IS NULL"
+    if vis_spaces:
+        ph = ",".join("?" for _ in vis_spaces)
+        page_src = f"SELECT id FROM pages WHERE space_id IN ({ph})"
+        params.extend(vis_spaces)
+    else:
+        page_src = "SELECT id FROM pages WHERE 0"  # no visible spaces → no page hits
+    clause = (
+        f"AND ((kind = 'issue' AND source_id IN ({issue_src})) "
+        f"OR (kind = 'page' AND source_id IN ({page_src}))) "
+    )
+    return clause, params
+
+
 def search(
     conn: sqlite3.Connection,
     query: str,
@@ -124,6 +165,7 @@ def search(
     limit: int = 20,
     offset: int = 0,
     ids: list[int] | None = None,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Best-first hits for `query` across issues and pages.
 
@@ -140,7 +182,14 @@ def search(
     lets a caller intersect full-text relevance with a structured pre-filter (e.g.
     aegis narrows an issue search to the issues that match status/label/project).
     source_ids are per-kind, so a caller passing `ids` must also fix `kind`; an empty
-    list matches nothing (an "IN ()" is both invalid SQL and the right answer)."""
+    list matches nothing (an "IN ()" is both invalid SQL and the right answer).
+
+    `actor` gates the hits by visibility: an issue hit survives only if its project is
+    visible to the actor (or it is a backlog issue), and a page hit only if its space
+    is. The default (_UNGATED) applies no gate — for internal callers and ranking
+    tests; pass the real actor (a user dict, or None for anonymous) to filter. Gating
+    happens in SQL, before LIMIT/OFFSET, so paging stays correct. An admin sees
+    everything, so no predicate is added for them."""
     if not query or not query.strip():
         return []
     if ids is not None and not ids:
@@ -159,6 +208,11 @@ def search(
         placeholders = ",".join("?" for _ in ids)
         sql += f"AND source_id IN ({placeholders}) "
         params.extend(ids)
+    if actor is not _UNGATED:
+        clause, vis_params = _visibility_clause(conn, actor)
+        if clause:
+            sql += clause
+            params.extend(vis_params)
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"
     params.extend([limit, offset])
