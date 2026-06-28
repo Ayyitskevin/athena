@@ -43,11 +43,17 @@ def build_server(client: AthenaClient) -> FastMCP:
         project: str | None = None,
         label: str | None = None,
         search: str | None = None,
+        include_archived: bool = False,
     ) -> list:
         """List Aegis issues, optionally filtered by status (open/in_progress/done),
-        project (id or 'none' for the backlog), label name, or a text substring."""
+        project (id or 'none' for the backlog), label name, or a text substring.
+        Archived issues are hidden by default; pass include_archived=true to see them."""
         return client.list_issues(
-            status=status, project=project, label=label, search=search
+            status=status,
+            project=project,
+            label=label,
+            search=search,
+            include_archived=include_archived,
         )
 
     @mcp.tool()
@@ -100,6 +106,17 @@ def build_server(client: AthenaClient) -> FastMCP:
     def comment_on_issue(issue_id: int, body: str) -> dict:
         """Add a comment to an issue, authored by the token's user."""
         return client.comment_on_issue(issue_id, body)
+
+    @mcp.tool()
+    def archive_issue(issue_id: int) -> dict:
+        """Archive (soft-delete) an issue: it's hidden from the default lists but the
+        row and its history are kept, and it can be restored. Returns the issue."""
+        return client.archive_issue(issue_id)
+
+    @mcp.tool()
+    def unarchive_issue(issue_id: int) -> dict:
+        """Restore a previously archived issue to the active lists. Returns the issue."""
+        return client.unarchive_issue(issue_id)
 
     @mcp.tool()
     def bulk_update_issues(

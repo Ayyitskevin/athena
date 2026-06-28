@@ -81,15 +81,14 @@ class AthenaClient:
         project: str | None = None,
         label: str | None = None,
         search: str | None = None,
+        include_archived: bool = False,
     ) -> Any:
-        return self._result(
-            self._client.get(
-                "/issues",
-                params=self._params(
-                    status=status, project=project, label=label, search=search
-                ),
-            )
+        params = self._params(
+            status=status, project=project, label=label, search=search
         )
+        if include_archived:  # only send it when set, so the default stays clean
+            params["include_archived"] = True
+        return self._result(self._client.get("/issues", params=params))
 
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
@@ -137,6 +136,12 @@ class AthenaClient:
         return self._result(
             self._client.post(f"/issues/{issue_id}/comments", json={"body": body})
         )
+
+    def archive_issue(self, issue_id: int) -> Any:
+        return self._result(self._client.post(f"/issues/{issue_id}/archive"))
+
+    def unarchive_issue(self, issue_id: int) -> Any:
+        return self._result(self._client.post(f"/issues/{issue_id}/unarchive"))
 
     def bulk_update_issues(
         self,
