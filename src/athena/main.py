@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -28,6 +29,7 @@ from athena.core import (
     attachments_api,
     db,
     events_api,
+    idempotency,
     notifications,
     notifications_api,
     run_context,
@@ -169,6 +171,119 @@ class RunContextMiddleware:
             run_context.reset_run_id(run_token)
 
 
+class IdempotencyMiddleware:
+    """Replay the first response to a retried write, so an agent's POST that times out
+    on a network blip and gets retried can't double-create (two issues, two comments).
+
+    When a POST carries an `Idempotency-Key` header from an identifiable caller, the
+    first 2xx response is stored and any later request with the same key REPLAYS it
+    verbatim instead of running the write again. Pure-ASGI (like RunContextMiddleware)
+    so it can both short-circuit with the stored response and capture the live one by
+    wrapping `send`.
+
+    Bounded blast radius: anything that is not POST + Idempotency-Key + an identifiable
+    credential passes straight through untouched, so non-opt-in traffic is unaffected.
+    Only 2xx is stored — a retry of a *failed* write should re-run, not replay the
+    error. Registered INSIDE harden_http, so a replayed response still gets the
+    security headers. Sequential retries (the common case) are fully covered; truly
+    concurrent same-key requests may both run, with the second store ignored — a
+    future claim-first pass could close that.
+    """
+
+    def __init__(self, app, db_path):
+        self.app = app
+        self.db_path = db_path
+
+    @staticmethod
+    def _identity(headers: dict) -> str | None:
+        """Scope the key to the caller, WITHOUT a DB lookup: a bearer token by its
+        hash (never the raw value), or the trusted actor header by id. None means the
+        request isn't identifiably authenticated, so we don't dedupe it (it will be
+        handled — likely 401 — like any other request)."""
+        auth = headers.get(b"authorization")
+        if auth is not None and auth.lower().startswith(b"bearer "):
+            token = auth[len(b"bearer "):].strip()
+            return "tok:" + hashlib.sha256(token).hexdigest()
+        if config.TRUST_ACTOR_HEADER:
+            actor = headers.get(b"x-athena-actor")
+            if actor is not None:
+                return "actor:" + actor.decode("latin-1")
+        return None
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "POST":
+            await self.app(scope, receive, send)
+            return
+        headers = {name.lower(): value for name, value in scope.get("headers", [])}
+        key_raw = headers.get(b"idempotency-key")
+        if not key_raw:
+            await self.app(scope, receive, send)
+            return
+        key = key_raw.decode("latin-1").strip()
+        identity = self._identity(headers)
+        if not key or identity is None:
+            await self.app(scope, receive, send)
+            return
+
+        conn = db.connect(self.db_path)
+        try:
+            existing = idempotency.get(conn, key=key, identity=identity)
+            if existing is not None:
+                await self._replay(send, existing)
+                return
+
+            captured: dict = {"status": 500, "headers": [], "body": []}
+
+            async def capture_send(message):
+                if message["type"] == "http.response.start":
+                    captured["status"] = message["status"]
+                    captured["headers"] = message.get("headers", [])
+                elif message["type"] == "http.response.body":
+                    captured["body"].append(message.get("body", b""))
+                await send(message)
+
+            await self.app(scope, receive, capture_send)
+
+            if 200 <= captured["status"] < 300:
+                content_type = next(
+                    (
+                        v.decode("latin-1")
+                        for n, v in captured["headers"]
+                        if n.lower() == b"content-type"
+                    ),
+                    None,
+                )
+                idempotency.store(
+                    conn,
+                    key=key,
+                    identity=identity,
+                    method="POST",
+                    path=scope.get("path", ""),
+                    status_code=captured["status"],
+                    content_type=content_type,
+                    response_body=b"".join(captured["body"]),
+                )
+        finally:
+            conn.close()
+
+    @staticmethod
+    async def _replay(send: Callable[[dict], Awaitable[None]], record: dict) -> None:
+        body = record["response_body"]
+        headers = [(b"content-length", str(len(body)).encode("ascii"))]
+        if record["content_type"]:
+            headers.append((b"content-type", record["content_type"].encode("latin-1")))
+        # Let a caller tell a replay apart from a fresh write.
+        headers.append((b"idempotent-replay", b"true"))
+        await send(
+            {
+                "type": "http.response.start",
+                "status": record["status_code"],
+                "headers": headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
 async def _send_json_response(
     send: Callable[[dict], Awaitable[None]], body: dict, *, status_code: int
 ) -> None:
@@ -244,6 +359,10 @@ def create_app(
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
     # Stamp the ambient run id (X-Athena-Run) for every event recorded this request.
     app.add_middleware(RunContextMiddleware)
+    # Replay the first response to a retried write (opt-in via the Idempotency-Key
+    # header). Added here so it sits INSIDE harden_http (a replay still gets the
+    # security headers) but wraps the routes (it can capture their response).
+    app.add_middleware(IdempotencyMiddleware, db_path=resolved_db)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
