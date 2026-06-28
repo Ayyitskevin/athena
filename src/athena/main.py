@@ -386,8 +386,11 @@ def create_app(
                 request.state.user = sessions.resolve_session(conn, raw)
                 if request.state.user is not None:
                     request.state.csrf_token = sessions.csrf_token_for(conn, raw)
+                    # Gate the badge by visibility too, so it matches the inbox: an
+                    # unread notification on a target the user can no longer see
+                    # doesn't inflate the count.
                     request.state.unread_count = notifications.unread_count(
-                        conn, request.state.user["id"]
+                        conn, request.state.user["id"], actor=request.state.user
                     )
             finally:
                 conn.close()

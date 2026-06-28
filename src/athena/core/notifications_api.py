@@ -51,7 +51,7 @@ def inbox(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     return notifications.list_notifications(
-        conn, actor["id"], unread_only=unread, limit=limit
+        conn, actor["id"], unread_only=unread, limit=limit, actor=actor
     )
 
 
@@ -60,7 +60,7 @@ def unread_count(
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    return {"count": notifications.unread_count(conn, actor["id"])}
+    return {"count": notifications.unread_count(conn, actor["id"], actor=actor)}
 
 
 @router.post("/notifications/{notification_id}/read", status_code=204)

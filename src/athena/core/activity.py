@@ -14,13 +14,18 @@ from datetime import datetime
 from io import StringIO
 import sqlite3
 
-from athena.core import notifications, run_context
+from athena.core import access, notifications, run_context
 
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
 _SELECT = (
     "SELECT a.*, u.name AS actor_name FROM activity a JOIN users u ON u.id = a.actor_id"
 )
+
+# Sentinel for the read functions' `actor`: "no visibility gating" (internal callers,
+# per-entity sections already gated upstream by their detail route's 404, and tests).
+# Distinct from actor=None, a real anonymous viewer who sees only public targets.
+_UNGATED = object()
 
 
 def _like_pattern(value: str) -> str:
@@ -121,6 +126,7 @@ def list_activity(
     search: str | None = None,
     before_id: int | None = None,
     limit: int = 50,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Activity newest first. Every filter is optional and independent: pass
     target_kind+target_id for one target's timeline, target_kind alone to scope
@@ -130,9 +136,20 @@ def list_activity(
     replay: exactly the events tagged with that run. parent_run_id walks lineage the
     other way: the events of the CHILD runs a given run spawned. before_id is the
     paging cursor — only rows older than it (a.id < before_id), so the caller can walk
-    back through history one page at a time on a stable, append-only ordering."""
+    back through history one page at a time on a stable, append-only ordering.
+
+    `actor` gates the feed by visibility: an event whose target is an issue/page/space
+    the actor can't see is dropped (in SQL, before the limit, so paging stays exact).
+    The default (_UNGATED) applies no gate — internal callers, and the per-entity
+    timelines whose detail route already 404s when the entity is hidden. Pass the real
+    actor (a user dict, or None for anonymous) to gate the global feed."""
     clauses: list[str] = []
     params: list = []
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            clauses.append(gate)
+            params.extend(gate_params)
     if target_kind is not None:
         clauses.append("a.target_kind = ?")
         params.append(target_kind)
@@ -192,6 +209,7 @@ def list_events(
     parent_run_id: str | None = None,
     verb: str | None = None,
     limit: int = 50,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Events in FORWARD (oldest-first) order for cursor consumption — the agent/
     integration view of the same append-only trail `list_activity` serves to humans.
@@ -207,9 +225,20 @@ def list_events(
     only, False for humans only — so an integration can subscribe to just the agents'
     stream, or just the humans'), one run_id (the exact events of a known run, for
     deterministic replay), or one parent_run_id (the events of the child runs a run
-    spawned, for walking lineage)."""
+    spawned, for walking lineage).
+
+    `actor` gates the stream by visibility, exactly like list_activity: an event on a
+    target the consumer can't see is dropped (in SQL, before the limit). The default
+    (_UNGATED) is no gate, for the system webhook-delivery worker (an admin-configured
+    firehose with no per-actor scope); the authenticated GET /events consumer passes
+    its token's actor so an agent only drains the trail it may see."""
     clauses: list[str] = []
     params: list = []
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            clauses.append(gate)
+            params.extend(gate_params)
     if after_id is not None:
         clauses.append("a.id > ?")
         params.append(after_id)
@@ -303,6 +332,7 @@ def reconstruct_runs(
     actor_id: int,
     gap_seconds: int = 1800,
     limit: int = 200,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Reconstruct one actor's recent activity into RUNS — a reading lens over the
     append-only log. A run is a maximal sequence of that actor's events that belong
@@ -328,8 +358,12 @@ def reconstruct_runs(
     clipped by an older boundary). Callers should treat a partial run's totals as a
     lower bound and widen `limit` to see the rest."""
     # Pull the actor's most recent events (newest-first), then walk them oldest-first
-    # so each comparison weighs an event against the one immediately before it.
-    ascending = list(reversed(list_activity(conn, actor_id=actor_id, limit=limit)))
+    # so each comparison weighs an event against the one immediately before it. The
+    # viewing `actor` gates which events are visible (the runs reader can't see a run's
+    # work on a target they can't see); _UNGATED leaves it ungated.
+    ascending = list(
+        reversed(list_activity(conn, actor_id=actor_id, limit=limit, actor=actor))
+    )
     # A full window means there may be older events we didn't load, so the oldest
     # run could be clipped. A short window means we've seen all of this actor's
     # history — every run is whole.

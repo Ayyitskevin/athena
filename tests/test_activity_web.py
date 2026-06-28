@@ -179,6 +179,11 @@ def test_global_feed_pager_preserves_search_and_target_filters(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _seed_user(db_file)
+        # Record the audit needles against a REAL issue: the feed is now
+        # visibility-gated, and an event whose target doesn't exist is hidden (the
+        # safe default), so the events need a live target to page through. A backlog
+        # issue (no project) is visible to everyone, including this anonymous read.
+        iid = _make_issue(client, title="needle-target")
         conn = db.connect(db_file)
         try:
             for _ in range(51):
@@ -187,19 +192,19 @@ def test_global_feed_pager_preserves_search_and_target_filters(tmp_path):
                     actor_id=1,
                     verb="changed_status",
                     target_kind="issue",
-                    target_id=7,
+                    target_id=iid,
                     detail="audit needle",
                 )
         finally:
             conn.close()
 
-        page = client.get("/aegis/activity?q=needle&kind=issue&target=7")
+        page = client.get(f"/aegis/activity?q=needle&kind=issue&target={iid}")
 
     assert page.status_code == 200
     assert "Older →" in page.text
     assert "q=needle" in page.text
     assert "kind=issue" in page.text
-    assert "target=7" in page.text
+    assert f"target={iid}" in page.text
 
 
 def test_global_feed_downloads_filtered_csv(tmp_path):

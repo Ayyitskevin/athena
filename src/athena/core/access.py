@@ -278,3 +278,42 @@ def visible_space_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int]:
             )
         }
     return visible
+
+
+def _in_or_null(ids: set[int]) -> tuple[str, list]:
+    """Comma-joined placeholders + params for an IN list, or the literal token 'NULL'
+    (which matches nothing) when the set is empty — SQLite rejects 'IN ()'. Sorted for
+    a deterministic query string."""
+    vals = sorted(ids)
+    return (",".join("?" for _ in vals), vals) if vals else ("NULL", [])
+
+
+def event_visibility_clause(
+    conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
+) -> tuple[str, list]:
+    """A SQL predicate (no leading AND) + params that keep only activity rows whose
+    target the actor may see — the gate the activity feed and the notifications inbox
+    share, since both expose (target_kind, target_id). Returns ('', []) for an admin
+    (god view → no gate). The three kinds ever recorded: an 'issue' is kept if it's a
+    backlog issue (no project) OR its project is visible; a 'page' if its space is
+    visible; a 'space' if that space (the target itself) is visible. A hard-deleted
+    target has no surviving container, so its events drop out — the safe default.
+
+    `alias` is the SQL alias of the activity table/row in the caller's query (both the
+    feed and the inbox alias it 'a'). Built as correlated EXISTS so it can be ANDed
+    straight into an existing WHERE, before LIMIT, keeping cursor paging exact."""
+    if _is_admin(actor):
+        return "", []
+    proj_ph, proj_params = _in_or_null(visible_project_ids(conn, actor))
+    space_ph, space_params = _in_or_null(visible_space_ids(conn, actor))
+    clause = (
+        f"(({alias}.target_kind = 'issue' AND EXISTS ("
+        f"SELECT 1 FROM issues i WHERE i.id = {alias}.target_id "
+        f"AND (i.project_id IS NULL OR i.project_id IN ({proj_ph})))) "
+        f"OR ({alias}.target_kind = 'page' AND EXISTS ("
+        f"SELECT 1 FROM pages pg WHERE pg.id = {alias}.target_id "
+        f"AND pg.space_id IN ({space_ph}))) "
+        f"OR ({alias}.target_kind = 'space' AND {alias}.target_id IN ({space_ph})))"
+    )
+    params = [*proj_params, *space_params, *space_params]
+    return clause, params

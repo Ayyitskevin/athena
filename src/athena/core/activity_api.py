@@ -110,6 +110,7 @@ def feed(
         search=q,
         before_id=before_id,
         limit=limit,
+        actor=actor,
     )
 
 
@@ -153,6 +154,7 @@ def export_csv(
         search=q,
         before_id=before_id,
         limit=limit,
+        actor=actor,
     )
     return Response(
         activity.to_csv(rows),
@@ -180,5 +182,5 @@ def runs(
     # sessions (runs). actor_id is required — a "runs" feed mixing actors would be
     # meaningless, since a run is by definition one actor's uninterrupted stretch.
     return activity.reconstruct_runs(
-        conn, actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
+        conn, actor_id=actor_id, gap_seconds=gap_seconds, limit=limit, actor=actor
     )

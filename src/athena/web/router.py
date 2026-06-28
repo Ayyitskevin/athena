@@ -163,7 +163,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             "active_sprints": dashboard.active_sprints(conn, vis),
             # The user's own plate only makes sense when we know who they are.
             "my_issues": dashboard.my_open_issues(conn, user["id"], visible_project_ids=vis) if user else [],
-            "recent_activity": activity.list_activity(conn, limit=10),
+            "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )
 
@@ -294,7 +294,7 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a> to see your inbox.</div>',
             status_code=401,
         )
-    items = notifications.list_notifications(conn, user["id"], limit=100)
+    items = notifications.list_notifications(conn, user["id"], limit=100, actor=user)
     for it in items:
         it["href"] = (
             f"/aegis/issues/{it['target_id']}"
@@ -583,10 +583,11 @@ def _activity_export_url(
 
 @router.get("/aegis/activity", response_class=HTMLResponse)
 def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """The global activity timeline — the browser twin of GET /activity. Reading
-    is open, like every other web read (the JSON API gates the feed for the fleet;
-    the human view follows the rest of the site's open-read convention). It runs
-    the SAME data-layer query the API serves, so the two never disagree.
+    """The global activity timeline — the browser twin of GET /activity. Like the
+    JSON API, the feed is gated by the viewer: an anonymous visitor sees only events
+    on public targets, never an event on a private project's issue or a private
+    space's page. It runs the SAME data-layer query the API serves, so the two never
+    disagree.
 
     Supports the same filters (actor / verb / target kind) and a cursor (?before=)
     for paging back through history one page at a time."""
@@ -604,7 +605,10 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
 
     # Fetch one extra row to know whether an older page exists without a count
-    # query; if we got it, there's more — trim it off and remember the cursor.
+    # query; if we got it, there's more — trim it off and remember the cursor. The
+    # feed is gated by the viewer (anonymous → public targets only), so an event on a
+    # private project's issue / a private space's page never shows to an outsider.
+    user = getattr(request.state, "user", None)
     rows = activity.list_activity(
         conn,
         target_kind=kind,
@@ -615,6 +619,7 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         search=q,
         before_id=before_id,
         limit=_FEED_PAGE + 1,
+        actor=user,
     )
     has_more = len(rows) > _FEED_PAGE
     events = rows[:_FEED_PAGE]
@@ -662,6 +667,7 @@ def activity_export_csv(
     if target_id is not None and kind is None:
         return HTMLResponse("<h1>Invalid activity target filter</h1>", status_code=400)
 
+    user = getattr(request.state, "user", None)
     rows = activity.list_activity(
         conn,
         target_kind=kind,
@@ -671,6 +677,7 @@ def activity_export_csv(
         verb=verb,
         search=q,
         limit=_EXPORT_LIMIT,
+        actor=user,
     )
     return Response(
         activity.to_csv(rows),
@@ -696,8 +703,9 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
     selected_actor = users.get_user(conn, actor_id) if actor_id is not None else None
+    user = getattr(request.state, "user", None)
     runs = (
-        activity.reconstruct_runs(conn, actor_id=actor_id)
+        activity.reconstruct_runs(conn, actor_id=actor_id, actor=user)
         if selected_actor is not None
         else []
     )
