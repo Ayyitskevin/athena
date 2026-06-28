@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
 from athena.aegis import issues
-from athena.core import labels
+from athena.core import access, labels
 from athena.core.deps import get_conn
 from athena.mentor import pages
 from athena.web.router import get_templates
@@ -60,12 +60,20 @@ def label_detail(
     # Resolve the ids the label points at, then read each kind through its own data
     # layer — the same ids→rows split the issue list uses for label filtering. Issues
     # go through list_issues, so archived ones are hidden by default (consistent with
-    # every other list); pages have no archival, so all tagged pages show.
-    tagged_issues = issues.list_issues(conn, ids=labels.issue_ids_for_label(conn, name))
+    # every other list); pages have no archival, so all tagged pages show. Both sides
+    # are gated by visibility: an issue in a project / a page in a space the viewer
+    # can't see never appears in the hub (admins see all).
+    user = getattr(request.state, "user", None)
+    tagged_issues = issues.list_issues(
+        conn,
+        ids=labels.issue_ids_for_label(conn, name),
+        visible_project_ids=access.visible_project_filter(conn, user),
+    )
     tagged_pages = [
         page
         for pid in labels.page_ids_for_label(conn, name)
         if (page := pages.get_page(conn, pid)) is not None
+        and access.can_see_space(conn, user, page["space_id"])
     ]
     return templates.TemplateResponse(
         request=request,
