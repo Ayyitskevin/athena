@@ -72,24 +72,59 @@ def list_labels(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def label_usage(conn: sqlite3.Connection) -> list[dict]:
+def _grouped_counts(conn: sqlite3.Connection, sql: str, params: list) -> dict[int, int]:
+    return {r["label_id"]: r["n"] for r in conn.execute(sql, params).fetchall()}
+
+
+def label_usage(
+    conn: sqlite3.Connection,
+    *,
+    visible_project_ids: set[int] | None = None,
+    visible_space_ids: set[int] | None = None,
+) -> list[dict]:
     """Every label with how many issues and pages carry it — the data behind the
     label index. Two grouped counts (one per join) folded onto the vocabulary, so
     it stays O(1) queries regardless of how many labels there are. Counts include
     archived issues (the label join doesn't know about archival); the per-label view
-    is where that distinction, if wanted, would live."""
-    issue_counts = {
-        r["label_id"]: r["n"]
-        for r in conn.execute(
-            "SELECT label_id, COUNT(*) AS n FROM issue_labels GROUP BY label_id"
-        ).fetchall()
-    }
-    page_counts = {
-        r["label_id"]: r["n"]
-        for r in conn.execute(
-            "SELECT label_id, COUNT(*) AS n FROM page_labels GROUP BY label_id"
-        ).fetchall()
-    }
+    is where that distinction, if wanted, would live.
+
+    The counts respect visibility: visible_project_ids / visible_space_ids restrict the
+    issue / page tallies to what the viewer may see (a label's count never reveals how
+    many hidden items carry it). None means no gating (an admin, or an internal caller)
+    — the bare grouped count; a set restricts (issues keep the backlog; an empty set
+    means only the backlog for issues, no pages). Labels are shared vocabulary, so a
+    label whose usages are all hidden still appears, just at zero."""
+    if visible_project_ids is None:
+        issue_counts = _grouped_counts(
+            conn, "SELECT label_id, COUNT(*) AS n FROM issue_labels GROUP BY label_id", []
+        )
+    else:
+        if visible_project_ids:
+            ph = ",".join("?" for _ in visible_project_ids)
+            cond, params = f"(i.project_id IS NULL OR i.project_id IN ({ph}))", list(visible_project_ids)
+        else:
+            cond, params = "i.project_id IS NULL", []
+        issue_counts = _grouped_counts(
+            conn,
+            "SELECT il.label_id AS label_id, COUNT(*) AS n FROM issue_labels il "
+            f"JOIN issues i ON i.id = il.issue_id WHERE {cond} GROUP BY il.label_id",
+            params,
+        )
+
+    if visible_space_ids is None:
+        page_counts = _grouped_counts(
+            conn, "SELECT label_id, COUNT(*) AS n FROM page_labels GROUP BY label_id", []
+        )
+    elif visible_space_ids:
+        ph = ",".join("?" for _ in visible_space_ids)
+        page_counts = _grouped_counts(
+            conn,
+            "SELECT pl.label_id AS label_id, COUNT(*) AS n FROM page_labels pl "
+            f"JOIN pages pg ON pg.id = pl.page_id WHERE pg.space_id IN ({ph}) GROUP BY pl.label_id",
+            list(visible_space_ids),
+        )
+    else:
+        page_counts = {}  # no visible spaces → no page tallies
     return [
         {
             **label,

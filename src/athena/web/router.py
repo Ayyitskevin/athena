@@ -486,7 +486,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # Sprint-filter options. A sprint belongs to one project, so each option is
     # labelled with its project's key to disambiguate same-named sprints across
     # projects (e.g. "ATH · Sprint 1"). One pass over projects builds the key map.
-    all_projects = projects.list_projects(conn)
+    all_projects = projects.list_projects(conn, access.visible_project_filter(conn, user))
     project_keys = {p["id"]: p["key"] for p in all_projects}
     all_sprints = [
         {"id": s["id"], "name": s["name"], "project_key": project_keys.get(s["project_id"], "?")}
@@ -732,7 +732,7 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
-        context={"all_projects": projects.list_projects(conn)},
+        context={"all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user))},
     )
 
 
@@ -1018,7 +1018,7 @@ def _render_issue_detail(
         "contributors": contributors.list_contributors(conn, issue_id),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
-        "all_projects": projects.list_projects(conn),
+        "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
         # Sprints the issue could join — only its own project's, since a sprint
         # belongs to one project (and a backlog issue with no project has none).
         "issue_sprints": (
@@ -1750,7 +1750,7 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
             "prefill": prefill,
             "priorities": issues.PRIORITIES,
             "all_labels": labels.list_labels(conn),
-            "all_projects": projects.list_projects(conn),
+            "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
             "all_users": users.list_users(conn),
         },
     )
