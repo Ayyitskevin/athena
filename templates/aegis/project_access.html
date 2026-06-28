@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Access — {{ project.name }} — Projects — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Back to projects</a>
+        <h1>Access — {{ project.name }}</h1>
+    </div>
+</div>
+
+<div class="form-container">
+    <h3>Visibility</h3>
+    {% if project.visibility == "private" %}
+    <p class="note-small">
+        <span class="badge badge-private">🔒 Private</span>
+        Only its members, you, and admins can see this project and its issues.
+    </p>
+    <form method="post" action="/aegis/projects/{{ project.id }}/visibility">
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="visibility" value="public">
+        <button type="submit" class="button secondary">Make public</button>
+    </form>
+    {% else %}
+    <p class="note-small">
+        <span class="badge badge-public">Public</span>
+        Anyone, signed in or not, can read this project and its issues.
+    </p>
+    <form method="post" action="/aegis/projects/{{ project.id }}/visibility"
+          data-confirm="Make {{ project.name }} private? Only members will see it.">
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="visibility" value="private">
+        <button type="submit" class="button">Make private</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="form-container">
+    <h3>Members</h3>
+    {% if project.visibility == "public" %}
+    <p class="note-small">Membership takes effect once the project is private. You can
+        add members now so they're ready when you flip it.</p>
+    {% else %}
+    <p class="note-small">Everyone who can read this private project. The creator and
+        admins always have access; these are the explicit grants.</p>
+    {% endif %}
+
+    {% if members %}
+    <ul class="member-list">
+        {% for m in members %}
+        <li>
+            <span class="member-name">{{ m.name }}{% if m.is_agent %} <span class="muted">(agent)</span>{% endif %}</span>
+            <form method="post" action="/aegis/projects/{{ project.id }}/members/{{ m.user_id }}/delete"
+                  data-confirm="Remove {{ m.name }} from {{ project.name }}?" style="display:inline">
+                {% include "partials/csrf.html" %}
+                <button type="submit" class="button danger small">Remove</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-state">No members yet.</p>
+    {% endif %}
+
+    {% if addable %}
+    <form method="post" action="/aegis/projects/{{ project.id }}/members" class="member-add">
+        {% include "partials/csrf.html" %}
+        <select name="user_id" required>
+            <option value="" disabled selected>Add a member…</option>
+            {% for u in addable %}
+            <option value="{{ u.id }}">{{ u.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="button secondary">Add member</button>
+    </form>
+    {% else %}
+    <p class="note-small">Everyone is already a member.</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -26,6 +26,9 @@
         <tr>
             <td class="issue-title">
                 <a href="/aegis/issues?project={{ p.id }}">{{ p.name }}</a>
+                {% if p.visibility == "private" %}
+                <span class="badge badge-private" title="Private — members only">🔒</span>
+                {% endif %}
             </td>
             <td class="muted"><code>{{ p.key }}</code></td>
             <td class="muted">{{ p.description or "—" }}</td>
@@ -34,6 +37,9 @@
                 <a href="/aegis/projects/{{ p.id }}/sprints">Sprints</a>
                 {% if can_write and request.state.user.id == p.created_by %}
                 · <a href="/aegis/projects/{{ p.id }}/edit">Edit</a>
+                {% endif %}
+                {% if can_write and (request.state.user.id == p.created_by or is_admin) %}
+                · <a href="/aegis/projects/{{ p.id }}/access">Access</a>
                 {% endif %}
             </td>
         </tr>

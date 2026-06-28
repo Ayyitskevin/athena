@@ -22,6 +22,7 @@ from athena.aegis import (
     issue_activity,
     issue_search,
     issues,
+    project_activity,
     projects,
     saved_filters,
     sprints,
@@ -2087,7 +2088,14 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/projects.html",
-        context={"projects": all_projects, "counts": counts, "can_write": can_write},
+        context={
+            "projects": all_projects,
+            "counts": counts,
+            "can_write": can_write,
+            # An admin may manage access on any project, the creator only on their own —
+            # the template uses this to show the "Manage access" link beyond the creator.
+            "is_admin": user is not None and identity.is_admin(user),
+        },
     )
 
 
@@ -2263,6 +2271,159 @@ def project_delete(
         )
     projects.delete_project(conn, project_id)
     return RedirectResponse("/aegis/projects", status_code=303)
+
+
+# --- Project access: privacy toggle + member management (web) -------------
+#
+# The browser surface for the access control that already lives in the REST API.
+# Managing access is creator-OR-admin (wider than edit/delete, creator-only), so this
+# uses its own gate, _authorize_project_manage, rather than _authorize_project_write.
+
+
+def _authorize_project_manage(conn, project_id: int, user: dict):
+    """Resolve a project whose ACCESS (privacy + roster) the user may manage, or an
+    error response. Returns (project, None) or (None, HTMLResponse). Creator-OR-admin:
+    a private project the user can't even see is 404 (no existence leak); a visible one
+    they may see but not manage is 403. The 401 (logged-out) check stays at each call
+    site, before this."""
+    project = projects.get_project(conn, project_id)
+    if project is None or not access.can_see_project(conn, user, project_id):
+        return None, HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    if not identity.can_write(user):
+        return None, _readonly_response()
+    if project["created_by"] != user["id"] and not identity.is_admin(user):
+        return None, HTMLResponse(
+            '<div class="blocked">Only the project creator or an admin may manage access.</div>',
+            status_code=403,
+        )
+    return project, None
+
+
+@router.get("/aegis/projects/{project_id}/access", response_class=HTMLResponse)
+def project_access(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The access page for a project: its visibility with a public/private toggle, and
+    — when private — the member roster with add/remove. Creator-or-admin (401/403/404)."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to manage access.</div>',
+            status_code=401,
+        )
+    project, err = _authorize_project_manage(conn, project_id, user)
+    if err is not None:
+        return err
+    members = access.list_project_members(conn, project_id)
+    member_ids = {m["user_id"] for m in members}
+    # Everyone who could be added (not already a member). The creator gets in implicitly
+    # and is auto-added on going private, so they're naturally excluded once private.
+    addable = [u for u in users.list_users(conn) if u["id"] not in member_ids]
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/project_access.html",
+        context={"project": project, "members": members, "addable": addable},
+    )
+
+
+@router.post("/aegis/projects/{project_id}/visibility", dependencies=[Depends(verify_csrf)])
+def project_set_visibility(
+    request: Request,
+    project_id: int,
+    visibility: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Flip a project public ↔ private from its access page. Creator-or-admin. Going
+    private auto-adds the creator to the roster (they keep access via created_by
+    regardless). 303 back to the access page."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    project, err = _authorize_project_manage(conn, project_id, user)
+    if err is not None:
+        return err
+    visibility = visibility.strip().lower()
+    if visibility not in ("public", "private"):
+        return HTMLResponse(
+            '<div class="error">Visibility must be public or private.</div>',
+            status_code=400,
+        )
+    if visibility != project["visibility"]:
+        projects.set_visibility(conn, project_id, visibility)
+        if visibility == "private":
+            access.add_project_member(
+                conn, project_id, project["created_by"], added_by=user["id"]
+            )
+        project_activity.record_project_visibility_changed(
+            conn, actor_id=user["id"], project_id=project_id,
+            name=project["name"], visibility=visibility,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
+
+
+@router.post("/aegis/projects/{project_id}/members", dependencies=[Depends(verify_csrf)])
+def project_add_member(
+    request: Request,
+    project_id: int,
+    user_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Grant a user access to a private project from its access page. Creator-or-admin.
+    400 on a missing/blank user; a re-add is idempotent. 303 back to the access page."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_manage(conn, project_id, user)
+    if err is not None:
+        return err
+    member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
+    if member is None:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+    if access.add_project_member(conn, project_id, member["id"], added_by=user["id"]):
+        project_activity.record_project_member_added(
+            conn, actor_id=user["id"], project_id=project_id, member_name=member["name"]
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/members/{member_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def project_remove_member(
+    request: Request,
+    project_id: int,
+    member_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Revoke a user's project membership from its access page. Creator-or-admin. A
+    no-op (they weren't a member) still 303s back — the roster simply reflects reality."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_project_manage(conn, project_id, user)
+    if err is not None:
+        return err
+    member = users.get_user(conn, member_id)
+    if access.remove_project_member(conn, project_id, member_id):
+        project_activity.record_project_member_removed(
+            conn, actor_id=user["id"], project_id=project_id,
+            member_name=member["name"] if member else str(member_id),
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
 
 # --- Sprints: a project's iterations --------------------------------------
