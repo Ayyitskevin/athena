@@ -97,6 +97,7 @@ def events(
         parent_run_id=parent_run_id,
         verb=verb,
         limit=limit + 1,
+        actor=actor,
     )
     has_more = len(rows) > limit
     batch = rows[:limit]

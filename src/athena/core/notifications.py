@@ -20,9 +20,18 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from athena.core import access
+
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
 # rejects unknown kinds.
 WATCHABLE_KINDS = ("issue", "page")
+
+# Sentinel for the inbox reads' `actor`: "no visibility gating" (internal callers /
+# tests). Distinct from actor=None. Notifications are created without an access check
+# (a watch or a mention can land on a target that later goes private), so the inbox
+# reads gate at READ time: a notification whose target the owner can no longer see is
+# filtered out here rather than deleted.
+_UNGATED = object()
 
 # A mention is [[user:N]] in body/comment text — the same bracket grammar as the
 # [[issue:N]]/[[page:N]] cross-links, but for people. The links/backlinks system
@@ -170,12 +179,20 @@ def list_notifications(
     *,
     unread_only: bool = False,
     limit: int = 50,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
-    """A user's inbox, newest first. unread_only narrows to the unread ones."""
+    """A user's inbox, newest first. unread_only narrows to the unread ones. `actor`
+    (the inbox owner viewing it) gates out notifications whose target they can no
+    longer see; _UNGATED leaves it ungated for internal callers/tests."""
     where = "WHERE n.user_id = ?"
     params: list = [user_id]
     if unread_only:
         where += " AND n.read_at IS NULL"
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where += f" AND {gate}"
+            params.extend(gate_params)
     rows = conn.execute(
         f"{_INBOX_SELECT} {where} ORDER BY n.id DESC LIMIT ?",
         (*params, limit),
@@ -183,11 +200,31 @@ def list_notifications(
     return [dict(r) for r in rows]
 
 
-def unread_count(conn: sqlite3.Connection, user_id: int) -> int:
+def unread_count(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> int:
+    """How many unread notifications the user has — the nav badge. Gated like the
+    inbox itself (an unread notification on a target the owner can't see doesn't count)
+    by joining the activity row; _UNGATED skips the join and counts them all."""
+    if actor is _UNGATED:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM notifications "
+            "WHERE user_id = ? AND read_at IS NULL",
+            (user_id,),
+        ).fetchone()["n"]
+    gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+    where = "WHERE n.user_id = ? AND n.read_at IS NULL"
+    params: list = [user_id]
+    if gate:
+        where += f" AND {gate}"
+        params.extend(gate_params)
     return conn.execute(
-        "SELECT COUNT(*) AS n FROM notifications "
-        "WHERE user_id = ? AND read_at IS NULL",
-        (user_id,),
+        f"SELECT COUNT(*) AS n FROM notifications n "
+        f"JOIN activity a ON a.id = n.event_id {where}",
+        params,
     ).fetchone()["n"]
 
 
