@@ -792,7 +792,10 @@ def edit_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    return comments.update_comment(conn, comment_id, body=body)
+    updated = comments.update_comment(conn, comment_id, body=body)
+    if updated is None:  # vanished between the author check and the write (a race)
+        raise HTTPException(status_code=404, detail="no such comment")
+    return updated
 
 
 @router.delete("/{issue_id}/comments/{comment_id}", status_code=204)
@@ -803,7 +806,10 @@ def delete_comment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     _author_comment_or_error(conn, issue_id, comment_id, actor)
-    comments.delete_comment(conn, comment_id)
+    if not comments.delete_comment(conn, comment_id):
+        # vanished between the author check and the delete (a race) — don't record
+        # an event for a deletion that didn't happen.
+        raise HTTPException(status_code=404, detail="no such comment")
     issue_activity.record_comment_deleted(conn, actor_id=actor["id"], issue_id=issue_id)
 
 
