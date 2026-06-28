@@ -7,8 +7,6 @@ project) stays visible to everyone. Nothing marks a project private through the 
 yet (that's a later slice), so these flip the `visibility` column on a side
 connection to the same DB and exercise the gate.
 """
-import sqlite3
-
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
