@@ -79,11 +79,26 @@ def get_project_by_key(conn: sqlite3.Connection, key: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_projects(conn: sqlite3.Connection) -> list[dict]:
-    """Every project, alphabetical."""
-    rows = conn.execute(
-        "SELECT * FROM projects ORDER BY name COLLATE NOCASE"
-    ).fetchall()
+def list_projects(
+    conn: sqlite3.Connection, visible_project_ids: set[int] | None = None
+) -> list[dict]:
+    """Projects the viewer may see, alphabetical. None means no gating — an admin, or
+    an internal caller that needs the full set (e.g. building a write-side dropdown);
+    a set restricts to those ids; an empty set yields nothing. Callers get the set
+    from access.visible_project_filter."""
+    if visible_project_ids is None:
+        rows = conn.execute(
+            "SELECT * FROM projects ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    elif not visible_project_ids:
+        return []
+    else:
+        placeholders = ",".join("?" for _ in visible_project_ids)
+        rows = conn.execute(
+            f"SELECT * FROM projects WHERE id IN ({placeholders}) "
+            "ORDER BY name COLLATE NOCASE",
+            list(visible_project_ids),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
