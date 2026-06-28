@@ -1397,7 +1397,10 @@ def edit_issue_comment(
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
-    comments.update_comment(conn, comment_id, body=body)
+    if comments.update_comment(conn, comment_id, body=body) is None:
+        # vanished between the author check and the write (a race) — 404, not a
+        # silent "success" redirect.
+        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1421,7 +1424,10 @@ def delete_issue_comment(
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
     if err is not None:
         return err
-    comments.delete_comment(conn, comment_id)
+    if not comments.delete_comment(conn, comment_id):
+        # vanished between the author check and the delete (a race) — 404, and don't
+        # record an event for a deletion that didn't happen.
+        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
     issue_activity.record_comment_deleted(conn, actor_id=user["id"], issue_id=issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
