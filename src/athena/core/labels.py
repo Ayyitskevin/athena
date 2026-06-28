@@ -147,3 +147,56 @@ def labels_for_issues(
         issue_id = d.pop("issue_id")
         out.setdefault(issue_id, []).append(d)
     return out
+
+
+# --- The page<->label join (the Mentor twin of the issue join above) ---------
+
+
+def add_label_to_page(
+    conn: sqlite3.Connection, page_id: int, label_id: int
+) -> bool:
+    """Attach a label to a page. Idempotent (composite PK + OR IGNORE). Returns True
+    if a new pairing was created, False if it was already attached — so the caller
+    records the audit event only on a real change. Raises sqlite3.IntegrityError if
+    the page or label doesn't exist (the FKs)."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO page_labels (page_id, label_id) VALUES (?, ?)",
+        (page_id, label_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def remove_label_from_page(
+    conn: sqlite3.Connection, page_id: int, label_id: int
+) -> bool:
+    """Detach a label from a page. Returns True if a pairing was removed, False if
+    the pair wasn't attached (so the caller can 404)."""
+    cur = conn.execute(
+        "DELETE FROM page_labels WHERE page_id = ? AND label_id = ?",
+        (page_id, label_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def page_ids_for_label(conn: sqlite3.Connection, name: str) -> list[int]:
+    """The ids of every page carrying the named label (case-insensitive). [] for an
+    unknown label, so a label filter naturally matches nothing."""
+    rows = conn.execute(
+        "SELECT pl.page_id FROM page_labels pl "
+        "JOIN labels l ON l.id = pl.label_id WHERE l.name = ?",
+        (name,),
+    ).fetchall()
+    return [row["page_id"] for row in rows]
+
+
+def labels_for_page(conn: sqlite3.Connection, page_id: int) -> list[dict]:
+    """The labels attached to one page, alphabetical."""
+    rows = conn.execute(
+        "SELECT l.* FROM labels l "
+        "JOIN page_labels pl ON pl.label_id = l.id "
+        "WHERE pl.page_id = ? ORDER BY l.name COLLATE NOCASE",
+        (page_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]

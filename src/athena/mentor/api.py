@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import activity, attachments, links
+from athena.core import activity, attachments, labels, links
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
@@ -53,6 +53,19 @@ class PageCreate(BaseModel):
     parent_id: int | None = None
 
 
+class LabelOut(BaseModel):
+    # The shared label vocabulary, same shape Aegis returns — a page and an issue
+    # carry the same labels. Defined here (not imported from aegis) so Mentor keeps
+    # no dependency on a sibling feature module.
+    id: int
+    name: str
+    color: str
+
+
+class LabelAttach(BaseModel):
+    label_id: int
+
+
 class PageOut(BaseModel):
     id: int
     space_id: int
@@ -64,6 +77,8 @@ class PageOut(BaseModel):
     # The current revision's editor + time (== creator/created_at until first edit).
     updated_by: int
     updated_at: str
+    # The shared labels attached to this page (alphabetical), or [] if none.
+    labels: list[LabelOut] = []
 
 
 class PageUpdate(BaseModel):
@@ -107,6 +122,22 @@ class PageCommentOut(BaseModel):
     author_name: str
     body: str
     created_at: str
+
+
+def _with_labels(conn: sqlite3.Connection, page: dict) -> dict:
+    """Attach a page's labels under a "labels" key, so PageOut carries them. The page
+    OWNS its core columns; labels are a join, resolved here in the one place every
+    page response funnels through (the Mentor twin of aegis _with_labels)."""
+    page["labels"] = labels.labels_for_page(conn, page["id"])
+    return page
+
+
+def _with_labels_many(conn: sqlite3.Connection, page_rows: list[dict]) -> list[dict]:
+    """labels for a list of pages, attached in place. Mirrors _with_labels for the
+    list endpoint; small page sets, so a per-page lookup is fine."""
+    for page in page_rows:
+        page["labels"] = labels.labels_for_page(conn, page["id"])
+    return page_rows
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -268,7 +299,7 @@ def create_page(
         title=page["title"],
         body=page["body"],
     )
-    return page
+    return _with_labels(conn, page)
 
 
 @spaces_router.get("/{space_id}/pages", response_model=list[PageOut])
@@ -279,7 +310,7 @@ def list_pages(
     # space that simply has no pages yet, which returns []).
     if spaces.get_space(conn, space_id) is None:
         raise HTTPException(status_code=404, detail="no such space")
-    return pages.list_pages_in_space(conn, space_id)
+    return _with_labels_many(conn, pages.list_pages_in_space(conn, space_id))
 
 
 @pages_router.get("/{page_id}", response_model=PageOut)
@@ -287,7 +318,7 @@ def show_page(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dic
     page = pages.get_page(conn, page_id)
     if page is None:
         raise HTTPException(status_code=404, detail="no such page")
-    return page
+    return _with_labels(conn, page)
 
 
 @pages_router.patch("/{page_id}", response_model=PageOut)
@@ -316,7 +347,7 @@ def edit_page(
     page_activity.record_page_edited(
         conn, actor_id=actor["id"], before=before, after=after
     )
-    return after
+    return _with_labels(conn, after)
 
 
 @pages_router.put("/{page_id}/move", response_model=PageOut)
@@ -343,7 +374,7 @@ def move_page(
         before_parent_id=page["parent_id"],
         after_parent_id=payload.parent_id,
     )
-    return moved
+    return _with_labels(conn, moved)
 
 
 @pages_router.delete("/{page_id}", status_code=204)
@@ -561,4 +592,47 @@ def restore_version(
         before=before,
         after=restored,
     )
-    return restored
+    return _with_labels(conn, restored)
+
+
+# --- Labels on a page: an open write, like editing it -----------------------
+
+
+@pages_router.post("/{page_id}/labels", response_model=PageOut, status_code=201)
+def attach_label(
+    page_id: int,
+    payload: LabelAttach,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Labelling a page is an open write like editing it (Mentor's shared-wiki model).
+    # 404 if the page is missing; 422 if the label id isn't real (rather than letting
+    # the FK surface a 500). Idempotent — re-attaching records nothing.
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    if labels.get_label(conn, payload.label_id) is None:
+        raise HTTPException(status_code=422, detail="no such label")
+    if labels.add_label_to_page(conn, page_id, payload.label_id):
+        page_activity.record_page_label_added(
+            conn, actor_id=actor["id"], page_id=page_id, label_id=payload.label_id
+        )
+    return _with_labels(conn, page)
+
+
+@pages_router.delete("/{page_id}/labels/{label_id}", response_model=PageOut)
+def detach_label(
+    page_id: int,
+    label_id: int,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        raise HTTPException(status_code=404, detail="no such page")
+    if not labels.remove_label_from_page(conn, page_id, label_id):
+        raise HTTPException(status_code=404, detail="label not on this page")
+    page_activity.record_page_label_removed(
+        conn, actor_id=actor["id"], page_id=page_id, label_id=label_id
+    )
+    return _with_labels(conn, page)
