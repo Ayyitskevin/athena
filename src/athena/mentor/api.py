@@ -419,12 +419,17 @@ def delete_page(
 
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])
-def backlinks(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    # "What references this page?" — open like other reads. 404 if the page
-    # itself is missing, so a typo'd id reads as not-found, not empty.
+def backlinks(
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # "What references this page?" — open like other reads, but the sources are gated
+    # by the viewer: a private project's issue / a private space's page linking here
+    # never reveals itself. 404 if the page itself is missing.
     if pages.get_page(conn, page_id) is None:
         raise HTTPException(status_code=404, detail="no such page")
-    return links.backlinks(conn, target_kind="page", target_id=page_id)
+    return links.backlinks(conn, target_kind="page", target_id=page_id, actor=actor)
 
 
 # --- Page comments: the discussion thread on a page -----------------------

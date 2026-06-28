@@ -1007,7 +1007,8 @@ def _render_issue_detail(
     context = {
         "issue": issue,
         "body_html": render_body(conn, issue["body"]),
-        "backlinks": links.backlinks(conn, "issue", issue_id),
+        # "Referenced by" hides sources in projects/spaces the viewer can't see.
+        "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
         "links": dependencies.list_links(conn, issue_id),
         "comments": comment_rows,
         "attachments": attachments.list_for(conn, "issue", issue_id),

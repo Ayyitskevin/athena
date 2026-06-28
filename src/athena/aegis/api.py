@@ -425,13 +425,16 @@ def show(
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
 def backlinks(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # "What references this issue?" — open like other reads. 404 if the issue
-    # itself is missing, so a typo'd id reads as not-found, not empty.
+    # "What references this issue?" — open like other reads, but the sources are gated
+    # by the viewer so a hidden project's/space's reference never reveals itself. 404
+    # if the issue itself is missing.
     if issues.get_issue(conn, issue_id) is None:
         raise HTTPException(status_code=404, detail="no such issue")
-    return links.backlinks(conn, target_kind="issue", target_id=issue_id)
+    return links.backlinks(conn, target_kind="issue", target_id=issue_id, actor=actor)
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:

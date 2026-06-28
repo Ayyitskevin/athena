@@ -216,6 +216,31 @@ def visible_project_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int
     return visible
 
 
+def can_see_issue(conn: sqlite3.Connection, actor: dict | None, issue_id: int) -> bool:
+    """Whether the actor may read this issue, resolved by its id — the cross-link
+    gate. Looks up the issue's project and defers to can_see_project_or_backlog. A
+    missing issue is not visible (a deleted target has no container to authorize
+    against — the safe default the activity gate uses too)."""
+    row = conn.execute(
+        "SELECT project_id FROM issues WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if row is None:
+        return False
+    return can_see_project_or_backlog(conn, actor, row["project_id"])
+
+
+def can_see_page(conn: sqlite3.Connection, actor: dict | None, page_id: int) -> bool:
+    """Whether the actor may read this page, resolved by its id — the page twin of
+    can_see_issue. Looks up the page's space and defers to can_see_space; a missing
+    page is not visible."""
+    row = conn.execute(
+        "SELECT space_id FROM pages WHERE id = ?", (page_id,)
+    ).fetchone()
+    if row is None:
+        return False
+    return can_see_space(conn, actor, row["space_id"])
+
+
 def visible_project_filter(
     conn: sqlite3.Connection, actor: dict | None
 ) -> set[int] | None:

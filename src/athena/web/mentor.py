@@ -402,7 +402,7 @@ def page_detail(
             "attachments": attachments.list_for(conn, "page", page_id),
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
-            "backlinks": links.backlinks(conn, "page", page_id),
+            "backlinks": links.backlinks(conn, "page", page_id, actor=user),
             "space": spaces.get_space(conn, page["space_id"]),
             "ancestors": ancestors,
             "tree": tree,
