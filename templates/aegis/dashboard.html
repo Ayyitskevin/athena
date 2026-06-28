@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Dashboard</h1>
+        <p class="subtitle">A live overview of the work</p>
+    </div>
+</div>
+
+<div class="stat-row">
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.active_issues }}</span>
+        <span class="stat-label">Active issues</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.projects }}</span>
+        <span class="stat-label">Projects</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.active_sprints }}</span>
+        <span class="stat-label">Active sprints</span>
+    </div>
+</div>
+
+<div class="dashboard-grid">
+    {% if request.state.user %}
+    <section class="dashboard-card">
+        <h3>My open issues</h3>
+        {% if my_issues %}
+        <ul class="dashboard-list">
+            {% for i in my_issues %}
+            <li>
+                <a href="/aegis/issues/{{ i.id }}">{{ i.key or "#" ~ i.id }} — {{ i.title }}</a>
+                <span class="status {{ i.status }}">{{ i.status }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="note-small">Nothing assigned to you is open. Clear desk.</p>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="dashboard-card">
+        <h3>By status</h3>
+        {% if status_counts %}
+        <ul class="dashboard-bars">
+            {% for s in status_counts %}
+            <li>
+                <a href="/aegis/issues?status={{ s.status | urlencode }}"><span class="status {{ s.status }}">{{ s.status }}</span></a>
+                <span class="bar-count">{{ s.count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="note-small">No issues yet.</p>
+        {% endif %}
+    </section>
+
+    <section class="dashboard-card">
+        <h3>By priority</h3>
+        <ul class="dashboard-bars">
+            {% for p in priority_counts %}
+            <li>
+                <a href="/aegis/issues?priority={{ p.priority | urlencode }}"><span class="priority {{ p.priority }}">{{ p.priority }}</span></a>
+                <span class="bar-count">{{ p.count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+
+    <section class="dashboard-card">
+        <h3>By project</h3>
+        <ul class="dashboard-bars">
+            {% for p in projects %}
+            <li>
+                <a href="/aegis/issues?project={{ p.id }}">{{ p.name }} <code>{{ p.key }}</code></a>
+                <span class="bar-count">{{ p.count }}</span>
+            </li>
+            {% endfor %}
+            <li>
+                <a href="/aegis/issues?project=none" class="muted">Backlog (no project)</a>
+                <span class="bar-count">{{ backlog_count }}</span>
+            </li>
+        </ul>
+    </section>
+
+    <section class="dashboard-card">
+        <h3>In flight</h3>
+        {% if active_sprints %}
+        <ul class="dashboard-list">
+            {% for s in active_sprints %}
+            <li>
+                <a href="/aegis/projects/{{ s.project_id }}/sprints">{{ s.name }}</a>
+                <span class="muted">{{ s.project_name }} · {{ s.issue_count }} issue{{ "s" if s.issue_count != 1 else "" }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="note-small">No active sprints right now.</p>
+        {% endif %}
+    </section>
+
+    <section class="dashboard-card dashboard-activity">
+        <h3>Recent activity</h3>
+        {% with events = recent_activity, show_target = True %}
+        {% include "aegis/partials/activity_list.html" %}
+        {% endwith %}
+        <p class="note-small"><a href="/aegis/activity">Full activity feed →</a></p>
+    </section>
+</div>
+{% endblock %}
