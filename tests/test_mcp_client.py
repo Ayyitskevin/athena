@@ -96,6 +96,26 @@ def test_recent_events_envelope(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_bulk_update_through_the_client(tmp_path):
+    # WHY: agents must move many issues in one call, not N — the bulk endpoint is
+    # reachable as a single MCP tool, best-effort with per-item results.
+    tc, ath = _client(tmp_path, "bulk.db")
+    try:
+        proj = tc.post("/projects", json={"name": "Ops", "key": "OPS"}).json()
+        a = ath.create_issue(title="a", project_id=proj["id"])
+        b = ath.create_issue(title="b", project_id=proj["id"])
+        out = ath.bulk_update_issues(
+            [a["id"], b["id"], 9999], status="in_progress", assignee_id=1
+        )
+        assert out["updated"] == 2 and out["failed"] == 1
+        outcomes = {r["id"]: r for r in out["results"]}
+        assert outcomes[a["id"]]["ok"] and not outcomes[9999]["ok"]
+        # The change actually landed.
+        assert ath.get_issue(str(a["id"]))["status"] == "in_progress"
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
     # WHY: these surfaces (parent/child, dependencies, sprints, labels) all have
     # REST endpoints + data layers, but were unreachable via MCP — an agent could
@@ -168,6 +188,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "update_issue",
             "assign_issue",
             "comment_on_issue",
+            "bulk_update_issues",
             "recent_events",
             "list_projects",
             "list_users",

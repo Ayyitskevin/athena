@@ -138,6 +138,29 @@ class AthenaClient:
             self._client.post(f"/issues/{issue_id}/comments", json={"body": body})
         )
 
+    def bulk_update_issues(
+        self,
+        ids: list[int],
+        *,
+        status: str | None = None,
+        priority: str | None = None,
+        assignee_id: int | None = None,
+        sprint_id: int | None = None,
+    ) -> Any:
+        # Only the fields actually given are sent (drop-None), so the bulk tool SETS
+        # values; clearing an assignee/sprint stays the per-issue tools' job. The
+        # endpoint is best-effort, so the result is {updated, failed, results}.
+        payload = {
+            "ids": ids,
+            **self._params(
+                status=status,
+                priority=priority,
+                assignee_id=assignee_id,
+                sprint_id=sprint_id,
+            ),
+        }
+        return self._result(self._client.post("/issues/bulk", json=payload))
+
     # --- hierarchy (parent / children) --------------------------------------
 
     def set_issue_parent(self, issue_id: int, parent_id: int | None) -> Any:
