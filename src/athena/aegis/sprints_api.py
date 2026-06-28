@@ -15,8 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from athena.aegis import projects, sprints
+from athena.core import access
 from athena.core.deps import get_conn
-from athena.core.identity import issue_write_actor
+from athena.core.identity import issue_write_actor, optional_actor
 
 router = APIRouter(tags=["aegis"])
 
@@ -78,10 +79,12 @@ def _sprint_for_write(conn: sqlite3.Connection, sprint_id: int, actor: dict) -> 
 def list_project_sprints(
     project_id: int,
     state: str | None = Query(None, description="filter to one state"),
+    actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Reading a project's sprints is open, like listing its issues.
-    if projects.get_project(conn, project_id) is None:
+    # Reading a project's sprints is open, like listing its issues — but a private
+    # project the caller can't see is a 404, indistinguishable from a missing one.
+    if not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     if state is not None and state not in sprints.STATES:
         raise HTTPException(
@@ -115,10 +118,14 @@ def create_sprint(
 
 @router.get("/sprints/{sprint_id}", response_model=SprintOut)
 def show_sprint(
-    sprint_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    sprint_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     sprint = sprints.get_sprint(conn, sprint_id)
-    if sprint is None:
+    # A sprint in a private project the caller can't see is a 404 — gated by its
+    # project, so neither the sprint nor the project's existence leaks.
+    if sprint is None or not access.can_see_project(conn, actor, sprint["project_id"]):
         raise HTTPException(status_code=404, detail="no such sprint")
     return sprint
 

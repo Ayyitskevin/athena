@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.aegis import api, saved_filters
+from athena.core import access
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -163,5 +164,7 @@ def run(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     flt = _owned_filter_or_404(conn, filter_id, actor)
-    rows = saved_filters.run_filter(conn, flt["criteria"])
+    rows = saved_filters.run_filter(
+        conn, flt["criteria"], visible_project_ids=access.visible_project_filter(conn, actor)
+    )
     return api._with_labels_many(conn, rows)
