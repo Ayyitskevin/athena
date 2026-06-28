@@ -319,10 +319,12 @@ def event_visibility_clause(
     """A SQL predicate (no leading AND) + params that keep only activity rows whose
     target the actor may see — the gate the activity feed and the notifications inbox
     share, since both expose (target_kind, target_id). Returns ('', []) for an admin
-    (god view → no gate). The three kinds ever recorded: an 'issue' is kept if it's a
+    (god view → no gate). The four kinds ever recorded: an 'issue' is kept if it's a
     backlog issue (no project) OR its project is visible; a 'page' if its space is
-    visible; a 'space' if that space (the target itself) is visible. A hard-deleted
-    target has no surviving container, so its events drop out — the safe default.
+    visible; a 'space' if that space (the target itself) is visible; a 'project' if
+    that project (the target itself) is visible — the container-audit twin of 'space',
+    for the project-privacy/membership events. A hard-deleted target has no surviving
+    container, so its events drop out — the safe default.
 
     `alias` is the SQL alias of the activity table/row in the caller's query (both the
     feed and the inbox alias it 'a'). Built as correlated EXISTS so it can be ANDed
@@ -338,7 +340,8 @@ def event_visibility_clause(
         f"OR ({alias}.target_kind = 'page' AND EXISTS ("
         f"SELECT 1 FROM pages pg WHERE pg.id = {alias}.target_id "
         f"AND pg.space_id IN ({space_ph}))) "
-        f"OR ({alias}.target_kind = 'space' AND {alias}.target_id IN ({space_ph})))"
+        f"OR ({alias}.target_kind = 'space' AND {alias}.target_id IN ({space_ph})) "
+        f"OR ({alias}.target_kind = 'project' AND {alias}.target_id IN ({proj_ph})))"
     )
-    params = [*proj_params, *space_params, *space_params]
+    params = [*proj_params, *space_params, *space_params, *proj_params]
     return clause, params

@@ -69,3 +69,51 @@ def record_space_deleted(
         target_id=space_id,
         detail=name,
     )
+
+
+def record_space_visibility_changed(
+    conn: sqlite3.Connection, *, actor_id: int, space_id: int, name: str, visibility: str
+) -> None:
+    """A space was made private or public — the Mentor twin of the project event. The
+    verb encodes the direction, the detail names the space. Recorded only on a real
+    transition (the caller skips a no-op set-to-same-value)."""
+    verb = "space_made_private" if visibility == "private" else "space_made_public"
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb=verb,
+        target_kind="space",
+        target_id=space_id,
+        detail=name,
+    )
+
+
+def record_space_member_added(
+    conn: sqlite3.Connection, *, actor_id: int, space_id: int, member_name: str
+) -> None:
+    """A user was granted access to a private space. The detail is the member's name;
+    recorded only on a real change (re-adding an existing member records nothing)."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="space_member_added",
+        target_kind="space",
+        target_id=space_id,
+        detail=member_name,
+    )
+
+
+def record_space_member_removed(
+    conn: sqlite3.Connection, *, actor_id: int, space_id: int, member_name: str
+) -> None:
+    """A user's access to a private space was revoked. The detail is the member's name,
+    preserved here even though the membership row is gone; recorded only when a row was
+    actually removed."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="space_member_removed",
+        target_kind="space",
+        target_id=space_id,
+        detail=member_name,
+    )
