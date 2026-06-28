@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import activity, notifications
+from athena.core import activity, labels, notifications
 from athena.mentor import pages
 
 
@@ -148,6 +148,38 @@ def record_page_comment_deleted(
         verb="page_comment_deleted",
         target_kind="page",
         target_id=page_id,
+    )
+
+
+def record_page_label_added(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, label_id: int
+) -> None:
+    """Record that a label was attached to the page, stamped with the label's name.
+    Caller records only when the attach created a new pairing."""
+    label = labels.get_label(conn, label_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_labeled",
+        target_kind="page",
+        target_id=page_id,
+        detail=label["name"] if label else "",
+    )
+
+
+def record_page_label_removed(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, label_id: int
+) -> None:
+    """Record that a label was detached from the page. Caller records only when a
+    pairing was actually removed."""
+    label = labels.get_label(conn, label_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_unlabeled",
+        target_kind="page",
+        target_id=page_id,
+        detail=label["name"] if label else "",
     )
 
 

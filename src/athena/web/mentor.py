@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.core import activity, attachments, identity, links, notifications
+from athena.core import activity, attachments, identity, labels, links, notifications
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -390,6 +390,8 @@ def page_detail(
             "page": page,
             "body_html": render_body(conn, page["body"]),
             "comments": comment_rows,
+            "page_labels": labels.labels_for_page(conn, page_id),
+            "all_labels": labels.list_labels(conn),  # the shared vocabulary, for autocomplete
             "attachments": attachments.list_for(conn, "page", page_id),
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
@@ -779,4 +781,60 @@ def delete_page_comment(
     page_activity.record_page_comment_deleted(
         conn, actor_id=user["id"], page_id=page_id
     )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+# --- Page labels ------------------------------------------------------------
+
+
+@router.post("/mentor/pages/{page_id}/labels", dependencies=[Depends(verify_csrf)])
+def add_page_label(
+    request: Request,
+    page_id: int,
+    name: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Attach a label to a page by typing its name — find-or-create, so the user
+    doesn't manage a separate vocabulary first (the same shared vocabulary issues
+    use). Open write like editing a page. Empty name → 400. 303 back to the page."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "label pages")
+    if err is not None:
+        return err
+    if pages.get_page(conn, page_id) is None:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    name = name.strip()
+    if not name:
+        return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
+    label = labels.get_or_create_label(conn, name=name)
+    if labels.add_label_to_page(conn, page_id, label["id"]):  # idempotent
+        page_activity.record_page_label_added(
+            conn, actor_id=user["id"], page_id=page_id, label_id=label["id"]
+        )
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post(
+    "/mentor/pages/{page_id}/labels/{label_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_page_label(
+    request: Request,
+    page_id: int,
+    label_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Detach a label from a page. Same write gate. POST (not DELETE) because HTML
+    forms can't issue DELETE."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "label pages")
+    if err is not None:
+        return err
+    if pages.get_page(conn, page_id) is None:
+        # 404 a missing page, symmetric with add_page_label (and the REST detach).
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    if labels.remove_label_from_page(conn, page_id, label_id):
+        page_activity.record_page_label_removed(
+            conn, actor_id=user["id"], page_id=page_id, label_id=label_id
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
