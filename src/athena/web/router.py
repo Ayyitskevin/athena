@@ -211,6 +211,9 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # plain cross-kind search honouring the scope tab.
     fetch = _SEARCH_PAGE + 1
     skip = (page - 1) * _SEARCH_PAGE
+    user = getattr(request.state, "user", None)
+    # Search is gated by the viewer: a private project's issues / a private space's
+    # pages never appear to someone who can't see them (admins see all).
     if not q:
         hits = []
     elif filtered_mode:
@@ -222,9 +225,10 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             project=project_filter or None,
             limit=fetch,
             offset=skip,
+            actor=user,
         )
     else:
-        hits = search.search(conn, q, kind=kind, limit=fetch, offset=skip)
+        hits = search.search(conn, q, kind=kind, limit=fetch, offset=skip, actor=user)
     has_next = len(hits) > _SEARCH_PAGE
     hits = hits[:_SEARCH_PAGE]
     for h in hits:
@@ -261,9 +265,13 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "status_filter": status_filter,
             "label_filter": label_filter,
             "project_filter": project_filter,
-            "all_statuses": sorted({i["status"] for i in issues.list_issues(conn)}),
+            # The filter dropdowns must not enumerate a private project (its statuses
+            # or its name) to someone who can't see it.
+            "all_statuses": sorted(
+                {i["status"] for i in issues.list_issues(conn, visible_project_ids=access.visible_project_filter(conn, user))}
+            ),
             "all_labels": labels.list_labels(conn),
-            "all_projects": projects.list_projects(conn),
+            "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
             "scope_urls": {
                 "all": find_url(scope=None, page_num=1),
                 "issue": find_url(scope="issue", page_num=1),
@@ -1831,6 +1839,7 @@ def filter_detail(
             label=crit.get("label"),
             project=crit.get("project"),
             limit=_FILTER_SEARCH_LIMIT,
+            actor=user,
         )
         for h in hits:
             h["snippet_html"] = render_snippet(h.get("snippet"))

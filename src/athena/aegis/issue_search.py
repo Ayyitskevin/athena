@@ -20,7 +20,11 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import issues
-from athena.core import labels, search
+from athena.core import access, labels, search
+
+# Sentinel: "no visibility gating" (internal callers / ranking tests). Distinct from
+# actor=None, a real anonymous viewer who may see only public projects.
+_UNGATED = object()
 
 
 def search_issues(
@@ -34,6 +38,7 @@ def search_issues(
     project: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Issues matching `query` (full-text, ranked) AND every supplied filter.
 
@@ -41,9 +46,21 @@ def search_issues(
     issues" need is served by the issue list / saved filters). When no filter is set
     it is a plain issue search; when filters are set, the FTS hits are intersected
     with the issues that satisfy them, preserving FTS rank order. Returns core.search
-    hits ({kind, source_id, title, snippet, key, status})."""
+    hits ({kind, source_id, title, snippet, key, status}).
+
+    `actor` gates by project visibility: an issue in a project the actor can't see
+    never surfaces. The default (_UNGATED) applies no gate (internal/ranking callers);
+    pass the real actor (a user dict, or None for anonymous) to filter. It is threaded
+    to both the structured pre-filter (list_issues) and the FTS query (search), so a
+    hidden issue can't slip through either path."""
     if not query or not query.strip():
         return []
+    gate = {} if actor is _UNGATED else {"actor": actor}
+    list_gate = (
+        {}
+        if actor is _UNGATED
+        else {"visible_project_ids": access.visible_project_filter(conn, actor)}
+    )
 
     project_filter = project is not None and project.strip() != ""
     has_filter = (
@@ -55,7 +72,7 @@ def search_issues(
     )
     if not has_filter:
         # No structured constraint — a plain issue-scoped search.
-        return search.search(conn, query, kind="issue", limit=limit, offset=offset)
+        return search.search(conn, query, kind="issue", limit=limit, offset=offset, **gate)
 
     # Resolve the structured filter to a concrete set of issue ids via the one
     # issue-filtering path, then restrict the ranked FTS hits to that set.
@@ -74,10 +91,11 @@ def search_issues(
         project_id=project_id,
         backlog=backlog,
         ids=label_ids,
+        **list_gate,
     )
     allowed = [i["id"] for i in filtered]
     if not allowed:
         return []
     return search.search(
-        conn, query, kind="issue", ids=allowed, limit=limit, offset=offset
+        conn, query, kind="issue", ids=allowed, limit=limit, offset=offset, **gate
     )

@@ -45,5 +45,7 @@ def query(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # An empty/whitespace q legitimately returns [] (the search layer handles it);
-    # no need to 422 — a blank search box is "no results", not an error.
-    return search.search(conn, q, kind=kind, limit=limit, offset=offset)
+    # no need to 422 — a blank search box is "no results", not an error. The actor
+    # gates the hits: a private project's issues / a private space's pages never
+    # surface to someone who can't see them (admins see all).
+    return search.search(conn, q, kind=kind, limit=limit, offset=offset, actor=actor)

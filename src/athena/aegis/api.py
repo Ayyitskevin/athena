@@ -379,14 +379,16 @@ def search_issues_endpoint(
     project: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Full-text issue search narrowed by the structured filters — the ranked twin of
-    # GET /issues. Open like the issue list (it returns issue data only, no pages), so
-    # no actor. project is validated the same way the list does (422 on garbage); the
-    # rest are passed through (an unknown status/label/assignee simply matches none).
-    # A blank q legitimately returns [] — the issue_search layer handles it. Declared
-    # BEFORE GET /{ref} so the literal path wins over the issue-ref parameter.
+    # GET /issues. Open like the issue list (optional_actor → None for anonymous), but
+    # gated by it: an issue in a project the caller can't see never surfaces. project
+    # is validated the same way the list does (422 on garbage); the rest are passed
+    # through (an unknown status/label/assignee simply matches none). A blank q
+    # legitimately returns [] — the issue_search layer handles it. Declared BEFORE GET
+    # /{ref} so the literal path wins over the issue-ref parameter.
     if project is not None:
         _parse_project_filter(project)  # raises 422 on an unparseable filter
     return issue_search.search_issues(
@@ -399,6 +401,7 @@ def search_issues_endpoint(
         project=project,
         limit=limit,
         offset=offset,
+        actor=actor,
     )
 
 
