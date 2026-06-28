@@ -377,6 +377,7 @@ def list_issues(
     sprint_id: int | None = None,
     include_archived: bool = False,
     ids: list[int] | None = None,
+    visible_project_ids: set[int] | None = None,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
     and the web list both use, so the two never disagree on what matches.
@@ -400,6 +401,12 @@ def list_issues(
     - ids: restrict to these issue ids. Generic on purpose — the caller resolves
       *what* the ids mean (e.g. labels.py turns a label name into ids), so this
       module stays decoupled from labels. An empty list means "match nothing".
+    - visible_project_ids: the project-visibility gate. None (the default) means no
+      gating — every issue is eligible, the historical behaviour, kept for internal
+      and aggregate callers. A set restricts to issues whose project is in it, PLUS
+      backlog issues (no project, so nothing to gate on); an empty set therefore
+      yields only the backlog. Callers get the set from access.visible_project_filter
+      (which hands back None for an admin, skipping the clause entirely).
 
     Column names below are hardcoded literals; all values stay parameterized."""
     if ids is not None and not ids:
@@ -433,6 +440,15 @@ def list_issues(
         placeholders = ",".join("?" for _ in ids)
         clauses.append(f"i.id IN ({placeholders})")
         params.extend(ids)
+    if visible_project_ids is not None:
+        # Backlog (no project) has nothing to gate on, so it stays visible; an empty
+        # visible set therefore narrows to the backlog alone, not to nothing.
+        if visible_project_ids:
+            vis_ph = ",".join("?" for _ in visible_project_ids)
+            clauses.append(f"(i.project_id IS NULL OR i.project_id IN ({vis_ph}))")
+            params.extend(visible_project_ids)
+        else:
+            clauses.append("i.project_id IS NULL")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(f"{_SELECT}{where} ORDER BY i.id", params).fetchall()
     return [_to_issue(row) for row in rows]

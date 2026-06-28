@@ -24,10 +24,10 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import activity, attachments, labels, links, users
+from athena.core import access, activity, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
-from athena.core.identity import issue_write_actor
+from athena.core.identity import issue_write_actor, optional_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
@@ -326,6 +326,7 @@ def index(
     project: str | None = None,
     sprint: int | None = None,
     include_archived: bool = False,
+    actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Optional filters, same semantics the web list uses (one shared path in
@@ -335,6 +336,9 @@ def index(
     # "none" restricts to the backlog (no project). priority/assignee are direct
     # columns too — the same dimensions a saved filter persists. sprint is a direct
     # column too: an id restricts to that sprint (an unknown id matches nothing).
+    # The read is open (optional_actor → None for anonymous), but it only ever
+    # returns issues in projects the caller may see (public + their private ones);
+    # admins see all, the backlog is always in.
     project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
@@ -348,6 +352,7 @@ def index(
         sprint_id=sprint,
         include_archived=include_archived,
         ids=ids,
+        visible_project_ids=access.visible_project_filter(conn, actor),
     )
     return _with_labels_many(conn, rows)
 
@@ -398,14 +403,19 @@ def search_issues_endpoint(
 
 
 @router.get("/{ref}", response_model=IssueOut)
-def show(ref: str, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    # Reads are open to everyone (no actor), same as the list endpoint — only
-    # writes pass through the creator-or-assignee gate. ref is addressable two
-    # ways: the numeric id ("12") or the project key ("ATH-12"); both resolve to
-    # the same issue. Writes and sub-resources below stay numeric (forms post the
-    # id we control), so only this read entry point widens.
+def show(
+    ref: str,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Reads are open to everyone (optional_actor → None for anonymous), same as the
+    # list endpoint — only writes pass through the creator-or-assignee gate. ref is
+    # addressable two ways: the numeric id ("12") or the project key ("ATH-12"); both
+    # resolve to the same issue. An issue in a private project the caller can't see is
+    # a 404, indistinguishable from a missing one, so visibility never leaks via
+    # existence. Backlog issues (no project) read like a public one.
     issue = issues.get_by_ref(conn, ref)
-    if issue is None:
+    if issue is None or not access.can_see_project_or_backlog(conn, actor, issue["project_id"]):
         raise HTTPException(status_code=404, detail="no such issue")
     return _with_labels(conn, issue)
 
