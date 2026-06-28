@@ -300,10 +300,12 @@ def create(
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=422, detail="title cannot be empty")
-    # Reject an unknown project here (422) rather than letting the FK raise a 500.
-    if (
-        payload.project_id is not None
-        and projects.get_project(conn, payload.project_id) is None
+    # Reject an unknown OR invisible project here (422) rather than letting the FK
+    # raise a 500. can_see_project is False for a missing project too, so a private
+    # project the actor can't see can't be discovered (or written into) via create —
+    # same 422 as a nonexistent one, no existence leak.
+    if payload.project_id is not None and not access.can_see_project(
+        conn, actor, payload.project_id
     ):
         raise HTTPException(status_code=422, detail="no such project")
     # Status is validated against the TARGET project's set (the backlog uses the
@@ -463,13 +465,20 @@ def backlinks(
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:
-    """Fetch an issue the actor is allowed to MODIFY, or raise: 404 if no such
-    issue, 403 if the actor is neither its creator nor its current assignee.
-    Centralizes the issue write-authorization rule (issues.can_modify) so every
-    write path (status/edit/assign) enforces it identically. Reads and comments
-    do not go through here."""
+    """Fetch an issue the actor is allowed to MODIFY, or raise: 404 if no such issue
+    OR one in a private project the actor can't see, 403 if the actor is neither its
+    creator nor its current assignee. Centralizes the issue write-authorization rule so
+    every write path (status/edit/assign/labels/links/...) enforces it identically.
+
+    Visibility is checked FIRST and collapses to the same 404 as a missing issue —
+    "can't write what you can't see." This matters even for a creator/assignee: if a
+    project is flipped private without adding them, they lose the issue from view and
+    must not be able to keep writing to it. The 404 (not 403) also means a hidden
+    issue's existence never leaks through a write attempt."""
     issue = issues.get_issue(conn, issue_id)
-    if issue is None:
+    if issue is None or not access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    ):
         raise HTTPException(status_code=404, detail="no such issue")
     if not issues.can_modify(issue, actor["id"]):
         raise HTTPException(
@@ -782,11 +791,12 @@ def set_project(
     # Moving an issue between projects is a write — creator-or-assignee only
     # (404 if missing, 403 if not permitted), same gate as status/assign/labels.
     before = _issue_for_write(conn, issue_id, actor)
-    # Reject an unknown project here (422) rather than letting the FK raise a 500.
-    # None is always valid — it means "remove from project".
-    if (
-        payload.project_id is not None
-        and projects.get_project(conn, payload.project_id) is None
+    # The TARGET project must be one the actor can see (and exist) — you can't move an
+    # issue into a private project you're not in. can_see_project is False for a missing
+    # project too, so unknown and invisible collapse to the same 422. None is always
+    # valid — it means "remove from project" (the backlog).
+    if payload.project_id is not None and not access.can_see_project(
+        conn, actor, payload.project_id
     ):
         raise HTTPException(status_code=422, detail="no such project")
     updated = issues.set_project(conn, issue_id, payload.project_id)
@@ -844,9 +854,10 @@ def add_comment(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # author is the authenticated actor, never a caller-supplied field.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # author is the authenticated actor, never a caller-supplied field. Commenting is
+    # an additive write any issue WRITER may do — but only on an issue they can see, so
+    # gate by visibility (404 if missing or hidden), not by can_modify.
+    _issue_for_read(conn, issue_id, actor)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
@@ -893,6 +904,7 @@ def edit_comment(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     body = payload.body.strip()
     if not body:
@@ -910,6 +922,7 @@ def delete_comment(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
+    _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     if not comments.delete_comment(conn, comment_id):
         # vanished between the author check and the delete (a race) — don't record
@@ -929,9 +942,9 @@ def upload_issue_attachment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Attaching is additive, like commenting: any issue writer may do it (not just
-    # the creator/assignee). 404 if the issue is missing.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # the creator/assignee) — but only on an issue they can see. 404 if missing or
+    # hidden.
+    _issue_for_read(conn, issue_id, actor)
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
@@ -996,8 +1009,12 @@ def add_link(
     # status/assign/labels. The gate is on THIS issue (the one being edited),
     # regardless of which end the edge is stored on.
     _issue_for_write(conn, issue_id, actor)
+    # The TARGET must be an issue the actor can see: a hidden target collapses to the
+    # same 422 as a missing one, so you can't link to (or probe the existence of) an
+    # issue in a private project you're not in. can_see_issue is False for a missing
+    # issue too, so the two cases are indistinguishable.
     target = issues.get_by_ref(conn, payload.target_ref)
-    if target is None:
+    if target is None or not access.can_see_issue(conn, actor, target["id"]):
         raise HTTPException(status_code=422, detail="no such target issue")
     reason = dependencies.add_link(
         conn,

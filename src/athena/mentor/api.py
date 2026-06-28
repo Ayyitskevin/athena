@@ -227,9 +227,10 @@ def edit_space(
 ) -> dict:
     # Editing a space is open to any authenticated actor, like creating one or
     # editing a page — only DELETE is creator-locked, because removing a whole
-    # container is the destructive action. 404 if the space is missing.
+    # container is the destructive action. 404 if the space is missing OR private to
+    # the caller: you can't edit a space you can't see.
     before = spaces.get_space(conn, space_id)
-    if before is None:
+    if before is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
@@ -415,9 +416,12 @@ def create_page(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Any authenticated actor may create a page (like creating an issue). The
-    # space is a path resource: 404 if it doesn't exist.
-    if spaces.get_space(conn, space_id) is None:
+    # Any authenticated actor may create a page (like creating an issue) — but only in
+    # a space they can see. The space is a path resource: 404 if it doesn't exist OR is
+    # private to the caller (you can't add a page to a space you can't see).
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
+        conn, actor, space_id
+    ):
         raise HTTPException(status_code=404, detail="no such space")
     title = payload.title.strip()
     if not title:
@@ -494,10 +498,8 @@ def edit_page(
 ) -> dict:
     # Editing is open to any authenticated actor, mirroring create (a page has no
     # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
-    # history anyway). 404 if the page is missing.
-    before = pages.get_page(conn, page_id)
-    if before is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # history anyway) — but only on a page they can see. 404 if missing or hidden.
+    before = _page_for_read(conn, page_id, actor)
     # Only the fields the client actually sent are touched.
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
@@ -522,11 +524,10 @@ def move_page(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Re-parent a page within its space. Open to any authenticated actor, like
-    # edit (no creator lock). 404 if the page is missing; 422 if the new parent is
-    # invalid (another space, the page itself, or its own descendant — a cycle).
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # edit (no creator lock) — but only on a page they can see. 404 if the page is
+    # missing or hidden; 422 if the new parent is invalid (another space, the page
+    # itself, or its own descendant — a cycle).
+    page = _page_for_read(conn, page_id, actor)
     err = pages.validate_move(conn, page, payload.parent_id)
     if err is not None:
         raise HTTPException(status_code=422, detail=err)
@@ -547,12 +548,10 @@ def delete_page(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    # Delete a page. Authed like edit/move. 404 if missing; 409 if it still has
-    # child pages — we refuse rather than cascade, so a delete can't silently wipe
-    # a subtree. 204 (no body) on success.
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Delete a page. Authed like edit/move — only on a page the actor can see. 404 if
+    # missing or hidden; 409 if it still has child pages — we refuse rather than
+    # cascade, so a delete can't silently wipe a subtree. 204 (no body) on success.
+    page = _page_for_read(conn, page_id, actor)
     if pages.count_child_pages(conn, page_id) > 0:
         raise HTTPException(
             status_code=409, detail="move or delete its child pages first"
@@ -589,10 +588,10 @@ def add_page_comment(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Commenting is an open write like editing a page (Mentor's shared-wiki model).
-    # The author is the authenticated actor, never a caller-supplied field.
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Commenting is an open write like editing a page (Mentor's shared-wiki model) —
+    # but only on a page the actor can see. The author is the authenticated actor,
+    # never a caller-supplied field. 404 if the page is missing or hidden.
+    _page_for_read(conn, page_id, actor)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
@@ -642,6 +641,7 @@ def edit_page_comment(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
     _author_page_comment_or_error(conn, page_id, comment_id, actor)
     body = payload.body.strip()
     if not body:
@@ -659,6 +659,7 @@ def delete_page_comment(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
+    _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
     _author_page_comment_or_error(conn, page_id, comment_id, actor)
     if not page_comments.delete_comment(conn, comment_id):
         # vanished between the author check and the delete (a race) — don't record
@@ -679,9 +680,8 @@ def upload_page_attachment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Attaching to a page is an open write like editing it (Mentor's shared-wiki
-    # model). 404 if the page is missing.
-    if pages.get_page(conn, page_id) is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # model) — but only on a page the actor can see. 404 if missing or hidden.
+    _page_for_read(conn, page_id, actor)
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
@@ -758,10 +758,10 @@ def restore_version(
 ) -> dict:
     # Restoring is an EDIT, not a destruction (the current content is preserved as
     # a new version), so it's open to any authenticated actor like edit/move — not
-    # creator-locked the way delete is. 404 if the page or that version is missing;
-    # the snapshot's author stamps nothing, the restoring actor stamps the new live
-    # revision. Returns the updated page.
-    before = pages.get_page(conn, page_id)
+    # creator-locked the way delete is — but only on a page the actor can see. 404 if
+    # the page is missing/hidden or that version is missing; the snapshot's author
+    # stamps nothing, the restoring actor stamps the new live revision.
+    before = _page_for_read(conn, page_id, actor)
     restored = pages.restore_version(conn, page_id, version, editor_id=actor["id"])
     if restored is None:
         raise HTTPException(status_code=404, detail="no such page or version")
@@ -786,12 +786,11 @@ def attach_label(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Labelling a page is an open write like editing it (Mentor's shared-wiki model).
-    # 404 if the page is missing; 422 if the label id isn't real (rather than letting
-    # the FK surface a 500). Idempotent — re-attaching records nothing.
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    # Labelling a page is an open write like editing it (Mentor's shared-wiki model) —
+    # but only on a page the actor can see. 404 if missing or hidden; 422 if the label
+    # id isn't real (rather than letting the FK surface a 500). Idempotent — re-attaching
+    # records nothing.
+    page = _page_for_read(conn, page_id, actor)
     if labels.get_label(conn, payload.label_id) is None:
         raise HTTPException(status_code=422, detail="no such label")
     if labels.add_label_to_page(conn, page_id, payload.label_id):
@@ -808,9 +807,7 @@ def detach_label(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        raise HTTPException(status_code=404, detail="no such page")
+    page = _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
     if not labels.remove_label_from_page(conn, page_id, label_id):
         raise HTTPException(status_code=404, detail="label not on this page")
     page_activity.record_page_label_removed(
