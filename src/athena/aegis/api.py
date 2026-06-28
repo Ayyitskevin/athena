@@ -454,6 +454,22 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
     return issue
 
 
+def _issue_for_read(
+    conn: sqlite3.Connection, issue_id: int, actor: dict | None
+) -> dict:
+    """Fetch an issue the actor may READ, or raise 404. The read counterpart of
+    _issue_for_write: a missing issue and one in a private project the actor can't see
+    are the same 404, so a sub-resource (comments/children/links/contributors/
+    attachments) never leaks for a hidden issue. Backlog issues (no project) read like
+    a public one. No write check — reads stay open within what's visible."""
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None or not access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    ):
+        raise HTTPException(status_code=404, detail="no such issue")
+    return issue
+
+
 @router.patch("/{issue_id}", response_model=IssueOut)
 def update(
     issue_id: int,
@@ -786,11 +802,13 @@ def set_parent(
 
 @router.get("/{issue_id}/children", response_model=list[IssueOut])
 def list_children(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Open read, like backlinks/comments. 404 if the issue itself is missing.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # Open read, like backlinks/comments. 404 if the issue is missing OR in a private
+    # project the caller can't see.
+    _issue_for_read(conn, issue_id, actor)
     return _with_labels_many(conn, issues.list_children(conn, issue_id))
 
 
@@ -818,10 +836,11 @@ def add_comment(
 
 @router.get("/{issue_id}/comments", response_model=list[CommentOut])
 def list_comments(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    _issue_for_read(conn, issue_id, actor)  # 404 if missing or not visible
     return comments.list_comments(conn, issue_id)
 
 
@@ -916,11 +935,12 @@ def upload_issue_attachment(
 
 @router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])
 def list_issue_attachments(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Open read, like listing comments. 404 if the issue itself is missing.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # Open read, like listing comments. 404 if the issue is missing or not visible.
+    _issue_for_read(conn, issue_id, actor)
     return attachments.list_for(conn, "issue", issue_id)
 
 
@@ -928,11 +948,14 @@ def list_issue_attachments(
 
 
 @router.get("/{issue_id}/links", response_model=IssueLinksOut)
-def list_links(issue_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
-    # Open read, like backlinks/comments. 404 if the issue itself is missing, so
-    # a typo'd id reads as not-found rather than three empty lists.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+def list_links(
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Open read, like backlinks/comments. 404 if the issue is missing or not visible,
+    # so a hidden/typo'd id reads as not-found rather than three empty lists.
+    _issue_for_read(conn, issue_id, actor)
     return dependencies.list_links(conn, issue_id)
 
 
@@ -1232,11 +1255,13 @@ class ContributorAdd(BaseModel):
 
 @router.get("/{issue_id}/contributors", response_model=list[ContributorOut])
 def list_issue_contributors(
-    issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Open read, like listing comments/labels. 404 if the issue itself is missing.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # Open read, like listing comments/labels. 404 if the issue is missing or not
+    # visible.
+    _issue_for_read(conn, issue_id, actor)
     return contributors.list_contributors(conn, issue_id)
 
 
