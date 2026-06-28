@@ -26,6 +26,12 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from athena.core import access
+
+# Sentinel for the link reads' `actor`: "no visibility gating" (internal callers /
+# tests). Distinct from actor=None, a real anonymous viewer who sees only public refs.
+_UNGATED = object()
+
 # The two linkable kinds and the table each lives in. This map is the only place
 # the resolver's knowledge of "what is linkable" lives; both tables happen to use
 # a `title` column. Values are fixed literals, never caller input, so building a
@@ -141,31 +147,63 @@ def resolve_ref(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
     return _resolve(conn, kind, target_id)
 
 
+def _visible_ref(conn: sqlite3.Connection, actor, kind: str, ref_id: int) -> bool:
+    """Whether the actor may see this (kind, id) reference — the per-ref visibility
+    gate the link lists apply. _UNGATED waves everything through (internal callers)."""
+    if actor is _UNGATED:
+        return True
+    if kind == "issue":
+        return access.can_see_issue(conn, actor, ref_id)
+    if kind == "page":
+        return access.can_see_page(conn, actor, ref_id)
+    return True
+
+
 def outgoing_links(
-    conn: sqlite3.Connection, source_kind: str, source_id: int
+    conn: sqlite3.Connection,
+    source_kind: str,
+    source_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """What this source references, each resolved to title + existence. Ordered
-    stably (kind, then id) so renders are deterministic."""
+    stably (kind, then id) so renders are deterministic. `actor` drops references to
+    targets the viewer can't see (a private project's issue / a private space's
+    page); _UNGATED is no gate."""
     rows = conn.execute(
         "SELECT target_kind, target_id FROM links "
         "WHERE source_kind = ? AND source_id = ? "
         "ORDER BY target_kind, target_id",
         (source_kind, source_id),
     ).fetchall()
-    return [_resolve(conn, r["target_kind"], r["target_id"]) for r in rows]
+    return [
+        _resolve(conn, r["target_kind"], r["target_id"])
+        for r in rows
+        if _visible_ref(conn, actor, r["target_kind"], r["target_id"])
+    ]
 
 
 def backlinks(
-    conn: sqlite3.Connection, target_kind: str, target_id: int
+    conn: sqlite3.Connection,
+    target_kind: str,
+    target_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """What references this target ("Referenced by"), each resolved to title +
     existence. The marquee query — keyed by target, served by idx_links_target.
     Sources are real rows (they had to exist to be written), so these resolve
-    live; the `exists` flag is still honored for robustness."""
+    live; the `exists` flag is still honored for robustness. `actor` drops sources
+    the viewer can't see — so a private project's issue linking to a public page
+    never reveals itself in that page's "Referenced by"; _UNGATED is no gate."""
     rows = conn.execute(
         "SELECT source_kind, source_id FROM links "
         "WHERE target_kind = ? AND target_id = ? "
         "ORDER BY source_kind, source_id",
         (target_kind, target_id),
     ).fetchall()
-    return [_resolve(conn, r["source_kind"], r["source_id"]) for r in rows]
+    return [
+        _resolve(conn, r["source_kind"], r["source_id"])
+        for r in rows
+        if _visible_ref(conn, actor, r["source_kind"], r["source_id"])
+    ]
