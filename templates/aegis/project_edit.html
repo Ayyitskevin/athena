@@ -74,6 +74,18 @@
     </form>
 </div>
 
+<div class="form-container">
+    <h3>Access</h3>
+    <p class="note-small">
+        {% if project.visibility == "private" %}
+        <span class="badge badge-private">🔒 Private</span> — only members, you, and admins can see it.
+        {% else %}
+        <span class="badge badge-public">Public</span> — anyone can read this project.
+        {% endif %}
+    </p>
+    <a href="/aegis/projects/{{ project.id }}/access" class="button secondary">Manage access &amp; members</a>
+</div>
+
 <div class="form-container danger-zone">
     <h3>Delete project</h3>
     {% if issue_count > 0 %}

@@ -960,6 +960,30 @@ footer {
     margin-left: 0.15em;
 }
 
+/* Visibility badges — neutral slate, distinct from the red notification badge. */
+.badge-private { background: #475569; }
+.badge-public { background: #94a3b8; }
+
+/* The member roster on the project/space access page. */
+.member-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.5rem 0;
+}
+.member-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid #e5e7eb;
+}
+.member-add {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    flex-wrap: wrap;
+}
+
 .header-actions {
     display: flex;
     align-items: center;
