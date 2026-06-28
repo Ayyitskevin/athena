@@ -28,6 +28,7 @@ from athena.aegis import (
     statuses,
 )
 from athena.core import (
+    access,
     activity,
     attachments,
     identity,
@@ -329,7 +330,12 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
-    all_issues = issues.list_issues(conn)
+    user = getattr(request.state, "user", None)
+    # Only count/show issues in projects this viewer may see (public + their own
+    # private ones; admins see all; the backlog is always in).
+    all_issues = issues.list_issues(
+        conn, visible_project_ids=access.visible_project_filter(conn, user)
+    )
     from collections import Counter
     status_counts = Counter(issue["status"] for issue in all_issues)
     # Recent issues (newest first)
@@ -337,7 +343,6 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         all_issues, key=lambda x: x.get("created_at", ""), reverse=True
     )[:5]
 
-    user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
     return _templates.TemplateResponse(
         request=request,
@@ -403,6 +408,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # so the list and the API never disagree on what matches. The web layer then
     # only does the presentation concerns — sort + pagination — on the result.
     ids = labels.issue_ids_for_label(conn, label_filter) if label_filter else None
+    user = getattr(request.state, "user", None)
     filtered = issues.list_issues(
         conn,
         status=status_filter,
@@ -414,6 +420,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         sprint_id=sprint_id,
         include_archived=include_archived,
         ids=ids,
+        visible_project_ids=access.visible_project_filter(conn, user),
     )
     _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
 
@@ -461,7 +468,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         for column in ("id", "title", "status", "priority", "created_at")
     }
 
-    user = getattr(request.state, "user", None)
+    # `user` was resolved above (for the visibility filter); reuse it here.
     can_write = user is not None and identity.can_write(user)
 
     # Sprint-filter options. A sprint belongs to one project, so each option is
@@ -938,7 +945,11 @@ def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     issue = issues.get_by_ref(conn, ref)
-    if not issue:
+    user = getattr(request.state, "user", None)
+    # An issue in a private project the viewer can't see is treated exactly like a
+    # missing one — same 404, so privacy never leaks through the existence of a ref.
+    # Backlog issues (no project) read like a public one.
+    if not issue or not access.can_see_project_or_backlog(conn, user, issue["project_id"]):
         # not-found state: render empty list page with error (minimal). Carry a
         # real 404 status — a missing issue is not a 200, and the API surface for
         # the same id returns 404, so the browser path must not disagree.
@@ -1866,8 +1877,15 @@ def _render_board(
     a normal request and just the .board partial on an HTMX request (so a swap
     replaces only the board, keeping the filter chrome)."""
     # Same data-layer path as the issues list and the API: filtering (status +
-    # search) is done by list_issues, NOT re-implemented in Python here.
-    filtered = issues.list_issues(conn, status=status_filter or None, search=search)
+    # search) is done by list_issues, NOT re-implemented in Python here. The board
+    # only shows issues in projects the viewer may see (admins all; backlog always).
+    user = getattr(request.state, "user", None)
+    filtered = issues.list_issues(
+        conn,
+        status=status_filter or None,
+        search=search,
+        visible_project_ids=access.visible_project_filter(conn, user),
+    )
     _attach_labels(conn, filtered)
 
     # Each card carries its OWN project's status menu, so the keyboard "Move" control

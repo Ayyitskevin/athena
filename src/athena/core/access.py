@@ -216,6 +216,31 @@ def visible_project_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int
     return visible
 
 
+def visible_project_filter(
+    conn: sqlite3.Connection, actor: dict | None
+) -> set[int] | None:
+    """The project-id set an issue LIST should be constrained to — or None when the
+    actor may see every project (an admin), in which case no filtering is needed.
+    None ("sees everything") is deliberately distinct from an empty set ("sees no
+    project → only the backlog"). This is what callers hand to issues.list_issues so
+    it can skip the IN-clause entirely for admins rather than list every project id."""
+    if _is_admin(actor):
+        return None
+    return visible_project_ids(conn, actor)
+
+
+def can_see_project_or_backlog(
+    conn: sqlite3.Connection, actor: dict | None, project_id: int | None
+) -> bool:
+    """Whether the actor may read an issue in this project scope — the single-issue
+    gate (detail pages). A None project is the shared backlog: it has no container to
+    gate on, so it reads like a public project (visible to everyone, signed in or
+    not). Otherwise defer to can_see_project."""
+    if project_id is None:
+        return True
+    return can_see_project(conn, actor, project_id)
+
+
 def visible_space_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int]:
     """The set of space ids this actor may read — the filter every page/space LIST
     applies. Same rule as visible_project_ids."""
