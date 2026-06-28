@@ -803,7 +803,13 @@ def _authorize_issue_write(conn, issue_id, user):
     _issue_for_write so the browser paths enforce the same creator-or-assignee
     rule. The 401 (logged-out) check stays at each call site, before this."""
     issue = issues.get_issue(conn, issue_id)
-    if not issue:
+    # Visibility first: a private issue the user can't see is "not found" (same 404 as a
+    # missing one), so neither its existence nor a write path leaks — the browser twin of
+    # the API's _issue_for_write gate, and it catches a creator/assignee who lost access
+    # when the project went private.
+    if not issue or not access.can_see_project_or_backlog(
+        conn, user, issue["project_id"]
+    ):
         return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
     if not identity.can_write(user):
         return None, _readonly_response()
@@ -812,6 +818,20 @@ def _authorize_issue_write(conn, issue_id, user):
             '<div class="error">Only the issue creator or assignee may modify it.</div>',
             status_code=403,
         )
+    return issue, None
+
+
+def _issue_visible_or_404(conn, issue_id, user):
+    """Return (issue, None) if the user may SEE this issue, else (None, 404 response).
+    The visibility-ONLY gate for additive web writes (comments, attachments) and the
+    personal watch toggle — any writer may act on a VISIBLE issue, so this stops short of
+    the creator/assignee check _authorize_issue_write applies. A hidden issue reads as
+    "not found", so its existence never leaks through a write path."""
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None or not access.can_see_project_or_backlog(
+        conn, user, issue["project_id"]
+    ):
+        return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
     return issue, None
 
 
@@ -1482,8 +1502,9 @@ def add_issue_comment(
         )
     if not identity.can_write(user):
         return _readonly_response()
-    if issues.get_issue(conn, issue_id) is None:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
@@ -1525,6 +1546,9 @@ def edit_issue_comment(
         )
     if not identity.can_write(user):
         return _readonly_response()
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
     if err is not None:
         return err
@@ -1555,6 +1579,9 @@ def delete_issue_comment(
         )
     if not identity.can_write(user):
         return _readonly_response()
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
     if err is not None:
         return err
@@ -1583,8 +1610,9 @@ def add_issue_attachment(
         )
     if not identity.can_write(user):
         return _readonly_response()
-    if issues.get_issue(conn, issue_id) is None:
-        return HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     data = file.file.read()
     if not data:
         return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
@@ -1631,6 +1659,9 @@ def remove_issue_attachment(
         )
     if not identity.can_write(user):
         return _readonly_response()
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "issue" or att["target_id"] != issue_id:
         return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
@@ -1663,6 +1694,11 @@ def watch_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
             status_code=401,
         )
+    # You can't watch what you can't see: a hidden issue is "not found", and gating here
+    # also stops a subscription that would later leak the issue through notifications.
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     notifications.watch(conn, user["id"], "issue", issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
@@ -1678,6 +1714,9 @@ def unwatch_issue(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
+    _, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
     notifications.unwatch(conn, user["id"], "issue", issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
@@ -2101,7 +2140,10 @@ def _authorize_project_write(conn, project_id: int, user: dict):
     is creator-only, the same rule the REST API enforces. The 401 (logged-out)
     check stays at each call site, before this."""
     project = projects.get_project(conn, project_id)
-    if project is None:
+    # Visibility first: a private project the user can't see is "no such project" (404),
+    # so a non-member never learns it exists via the 403. A visible-but-not-creator user
+    # still gets the honest 403.
+    if project is None or not access.can_see_project(conn, user, project_id):
         return None, HTMLResponse(
             '<div class="error">No such project.</div>', status_code=404
         )
