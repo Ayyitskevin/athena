@@ -352,3 +352,26 @@ def record_comment_deleted(
         target_kind="issue",
         target_id=issue_id,
     )
+
+
+def record_archive_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: str | None,
+    after: str | None,
+) -> None:
+    """Record an archive (soft-delete) or restore. before/after are the issue's
+    archived_at values — None means active, a timestamp means archived — so we
+    compare PRESENCE, not the exact time: re-archiving an already-archived issue
+    re-stamps the time but isn't a lifecycle change, and records nothing."""
+    if (before is not None) == (after is not None):
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="archived" if after is not None else "unarchived",
+        target_kind="issue",
+        target_id=issue_id,
+    )

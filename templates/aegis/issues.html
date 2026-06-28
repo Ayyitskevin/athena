@@ -24,14 +24,14 @@
             hx-trigger="keyup changed delay:300ms"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
         <select 
             class="filter-select"
             name="status"
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All statuses</option>
             {% for s in all_statuses %}
             <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
@@ -43,7 +43,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All priorities</option>
             {% for p in priorities %}
             <option value="{{ p }}" {% if priority_filter == p %}selected{% endif %}>{{ p.title() }}</option>
@@ -55,7 +55,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">Anyone</option>
             {% for u in all_users %}
             <option value="{{ u.id }}" {% if assignee_filter == u.id|string %}selected{% endif %}>{{ u.name }}</option>
@@ -67,7 +67,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All labels</option>
             {% for l in all_labels %}
             <option value="{{ l.name }}" {% if label_filter == l.name %}selected{% endif %}>{{ l.name }}</option>
@@ -79,7 +79,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All projects</option>
             <option value="none" {% if project_filter == 'none' %}selected{% endif %}>No project (backlog)</option>
             {% for p in all_projects %}
@@ -92,19 +92,31 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="">All sprints</option>
             {% for s in all_sprints %}
             <option value="{{ s.id }}" {% if sprint_filter == s.id|string %}selected{% endif %}>{{ s.project_key }} · {{ s.name }}</option>
             {% endfor %}
         </select>
+        <label class="filter-check">
+            <input
+                type="checkbox"
+                name="archived"
+                value="1"
+                {% if include_archived %}checked{% endif %}
+                hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
+                hx-target="#issues-table"
+                hx-swap="outerHTML"
+                hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            Show archived
+        </label>
         <select
             class="filter-select"
             name="sort"
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="created_at" {% if sort == 'created_at' or not sort %}selected{% endif %}>Sort: Created</option>
             <option value="title" {% if sort == 'title' %}selected{% endif %}>Sort: Title</option>
             <option value="status" {% if sort == 'status' %}selected{% endif %}>Sort: Status</option>
@@ -115,7 +127,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="desc" {% if order == 'desc' or not order %}selected{% endif %}>Desc</option>
             <option value="asc" {% if order == 'asc' %}selected{% endif %}>Asc</option>
         </select>
@@ -125,7 +137,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             <option value="10" {% if per_page == 10 %}selected{% endif %}>10 / page</option>
             <option value="20" {% if per_page == 20 or not per_page %}selected{% endif %}>20 / page</option>
             <option value="50" {% if per_page == 50 %}selected{% endif %}>50 / page</option>
@@ -136,7 +148,7 @@
             hx-get="/aegis/issues?page=1&per_page={{ per_page }}"
             hx-target="#issues-table"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
+            hx-include="[name='status'],[name='priority'],[name='assignee'],[name='label'],[name='project'],[name='sprint'],[name='archived'],[name='search'],[name='sort'],[name='order'],[name='per_page']">
             Refresh
         </button>
     </div>

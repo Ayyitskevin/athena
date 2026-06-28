@@ -185,6 +185,8 @@ class IssueOut(BaseModel):
     parent_id: int | None = None
     # The sprint this issue is in, or null for the backlog.
     sprint_id: int | None = None
+    # When the issue was archived (soft-deleted), or null if it's active.
+    archived_at: str | None = None
     labels: list[LabelOut] = []
 
 
@@ -324,6 +326,7 @@ def index(
     search: str | None = None,
     project: str | None = None,
     sprint: int | None = None,
+    include_archived: bool = False,
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Optional filters, same semantics the web list uses (one shared path in
@@ -344,6 +347,7 @@ def index(
         project_id=project_id,
         backlog=backlog,
         sprint_id=sprint,
+        include_archived=include_archived,
         ids=ids,
     )
     return _with_labels_many(conn, rows)
@@ -527,6 +531,48 @@ def set_assignee(
         issue_id=issue_id,
         before=before["assignee_id"],
         after=payload.assignee_id,
+    )
+    return _with_labels(conn, updated)
+
+
+@router.post("/{issue_id}/archive", response_model=IssueOut)
+def archive_issue(
+    issue_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Archiving (soft-delete) is a write on the issue — creator-or-assignee only
+    # (404 / 403), the same gate as status/assign. The row is never destroyed; it's
+    # hidden from the default lists and can be restored. Idempotent: re-archiving an
+    # archived issue re-stamps the time but records no new audit fact.
+    before = _issue_for_write(conn, issue_id, actor)
+    updated = issues.set_archived(conn, issue_id, True)
+    issue_activity.record_archive_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["archived_at"],
+        after=updated["archived_at"],
+    )
+    return _with_labels(conn, updated)
+
+
+@router.post("/{issue_id}/unarchive", response_model=IssueOut)
+def unarchive_issue(
+    issue_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Restore an archived issue to the active lists. Same write gate; records
+    # "unarchived" only if it was actually archived.
+    before = _issue_for_write(conn, issue_id, actor)
+    updated = issues.set_archived(conn, issue_id, False)
+    issue_activity.record_archive_change(
+        conn,
+        actor_id=actor["id"],
+        issue_id=issue_id,
+        before=before["archived_at"],
+        after=updated["archived_at"],
     )
     return _with_labels(conn, updated)
 
