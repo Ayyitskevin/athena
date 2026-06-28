@@ -147,18 +147,22 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
+    # Every number is counted only over the projects this viewer may see (admins all;
+    # the backlog is always in). recent_activity is gated with the rest of the
+    # activity surfaces in a later slice.
+    vis = access.visible_project_filter(conn, user)
     return _templates.TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
         context={
-            "totals": dashboard.totals(conn),
-            "status_counts": dashboard.status_counts(conn),
-            "priority_counts": dashboard.priority_counts(conn),
-            "projects": dashboard.project_open_counts(conn),
+            "totals": dashboard.totals(conn, vis),
+            "status_counts": dashboard.status_counts(conn, vis),
+            "priority_counts": dashboard.priority_counts(conn, vis),
+            "projects": dashboard.project_open_counts(conn, vis),
             "backlog_count": dashboard.backlog_count(conn),
-            "active_sprints": dashboard.active_sprints(conn),
+            "active_sprints": dashboard.active_sprints(conn, vis),
             # The user's own plate only makes sense when we know who they are.
-            "my_issues": dashboard.my_open_issues(conn, user["id"]) if user else [],
+            "my_issues": dashboard.my_open_issues(conn, user["id"], visible_project_ids=vis) if user else [],
             "recent_activity": activity.list_activity(conn, limit=10),
         },
     )
