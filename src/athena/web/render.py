@@ -98,7 +98,12 @@ def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:
     return Markup(linked.replace("\n", "<br>"))
 
 
-def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
+def render_body(
+    conn: sqlite3.Connection,
+    text: str | None,
+    *,
+    actor: dict | None | object = links._UNGATED,
+) -> Markup:
     """Render a body (Markdown) to safe HTML with cross-references linked. A
     reference to a real target becomes an <a class="xref">title</a>; a broken one
     (target not created, or deleted) renders the literal token in
@@ -109,7 +114,14 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
     nh3, then the cross-link tokens are substituted — the single safe path for body
     rendering (the body is never trusted raw). A token inside a code span/block is
     still linkified (the substitution runs over the rendered HTML); that edge is
-    accepted in exchange for keeping one obvious render path."""
+    accepted in exchange for keeping one obvious render path.
+
+    `actor` is the viewer the cross-link gate runs against: a token pointing at a
+    target the viewer can't see (an issue in a private project / a page in a private
+    space) is rendered broken — the same dangling token a deleted target gets — so
+    neither the hidden title nor a working link leaks, and the broken form can't be
+    told apart from a genuinely missing target (no existence leak). _UNGATED (the
+    default, for internal/test callers) waves every reference through."""
     if not text:
         return Markup("")
     # Markdown (raw HTML escaped by html=False), then an independent sanitizer
@@ -121,7 +133,11 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
     def _link(match) -> str:
         kind, num = match.group(1), int(match.group(2))
         ref = links.resolve_ref(conn, kind, num)
-        if ref["exists"]:
+        # A ref the viewer may not see is treated exactly like a dangling one:
+        # broken, no title, no link — so a hidden target leaks neither its title nor
+        # its existence (broken-because-hidden is indistinguishable from
+        # broken-because-missing).
+        if ref["exists"] and links._visible_ref(conn, actor, kind, num):
             href = _HREF[kind].format(num)
             label = escape(ref["title"])
             return f'<a href="{href}" class="xref">{label}</a>'
@@ -133,9 +149,10 @@ def render_body(conn: sqlite3.Connection, text: str | None) -> Markup:
         # [[ATH-12]] — resolve the project key + number to a concrete issue. A hit
         # links to that issue (by id, the stable address); a miss (unknown key or
         # retired number) renders the literal token as broken, same as a dangling
-        # numeric ref.
+        # numeric ref. A hit the viewer can't see is treated as a miss (broken),
+        # so a private project's issue title/existence never leaks through its key.
         ref = links.resolve_key_ref(conn, match.group(1), int(match.group(2)))
-        if ref["exists"]:
+        if ref["exists"] and links._visible_ref(conn, actor, "issue", ref["id"]):
             href = _HREF["issue"].format(ref["id"])
             label = escape(ref["title"])
             return f'<a href="{href}" class="xref">{label}</a>'
