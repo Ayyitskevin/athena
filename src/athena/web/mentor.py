@@ -53,6 +53,18 @@ def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
     return None
 
 
+def _page_visible_or_response(conn, page_id, user):
+    """Return (page, None) if the user may SEE this page (its space is visible to them),
+    else (None, 404 response). The web write-side visibility gate — a page in a private
+    space the user can't read is "not found", so its existence and content never leak
+    through a write path. The browser twin of the API's _page_for_read; every page write
+    funnels through here so visibility can't be forgotten on one."""
+    page = pages.get_page(conn, page_id)
+    if page is None or not access.can_see_space(conn, user, page["space_id"]):
+        return None, HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return page, None
+
+
 def _tree_rows(page_rows: list[dict]) -> list[dict]:
     """Flatten a space's pages into display order with a nesting depth on each.
 
@@ -217,7 +229,8 @@ def edit_space(
         return err
 
     before = spaces.get_space(conn, space_id)
-    if before is None:
+    # Can't edit a space you can't see — a private space reads as "not found", no leak.
+    if before is None or not access.can_see_space(conn, user, space_id):
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
     key = key.strip().upper()
     name = name.strip()
@@ -308,7 +321,10 @@ def create_page(
     if err is not None:
         return err
 
-    if spaces.get_space(conn, space_id) is None:
+    # Can't add a page to a space you can't see — a private space reads as "not found".
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
+        conn, user, space_id
+    ):
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
 
     title = title.strip()
@@ -460,9 +476,9 @@ def edit_page(
     if err is not None:
         return err
 
-    before = pages.get_page(conn, page_id)
-    if before is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    before, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
@@ -493,9 +509,9 @@ def move_page(
     if err is not None:
         return err
 
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
 
     parent_id = parent_id.strip()
     if parent_id == "":
@@ -535,9 +551,9 @@ def delete_page(
     if err is not None:
         return err
 
-    page = pages.get_page(conn, page_id)
-    if page is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     if pages.count_child_pages(conn, page_id) > 0:
         return HTMLResponse(
             '<div class="error">Move or delete its child pages first.</div>',
@@ -564,8 +580,9 @@ def add_page_attachment(
     err = _write_required(user, "attach files")
     if err is not None:
         return err
-    if pages.get_page(conn, page_id) is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     data = file.file.read()
     if not data:
         return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
@@ -607,6 +624,9 @@ def remove_page_attachment(
     err = _write_required(user, "remove files")
     if err is not None:
         return err
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "page" or att["target_id"] != page_id:
         return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
@@ -636,6 +656,11 @@ def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
             status_code=401,
         )
+    # You can't watch what you can't see (and a subscription would later leak the page
+    # through notifications) — a hidden page is "not found".
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     notifications.watch(conn, user["id"], "page", page_id)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
@@ -649,6 +674,9 @@ def unwatch_page(request: Request, page_id: int, conn=Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     notifications.unwatch(conn, user["id"], "page", page_id)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
@@ -673,7 +701,9 @@ def restore_version(
     if err is not None:
         return err
 
-    before = pages.get_page(conn, page_id)
+    before, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     restored = pages.restore_version(conn, page_id, version, editor_id=user["id"])
     if restored is None:
         return HTMLResponse(
@@ -707,8 +737,9 @@ def add_page_comment(
     err = _write_required(user, "comment")
     if err is not None:
         return err
-    if pages.get_page(conn, page_id) is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
@@ -751,6 +782,9 @@ def edit_page_comment(
     err = _write_required(user, "edit comments")
     if err is not None:
         return err
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
     if err is not None:
         return err
@@ -778,6 +812,9 @@ def delete_page_comment(
     edit. POST (not DELETE) because HTML forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
     err = _write_required(user, "delete comments")
+    if err is not None:
+        return err
+    _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
@@ -810,8 +847,9 @@ def add_page_label(
     err = _write_required(user, "label pages")
     if err is not None:
         return err
-    if pages.get_page(conn, page_id) is None:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
@@ -839,9 +877,10 @@ def remove_page_label(
     err = _write_required(user, "label pages")
     if err is not None:
         return err
-    if pages.get_page(conn, page_id) is None:
-        # 404 a missing page, symmetric with add_page_label (and the REST detach).
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    # 404 a missing OR hidden page, symmetric with add_page_label (and the REST detach).
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
     if labels.remove_label_from_page(conn, page_id, label_id):
         page_activity.record_page_label_removed(
             conn, actor_id=user["id"], page_id=page_id, label_id=label_id
