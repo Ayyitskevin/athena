@@ -14,8 +14,7 @@ matters:
 """
 from fastapi.testclient import TestClient
 
-from athena.aegis import labels
-from athena.core import db
+from athena.core import db, labels
 from athena.main import create_app
 
 

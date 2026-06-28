@@ -21,13 +21,21 @@ from athena.aegis import (
     issue_activity,
     issue_search,
     issues,
-    labels,
     projects,
     saved_filters,
     sprints,
     statuses,
 )
-from athena.core import activity, attachments, identity, links, notifications, search, users
+from athena.core import (
+    activity,
+    attachments,
+    identity,
+    labels,
+    links,
+    notifications,
+    search,
+    users,
+)
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_comment, render_snippet

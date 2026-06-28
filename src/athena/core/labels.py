@@ -1,9 +1,12 @@
-"""Data access for labels and the issue<->label join.
+"""Data access for labels — the shared label vocabulary and its joins.
 
-All label SQL lives here, mirroring aegis/issues.py and aegis/comments.py. A
-label is shared vocabulary reused across issues; the pairing of a label to an
-issue lives in the issue_labels join table. Attaching/detaching is idempotent so
-callers don't have to check first.
+A label is shared vocabulary (e.g. "bug", "frontend") reused across the app. It
+lives in core/, not in a feature module, because it is a CROSS-CUTTING concern —
+the same shape as core/links and core/attachments, which any kind of thing can
+point at. The pairing of a label to an issue lives in the issue_labels join table;
+other kinds (e.g. pages) attach through the same vocabulary via their own join.
+All label SQL lives here. Attaching/detaching is idempotent so callers don't have
+to check first.
 """
 from __future__ import annotations
 

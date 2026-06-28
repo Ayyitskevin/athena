@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import issues, labels, projects, sprints
-from athena.core import activity, notifications, users
+from athena.aegis import issues, projects, sprints
+from athena.core import activity, labels, notifications, users
 
 
 def record_created(

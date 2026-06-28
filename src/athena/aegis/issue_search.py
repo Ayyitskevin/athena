@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import issues, labels
-from athena.core import search
+from athena.aegis import issues
+from athena.core import labels, search
 
 
 def search_issues(
