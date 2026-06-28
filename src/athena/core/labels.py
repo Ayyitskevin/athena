@@ -72,6 +72,34 @@ def list_labels(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def label_usage(conn: sqlite3.Connection) -> list[dict]:
+    """Every label with how many issues and pages carry it — the data behind the
+    label index. Two grouped counts (one per join) folded onto the vocabulary, so
+    it stays O(1) queries regardless of how many labels there are. Counts include
+    archived issues (the label join doesn't know about archival); the per-label view
+    is where that distinction, if wanted, would live."""
+    issue_counts = {
+        r["label_id"]: r["n"]
+        for r in conn.execute(
+            "SELECT label_id, COUNT(*) AS n FROM issue_labels GROUP BY label_id"
+        ).fetchall()
+    }
+    page_counts = {
+        r["label_id"]: r["n"]
+        for r in conn.execute(
+            "SELECT label_id, COUNT(*) AS n FROM page_labels GROUP BY label_id"
+        ).fetchall()
+    }
+    return [
+        {
+            **label,
+            "issue_count": issue_counts.get(label["id"], 0),
+            "page_count": page_counts.get(label["id"], 0),
+        }
+        for label in list_labels(conn)
+    ]
+
+
 def add_label_to_issue(
     conn: sqlite3.Connection, issue_id: int, label_id: int
 ) -> bool:

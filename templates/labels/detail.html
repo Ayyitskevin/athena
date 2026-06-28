@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}{{ name }} — Labels — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/labels" class="muted">← All labels</a>
+        {% if label %}
+        <h1>
+            <span class="label" style="background: {{ label.color }}1a; color: {{ label.color }};">{{ label.name }}</span>
+        </h1>
+        <p class="subtitle">Everything tagged <code>{{ label.name }}</code></p>
+        {% else %}
+        <h1>Label not found</h1>
+        {% endif %}
+    </div>
+</div>
+
+{% if not label %}
+<p class="empty-state">No label named “{{ name }}”.</p>
+{% else %}
+
+<h3>Issues <span class="muted">({{ issues | length }})</span></h3>
+{% if issues %}
+<table class="issues-table">
+    <thead><tr><th>Key</th><th>Issue</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for i in issues %}
+        <tr>
+            <td class="muted"><code>{{ i.key or "#" ~ i.id }}</code></td>
+            <td class="issue-title"><a href="/aegis/issues/{{ i.id }}">{{ i.title }}</a></td>
+            <td><span class="status {{ i.status }}">{{ i.status }}</span></td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="note-small">No active issues carry this label.</p>
+{% endif %}
+
+<h3>Pages <span class="muted">({{ pages | length }})</span></h3>
+{% if pages %}
+<table class="issues-table">
+    <thead><tr><th>Page</th><th>Updated</th></tr></thead>
+    <tbody>
+    {% for p in pages %}
+        <tr>
+            <td class="issue-title"><a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a></td>
+            <td class="muted">{{ p.updated_at }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="note-small">No pages carry this label.</p>
+{% endif %}
+
+{% endif %}
+{% endblock %}

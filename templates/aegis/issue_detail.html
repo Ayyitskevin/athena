@@ -72,7 +72,7 @@
             <div class="label-list">
                 {% for l in issue_labels %}
                 <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
-                    {{ l.name }}
+                    <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/labels/{{ l.id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}
