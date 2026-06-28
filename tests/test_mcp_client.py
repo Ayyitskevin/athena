@@ -96,6 +96,26 @@ def test_recent_events_envelope(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_archive_unarchive_through_the_client(tmp_path):
+    # WHY: agents must be able to archive/restore issues and SEE archived ones via
+    # MCP, not just through the web/REST — the full archival surface, reachable.
+    tc, ath = _client(tmp_path, "arch.db")
+    try:
+        keep = ath.create_issue(title="keep")
+        gone = ath.create_issue(title="gone")
+        assert ath.archive_issue(gone["id"])["archived_at"] is not None
+        # Default listing hides it; include_archived reveals it.
+        assert [i["id"] for i in ath.list_issues()] == [keep["id"]]
+        assert {i["id"] for i in ath.list_issues(include_archived=True)} == {
+            keep["id"],
+            gone["id"],
+        }
+        assert ath.unarchive_issue(gone["id"])["archived_at"] is None
+        assert {i["id"] for i in ath.list_issues()} == {keep["id"], gone["id"]}
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_bulk_update_through_the_client(tmp_path):
     # WHY: agents must move many issues in one call, not N — the bulk endpoint is
     # reachable as a single MCP tool, best-effort with per-item results.
@@ -188,6 +208,8 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "update_issue",
             "assign_issue",
             "comment_on_issue",
+            "archive_issue",
+            "unarchive_issue",
             "bulk_update_issues",
             "recent_events",
             "list_projects",
