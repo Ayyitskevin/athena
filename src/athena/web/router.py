@@ -2013,14 +2013,17 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     list filtered to it. Reading is open; the create form below is gated."""
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
-    all_projects = projects.list_projects(conn)
+    user = getattr(request.state, "user", None)
+    # Only the projects this viewer may see (public + their own private ones; admins
+    # all). A private project never appears here to someone outside it.
+    all_projects = projects.list_projects(conn, access.visible_project_filter(conn, user))
     # One count per project, cheap on the small lists we have. NULL-project issues
-    # (the backlog) are simply not counted under any project.
+    # (the backlog) are simply not counted under any project. Every listed project is
+    # visible to the viewer, so its issue count is theirs to see in full.
     counts = {
         p["id"]: len(issues.list_issues(conn, project_id=p["id"]))
         for p in all_projects
     }
-    user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
     return _templates.TemplateResponse(
         request=request,

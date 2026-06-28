@@ -982,9 +982,14 @@ def remove_link(
 
 
 @projects_router.get("", response_model=list[ProjectOut])
-def list_all_projects(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    # Reading the project list is open, like listing issues.
-    return projects.list_projects(conn)
+def list_all_projects(
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Reading the project list is open (optional_actor → None for anonymous), but it
+    # only lists projects the caller may see — public ones plus their own private
+    # ones; admins see all. A private project never shows to someone outside it.
+    return projects.list_projects(conn, access.visible_project_filter(conn, actor))
 
 
 @projects_router.post("", response_model=ProjectOut, status_code=201)
