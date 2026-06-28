@@ -1430,3 +1430,89 @@ footer {
     font-size: 0.85rem;
     color: #374151;
 }
+
+/* Dashboard — a live overview of the work */
+.stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 1.25rem;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.stat-number {
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1;
+    color: #222;
+}
+
+.stat-label {
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    align-items: start;
+}
+
+.dashboard-card {
+    padding: 1rem 1.25rem;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.dashboard-card h3 {
+    margin: 0 0 0.75rem;
+    font-size: 1rem;
+}
+
+.dashboard-list,
+.dashboard-bars {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.dashboard-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.dashboard-bars li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.bar-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #444;
+}
+
+/* The activity card spans the full grid width so the feed has room to breathe. */
+.dashboard-activity {
+    grid-column: 1 / -1;
+}

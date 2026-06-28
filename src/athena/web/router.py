@@ -17,6 +17,7 @@ from athena import config
 from athena.aegis import (
     comments,
     contributors,
+    dashboard,
     dependencies,
     issue_activity,
     issue_search,
@@ -132,6 +133,33 @@ def home(request: Request):
     return _templates.TemplateResponse(
         request=request,
         name="home.html",
+    )
+
+
+@router.get("/aegis/dashboard", response_class=HTMLResponse)
+def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """A live overview of the work: headline totals, the issue distribution by status
+    and priority, per-project and backlog counts, what's in flight (active sprints),
+    the signed-in user's open plate, and the latest activity. Read-only — every
+    number comes from aegis.dashboard (the one home for the counting SQL), so this
+    route only lays them out. Open to read, like the issue list."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/dashboard.html",
+        context={
+            "totals": dashboard.totals(conn),
+            "status_counts": dashboard.status_counts(conn),
+            "priority_counts": dashboard.priority_counts(conn),
+            "projects": dashboard.project_open_counts(conn),
+            "backlog_count": dashboard.backlog_count(conn),
+            "active_sprints": dashboard.active_sprints(conn),
+            # The user's own plate only makes sense when we know who they are.
+            "my_issues": dashboard.my_open_issues(conn, user["id"]) if user else [],
+            "recent_activity": activity.list_activity(conn, limit=10),
+        },
     )
 
 
