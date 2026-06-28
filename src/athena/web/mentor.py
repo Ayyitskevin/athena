@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.core import activity, attachments, identity, labels, links, notifications
+from athena.core import access, activity, attachments, identity, labels, links, notifications
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -90,13 +90,15 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
-    all_spaces = spaces.list_spaces(conn)
+    user = getattr(request.state, "user", None)
+    # Only the spaces this viewer may see (public + their own private ones; admins
+    # all). A private space never appears here to someone outside it.
+    all_spaces = spaces.list_spaces(conn, access.visible_space_filter(conn, user))
     # One page-count per space — cheap on the small lists Mentor holds, and it
     # comes from the real data layer (no cached counter to drift).
     counts = {
         s["id"]: pages.count_pages_in_space(conn, s["id"]) for s in all_spaces
     }
-    user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
@@ -248,13 +250,16 @@ def space_detail(
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
+    user = getattr(request.state, "user", None)
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    # A private space the viewer can't see is treated exactly like a missing one — same
+    # 404, and the fallback space list is itself gated so it never leaks private names.
+    if space is None or not access.can_see_space(conn, user, space_id):
         return templates.TemplateResponse(
             request=request,
             name="mentor/spaces.html",
             context={
-                "spaces": spaces.list_spaces(conn),
+                "spaces": spaces.list_spaces(conn, access.visible_space_filter(conn, user)),
                 "counts": {},
                 "can_write": False,
                 "error": f"Space #{space_id} not found",
@@ -263,7 +268,6 @@ def space_detail(
         )
 
     page_rows = pages.list_pages_in_space(conn, space_id)
-    user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
@@ -352,8 +356,11 @@ def page_detail(
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
+    user = getattr(request.state, "user", None)
     page = pages.get_page(conn, page_id)
-    if page is None:
+    # A page in a private space the viewer can't see is a 404, gated by its space, so
+    # privacy never leaks through the existence of a page id.
+    if page is None or not access.can_see_space(conn, user, page["space_id"]):
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
 
     # One read of the space's pages serves two needs: the navigation tree (so you can
@@ -375,7 +382,7 @@ def page_detail(
         ancestors.append(by_id[cursor])
         cursor = by_id[cursor].get("parent_id")
     ancestors.reverse()
-    user = getattr(request.state, "user", None)
+    # `user` was resolved above (for the visibility gate); reuse it here.
     can_write = user is not None and identity.can_write(user)
     # The discussion thread, oldest first. Each body is rendered the same way an
     # issue comment is (cross-links + safe HTML), so [[page:N]]/[[issue:N]] mentions
@@ -426,7 +433,9 @@ def edit_page_form(
         return err
 
     page = pages.get_page(conn, page_id)
-    if page is None:
+    # Can't edit (or even see the form for) a page in a space you can't read — 404,
+    # same as a missing page, so the form never leaks a hidden page's content.
+    if page is None or not access.can_see_space(conn, user, page["space_id"]):
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     return templates.TemplateResponse(
         request=request,

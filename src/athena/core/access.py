@@ -241,6 +241,18 @@ def can_see_project_or_backlog(
     return can_see_project(conn, actor, project_id)
 
 
+def visible_space_filter(
+    conn: sqlite3.Connection, actor: dict | None
+) -> set[int] | None:
+    """The space twin of visible_project_filter: the space-id set a page/space LIST
+    should be constrained to, or None when the actor sees every space (an admin). None
+    ("sees everything") is distinct from an empty set ("sees no space"). Pages always
+    belong to a space (no backlog), so unlike issues there is no nullable case."""
+    if _is_admin(actor):
+        return None
+    return visible_space_ids(conn, actor)
+
+
 def visible_space_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int]:
     """The set of space ids this actor may read — the filter every page/space LIST
     applies. Same rule as visible_project_ids."""
