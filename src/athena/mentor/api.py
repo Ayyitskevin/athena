@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import activity, attachments, labels, links
+from athena.core import access, activity, attachments, labels, links
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
-from athena.core.identity import docs_write_actor
+from athena.core.identity import docs_write_actor, optional_actor
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
@@ -141,9 +141,14 @@ def _with_labels_many(conn: sqlite3.Connection, page_rows: list[dict]) -> list[d
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
-def list_all_spaces(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
-    # Reading the space list is open, like listing issues or projects.
-    return spaces.list_spaces(conn)
+def list_all_spaces(
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Reading the space list is open (optional_actor → None for anonymous), but it
+    # only lists spaces the caller may see — public ones plus their own private ones;
+    # admins see all. A private space never shows to someone outside it.
+    return spaces.list_spaces(conn, access.visible_space_filter(conn, actor))
 
 
 @spaces_router.post("", response_model=SpaceOut, status_code=201)
@@ -177,9 +182,15 @@ def create_space(
 
 
 @spaces_router.get("/{space_id}", response_model=SpaceOut)
-def show_space(space_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def show_space(
+    space_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    # A private space the caller can't see is a 404, indistinguishable from a missing
+    # one, so visibility never leaks through existence.
+    if space is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
     return space
 
@@ -304,19 +315,27 @@ def create_page(
 
 @spaces_router.get("/{space_id}/pages", response_model=list[PageOut])
 def list_pages(
-    space_id: int, conn: sqlite3.Connection = Depends(get_conn)
+    space_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Reads are open. 404 if the space itself is missing (distinct from a real
-    # space that simply has no pages yet, which returns []).
-    if spaces.get_space(conn, space_id) is None:
+    # Reads are open. 404 if the space is missing OR private to the caller (distinct
+    # from a real visible space that simply has no pages yet, which returns []). The
+    # space gate covers the pages: every page here is in this space.
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
     return _with_labels_many(conn, pages.list_pages_in_space(conn, space_id))
 
 
 @pages_router.get("/{page_id}", response_model=PageOut)
-def show_page(page_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+def show_page(
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
     page = pages.get_page(conn, page_id)
-    if page is None:
+    # A page in a private space the caller can't see is a 404 — gated by its space.
+    if page is None or not access.can_see_space(conn, actor, page["space_id"]):
         raise HTTPException(status_code=404, detail="no such page")
     return _with_labels(conn, page)
 
