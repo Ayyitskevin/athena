@@ -395,7 +395,7 @@ def page_detail(
         name="mentor/page_detail.html",
         context={
             "page": page,
-            "body_html": render_body(conn, page["body"]),
+            "body_html": render_body(conn, page["body"], actor=user),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
             "all_labels": labels.list_labels(conn),  # the shared vocabulary, for autocomplete
