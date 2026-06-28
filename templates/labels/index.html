@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Labels — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Labels</h1>
+        <p class="subtitle">The shared vocabulary across issues and pages</p>
+    </div>
+</div>
+
+{% if labels %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Label</th>
+            <th>Issues</th>
+            <th>Pages</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for l in labels %}
+        <tr>
+            <td class="issue-title">
+                <a href="/aegis/labels/{{ l.name }}">
+                    <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                </a>
+            </td>
+            <td class="muted">{{ l.issue_count }}</td>
+            <td class="muted">{{ l.page_count }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No labels yet — add one to an issue or a page.</p>
+{% endif %}
+
+<p class="note">The same label can sit on an issue and a page. Pick one to see everything tagged with it.</p>
+{% endblock %}
