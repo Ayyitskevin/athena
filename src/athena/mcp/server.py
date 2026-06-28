@@ -101,6 +101,28 @@ def build_server(client: AthenaClient) -> FastMCP:
         """Add a comment to an issue, authored by the token's user."""
         return client.comment_on_issue(issue_id, body)
 
+    @mcp.tool()
+    def bulk_update_issues(
+        ids: list[int],
+        status: str | None = None,
+        priority: str | None = None,
+        assignee_id: int | None = None,
+        sprint_id: int | None = None,
+    ) -> dict:
+        """Apply the same change to MANY issues at once (one call instead of N).
+        Set any of status (open/in_progress/done), priority (low/medium/high/urgent),
+        assignee_id, or sprint_id; only the fields you pass are touched. Best-effort:
+        each issue is authorized and validated on its own, so the result reports
+        {updated, failed, results:[{id, ok, error}]} — one issue's failure doesn't
+        stop the rest. (To CLEAR an assignee or sprint, use the per-issue tools.)"""
+        return client.bulk_update_issues(
+            ids,
+            status=status,
+            priority=priority,
+            assignee_id=assignee_id,
+            sprint_id=sprint_id,
+        )
+
     # --- hierarchy (epics & sub-tasks) --------------------------------------
 
     @mcp.tool()
