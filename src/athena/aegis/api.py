@@ -82,6 +82,35 @@ class ProjectUpdate(BaseModel):
     project_id: int | None
 
 
+class BulkUpdate(BaseModel):
+    # Apply the same triage change to many issues at once. Only the fields actually
+    # sent are touched (model_dump(exclude_unset=True) in the handler), so a sent
+    # assignee_id/sprint_id of null means "unassign"/"move to backlog" — distinct
+    # from omitting it, which leaves it alone. status/priority are set to a value
+    # (there is no "clear status"). Each issue is processed independently.
+    ids: list[int]
+    status: str | None = None
+    priority: Priority | None = None
+    assignee_id: int | None = None
+    sprint_id: int | None = None
+
+
+class BulkResult(BaseModel):
+    id: int
+    ok: bool
+    # The human-readable reason this issue was skipped (e.g. "no such status for
+    # this project"), or null when it succeeded.
+    error: str | None = None
+
+
+class BulkUpdateOut(BaseModel):
+    # A best-effort batch: each issue is attempted on its own and reported here, so
+    # one issue's 403/404/422 never sinks the rest. updated + failed == len(results).
+    updated: int
+    failed: int
+    results: list[BulkResult]
+
+
 class ParentUpdate(BaseModel):
     # None clears the parent (top-level); an int nests the issue under that issue.
     parent_id: int | None
@@ -500,6 +529,112 @@ def set_assignee(
         after=payload.assignee_id,
     )
     return _with_labels(conn, updated)
+
+
+_BULK_MAX = 500
+
+
+def _apply_bulk_update(
+    conn: sqlite3.Connection, issue_id: int, provided: dict, actor: dict
+) -> None:
+    """Apply the requested fields to ONE issue, or raise HTTPException (404/403/422)
+    so the caller records this issue as failed. Reuses the exact per-issue write
+    gate, validation, and activity recorders the single-issue endpoints use, so the
+    bulk path can never diverge from them. ALL requested fields are validated before
+    any are written, so a rejected issue is never left half-updated."""
+    before = _issue_for_write(conn, issue_id, actor)  # 404 / 403
+    # Validate everything up front (same rules as the single-issue endpoints).
+    if "status" in provided and not statuses.is_valid(
+        conn, before["project_id"], provided["status"]
+    ):
+        raise HTTPException(status_code=422, detail="no such status for this project")
+    if (
+        "assignee_id" in provided
+        and provided["assignee_id"] is not None
+        and users.get_user(conn, provided["assignee_id"]) is None
+    ):
+        raise HTTPException(status_code=422, detail="no such user")
+    if "sprint_id" in provided and provided["sprint_id"] is not None:
+        sprint = sprints.get_sprint(conn, provided["sprint_id"])
+        if sprint is None:
+            raise HTTPException(status_code=422, detail="no such sprint")
+        if sprint["project_id"] != before["project_id"]:
+            raise HTTPException(
+                status_code=422,
+                detail="sprint belongs to a different project than the issue",
+            )
+    # Apply — each write commits on its own (best-effort persists per issue), and
+    # each recorder no-ops when its field didn't actually move.
+    if "status" in provided or "priority" in provided:
+        updated = issues.update_issue(
+            conn,
+            issue_id,
+            status=provided.get("status"),
+            priority=provided.get("priority"),
+        )
+        if updated is None:  # vanished mid-batch (a race) — report, don't 500
+            raise HTTPException(status_code=404, detail="no such issue")
+        if "status" in provided:
+            issue_activity.record_status_change(
+                conn, actor_id=actor["id"], issue_id=issue_id,
+                before=before["status"], after=updated["status"],
+            )
+        if "priority" in provided:
+            issue_activity.record_priority_change(
+                conn, actor_id=actor["id"], issue_id=issue_id,
+                before=before["priority"], after=updated["priority"],
+            )
+    if "assignee_id" in provided:
+        issues.set_assignee(conn, issue_id, provided["assignee_id"])
+        issue_activity.record_assignee_change(
+            conn, actor_id=actor["id"], issue_id=issue_id,
+            before=before["assignee_id"], after=provided["assignee_id"],
+        )
+    if "sprint_id" in provided:
+        issues.set_sprint(conn, issue_id, provided["sprint_id"])
+        issue_activity.record_sprint_change(
+            conn, actor_id=actor["id"], issue_id=issue_id,
+            before=before["sprint_id"], after=provided["sprint_id"],
+        )
+
+
+@router.post("/bulk", response_model=BulkUpdateOut)
+def bulk_update(
+    payload: BulkUpdate,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Best-effort batch triage: apply the same change to many issues, each attempted
+    # and authorized on its own (creator-or-assignee per issue, exactly as the
+    # single-issue writes), so one issue's 403/404/422 never sinks the rest — the
+    # per-issue outcome is reported back. Atomic-all-or-nothing is deliberately NOT
+    # the contract: an agent moving 50 issues wants the 48 it may touch to move and
+    # a clear list of the 2 it couldn't.
+    provided = payload.model_dump(exclude_unset=True)
+    field_keys = [k for k in provided if k != "ids"]
+    if not payload.ids:
+        raise HTTPException(status_code=422, detail="ids must be a non-empty list")
+    if len(payload.ids) > _BULK_MAX:
+        raise HTTPException(
+            status_code=422, detail=f"at most {_BULK_MAX} ids per request"
+        )
+    if not field_keys:
+        raise HTTPException(status_code=422, detail="no fields to update")
+    # status/priority set a value; there is no "clear" for them, so an explicit null
+    # is a malformed request (rejected for the whole batch, before any write).
+    for column in ("status", "priority"):
+        if column in provided and provided[column] is None:
+            raise HTTPException(status_code=422, detail=f"{column} cannot be null")
+
+    results: list[dict] = []
+    for issue_id in dict.fromkeys(payload.ids):  # dedupe, preserve first-seen order
+        try:
+            _apply_bulk_update(conn, issue_id, provided, actor)
+            results.append({"id": issue_id, "ok": True})
+        except HTTPException as exc:
+            results.append({"id": issue_id, "ok": False, "error": str(exc.detail)})
+    updated = sum(1 for r in results if r["ok"])
+    return {"updated": updated, "failed": len(results) - updated, "results": results}
 
 
 @router.put("/{issue_id}/sprint", response_model=IssueOut)
