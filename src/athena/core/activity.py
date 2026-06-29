@@ -391,6 +391,147 @@ def reconstruct_runs(
     return runs
 
 
+# --- run lineage ------------------------------------------------------------
+
+# How many of a run's events one lineage node loads. A run is one unit of work, so
+# this is generous; a run beyond it has its node marked partial (a lower bound), the
+# same honesty rule reconstruct_runs uses for a window-clipped run.
+_LINEAGE_MAX_EVENTS = 500
+
+
+def _gated_run_events(
+    conn: sqlite3.Connection, run_id: str, actor: dict | None | object
+) -> list[dict]:
+    """One run's events (every event tagged with run_id), oldest-first, with the
+    viewing `actor`'s visibility gate applied so an event on a target the actor can't
+    see is dropped — exactly like list_activity. Loads one past the cap so the caller
+    can tell a clipped run from an exactly-full one. _UNGATED leaves it ungated."""
+    clauses = ["a.run_id = ?"]
+    params: list = [run_id]
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            clauses.append(gate)
+            params.extend(gate_params)
+    where = " WHERE " + " AND ".join(clauses)
+    params.append(_LINEAGE_MAX_EVENTS + 1)
+    rows = conn.execute(
+        f"{_SELECT}{where} ORDER BY a.id ASC LIMIT ?", params
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _run_node(
+    conn: sqlite3.Connection,
+    run_id: str,
+    actor: dict | None | object,
+    *,
+    with_events: bool,
+) -> dict | None:
+    """A lineage node for one run, or None when the actor can see none of its events
+    (hidden == missing — the run never leaks through lineage). `with_events` carries
+    the full event list for the FOCAL run; ancestors/descendants are light (events
+    dropped, summary kept) so a deep tree stays a bounded payload. A run past the event
+    cap is marked partial, its count a lower bound."""
+    events = _gated_run_events(conn, run_id, actor)
+    if not events:
+        return None
+    clipped = len(events) > _LINEAGE_MAX_EVENTS
+    if clipped:
+        events = events[:_LINEAGE_MAX_EVENTS]
+    node = _run_summary(events)
+    node["partial"] = clipped
+    if not with_events:
+        node["events"] = []
+    return node
+
+
+def _child_run_ids(conn: sqlite3.Connection, run_id: str) -> list[str]:
+    """The run ids of the runs `run_id` spawned — the distinct run ids of events whose
+    parent_run_id is this run — in the order they first appear (chronological), so the
+    lineage tree reads in the order children were begotten."""
+    rows = conn.execute(
+        "SELECT run_id, MIN(id) AS first_id FROM activity "
+        "WHERE parent_run_id = ? AND run_id IS NOT NULL AND run_id != ? "
+        "GROUP BY run_id ORDER BY first_id",
+        (run_id, run_id),
+    ).fetchall()
+    return [row["run_id"] for row in rows]
+
+
+def _descendant_tree(
+    conn: sqlite3.Connection,
+    run_id: str,
+    actor: dict | None | object,
+    seen: set[str],
+    max_depth: int,
+    depth: int,
+) -> list[dict]:
+    """The tree of runs descended from `run_id` (its children, their children, …), each
+    a light node carrying its own `children`. `seen` guards against a cycle in the
+    parent links; `max_depth` bounds a pathological chain. A child the actor can't see
+    is omitted, and its subtree with it."""
+    if depth > max_depth:
+        return []
+    out: list[dict] = []
+    for child_id in _child_run_ids(conn, run_id):
+        if child_id in seen:
+            continue
+        seen.add(child_id)
+        node = _run_node(conn, child_id, actor, with_events=False)
+        if node is None:
+            continue
+        node["children"] = _descendant_tree(
+            conn, child_id, actor, seen, max_depth, depth + 1
+        )
+        out.append(node)
+    return out
+
+
+def run_lineage(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    actor: dict | None | object = _UNGATED,
+    max_depth: int = 25,
+) -> dict | None:
+    """The lineage of a tagged run, reconstructed from the log alone: its ANCESTORS
+    (walk parent_run_id up to the originating goal — the root run with no parent),
+    the RUN itself with its events (oldest-first, replayable), and its DESCENDANTS (the
+    tree of child runs it spawned). This is the "end-to-end lineage from a high-level
+    goal down to the individual action" the event-sourced design promises — pure
+    projection of run_id/parent_run_id, no stored tree.
+
+    Returns None if the run has no events the `actor` may see — a run hidden behind
+    visibility is indistinguishable from one that never existed (404, no leak). The
+    focal run carries full events; ancestors and descendants are light summaries (drill
+    in via their own run_id). Ancestors are ordered root-first, so the list reads as the
+    causal path "originating goal → … → this run"."""
+    focal = _run_node(conn, run_id, actor, with_events=True)
+    if focal is None:
+        return None
+    seen = {run_id}
+    ancestors: list[dict] = []
+    cur = focal["parent_run_id"]
+    while cur is not None and cur not in seen and len(ancestors) < max_depth:
+        seen.add(cur)
+        node = _run_node(conn, cur, actor, with_events=False)
+        if node is None:
+            # An ancestor the actor can't see truncates the visible chain rather than
+            # leaking that a hidden run sits above this one.
+            break
+        ancestors.append(node)
+        cur = node["parent_run_id"]
+    ancestors.reverse()  # originating goal first
+    descendants = _descendant_tree(conn, run_id, actor, seen, max_depth, 1)
+    return {
+        "run_id": run_id,
+        "ancestors": ancestors,
+        "run": focal,
+        "descendants": descendants,
+    }
+
+
 def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
     """The verbs that actually occur in the trail, alphabetical. Powers the feed's
     verb filter from real data — never a hardcoded list that could drift from what
