@@ -22,6 +22,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import api as aegis_api
+from athena.aegis import automation as aegis_automation
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.core import (
@@ -347,14 +348,23 @@ def create_app(
             if config.WEBHOOK_DELIVERY_ENABLED
             else None
         )
+        # The automation rules engine: a sibling in-process loop that drains new activity
+        # events and fires matching rules' in-app actions. Same single-loop caveat as
+        # webhooks (one per deployment, off in tests).
+        automation_task = (
+            asyncio.create_task(aegis_automation.process_loop(resolved_db))
+            if config.AUTOMATION_ENABLED
+            else None
+        )
         try:
             yield
         finally:
-            # Shutdown: stop the delivery loop cleanly.
-            if delivery_task is not None:
-                delivery_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await delivery_task
+            # Shutdown: stop the background loops cleanly.
+            for task in (delivery_task, automation_task):
+                if task is not None:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
 
     app = FastAPI(title="Athena", lifespan=lifespan)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)

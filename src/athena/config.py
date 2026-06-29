@@ -54,6 +54,13 @@ WEBHOOK_DELIVERY_INTERVAL_SECONDS = float(
 )
 WEBHOOK_TIMEOUT_SECONDS = float(os.environ.get("ATHENA_WEBHOOK_TIMEOUT", "5"))
 
+# Automation rules engine. Like the webhook loop, the app runs a single in-process
+# background loop that drains new activity events and fires matching rules' actions.
+# Defaults ON; disable it (ATHENA_AUTOMATION=0) in extra worker processes (only one may
+# run, or rules fire twice) and in tests, which drive automation.run_pass directly.
+AUTOMATION_ENABLED = _bool_env("ATHENA_AUTOMATION", True)
+AUTOMATION_INTERVAL_SECONDS = float(os.environ.get("ATHENA_AUTOMATION_INTERVAL", "5"))
+
 # Where uploaded attachment blobs are stored on disk. Keep this OUTSIDE any
 # web-served directory (it is, by default — nothing serves it statically); the
 # only way to read a file is the authenticated/audited download route, which maps
