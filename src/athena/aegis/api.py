@@ -821,6 +821,13 @@ def set_parent(
     # gate as status/assign/project. The parent is validated for existence, self,
     # and cycles (422); clearing (None) is always allowed.
     before = _issue_for_write(conn, issue_id, actor)
+    # The parent must be one the actor can see: a hidden parent collapses to the same
+    # "no such parent issue" 422 validate_parent gives a missing one, so you can't nest
+    # under (or probe the existence of) an issue in a private project you're not in.
+    if payload.parent_id is not None and not access.can_see_issue(
+        conn, actor, payload.parent_id
+    ):
+        raise HTTPException(status_code=422, detail="no such parent issue")
     reason = issues.validate_parent(conn, issue_id, payload.parent_id)
     if reason is not None:
         raise HTTPException(status_code=422, detail=reason)

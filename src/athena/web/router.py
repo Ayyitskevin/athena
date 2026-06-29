@@ -773,7 +773,10 @@ def create_issue(
     if project_id == "":
         project: int | None = None
     else:
-        if not project_id.isdigit() or projects.get_project(conn, int(project_id)) is None:
+        if not project_id.isdigit() or not access.can_see_project(conn, user, int(project_id)):
+            # can_see_project is False for a missing project too, so a private project the
+            # actor can't see gives the SAME 400 — no write into (or discovery of) a
+            # hidden project, mirroring the REST API.
             return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         project = int(project_id)
     body = body.strip()
@@ -1158,7 +1161,10 @@ def change_issue_project(
     if project_id == "":
         target: int | None = None
     else:
-        if not project_id.isdigit() or projects.get_project(conn, int(project_id)) is None:
+        if not project_id.isdigit() or not access.can_see_project(conn, user, int(project_id)):
+            # can_see_project is False for a missing project too, so a private project the
+            # actor can't see gives the SAME 400 — no write into (or discovery of) a
+            # hidden project, mirroring the REST API.
             return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         target = int(project_id)
 
@@ -1247,7 +1253,9 @@ def change_issue_parent(
         parent_id: int | None = None
     else:
         parent = issues.get_by_ref(conn, parent_ref)
-        if parent is None:
+        # A parent the actor can't see collapses to the same 400 as a missing one, so
+        # you can't nest under (or probe the existence of) a hidden issue.
+        if parent is None or not access.can_see_issue(conn, user, parent["id"]):
             return HTMLResponse('<div class="error">No such parent issue.</div>', status_code=400)
         parent_id = parent["id"]
     reason = issues.validate_parent(conn, issue_id, parent_id)
@@ -1401,7 +1409,10 @@ def add_issue_link(
     if err is not None:
         return err
     target = issues.get_by_ref(conn, target_ref.strip())
-    if target is None:
+    # A target the actor can't see collapses to the same 400 as a missing one (the
+    # REST twin does this too), closing both the link-into-hidden write and the
+    # existence oracle.
+    if target is None or not access.can_see_issue(conn, user, target["id"]):
         return HTMLResponse('<div class="error">No such target issue.</div>', status_code=400)
     reason = dependencies.add_link(
         conn,
@@ -2053,10 +2064,14 @@ def board_move_issue(
             status_code=401,
         )
     issue = issues.get_issue(conn, issue_id)
-    # Apply only when the move is both permitted and valid; otherwise fall through
-    # to a clean re-render (snap-back). A missing issue likewise just re-renders.
+    # Apply only when the move is both VISIBLE to the actor and permitted and valid;
+    # otherwise fall through to a clean re-render (snap-back). The visibility term
+    # matches the detail-page status write (_authorize_issue_write) — a creator/assignee
+    # who lost access when the project went private can't keep moving the card, and a
+    # hidden issue snaps back exactly like a missing one (no oracle).
     if (
         issue is not None
+        and access.can_see_project_or_backlog(conn, user, issue["project_id"])
         and issues.can_modify(issue, user["id"])
         and new_status != issue["status"]
         and statuses.is_valid(conn, issue["project_id"], new_status)
