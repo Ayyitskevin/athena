@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Automation — Admin — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Automation</h1>
+        <p class="subtitle">When an issue event happens, do something automatically</p>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+{% if rules %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>When</th>
+            <th>Do</th>
+            <th>Status</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for rule in rules %}
+        <tr>
+            <td class="issue-title">{{ rule.name }}</td>
+            <td class="muted">
+                {{ "any event" if rule.trigger_verb == "*" else rule.trigger_verb }}
+                {% if rule.conditions.project_id %}
+                    in {{ project_names.get(rule.conditions.project_id, "project #" ~ rule.conditions.project_id) }}
+                {% endif %}
+            </td>
+            <td class="muted">
+                {% if rule.action_type in ("assign", "add_contributor") %}
+                    {{ rule.action_type.replace("_", " ") }} {{ user_names.get(rule.action_params.user_id, "user #" ~ rule.action_params.user_id) }}
+                {% elif rule.action_type == "set_status" %}
+                    set status → {{ rule.action_params.status }}
+                {% elif rule.action_type == "add_label" %}
+                    add label “{{ rule.action_params.label }}”
+                {% elif rule.action_type == "comment" %}
+                    comment “{{ rule.action_params.body }}”
+                {% else %}
+                    {{ rule.action_type }}
+                {% endif %}
+            </td>
+            <td>
+                {% if rule.enabled %}<span class="badge-active">enabled</span>{% else %}<span class="muted">paused</span>{% endif %}
+                <form method="post" action="/admin/automation/{{ rule.id }}/enabled" class="inline-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="enabled" value="{{ 0 if rule.enabled else 1 }}">
+                    <button type="submit" class="button secondary small">{{ "Pause" if rule.enabled else "Enable" }}</button>
+                </form>
+            </td>
+            <td class="muted">
+                <form method="post" action="/admin/automation/{{ rule.id }}/delete" class="inline-form" data-confirm="Delete rule “{{ rule.name }}”?">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary small">Delete</button>
+                </form>
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">No automation rules yet.</p>
+{% endif %}
+
+<div class="form-container">
+    <h3>New rule</h3>
+    <p class="note-small">A rule reacts to an issue event and performs one action, attributed to the Automation user. Rules act from now on — never on past events.</p>
+    <form method="post" action="/admin/automation" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="rule-name">Name</label>
+            <input id="rule-name" type="text" name="name" required placeholder="Auto-triage new bugs">
+        </div>
+        <div class="form-group">
+            <label for="rule-verb">When (trigger)</label>
+            <select id="rule-verb" name="trigger_verb">
+                <option value="*">any issue event</option>
+                {% for verb in trigger_verbs %}
+                <option value="{{ verb }}"{% if verb == "created" %} selected{% endif %}>{{ verb }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-project">Only in project (optional)</label>
+            <select id="rule-project" name="condition_project">
+                <option value="">any project</option>
+                {% for project in projects %}
+                <option value="{{ project.id }}">{{ project.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-action">Do (action)</label>
+            <select id="rule-action" name="action_type">
+                {% for action in action_types %}
+                <option value="{{ action }}">{{ action.replace("_", " ") }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <p class="note-small">Fill in the field for the action you chose above; the others are ignored.</p>
+        <div class="form-group">
+            <label for="rule-user">↳ assign / add contributor — user</label>
+            <select id="rule-user" name="action_user_id">
+                <option value="">—</option>
+                {% for u in users %}
+                <option value="{{ u.id }}">{{ u.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-status">↳ set status — status</label>
+            <input id="rule-status" type="text" name="action_status" list="status-options" placeholder="Done">
+            <datalist id="status-options">
+                {% for s in status_suggestions %}<option value="{{ s }}">{% endfor %}
+            </datalist>
+        </div>
+        <div class="form-group">
+            <label for="rule-label">↳ add label — label</label>
+            <input id="rule-label" type="text" name="action_label" placeholder="needs-triage">
+        </div>
+        <div class="form-group">
+            <label for="rule-body">↳ comment — body</label>
+            <textarea id="rule-body" name="action_body" rows="2" placeholder="Thanks for filing — we'll take a look."></textarea>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create rule</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

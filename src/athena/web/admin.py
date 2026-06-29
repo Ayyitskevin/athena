@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from athena.aegis import automation, projects, statuses
 from athena.core import activity, identity, oidc, tokens, users, webhooks
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -619,3 +620,179 @@ def delete_webhook(
             '<div class="error">No such webhook.</div>', status_code=404
         )
     return RedirectResponse("/admin/webhooks", status_code=303)
+
+
+# --- automation rules -------------------------------------------------------
+
+
+def _int_or_none(raw: str) -> int | None:
+    """A select's value as an int, or None for the empty ('any'/unset) option. Selects
+    only ever submit a known id or '', so a non-numeric value is treated as unset."""
+    raw = (raw or "").strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def _automation_context(conn: sqlite3.Connection, *, error: str | None = None) -> dict:
+    """Everything the rule-builder page renders: the existing rules plus the option
+    sets the create form offers (the SAME closed sets the validator enforces, so the
+    form can't suggest a value the boundary would reject). Project/user id→name maps let
+    the rules table show "in <Project>" / "assign <Name>" instead of bare ids."""
+    project_rows = projects.list_projects(conn)  # admin: every project
+    user_rows = users.list_users(conn)
+    return {
+        "rules": automation.list_rules(conn),
+        "trigger_verbs": automation.TRIGGER_VERBS,
+        "action_types": automation.ACTION_TYPES,
+        "projects": project_rows,
+        "users": user_rows,
+        # The default workflow's statuses, offered as suggestions for set_status — a rule
+        # may still target a project with custom statuses (validated at fire time).
+        "status_suggestions": statuses.status_names(conn, None),
+        "project_names": {p["id"]: p["name"] for p in project_rows},
+        "user_names": {u["id"]: u["name"] for u in user_rows},
+        "error": error,
+    }
+
+
+def _action_params_from_form(
+    action_type: str, *, user_id: int | None, status: str, label: str, body: str
+) -> dict:
+    """Fold the per-action form fields down to the one action_params dict the chosen
+    action_type needs. Unrelated fields are ignored, so switching the action select
+    doesn't smuggle a stale value into the rule. An empty field yields {}, which
+    validate_rule then rejects with the right 'requires …' message."""
+    if action_type in ("assign", "add_contributor"):
+        return {"user_id": user_id} if user_id is not None else {}
+    if action_type == "set_status":
+        return {"status": status.strip()} if status.strip() else {}
+    if action_type == "add_label":
+        return {"label": label.strip()} if label.strip() else {}
+    if action_type == "comment":
+        return {"body": body.strip()} if body.strip() else {}
+    return {}
+
+
+@router.get("/admin/automation", response_class=HTMLResponse)
+def automation_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    return templates.TemplateResponse(
+        request=request, name="admin/automation.html", context=_automation_context(conn)
+    )
+
+
+@router.post(
+    "/admin/automation",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def create_rule(
+    request: Request,
+    name: str = Form(""),
+    trigger_verb: str = Form(""),
+    condition_project: str = Form(""),
+    action_type: str = Form(""),
+    action_user_id: str = Form(""),
+    action_status: str = Form(""),
+    action_label: str = Form(""),
+    action_body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+
+    name = name.strip()
+    conditions: dict = {}
+    project_id = _int_or_none(condition_project)
+    if project_id is not None:
+        conditions["project_id"] = project_id
+    action_params = _action_params_from_form(
+        action_type,
+        user_id=_int_or_none(action_user_id),
+        status=action_status,
+        label=action_label,
+        body=action_body,
+    )
+
+    def _reject(message: str):
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/automation.html",
+            context=_automation_context(conn, error=message),
+            status_code=400,
+        )
+
+    if not name:
+        return _reject("Rule name is required.")
+    # The SAME validator the REST API uses — the form can't persist a rule the API
+    # wouldn't, so both surfaces reject a typo'd verb / missing param identically.
+    spec_error = automation.validate_rule(
+        trigger_verb=trigger_verb,
+        action_type=action_type,
+        conditions=conditions,
+        action_params=action_params,
+    )
+    if spec_error is not None:
+        return _reject(spec_error)
+
+    automation.create_rule(
+        conn,
+        name=name,
+        trigger_verb=trigger_verb,
+        action_type=action_type,
+        created_by=actor["id"],
+        conditions=conditions,
+        action_params=action_params,
+    )
+    return RedirectResponse("/admin/automation", status_code=303)
+
+
+@router.post(
+    "/admin/automation/{rule_id}/enabled",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def toggle_rule(
+    request: Request,
+    rule_id: int,
+    enabled: str = Form("0"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    # The form posts the DESIRED next state ("1" enable, anything else pause) — a
+    # deterministic toggle that keeps the rule (and its place in fire order).
+    if automation.set_enabled(conn, rule_id, enabled == "1") is None:
+        return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
+    return RedirectResponse("/admin/automation", status_code=303)
+
+
+@router.post(
+    "/admin/automation/{rule_id}/delete",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def delete_rule(
+    request: Request,
+    rule_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    if not automation.delete_rule(conn, rule_id):
+        return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
+    return RedirectResponse("/admin/automation", status_code=303)
