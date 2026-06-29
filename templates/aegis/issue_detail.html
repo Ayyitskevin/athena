@@ -305,7 +305,7 @@
         </div>
 
         <div class="activity">
-            <h3>History</h3>
+            <h3>History <a href="/aegis/issues/{{ issue.id }}/history" class="muted history-timetravel-link">time-travel →</a></h3>
             {% with events=activity, show_target=False %}
             {% include "aegis/partials/activity_list.html" %}
             {% endwith %}

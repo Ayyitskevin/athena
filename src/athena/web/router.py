@@ -20,6 +20,7 @@ from athena.aegis import (
     dashboard,
     dependencies,
     issue_activity,
+    issue_history,
     issue_search,
     issues,
     project_activity,
@@ -1124,6 +1125,48 @@ def _render_issue_detail(
         name="aegis/issue_detail.html",
         context=context,
         status_code=status_code,
+    )
+
+
+@router.get("/aegis/issues/{ref}/history", response_class=HTMLResponse)
+def issue_history_view(
+    request: Request, ref: str, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Time-travel for one issue — the browser twin of GET /issues/{id}/state. Shows the
+    issue's lifecycle state reconstructed AS OF a chosen checkpoint (?as_of=<event id>,
+    default now), beside the timeline of its events, each a clickable cutoff. A thin
+    client over issue_history.project_issue_state; gated exactly like the detail page (a
+    hidden/missing issue is the same 404, so existence never leaks)."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    issue = issues.get_by_ref(conn, ref)
+    user = getattr(request.state, "user", None)
+    if not issue or not access.can_see_project_or_backlog(
+        conn, user, issue["project_id"]
+    ):
+        return _templates.TemplateResponse(
+            request=request,
+            name="aegis/issues.html",
+            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue {ref} not found"},
+            status_code=404,
+        )
+    as_of = _int_or_none(request.query_params.get("as_of"))
+    snapshot = issue_history.project_issue_state(
+        conn, issue["id"], as_of_event_id=as_of
+    )
+    # The issue's timeline (newest-first), each event a checkpoint to time-travel to.
+    events = activity.list_activity(
+        conn, target_kind="issue", target_id=issue["id"]
+    )
+    return _templates.TemplateResponse(
+        request=request,
+        name="aegis/issue_history.html",
+        context={
+            "issue": issue,
+            "snapshot": snapshot,
+            "events": events,
+            "as_of": as_of,
+        },
     )
 
 
