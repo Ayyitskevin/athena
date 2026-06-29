@@ -63,6 +63,34 @@ class RunOut(BaseModel):
     events: list[ActivityOut]
 
 
+class RunNodeOut(BaseModel):
+    # One run in a lineage tree. The FOCAL run carries its full events (oldest-first,
+    # replayable); ancestors/descendants are light (events empty — drill in by their
+    # own run_id). `children` are the runs this one spawned (set on descendants only).
+    actor_id: int
+    actor_name: str
+    run_id: str | None = None
+    parent_run_id: str | None = None
+    partial: bool = False
+    started_at: str
+    ended_at: str
+    first_id: int
+    last_id: int
+    event_count: int
+    events: list[ActivityOut] = []
+    children: list["RunNodeOut"] = []
+
+
+class RunLineageOut(BaseModel):
+    # A run's place in the causal tree, reconstructed from the log: the originating
+    # goal down to this run (ancestors, root-first), the run itself, and the runs it
+    # spawned (descendants).
+    run_id: str
+    ancestors: list[RunNodeOut]
+    run: RunNodeOut
+    descendants: list[RunNodeOut]
+
+
 @router.get("", response_model=list[ActivityOut])
 def feed(
     target_kind: str | None = Query(
@@ -184,3 +212,20 @@ def runs(
     return activity.reconstruct_runs(
         conn, actor_id=actor_id, gap_seconds=gap_seconds, limit=limit, actor=actor
     )
+
+
+@router.get("/runs/{run_id}/lineage", response_model=RunLineageOut)
+def run_lineage(
+    run_id: str,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The causal tree of one tagged run: the originating goal down to it (ancestors),
+    # the run with its events, and the runs it spawned (descendants) — a pure
+    # projection of run_id/parent_run_id over the log. Visibility-gated by the actor
+    # (events on targets they can't see are dropped); a run with no visible events is a
+    # 404, indistinguishable from one that never existed.
+    lineage = activity.run_lineage(conn, run_id, actor=actor)
+    if lineage is None:
+        raise HTTPException(status_code=404, detail="no such run")
+    return lineage
