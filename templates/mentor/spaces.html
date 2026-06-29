@@ -20,15 +20,26 @@
             <th>Space</th>
             <th>Description</th>
             <th>Pages</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
     {% for s in spaces %}
         <tr>
             <td class="muted"><code>{{ s.key }}</code></td>
-            <td class="issue-title"><a href="/mentor/spaces/{{ s.id }}">{{ s.name }}</a></td>
+            <td class="issue-title">
+                <a href="/mentor/spaces/{{ s.id }}">{{ s.name }}</a>
+                {% if s.visibility == "private" %}
+                <span class="badge badge-private" title="Private — members only">🔒</span>
+                {% endif %}
+            </td>
             <td class="muted">{{ s.description or "—" }}</td>
             <td class="muted">{{ counts.get(s.id, 0) }}</td>
+            <td class="muted">
+                {% if can_write and (request.state.user.id == s.created_by or is_admin) %}
+                <a href="/mentor/spaces/{{ s.id }}/access">Access</a>
+                {% endif %}
+            </td>
         </tr>
     {% endfor %}
     </tbody>
