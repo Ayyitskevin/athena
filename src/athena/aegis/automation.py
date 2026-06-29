@@ -40,6 +40,71 @@ ACTION_TYPES = ("assign", "add_label", "set_status", "comment", "add_contributor
 # a silent match-everything.
 CONDITION_FIELDS = ("project_id", "status", "priority", "assignee_id", "sprint_id")
 
+# The activity verbs a rule may TRIGGER on, for target_kind="issue" — every verb the
+# issue lifecycle emits (see aegis/issue_activity.py), plus "*" for "any issue event".
+# Validating against this closed set at the boundary means a typo'd verb is a 422, never
+# a rule that silently never fires. The only target_kind rules act on yet is "issue".
+TRIGGER_VERBS = (
+    "created", "issue_edited", "changed_status", "changed_priority",
+    "assigned", "unassigned", "changed_project", "removed_from_project",
+    "moved_to_sprint", "removed_from_sprint", "set_parent", "removed_parent",
+    "added_contributor", "removed_contributor", "labeled", "unlabeled",
+    "commented", "comment_deleted", "archived", "unarchived",
+)
+TARGET_KINDS = ("issue",)
+
+
+def _validate_action_params(action_type: str, params: dict) -> str | None:
+    """The shape an action_type's params must have, or an error string. A user_id/label/
+    status/body that's missing or the wrong type would make the action a silent no-op at
+    fire time (execute_action fails soft), so we reject it at creation instead."""
+    if action_type in ("assign", "add_contributor"):
+        uid = params.get("user_id")
+        if not isinstance(uid, int) or isinstance(uid, bool):
+            return f"{action_type} requires action_params.user_id (an integer)"
+    elif action_type == "set_status":
+        status = params.get("status")
+        if not isinstance(status, str) or not status.strip():
+            return "set_status requires action_params.status (a non-empty string)"
+    elif action_type == "add_label":
+        label = params.get("label")
+        if not isinstance(label, str) or not label.strip():
+            return "add_label requires action_params.label (a non-empty string)"
+    elif action_type == "comment":
+        body = params.get("body")
+        if not isinstance(body, str) or not body.strip():
+            return "comment requires action_params.body (a non-empty string)"
+    return None
+
+
+def validate_rule(
+    *,
+    trigger_verb: str,
+    action_type: str,
+    conditions: dict,
+    action_params: dict,
+    target_kind: str = "issue",
+) -> str | None:
+    """Whether a rule spec is well-formed: return a human error string, or None if valid.
+    The ONE validator both write surfaces share — the REST API (slice 3) and the web form
+    (slice 4) — so a malformed rule is rejected the same way on both, never persisted as a
+    row that can't ever fire (typo'd verb/condition key) or whose action no-ops every time
+    (missing param). The data layer itself only persists; this is the boundary contract."""
+    if target_kind not in TARGET_KINDS:
+        return f"target_kind must be one of: {', '.join(TARGET_KINDS)}"
+    if trigger_verb != "*" and trigger_verb not in TRIGGER_VERBS:
+        return f"trigger_verb must be '*' or one of: {', '.join(TRIGGER_VERBS)}"
+    if action_type not in ACTION_TYPES:
+        return f"action_type must be one of: {', '.join(ACTION_TYPES)}"
+    for key in conditions:
+        if key not in CONDITION_FIELDS:
+            return (
+                f"unknown condition field '{key}'; "
+                f"allowed: {', '.join(CONDITION_FIELDS)}"
+            )
+    return _validate_action_params(action_type, action_params)
+
+
 _COLS = (
     "id, name, enabled, trigger_verb, target_kind, conditions, action_type, "
     "action_params, created_by, created_at"
