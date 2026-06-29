@@ -924,7 +924,9 @@ def change_issue_status(
         return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
 
     if statuses.is_done(conn, issue["project_id"], status) and not confirm.strip():
-        blockers = dependencies.open_blockers(conn, issue_id)
+        # Gate the blocker warning by the viewer: a blocker in a private project they
+        # can't see is omitted, so its key/title never leaks through the close warning.
+        blockers = dependencies.open_blockers(conn, issue_id, actor=user)
         if blockers:
             # Don't apply the close — show the warning and let the user confirm.
             return _render_issue_detail(
@@ -1030,7 +1032,10 @@ def _render_issue_detail(
         "body_html": render_body(conn, issue["body"], actor=user),
         # "Referenced by" hides sources in projects/spaces the viewer can't see.
         "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
-        "links": dependencies.list_links(conn, issue_id),
+        # Typed dependencies, gated like the backlinks: a blocks/relates edge to an
+        # issue in a private project the viewer can't see is dropped, so its key/title
+        # never leaks through this issue's relationship list.
+        "links": dependencies.list_links(conn, issue_id, actor=user),
         "comments": comment_rows,
         "attachments": attachments.list_for(conn, "issue", issue_id),
         "is_watching": user is not None
@@ -1054,7 +1059,15 @@ def _render_issue_detail(
             else None
         ),
         "issue_statuses": statuses.list_statuses(conn, issue["project_id"]),
-        "parent": issues.get_issue(conn, issue["parent_id"]) if issue.get("parent_id") else None,
+        # Only render the parent if the viewer may see it — a parent in a private
+        # project the viewer isn't in renders as none (no key/title leak), the same as
+        # if it were unset.
+        "parent": (
+            issues.get_issue(conn, issue["parent_id"])
+            if issue.get("parent_id")
+            and access.can_see_issue(conn, user, issue["parent_id"])
+            else None
+        ),
         "children": children,
         "children_done": sum(
             1 for c in children if statuses.is_done(conn, c["project_id"], c["status"])

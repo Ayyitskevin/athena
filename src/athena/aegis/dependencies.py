@@ -22,9 +22,16 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import issues, statuses
+from athena.core import access
 
 # What a form / API may ask for. The stored kinds are just {'blocks','relates'}.
 RELATIONS = ("blocks", "blocked_by", "relates")
+
+# Sentinel for "no visibility gating" — distinct from a real actor dict or None
+# (anonymous). Internal/test callers default to _UNGATED; the boundary passes the real
+# viewer so a relationship to an issue in a private project the viewer can't see is
+# dropped from the rendered summary (it would otherwise leak that issue's key/title).
+_UNGATED = object()
 
 
 def _summary(issue: dict) -> dict:
@@ -114,20 +121,29 @@ def remove_link(
     return cur.rowcount > 0
 
 
-def _others(conn: sqlite3.Connection, ids: list[int]) -> list[dict]:
+def _others(
+    conn: sqlite3.Connection, ids: list[int], actor: dict | None | object = _UNGATED
+) -> list[dict]:
     """Summaries for a list of issue ids, in the given order, skipping any that
     vanished (a CASCADE should make that impossible, but a read shouldn't crash on
-    a race). Small N — these are one issue's relationships — so a fetch per id is
-    fine and reuses issues.get_issue's key computation."""
+    a race) AND any the actor may not see. Small N — these are one issue's
+    relationships — so a fetch per id is fine and reuses issues.get_issue's key
+    computation. `actor` drops summaries for issues in a private project the viewer
+    can't see (their key/title/status would otherwise leak through the relationship);
+    _UNGATED keeps everything (internal callers)."""
     out = []
     for i in ids:
+        if actor is not _UNGATED and not access.can_see_issue(conn, actor, i):
+            continue
         issue = issues.get_issue(conn, i)
         if issue is not None:
             out.append(_summary(issue))
     return out
 
 
-def list_links(conn: sqlite3.Connection, issue_id: int) -> dict:
+def list_links(
+    conn: sqlite3.Connection, issue_id: int, *, actor: dict | None | object = _UNGATED
+) -> dict:
     """All of one issue's relationships, grouped by user-facing relation:
 
       {"blocks": [...], "blocked_by": [...], "relates": [...]}
@@ -137,7 +153,10 @@ def list_links(conn: sqlite3.Connection, issue_id: int) -> dict:
     - relates:    symmetric peers           ('relates' rows on either end)
 
     Each entry is a _summary (id, key, title, status) so the template can link to
-    it and show its state."""
+    it and show its state. `actor` gates each linked target by visibility — a
+    relationship to an issue in a private project the viewer can't see is omitted, so
+    its key/title/status never leaks through the relationship list. _UNGATED (the
+    default) keeps every relationship (internal/test callers)."""
     blocks = [
         r["to_id"]
         for r in conn.execute(
@@ -164,19 +183,23 @@ def list_links(conn: sqlite3.Connection, issue_id: int) -> dict:
         )
     ]
     return {
-        "blocks": _others(conn, blocks),
-        "blocked_by": _others(conn, blocked_by),
-        "relates": _others(conn, relates),
+        "blocks": _others(conn, blocks, actor),
+        "blocked_by": _others(conn, blocked_by, actor),
+        "relates": _others(conn, relates, actor),
     }
 
 
-def open_blockers(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
+def open_blockers(
+    conn: sqlite3.Connection, issue_id: int, *, actor: dict | None | object = _UNGATED
+) -> list[dict]:
     """Issues that block this one AND are not yet closed — the reason a close should
     warn. Returns summaries (possibly empty). "Closed" is category-based now
     (statuses.is_done), so a blocker in any project's done-category status counts as
     resolved, and anything else is still an open blocker. Each blocker's done-ness
     depends on its OWN project's status set, so we resolve it per row rather than in
-    one SQL comparison."""
+    one SQL comparison. `actor` gates each blocker by visibility, so the close-warning
+    never reveals a blocker in a private project the closer can't see; _UNGATED keeps
+    all (internal callers)."""
     rows = conn.execute(
         "SELECT l.from_id AS blocker, i.status, i.project_id FROM issue_links l "
         "JOIN issues i ON i.id = l.from_id "
@@ -189,4 +212,4 @@ def open_blockers(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
         for r in rows
         if not statuses.is_done(conn, r["project_id"], r["status"])
     ]
-    return _others(conn, open_ids)
+    return _others(conn, open_ids, actor)

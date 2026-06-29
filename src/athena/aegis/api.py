@@ -994,7 +994,7 @@ def list_links(
     # Open read, like backlinks/comments. 404 if the issue is missing or not visible,
     # so a hidden/typo'd id reads as not-found rather than three empty lists.
     _issue_for_read(conn, issue_id, actor)
-    return dependencies.list_links(conn, issue_id)
+    return dependencies.list_links(conn, issue_id, actor=actor)
 
 
 @router.post("/{issue_id}/links", response_model=IssueLinksOut, status_code=201)
@@ -1028,7 +1028,7 @@ def add_link(
         # existing state -> 409; everything else is bad input -> 422.
         status = 409 if "block each other" in reason else 422
         raise HTTPException(status_code=status, detail=reason)
-    return dependencies.list_links(conn, issue_id)
+    return dependencies.list_links(conn, issue_id, actor=actor)
 
 
 @router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
@@ -1046,7 +1046,7 @@ def remove_link(
         conn, from_id=issue_id, to_id=target_id, relation=relation
     ):
         raise HTTPException(status_code=404, detail="no such relationship")
-    return dependencies.list_links(conn, issue_id)
+    return dependencies.list_links(conn, issue_id, actor=actor)
 
 
 # --- Projects: a top-level grouping of issues -----------------------------
