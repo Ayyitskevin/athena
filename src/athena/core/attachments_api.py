@@ -20,11 +20,22 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import activity, attachments, tokens
+from athena.core import access, activity, attachments, tokens
 from athena.core.deps import get_conn
-from athena.core.identity import require_token_scope, write_actor
+from athena.core.identity import optional_actor, require_token_scope, write_actor
 
 router = APIRouter(prefix="/attachments", tags=["core"])
+
+
+def _can_see_attachment(conn: sqlite3.Connection, actor: dict | None, att: dict) -> bool:
+    """Whether the actor may see this attachment, resolved through its container's
+    visibility — an issue attachment is gated by can_see_issue, a page attachment by
+    can_see_page. The single place the cross-cutting attachment endpoints (which can't
+    import aegis/mentor) reuse the core resolver, so a private issue's/page's file is
+    never served to someone who can't see the issue/page."""
+    if att["target_kind"] == "issue":
+        return access.can_see_issue(conn, actor, att["target_id"])
+    return access.can_see_page(conn, actor, att["target_id"])
 
 
 class AttachmentOut(BaseModel):
@@ -40,10 +51,17 @@ class AttachmentOut(BaseModel):
 
 
 @router.get("/{attachment_id}")
-def download(attachment_id: int, conn: sqlite3.Connection = Depends(get_conn)):
-    # Open read, like other reads. 404 if the row or its blob is missing.
+def download(
+    attachment_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    # Open read, but gated by the container's visibility like every other read: a
+    # private issue's/page's attachment is served only to someone who can see the
+    # issue/page. A hidden (or missing) attachment is the SAME 404 — its bytes,
+    # metadata, and existence never leak.
     att = attachments.get(conn, attachment_id)
-    if att is None:
+    if att is None or not _can_see_attachment(conn, actor, att):
         raise HTTPException(status_code=404, detail="no such attachment")
     stored = attachments.get_stored_name(conn, attachment_id)
     path = attachments.disk_path(config.ATTACH_DIR, stored)
@@ -66,7 +84,9 @@ def remove(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     att = attachments.get(conn, attachment_id)
-    if att is None:
+    # 404 if missing OR on a container the actor can't see — you can't delete (or probe)
+    # a file on a private issue/page you can't see, same 404 as a missing one.
+    if att is None or not _can_see_attachment(conn, actor, att):
         raise HTTPException(status_code=404, detail="no such attachment")
     # The write scope is the one for the attachment's module — deleting an issue's
     # file needs issue:write, a page's file needs docs:write.
