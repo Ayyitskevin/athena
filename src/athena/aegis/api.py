@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from athena import config
@@ -18,6 +18,7 @@ from athena.aegis import (
     contributors,
     dependencies,
     issue_activity,
+    issue_history,
     issue_search,
     issues,
     project_activity,
@@ -462,6 +463,38 @@ def backlinks(
     # gated by the viewer so a hidden project's/space's reference never reveals itself.
     _issue_for_read(conn, issue_id, actor)
     return links.backlinks(conn, target_kind="issue", target_id=issue_id, actor=actor)
+
+
+class IssueStateOut(BaseModel):
+    # The issue's reconstructed lifecycle state as of a past point — time-travel over the
+    # activity log. `state` holds the diff-logged fields (status, priority, assignee,
+    # labels, sprint, parent, archived); content (title/body) and project aren't
+    # reconstructable from the log and are deliberately absent. as_of_event_id/as_of echo
+    # the actual cutoff event; is_current flags whether that cutoff is the latest event.
+    issue_id: int
+    as_of_event_id: int | None = None
+    as_of: str | None = None
+    is_current: bool
+    state: dict
+
+
+@router.get("/{issue_id}/state", response_model=IssueStateOut)
+def issue_state(
+    issue_id: int,
+    as_of: int | None = Query(
+        None, description="reconstruct state as of this activity event id (default: now)"
+    ),
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Time-travel: the issue's lifecycle state folded from its activity log as of a past
+    # event. Gated like other reads — a hidden/missing issue is a 404; within a visible
+    # issue its own history reads openly, like the detail page.
+    _issue_for_read(conn, issue_id, actor)
+    state = issue_history.project_issue_state(conn, issue_id, as_of_event_id=as_of)
+    if state is None:  # _issue_for_read already 404s; this is belt-and-suspenders
+        raise HTTPException(status_code=404, detail="no such issue")
+    return state
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:
