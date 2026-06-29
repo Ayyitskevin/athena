@@ -48,6 +48,9 @@
             {% if run.partial %}<span class="run-partial" title="Older events of this run fall outside the window — widen the limit to see them">partial</span>{% endif %}
             <span class="run-count">{{ run.event_count }}{{ "+" if run.partial }} event{{ "s" if run.event_count != 1 }}</span>
         </summary>
+        {% if run.run_id %}
+        <p class="run-lineage-link"><a href="/aegis/activity/runs/{{ run.run_id }}/lineage">View lineage →</a></p>
+        {% endif %}
         {% with events=run.events, show_target=True %}
         {% include "aegis/partials/activity_list.html" %}
         {% endwith %}

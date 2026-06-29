@@ -1388,6 +1388,47 @@ footer {
     padding: 0.25rem 0.8rem 0.6rem;
 }
 
+/* Link from a run card to its full lineage tree. */
+.run-lineage-link {
+    margin: 0;
+    padding: 0.4rem 0.8rem 0;
+    font-size: 0.85rem;
+}
+
+/* Run lineage view: the goal→…→run trail and the spawned-run tree. */
+.lineage-trail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.75rem 0 1rem;
+}
+
+.run-id.current {
+    background: #6d28d9;
+    color: #fff;
+}
+
+.lineage-children {
+    list-style: none;
+    margin: 0.25rem 0;
+    padding-left: 1.1rem;
+    border-left: 2px solid #ede9fe;
+}
+
+.lineage-root {
+    padding-left: 0;
+    border-left: none;
+}
+
+.lineage-node {
+    margin: 0.4rem 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+}
+
 /* SSO option on the login page (shown only when OIDC is configured). */
 .auth-sso {
     margin-top: 1rem;

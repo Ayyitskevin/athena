@@ -735,6 +735,27 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     )
 
 
+@router.get("/aegis/activity/runs/{run_id}/lineage", response_class=HTMLResponse)
+def activity_run_lineage(
+    run_id: str, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The lineage view for one tagged run — the browser twin of
+    GET /activity/runs/{run_id}/lineage. Renders the run's causal tree from the SAME
+    reconstruction the API serves: the originating goal down to it (ancestors), the run
+    with its events, and the runs it spawned (descendants). Reads are gated by the
+    viewer's visibility (an event on a target they can't see is dropped); a run with no
+    visible events — or no such run — is a 404, so its existence never leaks."""
+    if _templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    lineage = activity.run_lineage(conn, run_id, actor=user)
+    if lineage is None:
+        return HTMLResponse("<h1>No such run</h1>", status_code=404)
+    return _templates.TemplateResponse(
+        request=request, name="aegis/run_lineage.html", context={"lineage": lineage}
+    )
+
+
 @router.get("/aegis/issues/new", response_class=HTMLResponse)
 def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Render the new issue creation form."""

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Run lineage — Aegis{% endblock %}
+
+{% macro run_link(node) -%}
+<a href="/aegis/activity/runs/{{ node.run_id }}/lineage" class="run-id">run {{ node.run_id }}</a>
+{%- endmacro %}
+
+{# One descendant run and, recursively, the runs it spawned. #}
+{% macro descendant(node) %}
+<li class="lineage-node">
+    {{ run_link(node) }}
+    <span class="muted">by {{ node.actor_name }} · {{ node.event_count }}{{ "+" if node.partial }} event{{ "s" if node.event_count != 1 }} · {{ node.started_at }} → {{ node.ended_at }}</span>
+    {% if node.children %}
+    <ul class="lineage-children">
+        {% for child in node.children %}{{ descendant(child) }}{% endfor %}
+    </ul>
+    {% endif %}
+</li>
+{% endmacro %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/activity/runs" class="muted">← Back to Runs</a>
+        <h1>Run lineage</h1>
+    </div>
+</div>
+
+<p class="muted">
+    The causal tree of run <strong>{{ lineage.run_id }}</strong>, reconstructed from the
+    audit trail: the originating goal down to this run, then the runs it spawned.
+</p>
+
+{# Ancestors: the path from the originating goal down to this run (root-first). #}
+{% if lineage.ancestors %}
+<nav class="lineage-trail" aria-label="lineage">
+    {% for a in lineage.ancestors %}{{ run_link(a) }} <span class="muted">→</span> {% endfor %}
+    <span class="run-id current" title="This run">run {{ lineage.run.run_id }}</span>
+</nav>
+{% else %}
+<p class="muted">This is a root run — the originating goal, with no run above it.</p>
+{% endif %}
+
+{# The focal run + its events (oldest-first, as it happened). #}
+<details class="run-card" open>
+    <summary>
+        <span class="run-span">{{ lineage.run.started_at }} → {{ lineage.run.ended_at }}</span>
+        <span class="run-id" title="Tagged run (X-Athena-Run)">run {{ lineage.run.run_id }}</span>
+        {% if lineage.run.partial %}<span class="run-partial" title="Older events of this run fall outside the window">partial</span>{% endif %}
+        <span class="run-count">{{ lineage.run.event_count }}{{ "+" if lineage.run.partial }} event{{ "s" if lineage.run.event_count != 1 }}</span>
+        <span class="muted">by {{ lineage.run.actor_name }}</span>
+    </summary>
+    {% with events=lineage.run.events, show_target=True %}
+    {% include "aegis/partials/activity_list.html" %}
+    {% endwith %}
+</details>
+
+{# Descendants: the runs this run spawned, recursively. #}
+<h2>Spawned runs</h2>
+{% if lineage.descendants %}
+<ul class="lineage-children lineage-root">
+    {% for child in lineage.descendants %}{{ descendant(child) }}{% endfor %}
+</ul>
+{% else %}
+<p class="muted">This run spawned no child runs.</p>
+{% endif %}
+
+<p class="note">Lineage from the API.</p>
+{% endblock %}
