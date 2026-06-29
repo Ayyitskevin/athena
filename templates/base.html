@@ -33,7 +33,8 @@
                 <a href="/settings/password">Password</a>
                 {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins</a>{% endif %}
                 {% if request.state.user.role == "admin" %}<a href="/admin/users">Admin</a>
-                <a href="/admin/webhooks">Webhooks</a>{% endif %}
+                <a href="/admin/webhooks">Webhooks</a>
+                <a href="/admin/automation">Automation</a>{% endif %}
                 <span class="nav-user">{{ request.state.user.name }}</span>
                 <form method="post" action="/logout" class="nav-logout">
                     {% include "partials/csrf.html" %}
