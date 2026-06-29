@@ -303,10 +303,13 @@ def delete_space(
 
 def _space_for_privacy(conn: sqlite3.Connection, space_id: int, actor: dict) -> dict:
     """Fetch a space whose privacy/membership the actor may MANAGE, or raise: 404 if no
-    such space, 403 if the actor is neither its creator nor an admin. The access-admin
-    twin of _space_for_write (creator-only delete)."""
+    such space OR one the actor can't see, 403 if it's visible but the actor is neither
+    its creator nor an admin. The access-admin twin of _space_for_write (creator-only
+    delete). Visibility is checked first and collapses to a 404, so a private space the
+    actor can't see is indistinguishable from a missing one (no existence leak via 403),
+    matching the web twin _authorize_space_manage and the read-side list_space_members."""
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    if space is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
     if space["created_by"] != actor["id"] and not is_admin(actor):
         raise HTTPException(

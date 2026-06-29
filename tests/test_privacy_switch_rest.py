@@ -90,8 +90,9 @@ def test_project_member_lifecycle_and_roster_gate(tmp_path):
         assert client.get(members_url, headers=H_OUTSIDER).status_code == 404
         # An unknown user id is a clean 422, not a 500 from the FK.
         assert client.post(members_url, json={"user_id": 999}, headers=H_CREATOR).status_code == 422
-        # A non-manager can't add members.
-        assert client.post(members_url, json={"user_id": 3}, headers=H_OUTSIDER).status_code == 403
+        # An outsider who can't even SEE this private project gets 404 (not 403) on a
+        # manage attempt — its existence stays hidden (audit fix: no 403 oracle).
+        assert client.post(members_url, json={"user_id": 3}, headers=H_OUTSIDER).status_code == 404
 
         # The creator grants the outsider access; the roster now lists them.
         r = client.post(members_url, json={"user_id": 3}, headers=H_CREATOR)

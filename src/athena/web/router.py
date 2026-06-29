@@ -112,15 +112,24 @@ def _attach_labels(conn, rows: list[dict]) -> list[dict]:
     return rows
 
 
-def _statuses_in_use(conn) -> list[str]:
-    """The distinct statuses currently on any issue, ordered todo → doing → done then
-    name. This is the option set BOTH status filters (the issue list and the board)
-    offer, so a filter only ever lists statuses that really exist on issues —
-    including a project's custom statuses — instead of a hardcoded open/in_progress/
-    done trio. (Empty when there are no issues; the "All statuses" option always
-    remains, so the control still renders.)"""
+def _statuses_in_use(conn, visible_project_ids: set[int] | None = None) -> list[str]:
+    """The distinct statuses currently on any issue the viewer MAY SEE, ordered todo →
+    doing → done then name. This is the option set BOTH status filters (the issue list
+    and the board) offer, so a filter only ever lists statuses that really exist on
+    visible issues — including a project's custom statuses — instead of a hardcoded
+    open/in_progress/done trio. (Empty when there are none; the "All statuses" option
+    always remains, so the control still renders.)
+
+    visible_project_ids is what the caller gets from access.visible_project_filter: None
+    means no gating (an admin's god view), a set restricts to those projects (plus the
+    backlog). Without it a private project's CUSTOM status name would leak into the
+    dropdown for someone who can't see that project (the rows are gated, but the option
+    set was not)."""
     cat_rank = {"todo": 0, "doing": 1, "done": 2}
-    names = {i["status"] for i in issues.list_issues(conn)}
+    names = {
+        i["status"]
+        for i in issues.list_issues(conn, visible_project_ids=visible_project_ids)
+    }
     return sorted(
         names, key=lambda n: (cat_rank.get(statuses.global_category(conn, n), 1), n)
     )
@@ -489,9 +498,13 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # projects (e.g. "ATH · Sprint 1"). One pass over projects builds the key map.
     all_projects = projects.list_projects(conn, access.visible_project_filter(conn, user))
     project_keys = {p["id"]: p["key"] for p in all_projects}
+    # project_keys holds exactly the projects this viewer may see, so keeping only
+    # sprints whose project is in it drops sprints in private projects the viewer can't
+    # see — their name/id would otherwise leak through this dropdown.
     all_sprints = [
-        {"id": s["id"], "name": s["name"], "project_key": project_keys.get(s["project_id"], "?")}
+        {"id": s["id"], "name": s["name"], "project_key": project_keys[s["project_id"]]}
         for s in sprints.list_sprints(conn)
+        if s["project_id"] in project_keys
     ]
 
     # Pre-fill link for "Save current view" — carries the active filters to the
@@ -515,7 +528,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
-            "all_statuses": _statuses_in_use(conn),
+            "all_statuses": _statuses_in_use(conn, access.visible_project_filter(conn, user)),
             "priority_filter": priority_filter,
             "priorities": issues.PRIORITIES,
             "assignee_filter": assignee_raw,
@@ -2004,9 +2017,9 @@ def _render_board(
         {"name": name, "label": name.replace("_", " ").title(), "issues": grouped[name]}
         for name in sorted(grouped, key=_sort_key)
     ]
-    # The status filter offers every status currently in use (across all issues) —
-    # the same option set the issue list uses.
-    all_statuses = _statuses_in_use(conn)
+    # The status filter offers every status currently in use on issues THIS VIEWER may
+    # see — the same gated option set the issue list uses.
+    all_statuses = _statuses_in_use(conn, access.visible_project_filter(conn, user))
 
     template = "aegis/partials/boards_content.html" if request.headers.get("HX-Request") else "aegis/boards.html"
     return _templates.TemplateResponse(
