@@ -32,4 +32,16 @@
     </form>
     <p class="note-small">The key is uppercased; it must stay unique across spaces.</p>
 </div>
+
+<div class="form-container">
+    <h3>Access</h3>
+    <p class="note-small">
+        {% if space.visibility == "private" %}
+        <span class="badge badge-private">🔒 Private</span> — only members, you, and admins can see it.
+        {% else %}
+        <span class="badge badge-public">Public</span> — anyone can read this space.
+        {% endif %}
+    </p>
+    <a href="/mentor/spaces/{{ space.id }}/access" class="button secondary">Manage access &amp; members</a>
+</div>
 {% endblock %}

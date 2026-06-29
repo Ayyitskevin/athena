@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.core import access, activity, attachments, identity, labels, links, notifications
+from athena.core import access, activity, attachments, identity, labels, links, notifications, users
 from athena.core.deps import get_conn
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
@@ -115,7 +115,13 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     return templates.TemplateResponse(
         request=request,
         name="mentor/spaces.html",
-        context={"spaces": all_spaces, "counts": counts, "can_write": can_write},
+        context={
+            "spaces": all_spaces,
+            "counts": counts,
+            "can_write": can_write,
+            # An admin may manage access on any space; the creator only on their own.
+            "is_admin": user is not None and identity.is_admin(user),
+        },
     )
 
 
@@ -251,6 +257,141 @@ def edit_space(
         conn, actor_id=user["id"], before=before, after=after
     )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+# --- Space access: privacy toggle + member management (web) ----------------
+#
+# The Mentor twin of the project access page. Managing access is creator-OR-admin
+# (wider than delete, creator-only), so it uses its own gate rather than _write_required.
+
+
+def _authorize_space_manage(conn, space_id: int, user: dict):
+    """Resolve a space whose ACCESS (privacy + roster) the user may manage, or an error
+    response. Returns (space, None) or (None, HTMLResponse). Creator-OR-admin: a private
+    space the user can't see is 404 (no existence leak); a visible one they may see but
+    not manage is 403. The 401 (logged-out) check stays at each call site."""
+    space = spaces.get_space(conn, space_id)
+    if space is None or not access.can_see_space(conn, user, space_id):
+        return None, HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+    if not identity.can_write(user):
+        return None, _readonly_response()
+    if space["created_by"] != user["id"] and not identity.is_admin(user):
+        return None, HTMLResponse(
+            '<div class="blocked">Only the space creator or an admin may manage access.</div>',
+            status_code=403,
+        )
+    return space, None
+
+
+@router.get("/mentor/spaces/{space_id}/access", response_class=HTMLResponse)
+def space_access(
+    request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The access page for a space: its visibility with a public/private toggle, and —
+    when private — the member roster with add/remove. Creator-or-admin (401/403/404)."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage access")
+    space, err = _authorize_space_manage(conn, space_id, user)
+    if err is not None:
+        return err
+    members = access.list_space_members(conn, space_id)
+    member_ids = {m["user_id"] for m in members}
+    addable = [u for u in users.list_users(conn) if u["id"] not in member_ids]
+    return templates.TemplateResponse(
+        request=request,
+        name="mentor/space_access.html",
+        context={"space": space, "members": members, "addable": addable},
+    )
+
+
+@router.post("/mentor/spaces/{space_id}/visibility", dependencies=[Depends(verify_csrf)])
+def space_set_visibility(
+    request: Request,
+    space_id: int,
+    visibility: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Flip a space public ↔ private from its access page. Creator-or-admin. Going
+    private auto-adds the creator to the roster. 303 back to the access page."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage access")
+    space, err = _authorize_space_manage(conn, space_id, user)
+    if err is not None:
+        return err
+    visibility = visibility.strip().lower()
+    if visibility not in ("public", "private"):
+        return HTMLResponse(
+            '<div class="error">Visibility must be public or private.</div>',
+            status_code=400,
+        )
+    if visibility != space["visibility"]:
+        spaces.set_visibility(conn, space_id, visibility)
+        if visibility == "private":
+            access.add_space_member(
+                conn, space_id, space["created_by"], added_by=user["id"]
+            )
+        space_activity.record_space_visibility_changed(
+            conn, actor_id=user["id"], space_id=space_id,
+            name=space["name"], visibility=visibility,
+        )
+    return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
+
+
+@router.post("/mentor/spaces/{space_id}/members", dependencies=[Depends(verify_csrf)])
+def space_add_member(
+    request: Request,
+    space_id: int,
+    user_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Grant a user access to a private space from its access page. Creator-or-admin.
+    400 on a missing/blank user; a re-add is idempotent. 303 back to the access page."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage access")
+    _, err = _authorize_space_manage(conn, space_id, user)
+    if err is not None:
+        return err
+    member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
+    if member is None:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
+    if access.add_space_member(conn, space_id, member["id"], added_by=user["id"]):
+        space_activity.record_space_member_added(
+            conn, actor_id=user["id"], space_id=space_id, member_name=member["name"]
+        )
+    return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
+
+
+@router.post(
+    "/mentor/spaces/{space_id}/members/{member_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
+def space_remove_member(
+    request: Request,
+    space_id: int,
+    member_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Revoke a user's space membership from its access page. Creator-or-admin. A no-op
+    (they weren't a member) still 303s back — the roster reflects reality."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("manage access")
+    _, err = _authorize_space_manage(conn, space_id, user)
+    if err is not None:
+        return err
+    member = users.get_user(conn, member_id)
+    if access.remove_space_member(conn, space_id, member_id):
+        space_activity.record_space_member_removed(
+            conn, actor_id=user["id"], space_id=space_id,
+            member_name=member["name"] if member else str(member_id),
+        )
+    return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
 
 
 @router.get("/mentor/spaces/{space_id}", response_class=HTMLResponse)
