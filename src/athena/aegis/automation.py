@@ -17,16 +17,22 @@ testable without performing real writes.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+from pathlib import Path
 import sqlite3
 from collections.abc import Callable
 
-from athena.aegis import issues
-from athena.core import activity
+from athena import config
+from athena.aegis import comments, contributors, issue_activity, issues, statuses
+from athena.core import activity, db, labels, users
 
-# The actions a rule may take. The engine dispatches on action_type; the boundary
-# validates a rule's action_type is one of these. (The real implementations land with
-# the live executor in a later slice; this set is the contract both sides agree on.)
+# The actions a rule may take (dispatched on in execute_action). The boundary validates
+# a rule's action_type is one of these; the expected action_params per type are:
+#   assign / add_contributor -> {"user_id": int}
+#   set_status               -> {"status": str}   (must be valid for the issue's project)
+#   add_label                -> {"label": str}    (find-or-created by name)
+#   comment                  -> {"body": str}
 ACTION_TYPES = ("assign", "add_label", "set_status", "comment", "add_contributor")
 
 # The issue fields a CONDITION may match against, resolved from the target issue at match
@@ -212,3 +218,148 @@ def process_pending(
                     pass
     _set_cursor(conn, last_id)
     return fired
+
+
+# --- the live executor: turn a matched event into an in-app write -----------
+
+# The dedicated actor every rule action is attributed to, so the audit trail reads
+# "Automation assigned …" and the engine can skip its OWN events (the loop guard).
+SYSTEM_ACTOR_EMAIL = "automation@athena.system"
+
+
+def system_actor_id(conn: sqlite3.Connection) -> int:
+    """The id of the 'Automation' actor, get-or-created on first use. An is_agent user
+    with NO password (it never logs in) and the viewer role (it writes through the data
+    layer, not the gated API). Single-process loop, so the get-or-create needs no lock."""
+    existing = users.get_user_by_email(conn, SYSTEM_ACTOR_EMAIL)
+    if existing is not None:
+        return existing["id"]
+    return users.create_user(
+        conn, email=SYSTEM_ACTOR_EMAIL, name="Automation",
+        is_agent=True, role=users.VIEWER_ROLE,
+    )["id"]
+
+
+def execute_action(
+    conn: sqlite3.Connection, rule: dict, event: dict, *, actor_id: int
+) -> bool:
+    """Perform one rule's ACTION for one matched event, attributed to `actor_id` (the
+    system automation actor), and record the matching activity event so the trail shows
+    "Automation <did X>". Returns True if a change was actually made. Loads the target
+    issue fresh; a vanished issue, a missing/invalid param, or a no-op (already in the
+    desired state) returns False rather than raising — a bad rule fails soft instead of
+    stranding the engine. The actions mirror the issue write endpoints' data-layer +
+    activity-recorder pair, so an automated change is indistinguishable in the log from a
+    human one except for the actor."""
+    issue = issues.get_issue(conn, event["target_id"])
+    if issue is None:
+        return False
+    params = rule["action_params"]
+
+    if rule["action_type"] == "assign":
+        user_id = params.get("user_id")
+        if not isinstance(user_id, int) or users.get_user(conn, user_id) is None:
+            return False
+        if issue["assignee_id"] == user_id:
+            return False
+        issues.set_assignee(conn, issue["id"], user_id)
+        issue_activity.record_assignee_change(
+            conn, actor_id=actor_id, issue_id=issue["id"],
+            before=issue["assignee_id"], after=user_id,
+        )
+        return True
+
+    if rule["action_type"] == "set_status":
+        status = params.get("status")
+        if not status or not statuses.is_valid(conn, issue["project_id"], status):
+            return False
+        if issue["status"] == status:
+            return False
+        issues.update_status(conn, issue["id"], status)
+        issue_activity.record_status_change(
+            conn, actor_id=actor_id, issue_id=issue["id"],
+            before=issue["status"], after=status,
+        )
+        return True
+
+    if rule["action_type"] == "add_label":
+        name = (params.get("label") or "").strip()
+        if not name:
+            return False
+        label = labels.get_or_create_label(conn, name=name)
+        if labels.add_label_to_issue(conn, issue["id"], label["id"]):
+            issue_activity.record_label_added(
+                conn, actor_id=actor_id, issue_id=issue["id"], label_id=label["id"]
+            )
+            return True
+        return False
+
+    if rule["action_type"] == "comment":
+        body = (params.get("body") or "").strip()
+        if not body:
+            return False
+        comments.add_comment(conn, issue_id=issue["id"], author_id=actor_id, body=body)
+        issue_activity.record_commented(
+            conn, actor_id=actor_id, issue_id=issue["id"], body=body
+        )
+        return True
+
+    if rule["action_type"] == "add_contributor":
+        user_id = params.get("user_id")
+        if not isinstance(user_id, int) or users.get_user(conn, user_id) is None:
+            return False
+        if contributors.add_contributor(conn, issue["id"], user_id, added_by=actor_id):
+            issue_activity.record_contributor_added(
+                conn, actor_id=actor_id, issue_id=issue["id"], user_id=user_id
+            )
+            return True
+        return False
+
+    return False
+
+
+# --- background loop (wired into main.lifespan) -----------------------------
+
+
+def run_pass(db_path: str | Path) -> int:
+    """Open a short-lived connection and run one engine pass with the LIVE executor.
+    Synchronous (the loop calls it in a worker thread). The automation actor is both the
+    attribution for its actions and the loop guard (skip_actor_id), so a rule whose
+    action emits a new event can't re-trigger itself.
+
+    The actor is resolved LAZILY — created only the first time a rule actually fires, not
+    on every idle tick. This matters on a fresh install: automation defaults ON, so the
+    loop ticks immediately; eagerly creating the 'Automation' user before any human signs
+    up would make count_users() > 0 and consume the first-user-is-admin bootstrap, locking
+    the deploy out. A rule can't exist before a human admin does (created_by FK), so by the
+    time the executor fires, bootstrap has already happened. Until the actor exists there
+    are no events it authored, so skip_actor_id is None for that pass (any event it emits
+    mid-pass lands after this batch and is skipped on the next pass, when the id is known)."""
+    conn = db.connect(db_path)
+    try:
+        existing = users.get_user_by_email(conn, SYSTEM_ACTOR_EMAIL)
+        actor: dict[str, int | None] = {"id": existing["id"] if existing else None}
+
+        def executor(c: sqlite3.Connection, rule: dict, event: dict) -> None:
+            if actor["id"] is None:
+                actor["id"] = system_actor_id(c)
+            execute_action(c, rule, event, actor_id=actor["id"])
+
+        return process_pending(conn, executor=executor, skip_actor_id=actor["id"])
+    finally:
+        conn.close()
+
+
+async def process_loop(db_path: str | Path) -> None:
+    """Forever: run one pass in a worker thread, then sleep the interval. Started/
+    cancelled by main.lifespan. A pass that raises is swallowed so one bad tick never
+    kills the loop; cancellation (shutdown) propagates out cleanly. Mirrors
+    webhooks.delivery_loop."""
+    while True:
+        try:
+            await asyncio.to_thread(run_pass, db_path)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed pass must not stop the loop
+            pass
+        await asyncio.sleep(config.AUTOMATION_INTERVAL_SECONDS)

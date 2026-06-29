@@ -31,6 +31,15 @@ def webhook_delivery_disabled(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def automation_loop_disabled(monkeypatch):
+    # The automation engine runs a background loop that fires rule actions on a timer.
+    # Tests must not spawn it (it would act on issues mid-test, non-deterministically);
+    # they drive automation.run_pass / process_pending directly. Flip back on for a test
+    # that specifically wants the live loop.
+    monkeypatch.setattr(config, "AUTOMATION_ENABLED", False)
+
+
+@pytest.fixture(autouse=True)
 def isolated_attachment_dir(tmp_path, monkeypatch):
     # Attachments write blobs to config.ATTACH_DIR; point it at a per-test temp dir
     # so uploads never land in the repo and tests can't see each other's files.
