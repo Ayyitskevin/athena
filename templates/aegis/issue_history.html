@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}History — issue #{{ issue.id }} — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/issues/{{ issue.id }}" class="muted">← Back to issue #{{ issue.id }}</a>
+        <h1>History — {{ issue.title }}</h1>
+    </div>
+</div>
+
+<p class="muted">
+    The issue's lifecycle state reconstructed from the audit log as of a point in time.
+    Pick a checkpoint on the right to time-travel. Content (title/body) and project aren't
+    reconstructed — the log records lifecycle changes, not content snapshots.
+</p>
+
+<div class="timetravel">
+    <section class="tt-state">
+        <h2>
+            {% if snapshot.is_current %}Current state{% else %}State as of {{ snapshot.as_of }}{% endif %}
+        </h2>
+        {% if not snapshot.is_current %}
+        <p><a href="/aegis/issues/{{ issue.id }}/history" class="button secondary small">Jump to now</a></p>
+        {% endif %}
+        <dl class="tt-fields">
+            <dt>Status</dt><dd>{{ snapshot.state.status or "—" }}</dd>
+            <dt>Priority</dt><dd>{{ snapshot.state.priority or "—" }}</dd>
+            <dt>Assignee</dt><dd>{{ snapshot.state.assignee or "Unassigned" }}</dd>
+            <dt>Labels</dt><dd>
+                {% if snapshot.state.labels %}
+                    {% for name in snapshot.state.labels %}<span class="label-chip">{{ name }}</span>{% endfor %}
+                {% else %}—{% endif %}
+            </dd>
+            <dt>Sprint</dt><dd>{{ snapshot.state.sprint or "—" }}</dd>
+            <dt>Parent</dt><dd>{{ snapshot.state.parent or "—" }}</dd>
+            <dt>Archived</dt><dd>{{ "Yes" if snapshot.state.archived else "No" }}</dd>
+        </dl>
+    </section>
+
+    <section class="tt-timeline">
+        <h2>Checkpoints</h2>
+        {% if events %}
+        <ul class="tt-events">
+            <li class="tt-event{% if as_of is none %} current{% endif %}">
+                <a href="/aegis/issues/{{ issue.id }}/history">Now (latest)</a>
+            </li>
+            {% for e in events %}
+            <li class="tt-event{% if as_of == e.id %} current{% endif %}">
+                <a href="/aegis/issues/{{ issue.id }}/history?as_of={{ e.id }}">
+                    <span class="activity-actor">{{ e.actor_name }}</span>
+                    <span class="muted">{{ e.verb }}{% if e.detail %} {{ e.detail }}{% endif %}</span>
+                    <span class="muted activity-time">{{ e.created_at }}</span>
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No activity yet — nothing to time-travel through.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

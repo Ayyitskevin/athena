@@ -1429,6 +1429,69 @@ footer {
     gap: 0.4rem;
 }
 
+/* Issue time-travel: reconstructed state beside the clickable checkpoint timeline. */
+.timetravel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    align-items: flex-start;
+}
+
+.tt-state {
+    flex: 1 1 16rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 0.5rem 1rem 1rem;
+}
+
+.tt-timeline {
+    flex: 1 1 20rem;
+}
+
+.tt-fields {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem 1rem;
+    margin: 0;
+}
+
+.tt-fields dt {
+    font-weight: 600;
+    color: #6b7280;
+}
+
+.tt-fields dd {
+    margin: 0;
+}
+
+.tt-events {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.tt-event {
+    border-left: 2px solid #ede9fe;
+    padding: 0.1rem 0 0.1rem 0.6rem;
+}
+
+.tt-event.current {
+    border-left-color: #6d28d9;
+    background: #f5f3ff;
+}
+
+.tt-event a {
+    display: block;
+    padding: 0.2rem 0;
+    text-decoration: none;
+}
+
+.history-timetravel-link {
+    font-size: 0.8rem;
+    font-weight: normal;
+    margin-left: 0.5rem;
+}
+
 /* SSO option on the login page (shown only when OIDC is configured). */
 .auth-sso {
     margin-top: 1rem;
