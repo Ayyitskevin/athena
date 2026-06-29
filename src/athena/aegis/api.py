@@ -456,11 +456,11 @@ def backlinks(
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # "What references this issue?" — open like other reads, but the sources are gated
-    # by the viewer so a hidden project's/space's reference never reveals itself. 404
-    # if the issue itself is missing.
-    if issues.get_issue(conn, issue_id) is None:
-        raise HTTPException(status_code=404, detail="no such issue")
+    # "What references this issue?" — open like other reads, but gated by visibility:
+    # a hidden issue 404s identically to a missing one (the lone sub-resource read that
+    # used a bare existence check — a 200-vs-404 existence oracle), and the sources are
+    # gated by the viewer so a hidden project's/space's reference never reveals itself.
+    _issue_for_read(conn, issue_id, actor)
     return links.backlinks(conn, target_kind="issue", target_id=issue_id, actor=actor)
 
 
@@ -1191,11 +1191,16 @@ def delete_project(
 
 def _project_for_privacy(conn: sqlite3.Connection, project_id: int, actor: dict) -> dict:
     """Fetch a project whose privacy/membership the actor may MANAGE, or raise: 404 if
-    no such project, 403 if the actor is neither its creator nor an admin. The wider
-    twin of _project_for_write (creator-only): access administration is creator-OR-admin
-    per the access model."""
+    no such project OR one the actor can't see, 403 if it's visible but the actor is
+    neither its creator nor an admin. The wider twin of _project_for_write (creator-
+    only): access administration is creator-OR-admin per the access model.
+
+    Visibility is checked first and collapses to a 404, so a private project the actor
+    can't see is indistinguishable from a missing one — its existence never leaks
+    through a 403, matching the web twin _authorize_project_manage. A member who CAN see
+    it but isn't the creator/admin still gets the honest 403."""
     project = projects.get_project(conn, project_id)
-    if project is None:
+    if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     if project["created_by"] != actor["id"] and not is_admin(actor):
         raise HTTPException(
