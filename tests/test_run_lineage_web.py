@@ -42,6 +42,11 @@ def test_lineage_page_renders_focal_events_and_descendants(tmp_path):
         assert f"/aegis/issues/{iid}" in page.text
         # Its spawned run (c1) links to its own lineage.
         assert "/aegis/activity/runs/c1/lineage" in page.text
+        # The focal events offer copyable headers for starting a child fork.
+        assert "Fork headers" in page.text
+        assert "X-Athena-Run: g1:fork-" in page.text
+        assert "X-Athena-Parent-Run: g1" in page.text
+        assert "X-Athena-Fork-From-Event:" in page.text
 
 
 def test_lineage_page_shows_ancestor_trail(tmp_path):

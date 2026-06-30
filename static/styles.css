@@ -1429,6 +1429,33 @@ footer {
     gap: 0.4rem;
 }
 
+/* Copyable fork headers on the run lineage page. */
+.fork-contracts {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0.75rem 0 1.25rem;
+}
+
+.fork-contract {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.75rem;
+}
+
+.fork-contract textarea {
+    box-sizing: border-box;
+    width: 100%;
+    margin-top: 0.45rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #f9fafb;
+    color: #111827;
+    font: 0.82rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    resize: vertical;
+}
+
 /* Issue time-travel: reconstructed state beside the clickable checkpoint timeline. */
 .timetravel {
     display: flex;

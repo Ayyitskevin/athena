@@ -752,8 +752,21 @@ def activity_run_lineage(
     lineage = activity.run_lineage(conn, run_id, actor=user)
     if lineage is None:
         return HTMLResponse("<h1>No such run</h1>", status_code=404)
+    fork_contracts = []
+    for event in lineage["run"]["events"]:
+        contract = activity.run_fork_contract(
+            conn,
+            run_id,
+            fork_from_event_id=event["id"],
+            fork_run_id=f"{run_id}:fork-{event['id']}",
+            actor=user,
+        )
+        if contract is not None:
+            fork_contracts.append(contract)
     return _templates.TemplateResponse(
-        request=request, name="aegis/run_lineage.html", context={"lineage": lineage}
+        request=request,
+        name="aegis/run_lineage.html",
+        context={"lineage": lineage, "fork_contracts": fork_contracts},
     )
 
 
