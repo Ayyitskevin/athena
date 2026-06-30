@@ -323,3 +323,17 @@ class AthenaClient:
     def get_run_lineage(self, run_id: str) -> Any:
         """Read one tagged run's causal tree."""
         return self._result(self._client.get(f"/activity/runs/{run_id}/lineage"))
+
+    def get_run_fork_contract(
+        self, run_id: str, *, fork_from_event_id: int, fork_run_id: str
+    ) -> Any:
+        """Validate and describe how to fork a run from one parent event."""
+        return self._result(
+            self._client.get(
+                f"/activity/runs/{run_id}/fork",
+                params=self._params(
+                    from_event_id=fork_from_event_id,
+                    fork_run_id=fork_run_id,
+                ),
+            )
+        )
