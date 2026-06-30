@@ -137,14 +137,14 @@ class RequestBodyLimitMiddleware:
 
 
 class RunContextMiddleware:
-    """Capture the X-Athena-Run header into the request-scoped run context, so every
-    activity event recorded while handling this request is stamped with that run id.
+    """Capture run headers into the request-scoped run context, so every activity
+    event recorded while handling this request is stamped with that run metadata.
 
     A pure-ASGI middleware (not @app.middleware) ON PURPOSE: it runs in the same task
     as the endpoint, so the contextvar it sets reliably propagates into the handler
     (including sync handlers run in the threadpool, which copy the current context) —
-    the propagation that BaseHTTPMiddleware does not guarantee. The token is reset in
-    a finally so a run id never outlives its request."""
+    the propagation that BaseHTTPMiddleware does not guarantee. Tokens are reset in
+    a finally so run metadata never outlives its request."""
 
     def __init__(self, app):
         self.app = app
@@ -155,6 +155,7 @@ class RunContextMiddleware:
             return
         run_raw = None
         parent_raw = None
+        forked_from_raw = None
         for name, value in scope.get("headers", []):
             lname = name.lower()
             # Decode as UTF-8 (errors replaced, never raised) to match how Starlette
@@ -165,11 +166,15 @@ class RunContextMiddleware:
                 run_raw = value.decode("utf-8", "replace")
             elif lname == b"x-athena-parent-run":
                 parent_raw = value.decode("utf-8", "replace")
+            elif lname == b"x-athena-fork-from-event":
+                forked_from_raw = value.decode("utf-8", "replace")
         run_token = run_context.set_run_id(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
+        forked_from_token = run_context.set_forked_from_event_id(forked_from_raw)
         try:
             await self.app(scope, receive, send)
         finally:
+            run_context.reset_forked_from_event_id(forked_from_token)
             run_context.reset_parent_run_id(parent_token)
             run_context.reset_run_id(run_token)
 

@@ -41,6 +41,9 @@ class ActivityOut(BaseModel):
     # at top level.
     run_id: str | None = None
     parent_run_id: str | None = None
+    # The parent activity event this event's run forked from, if the caller used the
+    # run-forking contract. NULL means ordinary run or unknown fork point.
+    forked_from_event_id: int | None = None
 
 
 class RunOut(BaseModel):
@@ -52,6 +55,7 @@ class RunOut(BaseModel):
     actor_name: str
     run_id: str | None = None
     parent_run_id: str | None = None
+    forked_from_event_id: int | None = None
     # True when the run may be clipped by the reconstruction window — its totals are a
     # lower bound; widen `limit` to see the rest. Only the oldest run can be partial.
     partial: bool = False
@@ -71,6 +75,7 @@ class RunNodeOut(BaseModel):
     actor_name: str
     run_id: str | None = None
     parent_run_id: str | None = None
+    forked_from_event_id: int | None = None
     partial: bool = False
     started_at: str
     ended_at: str
@@ -89,6 +94,19 @@ class RunLineageOut(BaseModel):
     ancestors: list[RunNodeOut]
     run: RunNodeOut
     descendants: list[RunNodeOut]
+
+
+class RunForkContractOut(BaseModel):
+    # A read-only contract for starting a child run from a specific parent event.
+    # The caller uses `headers` on its next writes; those events then become the fork.
+    parent_run_id: str
+    fork_run_id: str
+    fork_from_event_id: int
+    fork_from_event: ActivityOut
+    shared_prefix_events: list[ActivityOut]
+    shared_prefix_event_count: int
+    shared_prefix_partial: bool
+    headers: dict[str, str]
 
 
 @router.get("", response_model=list[ActivityOut])
@@ -229,3 +247,38 @@ def run_lineage(
     if lineage is None:
         raise HTTPException(status_code=404, detail="no such run")
     return lineage
+
+
+@router.get("/runs/{run_id}/fork", response_model=RunForkContractOut)
+def run_fork_contract(
+    run_id: str,
+    from_event_id: int = Query(
+        ...,
+        ge=1,
+        description="event id inside the parent run where the child should branch",
+    ),
+    fork_run_id: str = Query(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="client-chosen id for the new child run",
+    ),
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # This creates no state. It validates the visible fork point and returns the
+    # exact headers a client should put on subsequent writes to make the child run
+    # replayable and lineage-linked from this parent event.
+    try:
+        contract = activity.run_fork_contract(
+            conn,
+            run_id,
+            fork_from_event_id=from_event_id,
+            fork_run_id=fork_run_id,
+            actor=actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if contract is None:
+        raise HTTPException(status_code=404, detail="no such fork point")
+    return contract
