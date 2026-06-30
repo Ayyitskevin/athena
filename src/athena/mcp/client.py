@@ -93,12 +93,23 @@ class AthenaClient:
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 
+    def get_issue_state(
+        self, issue_id: int, *, as_of_event_id: int | None = None
+    ) -> Any:
+        """Reconstruct an issue's lifecycle state from the activity log."""
+        return self._result(
+            self._client.get(
+                f"/issues/{issue_id}/state",
+                params=self._params(as_of=as_of_event_id),
+            )
+        )
+
     def create_issue(
         self,
         *,
         title: str,
         body: str = "",
-        status: str = "open",
+        status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
     ) -> Any:
@@ -295,3 +306,20 @@ class AthenaClient:
                 "/events", params=self._params(after=after, kind=kind, limit=limit)
             )
         )
+
+    def list_activity_runs(
+        self, *, actor_id: int, gap_seconds: int = 1800, limit: int = 200
+    ) -> Any:
+        """Reconstruct one actor's recent activity into runs."""
+        return self._result(
+            self._client.get(
+                "/activity/runs",
+                params=self._params(
+                    actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
+                ),
+            )
+        )
+
+    def get_run_lineage(self, run_id: str) -> Any:
+        """Read one tagged run's causal tree."""
+        return self._result(self._client.get(f"/activity/runs/{run_id}/lineage"))
