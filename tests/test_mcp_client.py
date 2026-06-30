@@ -172,6 +172,21 @@ def test_run_lineage_and_issue_time_travel_through_the_client(tmp_path):
         assert [a["run_id"] for a in ath.get_run_lineage("child")["ancestors"]] == [
             "goal"
         ]
+
+        contract = ath.get_run_fork_contract(
+            "goal", fork_from_event_id=created_id, fork_run_id="goal:alt"
+        )
+        assert contract["parent_run_id"] == "goal"
+        assert contract["fork_run_id"] == "goal:alt"
+        assert contract["fork_from_event_id"] == created_id
+        assert contract["headers"] == {
+            "X-Athena-Run": "goal:alt",
+            "X-Athena-Parent-Run": "goal",
+            "X-Athena-Fork-From-Event": str(created_id),
+        }
+        assert [event["id"] for event in contract["shared_prefix_events"]] == [
+            created_id
+        ]
     finally:
         tc.__exit__(None, None, None)
 
@@ -296,6 +311,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "recent_events",
             "list_activity_runs",
             "get_run_lineage",
+            "get_run_fork_contract",
             "list_projects",
             "list_users",
             "list_spaces",

@@ -91,6 +91,19 @@ def build_server(client: AthenaClient) -> FastMCP:
         events, and descendant runs spawned from it."""
         return client.get_run_lineage(run_id)
 
+    @mcp.tool()
+    def get_run_fork_contract(
+        run_id: str, fork_from_event_id: int, fork_run_id: str
+    ) -> dict:
+        """Validate a fork point inside a parent run and return the child-run
+        headers to use on subsequent writes, plus the visible shared-prefix events.
+        This creates no state; the child run begins when later writes use the headers."""
+        return client.get_run_fork_contract(
+            run_id,
+            fork_from_event_id=fork_from_event_id,
+            fork_run_id=fork_run_id,
+        )
+
     # --- issue writes -------------------------------------------------------
 
     @mcp.tool()
