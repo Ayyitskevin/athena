@@ -23,6 +23,14 @@ def _user2(client):
     client.post("/users", json={"email": "b@e.com", "name": "Bob"}, headers=H1)
 
 
+def _agent2(client):
+    client.post(
+        "/users",
+        json={"email": "bot@e.com", "name": "Bot", "is_agent": True},
+        headers=H1,
+    )
+
+
 def _issue(client, title):
     return client.post("/issues", json={"title": title}, headers=H1).json()
 
@@ -44,6 +52,40 @@ def test_add_list_remove_contributor(tmp_path):
         # clear it
         rem = client.delete(f"/issues/{iid}/contributors/2", headers=H1)
         assert rem.status_code == 200 and rem.json() == []
+
+
+def test_delegate_issue_to_agent_keeps_assignee_and_audits(tmp_path):
+    # WHY: explicit delegation is agent-as-teammate, not reassignment: the human
+    # stays accountable while the agent joins as a contributor with its own audit verb.
+    with TestClient(create_app(tmp_path / "d.db")) as client:
+        _admin(client)
+        _agent2(client)
+        iid = _issue(client, "delegate")["id"]
+        client.put(f"/issues/{iid}/assignee", json={"assignee_id": 1}, headers=H1)
+
+        delegated = client.post(f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1)
+        assert delegated.status_code == 201, delegated.text
+        assert delegated.json()[0]["name"] == "Bot"
+        assert delegated.json()[0]["is_agent"] is True
+        assert client.get(f"/issues/{iid}", headers=H1).json()["assignee_id"] == 1
+
+        verbs = [
+            a["verb"]
+            for a in client.get(
+                f"/activity?target_kind=issue&target_id={iid}", headers=H1
+            ).json()
+        ]
+        assert "delegated" in verbs and "added_contributor" not in verbs
+        assert any(n["verb"] == "delegated" for n in client.get("/notifications", headers=H2).json())
+
+
+def test_delegate_requires_agent_user(tmp_path):
+    with TestClient(create_app(tmp_path / "human.db")) as client:
+        _admin(client)
+        _user2(client)
+        iid = _issue(client, "human")["id"]
+        rejected = client.post(f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1)
+        assert rejected.status_code == 422
 
 
 def test_add_is_idempotent(tmp_path):

@@ -1462,6 +1462,7 @@ def detach_label(
 class ContributorOut(BaseModel):
     user_id: int
     name: str
+    is_agent: bool = False
     added_by: int
     added_at: str
 
@@ -1496,6 +1497,29 @@ def add_issue_contributor(
     # Idempotent: record (and auto-watch) only when a NEW pairing was created.
     if contributors.add_contributor(conn, issue_id, payload.user_id, actor["id"]):
         issue_activity.record_contributor_added(
+            conn, actor_id=actor["id"], issue_id=issue_id, user_id=payload.user_id
+        )
+    return contributors.list_contributors(conn, issue_id)
+
+
+@router.post("/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201)
+def delegate_issue_to_agent(
+    issue_id: int,
+    payload: ContributorAdd,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Agent delegation is the explicit agent-as-teammate path: the human assignee stays
+    # accountable; the target agent is added as a contributor and receives a distinct
+    # delegated audit event. Generic contributor add remains available for humans.
+    _issue_for_write(conn, issue_id, actor)
+    target = users.get_user(conn, payload.user_id)
+    if target is None:
+        raise HTTPException(status_code=422, detail="no such user")
+    if not target["is_agent"]:
+        raise HTTPException(status_code=422, detail="delegation target must be an agent")
+    if contributors.add_contributor(conn, issue_id, payload.user_id, actor["id"]):
+        issue_activity.record_delegated(
             conn, actor_id=actor["id"], issue_id=issue_id, user_id=payload.user_id
         )
     return contributors.list_contributors(conn, issue_id)

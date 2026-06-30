@@ -103,6 +103,13 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.assign_issue(issue_id, assignee_id)
 
     @mcp.tool()
+    def delegate_issue(issue_id: int, agent_user_id: int) -> list:
+        """Delegate an issue to an agent user. The human assignee remains accountable;
+        the agent is added as a contributor and a delegated audit event is recorded.
+        Use list_users to resolve agent user ids."""
+        return client.delegate_issue(issue_id, agent_user_id)
+
+    @mcp.tool()
     def comment_on_issue(issue_id: int, body: str) -> dict:
         """Add a comment to an issue, authored by the token's user."""
         return client.comment_on_issue(issue_id, body)
