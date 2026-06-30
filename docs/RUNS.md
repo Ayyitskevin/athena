@@ -21,6 +21,28 @@ Browser actions normally omit all three headers and remain ordinary activity row
 - `GET /activity/runs/{run_id}/lineage` reconstructs the parent/child tree from
   `run_id`, `parent_run_id`, and `forked_from_event_id`.
 
+## Determinism Contract
+
+Replay is a read of recorded facts, not a re-execution of side effects. A consumer
+can trust these event fields as the replay-safe envelope:
+
+- `id`: monotonic activity id; this is the replay order.
+- `actor_id`, `verb`, `target_kind`, `target_id`, `detail`: the recorded action.
+- `run_id`, `parent_run_id`, `forked_from_event_id`: the run/fork coordinates.
+
+These fields are observational, useful for humans but not enough to re-drive work:
+
+- `actor_name`: resolved from the current user row.
+- `created_at`: wall-clock timestamp for display; order by `id`, not time text.
+- Rendered HTML, current issue/page state, search snippets, and notification state.
+
+Handlers that want replayable work must record the result of any nondeterministic
+operation as an event or artifact before another handler depends on it. Do not make a
+projection depend on the current clock, random ids, network calls, or model output
+unless that value was already written into the log. Changing a verb or the meaning of
+`detail` is a contract change: add tests for the old and new shape rather than
+silently changing replay semantics.
+
 ## Forking
 
 Forking starts with a read-only contract request:
