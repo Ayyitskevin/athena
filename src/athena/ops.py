@@ -6,8 +6,132 @@ import argparse
 from pathlib import Path
 import sqlite3
 import sys
+import tempfile
 
+from athena.core import db
 from athena.core.backup import backup_database, restore_database
+
+
+def _required_migrations() -> list[str]:
+    return [path.name for path in sorted(db.MIGRATIONS_DIR.glob("*.sql"))]
+
+
+def _applied_migrations(conn: sqlite3.Connection) -> set[str]:
+    try:
+        rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
+    except sqlite3.Error as exc:
+        raise ValueError("database is not migrated: schema_migrations is missing") from exc
+    return {row["version"] for row in rows}
+
+
+def _format_missing_migrations(missing: list[str]) -> str:
+    shown = ", ".join(missing[:5])
+    if len(missing) > 5:
+        shown = f"{shown}, ... ({len(missing)} total)"
+    return shown
+
+
+def _check_integrity(conn: sqlite3.Connection) -> None:
+    result = conn.execute("PRAGMA integrity_check").fetchone()
+    if result is None or result[0] != "ok":
+        reason = "no result" if result is None else result[0]
+        raise ValueError(f"database integrity check failed: {reason}")
+
+
+def _check_database(db_path: Path, *, migrate: bool) -> str:
+    required = _required_migrations()
+    if not required:
+        raise ValueError("no Athena migrations were found")
+
+    if migrate:
+        conn = db.connect(db_path)
+        try:
+            applied_now = db.migrate(conn)
+            _check_integrity(conn)
+            applied = _applied_migrations(conn)
+        finally:
+            conn.close()
+    else:
+        if not db_path.exists():
+            raise FileNotFoundError(f"database does not exist: {db_path}")
+        uri = f"file:{db_path}?mode=rw"
+        conn = sqlite3.connect(uri, uri=True)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            _check_integrity(conn)
+            applied = _applied_migrations(conn)
+        finally:
+            conn.close()
+        applied_now = []
+
+    missing = [version for version in required if version not in applied]
+    if missing:
+        raise ValueError(
+            "database is missing migrations: "
+            f"{_format_missing_migrations(missing)}"
+        )
+
+    action = (
+        f"applied {len(applied_now)} migrations" if applied_now else "already current"
+    )
+    return f"database: ok ({len(applied)} migrations, latest {required[-1]}, {action})"
+
+
+def _check_attachment_dir(attach_dir: Path) -> str:
+    if not attach_dir.exists():
+        raise FileNotFoundError(f"attachment directory does not exist: {attach_dir}")
+    if not attach_dir.is_dir():
+        raise NotADirectoryError(f"attachment path is not a directory: {attach_dir}")
+
+    with tempfile.NamedTemporaryFile(
+        dir=attach_dir,
+        prefix=".athena-doctor-",
+        delete=True,
+    ) as probe:
+        probe.write(b"ok")
+        probe.flush()
+
+    return f"attachments: ok ({attach_dir})"
+
+
+def doctor_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-doctor",
+        description="Check Athena deployment prerequisites.",
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "--attach-dir",
+        type=Path,
+        help="attachment directory to verify for writable blob storage",
+    )
+    parser.add_argument(
+        "--migrate",
+        action="store_true",
+        help="create or migrate the database before checking it",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        checks = [_check_database(args.db_path, migrate=args.migrate)]
+        if args.attach_dir is not None:
+            checks.append(_check_attachment_dir(args.attach_dir))
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-doctor: {exc}", file=sys.stderr)
+        return 1
+
+    for check in checks:
+        print(check)
+    print("athena-doctor: ok")
+    return 0
 
 
 def backup_main(argv: list[str] | None = None) -> int:

@@ -52,6 +52,29 @@ Migrations run automatically during app startup. A failing `/readyz` usually
 means the app cannot open the configured `ATHENA_DB` path or the schema did not
 finish migrating.
 
+## Deploy Preflight
+
+Run `athena-doctor` before switching a service to a restored or migrated database:
+
+```bash
+athena-doctor /var/lib/athena/athena.db \
+  --attach-dir /var/lib/athena/attachments
+```
+
+The command opens the database the same way the app needs to use it, verifies
+SQLite integrity, confirms every packaged migration has been applied, and checks
+that the attachment directory exists and can accept writes. It does not apply
+migrations unless `--migrate` is passed.
+
+For first install or an intentional offline upgrade:
+
+```bash
+athena-doctor /var/lib/athena/athena.db --migrate \
+  --attach-dir /var/lib/athena/attachments
+```
+
+Follow the preflight with the service-level `/readyz` check after startup.
+
 ## Backup and Restore
 
 Use the packaged commands for SQLite snapshots:
@@ -223,5 +246,7 @@ Before leaving laptop-only development:
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
 - Keep `/readyz` in the service or reverse-proxy health check.
+- Run `athena-doctor` against the configured database and attachment directory
+  before exposing a restored, moved, or upgraded instance.
 - Run `athena-backup` on the configured SQLite database path and store the
   snapshot somewhere outside the service host.
