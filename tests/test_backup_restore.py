@@ -37,6 +37,13 @@ def _database_summary(path):
     return {"email": row["email"], "issue": row["title"], "migrations": migrations}
 
 
+def _migration_count(path):
+    conn = sqlite3.connect(path)
+    count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
+    conn.close()
+    return count
+
+
 def test_backup_database_copies_schema_and_data(tmp_path):
     source = _seed_database(tmp_path / "athena.db")
     snapshot = tmp_path / "snapshots" / "athena.db"
@@ -105,3 +112,48 @@ def test_backup_and_restore_cli_entry_points(tmp_path, capsys):
     out = capsys.readouterr()
     assert "Restored" in out.out
     assert _database_summary(restored)["email"] == "cli@example.com"
+
+
+def test_doctor_cli_checks_database_and_attachment_dir(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db", email="doctor@example.com")
+    attach_dir = tmp_path / "attachments"
+    attach_dir.mkdir()
+
+    assert ops.doctor_main([str(source), "--attach-dir", str(attach_dir)]) == 0
+
+    out = capsys.readouterr()
+    assert "database: ok" in out.out
+    assert "attachments: ok" in out.out
+    assert "athena-doctor: ok" in out.out
+
+
+def test_doctor_cli_refuses_unmigrated_database(tmp_path, capsys):
+    source = tmp_path / "empty.db"
+    sqlite3.connect(source).close()
+
+    assert ops.doctor_main([str(source)]) == 1
+
+    out = capsys.readouterr()
+    assert "schema_migrations is missing" in out.err
+
+
+def test_doctor_cli_can_migrate_fresh_database(tmp_path, capsys):
+    source = tmp_path / "fresh.db"
+
+    assert ops.doctor_main([str(source), "--migrate"]) == 0
+
+    out = capsys.readouterr()
+    assert "database: ok" in out.out
+    assert "applied " in out.out
+    assert _migration_count(source) > 0
+
+
+def test_doctor_cli_rejects_attachment_path_that_is_not_directory(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    attach_dir = tmp_path / "attachments"
+    attach_dir.write_text("not a directory")
+
+    assert ops.doctor_main([str(source), "--attach-dir", str(attach_dir)]) == 1
+
+    out = capsys.readouterr()
+    assert "attachment path is not a directory" in out.err
