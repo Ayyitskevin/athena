@@ -75,6 +75,46 @@ def test_events_oldest_first_with_cursor(tmp_path):
         assert [e["verb"] for e in body["events"]] == ["created", "created", "created"]
 
 
+def test_events_replay_envelope_is_stable(tmp_path):
+    # WHY: agents replay runs from /events. The JSON envelope is the deterministic
+    # contract: id orders the stream, action fields describe what happened, and run
+    # coordinates place the event in a lineage/fork tree.
+    app = create_app(tmp_path / "shape.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "shape.db")
+        client.post(
+            "/issues",
+            json={"title": "forked"},
+            headers={
+                **H,
+                "X-Athena-Run": "child",
+                "X-Athena-Parent-Run": "parent",
+                "X-Athena-Fork-From-Event": "7",
+            },
+        )
+
+        event = client.get("/events", headers=H).json()["events"][0]
+        assert set(event) == {
+            "id",
+            "actor_id",
+            "actor_name",
+            "verb",
+            "target_kind",
+            "target_id",
+            "detail",
+            "created_at",
+            "run_id",
+            "parent_run_id",
+            "forked_from_event_id",
+        }
+        assert event["id"] == 1
+        assert event["verb"] == "created"
+        assert event["target_kind"] == "issue"
+        assert event["run_id"] == "child"
+        assert event["parent_run_id"] == "parent"
+        assert event["forked_from_event_id"] == 7
+
+
 def test_events_pagination_has_more_and_resume(tmp_path):
     app = create_app(tmp_path / "page.db")
     with TestClient(app) as client:
