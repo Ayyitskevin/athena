@@ -53,6 +53,26 @@ def test_issue_lifecycle_through_the_client(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_create_issue_omits_status_so_project_default_applies(tmp_path):
+    # WHY: project statuses are configurable. MCP must not force the old global
+    # "open" default, or agents cannot create issues in projects whose first status
+    # was renamed/removed.
+    tc, ath = _client(tmp_path, "custom-status.db")
+    try:
+        project = tc.post("/projects", json={"name": "Ops", "key": "OPS"}).json()
+        assert tc.delete(f"/projects/{project['id']}/statuses/open").status_code == 200
+
+        issue = ath.create_issue(title="use project default", project_id=project["id"])
+        assert issue["status"] == "in_progress"
+
+        explicit = ath.create_issue(
+            title="explicit status", project_id=project["id"], status="done"
+        )
+        assert explicit["status"] == "done"
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_assign_and_list_users(tmp_path):
     tc, ath = _client(tmp_path, "assign.db")
     try:
@@ -116,6 +136,42 @@ def test_recent_events_envelope(tmp_path):
         assert [e["verb"] for e in feed["events"]] == ["created", "created"]
         # Resume from the cursor: no new events yet.
         assert ath.recent_events(after=feed["next_after"])["events"] == []
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_run_lineage_and_issue_time_travel_through_the_client(tmp_path):
+    # WHY: the newest log-as-truth features must be reachable by agents over MCP,
+    # not only by browser/REST users: reconstruct runs, walk run lineage, and
+    # time-travel an issue's lifecycle state from the same activity log.
+    tc, ath = _client(tmp_path, "runs.db")
+    try:
+        tc.headers.update({"X-Athena-Run": "goal"})
+        issue = ath.create_issue(title="lineage")
+
+        tc.headers.update({"X-Athena-Run": "child", "X-Athena-Parent-Run": "goal"})
+        ath.update_issue(issue["id"], status="in_progress")
+
+        events = ath.recent_events(kind="issue")["events"]
+        created_id = min(e["id"] for e in events if e["verb"] == "created")
+
+        now = ath.get_issue_state(issue["id"])
+        assert now["state"]["status"] == "in_progress"
+        assert now["is_current"] is True
+
+        then = ath.get_issue_state(issue["id"], as_of_event_id=created_id)
+        assert then["state"]["status"] == "open"
+        assert then["is_current"] is False
+
+        runs = ath.list_activity_runs(actor_id=1)
+        assert {"goal", "child"} <= {r["run_id"] for r in runs}
+
+        lineage = ath.get_run_lineage("goal")
+        assert lineage["run"]["run_id"] == "goal"
+        assert [d["run_id"] for d in lineage["descendants"]] == ["child"]
+        assert [a["run_id"] for a in ath.get_run_lineage("child")["ancestors"]] == [
+            "goal"
+        ]
     finally:
         tc.__exit__(None, None, None)
 
@@ -230,6 +286,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_issue",
             "create_issue",
             "update_issue",
+            "get_issue_state",
             "assign_issue",
             "delegate_issue",
             "comment_on_issue",
@@ -237,6 +294,8 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "unarchive_issue",
             "bulk_update_issues",
             "recent_events",
+            "list_activity_runs",
+            "get_run_lineage",
             "list_projects",
             "list_users",
             "list_spaces",

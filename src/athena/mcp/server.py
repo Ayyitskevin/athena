@@ -62,11 +62,34 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.get_issue(ref)
 
     @mcp.tool()
+    def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
+        """Reconstruct an issue's lifecycle state from the activity log. Pass
+        as_of_event_id to time-travel to the state at that activity checkpoint; omit
+        it for the current lifecycle state. Content fields are intentionally absent."""
+        return client.get_issue_state(issue_id, as_of_event_id=as_of_event_id)
+
+    @mcp.tool()
     def recent_events(after: int | None = None, kind: str | None = None) -> dict:
         """Read the audit/event feed in order. Pass the last event id you saw as
         `after` to get only newer events; optionally filter by kind (issue/page).
         Returns {events, next_after, has_more}."""
         return client.recent_events(after=after, kind=kind)
+
+    @mcp.tool()
+    def list_activity_runs(
+        actor_id: int, gap_seconds: int = 1800, limit: int = 200
+    ) -> list:
+        """Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run
+        ids are authoritative; untagged work falls back to a time-gap heuristic."""
+        return client.list_activity_runs(
+            actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
+        )
+
+    @mcp.tool()
+    def get_run_lineage(run_id: str) -> dict:
+        """Read a tagged run's causal tree: ancestors, the focal run's replayable
+        events, and descendant runs spawned from it."""
+        return client.get_run_lineage(run_id)
 
     # --- issue writes -------------------------------------------------------
 
@@ -74,13 +97,20 @@ def build_server(client: AthenaClient) -> FastMCP:
     def create_issue(
         title: str,
         body: str = "",
+        status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
     ) -> dict:
-        """Create an Aegis issue. priority is one of low/medium/high/urgent. Bodies
-        support Markdown and [[issue:N]]/[[page:N]] cross-links."""
+        """Create an Aegis issue. Omit status to use the target project's default;
+        otherwise status must belong to that project. priority is one of
+        low/medium/high/urgent. Bodies support Markdown and [[issue:N]]/[[page:N]]
+        cross-links."""
         return client.create_issue(
-            title=title, body=body, priority=priority, project_id=project_id
+            title=title,
+            body=body,
+            status=status,
+            priority=priority,
+            project_id=project_id,
         )
 
     @mcp.tool()
