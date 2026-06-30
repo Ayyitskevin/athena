@@ -67,6 +67,30 @@ def test_assign_and_list_users(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_delegate_issue_through_the_client(tmp_path):
+    # WHY: agent delegation must be reachable through MCP as a first-class action,
+    # while preserving the human assignee as the accountable owner.
+    tc, ath = _client(tmp_path, "delegate.db")
+    try:
+        agent = tc.post(
+            "/users",
+            json={"email": "bot@e.com", "name": "Bot", "is_agent": True},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        issue = ath.create_issue(title="delegate")
+        ath.assign_issue(issue["id"], 1)
+
+        contributors = ath.delegate_issue(issue["id"], agent["id"])
+        assert contributors[0]["user_id"] == agent["id"]
+        assert contributors[0]["is_agent"] is True
+        assert ath.get_issue(str(issue["id"]))["assignee_id"] == 1
+        assert "delegated" in [
+            e["verb"] for e in ath.recent_events(kind="issue")["events"]
+        ]
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_pages_through_the_client(tmp_path):
     tc, ath = _client(tmp_path, "pages.db")
     try:
@@ -207,6 +231,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "create_issue",
             "update_issue",
             "assign_issue",
+            "delegate_issue",
             "comment_on_issue",
             "archive_issue",
             "unarchive_issue",

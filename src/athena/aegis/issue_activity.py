@@ -271,6 +271,24 @@ def record_contributor_added(
     )
 
 
+def record_delegated(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+) -> None:
+    """Record explicit agent delegation. Like contributor-add, the delegated agent
+    starts watching before the event is recorded, so the delegation itself appears
+    in their inbox. Caller records only when a new contributor pairing was created."""
+    notifications.watch(conn, user_id, "issue", issue_id)
+    agent = users.get_user(conn, user_id)
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="delegated",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=agent["name"] if agent else "",
+    )
+
+
 def record_contributor_removed(
     conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
 ) -> None:

@@ -132,6 +132,13 @@ class AthenaClient:
             )
         )
 
+    def delegate_issue(self, issue_id: int, agent_user_id: int) -> Any:
+        return self._result(
+            self._client.post(
+                f"/issues/{issue_id}/delegate", json={"user_id": agent_user_id}
+            )
+        )
+
     def comment_on_issue(self, issue_id: int, body: str) -> Any:
         return self._result(
             self._client.post(f"/issues/{issue_id}/comments", json={"body": body})
