@@ -56,6 +56,25 @@
     {% endwith %}
 </details>
 
+<h2>Fork headers</h2>
+{% if fork_contracts %}
+<div class="fork-contracts">
+    {% for contract in fork_contracts %}
+    <section class="fork-contract">
+        <div>
+            <strong>Fork from event #{{ contract.fork_from_event_id }}</strong>
+            <span class="muted">{{ contract.fork_from_event.created_at }}</span>
+        </div>
+        <textarea readonly rows="3" aria-label="Headers for fork from event {{ contract.fork_from_event_id }}">X-Athena-Run: {{ contract.headers["X-Athena-Run"] }}
+X-Athena-Parent-Run: {{ contract.headers["X-Athena-Parent-Run"] }}
+X-Athena-Fork-From-Event: {{ contract.headers["X-Athena-Fork-From-Event"] }}</textarea>
+    </section>
+    {% endfor %}
+</div>
+{% else %}
+<p class="muted">No visible fork points for this run.</p>
+{% endif %}
+
 {# Descendants: the runs this run spawned, recursively. #}
 <h2>Spawned runs</h2>
 {% if lineage.descendants %}
