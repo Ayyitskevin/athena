@@ -27,6 +27,12 @@ _parent_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "athena_parent_run_id", default=None
 )
 
+# The parent activity event after which the current run forked, or None for top-level
+# runs, ordinary child runs, and untagged requests.
+_forked_from_event_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "athena_forked_from_event_id", default=None
+)
+
 # An opaque client string; bound its length so a hostile/huge header can't bloat
 # every activity row. Long enough for any UUID/ULID/job id a caller would use.
 _MAX_RUN_ID_LEN = 200
@@ -75,3 +81,36 @@ def reset_parent_run_id(token: contextvars.Token) -> None:
 def get_parent_run_id() -> str | None:
     """The parent run id in force for the current request, or None at top level."""
     return _parent_run_id.get()
+
+
+def normalize_event_id(raw: str | int | None) -> int | None:
+    """Clean a raw fork-point event id into a positive integer, or None.
+
+    The header is metadata, not authorization, so malformed values simply mean
+    "unknown fork point" rather than failing an otherwise valid write. Callers that
+    want a guaranteed-valid fork should first ask the fork-contract endpoint, which
+    validates the event against the visible parent run and returns a safe header set.
+    """
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def set_forked_from_event_id(raw: str | int | None) -> contextvars.Token:
+    """Set the current fork-point event id from a raw header value; return the reset
+    token. The caller MUST reset with it when the request ends."""
+    return _forked_from_event_id.set(normalize_event_id(raw))
+
+
+def reset_forked_from_event_id(token: contextvars.Token) -> None:
+    """Restore the previous fork-point event id."""
+    _forked_from_event_id.reset(token)
+
+
+def get_forked_from_event_id() -> int | None:
+    """The fork-point event id in force for the current request, if any."""
+    return _forked_from_event_id.get()

@@ -53,3 +53,4 @@ headless bootstrap commands.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the full design and phased roadmap.
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, bootstrap, roles, and token scopes.
+- [`docs/RUNS.md`](docs/RUNS.md) — deterministic run replay, lineage, and forking contract.

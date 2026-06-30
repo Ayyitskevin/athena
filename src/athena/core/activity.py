@@ -76,14 +76,14 @@ def record(
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
     a controlled verb; this layer only writes.
 
-    The event is stamped with the ambient run id and its parent run id (the
-    X-Athena-Run / X-Athena-Parent-Run headers for the request in flight, via
-    run_context) so the caller never threads them through — both are NULL when not
-    supplied, which is every untagged or top-level action."""
+    The event is stamped with the ambient run id, parent run id, and fork point (the
+    X-Athena-Run / X-Athena-Parent-Run / X-Athena-Fork-From-Event headers for the
+    request in flight, via run_context) so the caller never threads them through —
+    each is NULL when not supplied, which is every untagged or top-level action."""
     cur = conn.execute(
         "INSERT INTO activity "
-        "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
+        "forked_from_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             actor_id,
             verb,
@@ -92,6 +92,7 @@ def record(
             detail,
             run_context.get_run_id(),
             run_context.get_parent_run_id(),
+            run_context.get_forked_from_event_id(),
         ),
     )
     # Fan the event out to the inbox of anyone watching this target (not the actor).
@@ -296,6 +297,7 @@ def _run_summary(events: list[dict]) -> dict:
         "actor_name": first["actor_name"],
         "run_id": first["run_id"],
         "parent_run_id": first["parent_run_id"],
+        "forked_from_event_id": first["forked_from_event_id"],
         "started_at": first["created_at"],
         "ended_at": last["created_at"],
         "first_id": first["id"],
@@ -397,6 +399,10 @@ def reconstruct_runs(
 # this is generous; a run beyond it has its node marked partial (a lower bound), the
 # same honesty rule reconstruct_runs uses for a window-clipped run.
 _LINEAGE_MAX_EVENTS = 500
+
+# A fork contract returns the visible tail of the shared prefix. The cap keeps one
+# request bounded while still including the fork point itself.
+_FORK_PREFIX_MAX_EVENTS = 500
 
 
 def _gated_run_events(
@@ -529,6 +535,109 @@ def run_lineage(
         "ancestors": ancestors,
         "run": focal,
         "descendants": descendants,
+    }
+
+
+def _visible_event_in_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    event_id: int,
+    actor: dict | None | object,
+) -> dict | None:
+    """Return one visible event when it belongs to `run_id`, otherwise None."""
+    clauses = ["a.run_id = ?", "a.id = ?"]
+    params: list = [run_id, event_id]
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            clauses.append(gate)
+            params.extend(gate_params)
+    where = " WHERE " + " AND ".join(clauses)
+    row = conn.execute(f"{_SELECT}{where}", params).fetchone()
+    return dict(row) if row else None
+
+
+def _fork_prefix_events(
+    conn: sqlite3.Connection,
+    run_id: str,
+    event_id: int,
+    actor: dict | None | object,
+) -> tuple[list[dict], bool]:
+    """The visible shared-prefix tail through `event_id`, oldest-first.
+
+    The query walks backward from the fork point so the fork event is always present
+    even when the prefix is larger than the cap; the returned list is reversed back
+    into replay order.
+    """
+    clauses = ["a.run_id = ?", "a.id <= ?"]
+    params: list = [run_id, event_id]
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            clauses.append(gate)
+            params.extend(gate_params)
+    where = " WHERE " + " AND ".join(clauses)
+    params.append(_FORK_PREFIX_MAX_EVENTS + 1)
+    rows = conn.execute(
+        f"{_SELECT}{where} ORDER BY a.id DESC LIMIT ?", params
+    ).fetchall()
+    clipped = len(rows) > _FORK_PREFIX_MAX_EVENTS
+    if clipped:
+        rows = rows[:_FORK_PREFIX_MAX_EVENTS]
+    return [dict(row) for row in reversed(rows)], clipped
+
+
+def run_fork_contract(
+    conn: sqlite3.Connection,
+    parent_run_id: str,
+    *,
+    fork_from_event_id: int,
+    fork_run_id: str,
+    actor: dict | None | object = _UNGATED,
+) -> dict | None:
+    """Validate and describe how to fork a run from a specific event.
+
+    Athena does not store mutable run rows. A fork starts when a client performs
+    follow-up writes with three headers: X-Athena-Run (the new child id),
+    X-Athena-Parent-Run (the source run), and X-Athena-Fork-From-Event (the exact
+    event after whose shared prefix the child diverges). This function is the
+    read-only contract endpoint behind that flow: it proves the fork point is visible
+    and belongs to the parent run, returns the prefix to replay/inspect, and hands
+    back the header set to use for the child run.
+
+    Returns None when the parent run or fork point is not visible to the actor. Raises
+    ValueError for malformed ids the caller can fix.
+    """
+    parent_id = run_context.normalize(parent_run_id)
+    child_id = run_context.normalize(fork_run_id)
+    if parent_id is None:
+        raise ValueError("parent run id is required")
+    if child_id is None:
+        raise ValueError("fork_run_id is required")
+    if child_id == parent_id:
+        raise ValueError("fork_run_id must differ from parent run id")
+    if fork_from_event_id <= 0:
+        raise ValueError("fork_from_event_id must be positive")
+
+    fork_event = _visible_event_in_run(conn, parent_id, fork_from_event_id, actor)
+    if fork_event is None:
+        return None
+    prefix, prefix_partial = _fork_prefix_events(
+        conn, parent_id, fork_from_event_id, actor
+    )
+    return {
+        "parent_run_id": parent_id,
+        "fork_run_id": child_id,
+        "fork_from_event_id": fork_from_event_id,
+        "fork_from_event": fork_event,
+        "shared_prefix_events": prefix,
+        "shared_prefix_event_count": len(prefix),
+        "shared_prefix_partial": prefix_partial,
+        "headers": {
+            "X-Athena-Run": child_id,
+            "X-Athena-Parent-Run": parent_id,
+            "X-Athena-Fork-From-Event": str(fork_from_event_id),
+        },
     }
 
 

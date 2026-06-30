@@ -41,6 +41,9 @@ class EventOut(BaseModel):
     # run that spawned that run (lineage), or None at top level.
     run_id: str | None = None
     parent_run_id: str | None = None
+    # The parent activity event this event's run forked from, if known. This lets a
+    # stream consumer place a child run at the exact branch point in its parent.
+    forked_from_event_id: int | None = None
 
 
 class EventFeed(BaseModel):
