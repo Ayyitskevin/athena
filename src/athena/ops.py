@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -10,7 +11,7 @@ import tempfile
 
 from athena.core import db
 from athena.core.backup import backup_database, restore_database
-from athena.core.portability import export_database
+from athena.core.portability import dry_run_import_database, export_database
 
 
 def _required_migrations() -> list[str]:
@@ -209,6 +210,62 @@ def export_main(argv: list[str] | None = None) -> int:
 
     print(f"Exported {args.kind} {args.target_id} from {args.db_path} to {bundle}")
     return 0
+
+
+def import_dry_run_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-import-dry-run",
+        description="Validate an Athena portability bundle without importing it.",
+    )
+    parser.add_argument("db_path", type=Path, help="Target Athena SQLite database path")
+    parser.add_argument("bundle_path", type=Path, help="Source JSON bundle path")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the full dry-run report as JSON",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        report = dry_run_import_database(args.db_path, args.bundle_path)
+    except (
+        FileNotFoundError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-import-dry-run: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        _print_import_dry_run_report(report)
+    return 0 if report["ok"] else 1
+
+
+def _print_import_dry_run_report(report: dict) -> None:
+    print(f"athena-import-dry-run: {report['status']}")
+    print(f"bundle: {report['kind']} {report['root_id']} ({report['schema']})")
+    _print_count_block("would create", report["would_create"])
+    _print_count_block("would reuse", report["would_reuse"])
+    if report["conflicts"]:
+        print("conflicts:")
+        for item in report["conflicts"]:
+            print(f"  - {item['code']}: {item['message']}")
+    if report["warnings"]:
+        print("warnings:")
+        for item in report["warnings"]:
+            print(f"  - {item['code']}: {item['message']}")
+
+
+def _print_count_block(title: str, counts: dict[str, int]) -> None:
+    print(f"{title}:")
+    if not counts:
+        print("  none")
+        return
+    for key, value in counts.items():
+        print(f"  {key}: {value}")
 
 
 def restore_main(argv: list[str] | None = None) -> int:

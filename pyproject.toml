@@ -27,6 +27,7 @@ mcp = ["mcp>=1.2", "httpx"]
 athena-backup = "athena.ops:backup_main"
 athena-doctor = "athena.ops:doctor_main"
 athena-export = "athena.ops:export_main"
+athena-import-dry-run = "athena.ops:import_dry_run_main"
 athena-restore = "athena.ops:restore_main"
 athena-mcp = "athena.mcp.server:main"
 
