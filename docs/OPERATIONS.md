@@ -163,6 +163,23 @@ row counts, and warns about external links or attachment manifests that need a
 future import plan. A blocked dry-run exits nonzero; there is still no mutating
 selective import command in V1.
 
+Use `athena-import-manifest` to write the replay plan that a future mutating
+import should follow:
+
+```bash
+athena-import-manifest /var/lib/athena/athena.db /exports/project-1.json /exports/project-1.manifest.json
+athena-import-manifest /var/lib/athena/athena.db /exports/project-1.json /exports/project-1.manifest.json --attachment-policy require-blobs
+```
+
+The manifest is also read-only against the target database. It embeds the dry-run
+report, maps bundle user ids to target user ids by email, maps labels to existing
+target ids or future create refs, assigns stable target refs for rows that would
+be created, and lists replay operations in dependency order. The default
+attachment policy is `skip`, because V1 bundles contain attachment metadata but
+not raw blobs. `require-blobs` blocks manifests that contain attachment rows so an
+operator cannot accidentally plan a lossy replay. Existing manifest files are not
+replaced unless `--overwrite` is passed.
+
 ## Browser Password Management
 
 Signed-in users can change their own browser password at `/settings/password`.
