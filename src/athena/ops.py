@@ -15,6 +15,7 @@ from athena.core.portability import (
     ATTACHMENT_POLICIES,
     dry_run_import_database,
     export_database,
+    import_manifest_database,
     write_import_manifest_database,
 )
 
@@ -314,6 +315,55 @@ def import_manifest_main(argv: list[str] | None = None) -> int:
 
     print(f"Wrote import manifest to {args.manifest_path}: {manifest['status']}")
     return 0 if manifest["ok"] else 1
+
+
+def import_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-import",
+        description="Replay a ready Athena selective import manifest.",
+    )
+    parser.add_argument("db_path", type=Path, help="Target Athena SQLite database path")
+    parser.add_argument("bundle_path", type=Path, help="Source JSON bundle path")
+    parser.add_argument("manifest_path", type=Path, help="Ready replay manifest path")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the full import result as JSON",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        result = import_manifest_database(
+            args.db_path,
+            args.bundle_path,
+            args.manifest_path,
+        )
+    except (
+        FileNotFoundError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-import: {exc}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        _print_import_result(result)
+    return 0
+
+
+def _print_import_result(result: dict) -> None:
+    print(f"athena-import: {result['status']}")
+    print(f"bundle: {result['kind']} {result['root_id']} ({result['schema']})")
+    _print_count_block("created", result["created"])
+    _print_count_block("reused", result["reused"])
+    _print_count_block("skipped", result["skipped"])
+    if result["warnings"]:
+        print("warnings:")
+        for item in result["warnings"]:
+            print(f"  - {item['code']}: {item['message']}")
 
 
 def restore_main(argv: list[str] | None = None) -> int:

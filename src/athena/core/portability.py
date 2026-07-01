@@ -14,8 +14,11 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterable
 
+from athena.core import links
+
 SCHEMA = "athena.portability.v1"
 MANIFEST_SCHEMA = "athena.import_manifest.v1"
+IMPORT_RESULT_SCHEMA = "athena.import_result.v1"
 ATTACHMENT_POLICIES = ("skip", "require-blobs")
 
 _PROJECT_COLS = (
@@ -128,6 +131,37 @@ def write_import_manifest_database(
     return manifest
 
 
+def import_manifest_database(
+    db_path: str | Path,
+    bundle_path: str | Path,
+    manifest_path: str | Path,
+) -> dict:
+    """Replay a ready import manifest into ``db_path`` and return the result."""
+    database = Path(db_path)
+    bundle_file = Path(bundle_path)
+    manifest_file = Path(manifest_path)
+    if not database.exists():
+        raise FileNotFoundError(f"database path does not exist: {database}")
+    if not database.is_file():
+        raise FileNotFoundError(f"database path is not a file: {database}")
+    if not bundle_file.exists():
+        raise FileNotFoundError(f"bundle path does not exist: {bundle_file}")
+    if not bundle_file.is_file():
+        raise FileNotFoundError(f"bundle path is not a file: {bundle_file}")
+    if not manifest_file.exists():
+        raise FileNotFoundError(f"manifest path does not exist: {manifest_file}")
+    if not manifest_file.is_file():
+        raise FileNotFoundError(f"manifest path is not a file: {manifest_file}")
+
+    bundle = _load_bundle(bundle_file)
+    manifest = _load_manifest(manifest_file)
+    conn = _connect_readwrite(database)
+    try:
+        return replay_import_manifest(conn, bundle, manifest)
+    finally:
+        conn.close()
+
+
 def export_bundle(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
     """Return the in-memory export bundle for one project or space."""
     if kind == "project":
@@ -181,6 +215,42 @@ def build_import_manifest(
     }
 
 
+def replay_import_manifest(
+    conn: sqlite3.Connection,
+    bundle: dict,
+    manifest: dict,
+) -> dict:
+    """Replay a ready import manifest into ``conn`` transactionally."""
+    bundle = _validate_bundle(bundle)
+    manifest = _validate_import_manifest(manifest, bundle)
+    policy = manifest["attachment_policy"]["mode"]
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        fresh = build_import_manifest(conn, bundle, attachment_policy=policy)
+        if fresh["status"] != "ready":
+            raise ValueError(
+                "import manifest is no longer ready; regenerate it with "
+                "athena-import-manifest"
+            )
+        if _manifest_signature(fresh) != _manifest_signature(manifest):
+            raise ValueError(
+                "import manifest is stale; regenerate it with athena-import-manifest"
+            )
+
+        if bundle["kind"] == "project":
+            result = _replay_project_import(conn, bundle, manifest)
+        elif bundle["kind"] == "space":
+            result = _replay_space_import(conn, bundle, manifest)
+        else:
+            raise ValueError("bundle kind must be 'project' or 'space'")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return result
+
+
 def dry_run_import_bundle(conn: sqlite3.Connection, bundle: dict) -> dict:
     """Return a report for importing ``bundle`` without writing to the database."""
     bundle = _validate_bundle(bundle)
@@ -201,6 +271,16 @@ def _load_bundle(path: Path) -> dict:
     return data
 
 
+def _load_manifest(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"manifest is not valid JSON: {exc.msg}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("manifest must be a JSON object")
+    return data
+
+
 def _write_json_file(destination: Path, data: dict) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.tmp")
@@ -218,6 +298,15 @@ def _write_json_file(destination: Path, data: dict) -> None:
 def _connect_readonly(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
+def _connect_readwrite(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"file:{path}?mode=rw", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
@@ -504,6 +593,583 @@ def _space_import_report(conn: sqlite3.Connection, bundle: dict) -> dict:
     return _finish_import_report(report)
 
 
+def _replay_project_import(
+    conn: sqlite3.Connection,
+    bundle: dict,
+    manifest: dict,
+) -> dict:
+    _validate_project_bundle(bundle)
+    user_map, reused_users = _resolve_user_map(conn, bundle["users"])
+    label_map, created_labels, reused_labels = _resolve_label_map(
+        conn, bundle["labels"]
+    )
+    result = _base_import_result(bundle, manifest)
+
+    project = bundle["project"]
+    max_seq = max((row["project_seq"] or 0 for row in bundle["issues"]), default=0)
+    issue_counter = max(project.get("issue_counter") or 0, max_seq)
+    cur = conn.execute(
+        "INSERT INTO projects "
+        "(name, key, description, created_by, created_at, issue_counter, visibility) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            project["name"],
+            project["key"],
+            project.get("description", ""),
+            user_map[project["created_by"]],
+            project["created_at"],
+            issue_counter,
+            project.get("visibility", "public"),
+        ),
+    )
+    project_id = cur.lastrowid
+
+    for status in bundle["statuses"]:
+        conn.execute(
+            "INSERT INTO project_statuses "
+            "(project_id, name, category, position) VALUES (?, ?, ?, ?)",
+            (
+                project_id,
+                status["name"],
+                status.get("category", "todo"),
+                status.get("position", 0),
+            ),
+        )
+
+    sprint_map: dict[int, int] = {}
+    for sprint in bundle["sprints"]:
+        cur = conn.execute(
+            "INSERT INTO sprints "
+            "(project_id, name, goal, state, start_date, end_date, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                project_id,
+                sprint["name"],
+                sprint.get("goal", ""),
+                sprint.get("state", "planned"),
+                sprint.get("start_date"),
+                sprint.get("end_date"),
+                sprint["created_at"],
+            ),
+        )
+        sprint_map[sprint["id"]] = cur.lastrowid
+
+    issue_map: dict[int, int] = {}
+    for issue in bundle["issues"]:
+        cur = conn.execute(
+            "INSERT INTO issues "
+            "(title, body, status, priority, created_by, created_at, assignee_id, "
+            "project_id, project_seq, parent_id, sprint_id, archived_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                issue["title"],
+                issue.get("body", ""),
+                issue["status"],
+                issue.get("priority", "medium"),
+                user_map[issue["created_by"]],
+                issue["created_at"],
+                _map_optional(user_map, issue.get("assignee_id")),
+                project_id,
+                issue.get("project_seq"),
+                None,
+                _map_optional(sprint_map, issue.get("sprint_id")),
+                issue.get("archived_at"),
+            ),
+        )
+        issue_map[issue["id"]] = cur.lastrowid
+
+    for issue in bundle["issues"]:
+        body = _rewrite_body_refs(issue.get("body", ""), {"issue": issue_map})
+        conn.execute(
+            "UPDATE issues SET body = ?, parent_id = ? WHERE id = ?",
+            (
+                body,
+                _map_optional(issue_map, issue.get("parent_id")),
+                issue_map[issue["id"]],
+            ),
+        )
+
+    member_count = 0
+    for member in bundle["members"]:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO project_members "
+            "(project_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+            (
+                project_id,
+                user_map[member["user_id"]],
+                _map_optional(user_map, member.get("added_by")),
+                member["added_at"],
+            ),
+        )
+        member_count += max(cur.rowcount, 0)
+
+    comment_count = 0
+    for comment in bundle["comments"]:
+        conn.execute(
+            "INSERT INTO comments (issue_id, author_id, body, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                issue_map[comment["issue_id"]],
+                user_map[comment["author_id"]],
+                comment["body"],
+                comment["created_at"],
+            ),
+        )
+        comment_count += 1
+
+    contributor_count = 0
+    for contributor in bundle["contributors"]:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO issue_contributors "
+            "(issue_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+            (
+                issue_map[contributor["issue_id"]],
+                user_map[contributor["user_id"]],
+                _map_optional(user_map, contributor.get("added_by")),
+                contributor["added_at"],
+            ),
+        )
+        contributor_count += max(cur.rowcount, 0)
+
+    issue_link_count, skipped_issue_links = _insert_project_issue_links(
+        conn, bundle["issue_links"], issue_map, user_map
+    )
+
+    issue_label_count = 0
+    for label_link in bundle["label_links"]:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)",
+            (issue_map[label_link["issue_id"]], label_map[label_link["label_id"]]),
+        )
+        issue_label_count += max(cur.rowcount, 0)
+
+    link_count, skipped_cross_links = _insert_internal_cross_links(
+        conn, bundle["cross_links"], {"issue": issue_map}
+    )
+    activity_count, activity_map = _insert_activity(
+        conn,
+        bundle["activity"],
+        user_map,
+        {"project": {project["id"]: project_id}, "issue": issue_map},
+    )
+    search_count = _index_imported_issues(conn, bundle["issues"], issue_map)
+
+    result["created"] = {
+        "projects": 1,
+        "project_statuses": len(bundle["statuses"]),
+        "project_members": member_count,
+        "sprints": len(sprint_map),
+        "issues": len(issue_map),
+        "comments": comment_count,
+        "issue_contributors": contributor_count,
+        "issue_links": issue_link_count,
+        "labels": created_labels,
+        "issue_labels": issue_label_count,
+        "links": link_count,
+        "activity": activity_count,
+        "search_index": search_count,
+    }
+    result["reused"] = {"users": reused_users, "labels": reused_labels}
+    result["skipped"] = {
+        "attachments": len(bundle["attachments"]),
+        "external_issue_links": skipped_issue_links,
+        "external_cross_links": skipped_cross_links,
+    }
+    result["id_map"] = {
+        "users": _map_rows(bundle["users"], user_map),
+        "labels": _map_rows(bundle["labels"], label_map),
+        "project": {"source_id": project["id"], "target_id": project_id},
+        "sprints": _map_rows(bundle["sprints"], sprint_map),
+        "issues": _map_rows(bundle["issues"], issue_map),
+        "activity": _map_rows(bundle["activity"], activity_map),
+    }
+    return result
+
+
+def _replay_space_import(
+    conn: sqlite3.Connection,
+    bundle: dict,
+    manifest: dict,
+) -> dict:
+    _validate_space_bundle(bundle)
+    user_map, reused_users = _resolve_user_map(conn, bundle["users"])
+    label_map, created_labels, reused_labels = _resolve_label_map(
+        conn, bundle["labels"]
+    )
+    result = _base_import_result(bundle, manifest)
+
+    space = bundle["space"]
+    cur = conn.execute(
+        "INSERT INTO spaces "
+        "(key, name, description, created_by, created_at, visibility) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            space["key"],
+            space["name"],
+            space.get("description", ""),
+            user_map[space["created_by"]],
+            space["created_at"],
+            space.get("visibility", "public"),
+        ),
+    )
+    space_id = cur.lastrowid
+
+    page_map: dict[int, int] = {}
+    for page in bundle["pages"]:
+        cur = conn.execute(
+            "INSERT INTO pages "
+            "(space_id, parent_id, title, body, created_by, created_at, updated_by, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                space_id,
+                None,
+                page["title"],
+                page.get("body", ""),
+                user_map[page["created_by"]],
+                page["created_at"],
+                _map_optional(user_map, page.get("updated_by")),
+                page.get("updated_at"),
+            ),
+        )
+        page_map[page["id"]] = cur.lastrowid
+
+    for page in bundle["pages"]:
+        body = _rewrite_body_refs(page.get("body", ""), {"page": page_map})
+        conn.execute(
+            "UPDATE pages SET body = ?, parent_id = ? WHERE id = ?",
+            (
+                body,
+                _map_optional(page_map, page.get("parent_id")),
+                page_map[page["id"]],
+            ),
+        )
+
+    member_count = 0
+    for member in bundle["members"]:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO space_members "
+            "(space_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
+            (
+                space_id,
+                user_map[member["user_id"]],
+                _map_optional(user_map, member.get("added_by")),
+                member["added_at"],
+            ),
+        )
+        member_count += max(cur.rowcount, 0)
+
+    version_count = 0
+    for version in bundle["versions"]:
+        conn.execute(
+            "INSERT INTO page_versions "
+            "(page_id, version, title, body, edited_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                page_map[version["page_id"]],
+                version["version"],
+                version["title"],
+                _rewrite_body_refs(version.get("body", ""), {"page": page_map}),
+                user_map[version["edited_by"]],
+                version["created_at"],
+            ),
+        )
+        version_count += 1
+
+    comment_count = 0
+    for comment in bundle["comments"]:
+        conn.execute(
+            "INSERT INTO page_comments (page_id, author_id, body, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                page_map[comment["page_id"]],
+                user_map[comment["author_id"]],
+                comment["body"],
+                comment["created_at"],
+            ),
+        )
+        comment_count += 1
+
+    page_label_count = 0
+    for label_link in bundle["label_links"]:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO page_labels (page_id, label_id) VALUES (?, ?)",
+            (page_map[label_link["page_id"]], label_map[label_link["label_id"]]),
+        )
+        page_label_count += max(cur.rowcount, 0)
+
+    link_count, skipped_cross_links = _insert_internal_cross_links(
+        conn, bundle["cross_links"], {"page": page_map}
+    )
+    activity_count, activity_map = _insert_activity(
+        conn,
+        bundle["activity"],
+        user_map,
+        {"space": {space["id"]: space_id}, "page": page_map},
+    )
+    search_count = _index_imported_pages(conn, bundle["pages"], page_map)
+
+    result["created"] = {
+        "spaces": 1,
+        "space_members": member_count,
+        "pages": len(page_map),
+        "page_versions": version_count,
+        "page_comments": comment_count,
+        "labels": created_labels,
+        "page_labels": page_label_count,
+        "links": link_count,
+        "activity": activity_count,
+        "search_index": search_count,
+    }
+    result["reused"] = {"users": reused_users, "labels": reused_labels}
+    result["skipped"] = {
+        "attachments": len(bundle["attachments"]),
+        "external_cross_links": skipped_cross_links,
+    }
+    result["id_map"] = {
+        "users": _map_rows(bundle["users"], user_map),
+        "labels": _map_rows(bundle["labels"], label_map),
+        "space": {"source_id": space["id"], "target_id": space_id},
+        "pages": _map_rows(bundle["pages"], page_map),
+        "activity": _map_rows(bundle["activity"], activity_map),
+    }
+    return result
+
+
+def _base_import_result(bundle: dict, manifest: dict) -> dict:
+    return {
+        "schema": IMPORT_RESULT_SCHEMA,
+        "schema_version": 1,
+        "kind": bundle["kind"],
+        "root_id": bundle["root_id"],
+        "imported_at": _utc_now(),
+        "ok": True,
+        "status": "imported",
+        "created": {},
+        "reused": {},
+        "skipped": {},
+        "warnings": manifest["warnings"],
+        "id_map": {},
+    }
+
+
+def _resolve_user_map(
+    conn: sqlite3.Connection, users: list[dict]
+) -> tuple[dict[int, int], int]:
+    user_map: dict[int, int] = {}
+    for user in users:
+        found = _one(conn, "SELECT id FROM users WHERE email = ?", (user["email"],))
+        if found is None:
+            raise ValueError(
+                "import manifest is no longer ready; missing target user "
+                f"{user['email']!r}"
+            )
+        user_map[user["id"]] = found["id"]
+    return user_map, len(user_map)
+
+
+def _resolve_label_map(
+    conn: sqlite3.Connection, labels: list[dict]
+) -> tuple[dict[int, int], int, int]:
+    label_map: dict[int, int] = {}
+    created = 0
+    reused = 0
+    for label in labels:
+        found = _one(conn, "SELECT id FROM labels WHERE name = ?", (label["name"],))
+        if found is not None:
+            label_map[label["id"]] = found["id"]
+            reused += 1
+            continue
+        cur = conn.execute(
+            "INSERT INTO labels (name, color) VALUES (?, ?)",
+            (label["name"], label["color"]),
+        )
+        label_map[label["id"]] = cur.lastrowid
+        created += 1
+    return label_map, created, reused
+
+
+def _insert_project_issue_links(
+    conn: sqlite3.Connection,
+    issue_links: list[dict],
+    issue_map: dict[int, int],
+    user_map: dict[int, int],
+) -> tuple[int, int]:
+    inserted = 0
+    skipped = 0
+    for link in issue_links:
+        if link["from_id"] not in issue_map or link["to_id"] not in issue_map:
+            skipped += 1
+            continue
+        from_id = issue_map[link["from_id"]]
+        to_id = issue_map[link["to_id"]]
+        if from_id == to_id:
+            skipped += 1
+            continue
+        if link["kind"] == "relates" and from_id > to_id:
+            from_id, to_id = to_id, from_id
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO issue_links "
+            "(from_id, to_id, kind, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                from_id,
+                to_id,
+                link["kind"],
+                user_map[link["created_by"]],
+                link["created_at"],
+            ),
+        )
+        inserted += max(cur.rowcount, 0)
+    return inserted, skipped
+
+
+def _insert_internal_cross_links(
+    conn: sqlite3.Connection,
+    cross_links: list[dict],
+    maps: dict[str, dict[int, int]],
+) -> tuple[int, int]:
+    inserted = 0
+    skipped = 0
+    for link in cross_links:
+        source_map = maps.get(link["source_kind"])
+        target_map = maps.get(link["target_kind"])
+        if (
+            source_map is None
+            or target_map is None
+            or link["source_id"] not in source_map
+            or link["target_id"] not in target_map
+        ):
+            skipped += 1
+            continue
+        source_id = source_map[link["source_id"]]
+        target_id = target_map[link["target_id"]]
+        if link["source_kind"] == link["target_kind"] and source_id == target_id:
+            skipped += 1
+            continue
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO links "
+            "(source_kind, source_id, target_kind, target_id) VALUES (?, ?, ?, ?)",
+            (link["source_kind"], source_id, link["target_kind"], target_id),
+        )
+        inserted += max(cur.rowcount, 0)
+    return inserted, skipped
+
+
+def _insert_activity(
+    conn: sqlite3.Connection,
+    events: list[dict],
+    user_map: dict[int, int],
+    target_maps: dict[str, dict[int, int]],
+) -> tuple[int, dict[int, int]]:
+    activity_map: dict[int, int] = {}
+    for event in events:
+        target_map = target_maps.get(event["target_kind"])
+        if target_map is None or event["target_id"] not in target_map:
+            continue
+        cur = conn.execute(
+            "INSERT INTO activity "
+            "(actor_id, verb, target_kind, target_id, detail, created_at, "
+            "run_id, parent_run_id, forked_from_event_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                user_map[event["actor_id"]],
+                event["verb"],
+                event["target_kind"],
+                target_map[event["target_id"]],
+                event.get("detail", ""),
+                event["created_at"],
+                event.get("run_id"),
+                event.get("parent_run_id"),
+                None,
+            ),
+        )
+        activity_map[event["id"]] = cur.lastrowid
+
+    for event in events:
+        target_id = activity_map.get(event["id"])
+        forked_from = event.get("forked_from_event_id")
+        forked_target_id = activity_map.get(forked_from)
+        if target_id is not None and forked_target_id is not None:
+            conn.execute(
+                "UPDATE activity SET forked_from_event_id = ? WHERE id = ?",
+                (forked_target_id, target_id),
+            )
+    return len(activity_map), activity_map
+
+
+def _index_imported_issues(
+    conn: sqlite3.Connection, issues: list[dict], issue_map: dict[int, int]
+) -> int:
+    count = 0
+    for issue in issues:
+        source_id = issue["id"]
+        target_id = issue_map[source_id]
+        body = _rewrite_body_refs(issue.get("body", ""), {"issue": issue_map})
+        _replace_search_index(
+            conn, kind="issue", source_id=target_id, title=issue["title"], body=body
+        )
+        count += 1
+    return count
+
+
+def _index_imported_pages(
+    conn: sqlite3.Connection, pages: list[dict], page_map: dict[int, int]
+) -> int:
+    count = 0
+    for page in pages:
+        source_id = page["id"]
+        target_id = page_map[source_id]
+        body = _rewrite_body_refs(page.get("body", ""), {"page": page_map})
+        _replace_search_index(
+            conn, kind="page", source_id=target_id, title=page["title"], body=body
+        )
+        count += 1
+    return count
+
+
+def _replace_search_index(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    source_id: int,
+    title: str,
+    body: str,
+) -> None:
+    conn.execute(
+        "DELETE FROM search_index WHERE kind = ? AND source_id = ?",
+        (kind, source_id),
+    )
+    conn.execute(
+        "INSERT INTO search_index (kind, source_id, title, body) VALUES (?, ?, ?, ?)",
+        (kind, source_id, title, body),
+    )
+
+
+def _rewrite_body_refs(body: str | None, maps: dict[str, dict[int, int]]) -> str:
+    def replace(match) -> str:
+        kind = match.group(1)
+        source_id = int(match.group(2))
+        target_map = maps.get(kind)
+        if target_map is None or source_id not in target_map:
+            return match.group(0)
+        return f"[[{kind}:{target_map[source_id]}]]"
+
+    return links.REF_RE.sub(replace, body or "")
+
+
+def _map_optional(mapping: dict[int, int], source_id: int | None) -> int | None:
+    if source_id is None:
+        return None
+    return mapping[source_id]
+
+
+def _map_rows(rows: list[dict], mapping: dict[int, int]) -> list[dict]:
+    return [
+        {"source_id": row["id"], "target_id": mapping[row["id"]]}
+        for row in rows
+        if row["id"] in mapping
+    ]
+
+
 def _import_id_map(conn: sqlite3.Connection, bundle: dict) -> dict:
     mapped = {
         "users": _user_id_map(conn, bundle["users"]),
@@ -741,6 +1407,63 @@ def _validate_bundle(bundle: dict) -> dict:
     if "exported_at" not in bundle:
         raise ValueError("bundle.exported_at is required")
     return bundle
+
+
+def _validate_import_manifest(manifest: dict, bundle: dict) -> dict:
+    if not isinstance(manifest, dict):
+        raise ValueError("manifest must be a JSON object")
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        raise ValueError(
+            "unsupported manifest schema: "
+            f"{manifest.get('schema')!r}; expected {MANIFEST_SCHEMA!r}"
+        )
+    if manifest.get("schema_version") != 1:
+        raise ValueError(
+            "unsupported manifest schema_version: "
+            f"{manifest.get('schema_version')!r}"
+        )
+    if manifest.get("bundle_schema") != SCHEMA:
+        raise ValueError(
+            "manifest bundle_schema does not match this importer: "
+            f"{manifest.get('bundle_schema')!r}"
+        )
+    if manifest.get("bundle_schema_version") != bundle["schema_version"]:
+        raise ValueError("manifest bundle_schema_version does not match bundle")
+    if manifest.get("kind") != bundle["kind"]:
+        raise ValueError("manifest kind does not match bundle")
+    if manifest.get("root_id") != bundle["root_id"]:
+        raise ValueError("manifest root_id does not match bundle")
+    if manifest.get("ok") is not True or manifest.get("status") != "ready":
+        raise ValueError("import manifest is not ready")
+
+    policy = manifest.get("attachment_policy")
+    if not isinstance(policy, dict):
+        raise ValueError("manifest.attachment_policy must be an object")
+    if policy.get("mode") not in ATTACHMENT_POLICIES:
+        raise ValueError("manifest.attachment_policy.mode is not supported")
+    if policy.get("status") != "ready":
+        raise ValueError("manifest attachment policy is not ready")
+    if not isinstance(manifest.get("warnings"), list):
+        raise ValueError("manifest.warnings must be a list")
+    return manifest
+
+
+def _manifest_signature(manifest: dict) -> dict:
+    keys = (
+        "schema",
+        "schema_version",
+        "bundle_schema",
+        "bundle_schema_version",
+        "kind",
+        "root_id",
+        "attachment_policy",
+        "dry_run",
+        "conflicts",
+        "warnings",
+        "id_map",
+        "operations",
+    )
+    return {key: manifest.get(key) for key in keys}
 
 
 def _validate_project_bundle(bundle: dict) -> None:
