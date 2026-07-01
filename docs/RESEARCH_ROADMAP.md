@@ -448,9 +448,11 @@ premature. §10–§12 sequence this.
 Ordered by how much they still block "serious, multi-actor, agent-native" after
 the June 30 merge wave. **[Interpretation over Fact]**
 
-1. **Portability is coarse.** Whole-DB backup/restore exists, but there is no
-   selective per-project/per-space JSON export or dry-run import. This is now the
-   biggest migration and data-ownership blocker.
+1. **Portability has a V1 core; source-specific import is next.** Whole-DB
+   backup/restore exists, and selective project/space export, dry-run, manifest,
+   and manifest-gated replay now cover Athena-to-Athena moves. The remaining
+   migration blocker is common-source import from incumbents, not the internal
+   portability substrate.
 2. **Replay bundles are incomplete.** The event feed, run lineage, and fork
    contract exist; operators still need a single replay manifest/bundle that
    freezes one run's replay-safe facts plus lineage metadata for handoff and audit.
@@ -702,12 +704,13 @@ risk** (1–10). Files reference real modules.
 - **Files:** new `core/portability.py`; `ops.py` CLI (`athena-export`/`athena-import`);
   optional API endpoints; reuse existing data layers.
 - **Data model:** none (read/write through existing tables; preserve ids/links where safe).
-- **API/CLI:** export to a JSON bundle; dry-run import with conflict report.
+- **API/CLI:** export to a JSON bundle; dry-run import with conflict report; write a
+  replay manifest; import a ready manifest transactionally.
 - **UI:** optional later.
 - **Tests:** round-trip a space and a project (incl. versions + cross-links); dry-run
-  reports conflicts; import is idempotent on re-run.
+  reports conflicts; replay refuses blocked or stale manifests.
 - **Risk:** Medium · **Size:** M-L · **Deps:** S2 for attachment payloads ·
-- **DoD:** export→import reproduces content + links; green gate.
+- **DoD:** export→manifest→import reproduces content + internal links; green gate.
 
 ### S11 — Page comments · **Score 5**
 - **Why:** Confluence-parity for discussion on docs; cheap given the issue-comment pattern.
@@ -759,19 +762,18 @@ risk** (1–10). Files reference real modules.
 
 Chosen after reconciling the June 26 backlog against current `main` on 2026-06-30.
 
-1. **S10a — Export-only portability V1.** Add `athena-export` for one project or
-   space, producing a stable JSON bundle with content, versions/history, labels,
-   links, and an attachment manifest. Keep import out of the first PR.
-2. **S10b — Dry-run import.** Read the V1 bundle, report conflicts/missing actors/
-   missing attachment blobs, and prove idempotent planning before any writes.
-3. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
+1. **Common-source import mapper.** Convert a small Jira/Confluence export sample
+   into Athena's portability bundle shape, then reuse dry-run/manifest/import.
+2. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
    replay-safe events, parent/fork coordinates, and determinism metadata as a
    portable handoff/audit artifact.
-4. **Agent administration V2.** Add an admin-facing way to review agent users,
+3. **Agent administration V2.** Add an admin-facing way to review agent users,
    token scopes, project/space access, and delegation policy. Do not build a
    workflow engine.
-5. **API safety follow-up.** Add per-token rate limiting first, then bulk endpoints
+4. **API safety follow-up.** Add per-token rate limiting first, then bulk endpoints
    and ETag/`If-Match` where update races matter.
+5. **Backup retention/off-host helper.** Keep the deployment moat simple by making
+   retained SQLite backups and restore drills easy for operators.
 
 *Immediate follow-ons:* backup retention/off-host guidance, one-command packaging,
 and `/find` pagination/field search.

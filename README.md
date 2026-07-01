@@ -13,8 +13,10 @@ Self-hosted **project management + knowledge base** — one platform, two module
 
 **Local alpha.** Athena has a working FastAPI app with Aegis issues/projects/boards,
 Mentor spaces/pages/versioning, auth/sessions, CSRF, search, cross-links, and an
-audited activity trail. It is still developed locally and is not hosted yet;
-self-hosting on the `flow` node is a later decision.
+audited activity trail. Operators can export one project or space, dry-run it
+against another Athena database, write a replay manifest, and import it
+transactionally. It is still developed locally and is not hosted yet; self-hosting
+on the `flow` node is a later decision.
 
 ## Stack
 

@@ -160,8 +160,7 @@ The dry-run is read-only. It validates the bundle schema, checks that referenced
 users can be mapped by email in the target database, detects project name/key or
 space key conflicts, reports labels that would be created or reused, summarizes
 row counts, and warns about external links or attachment manifests that need a
-future import plan. A blocked dry-run exits nonzero; there is still no mutating
-selective import command in V1.
+replay plan. A blocked dry-run exits nonzero.
 
 Use `athena-import-manifest` to write the replay plan that a future mutating
 import should follow:
@@ -179,6 +178,23 @@ attachment policy is `skip`, because V1 bundles contain attachment metadata but
 not raw blobs. `require-blobs` blocks manifests that contain attachment rows so an
 operator cannot accidentally plan a lossy replay. Existing manifest files are not
 replaced unless `--overwrite` is passed.
+
+Use `athena-import` only after reviewing a ready manifest:
+
+```bash
+athena-import /var/lib/athena/athena.db /exports/project-1.json /exports/project-1.manifest.json
+athena-import /var/lib/athena/athena.db /exports/project-1.json /exports/project-1.manifest.json --json
+```
+
+Replay takes a write lock, regenerates the manifest plan against the current
+target database, and refuses to import if the reviewed manifest is blocked or
+stale. It creates the selected project or space, child rows, membership, labels,
+comments, issue dependencies, internal body backlinks, activity history, and FTS
+search rows in one transaction. V1 still skips raw attachment blobs and external
+cross-container links: the literal `[[issue:N]]` or `[[page:N]]` text remains in
+the imported body, but backlinks are created only when both sides are part of the
+same imported bundle. Regenerate the manifest after any target database change
+that affects user, label, project, or space mapping.
 
 ## Browser Password Management
 
