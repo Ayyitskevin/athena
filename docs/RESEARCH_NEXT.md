@@ -98,21 +98,29 @@ Teams leaving the incumbent need a small, specific set of capabilities to feel s
 
 ## What to build next (ranked)
 
-Ranked by impact-vs-effort, excluding capabilities Athena already ships. All items are **Recommendations**.
+Ranked by impact-vs-effort. This table is reconciled against current `main` as of
+2026-06-30, so capabilities that have landed are marked as shipped V1 instead of
+being treated as open backlog. All items are **Recommendations**.
 
-| # | Capability | Why it matters | Rough size | Competitor gap it closes |
+| # | Capability | Status | Why it matters | Next slice |
 |---|---|---|---|---|
-| 1 | **Agent-as-teammate: delegation + contributor model** (delegate an issue to an agent; human stays primary assignee/accountable; admin-controlled agent scope/team access) | Turns Athena's "agents can write via tokens" into "agents are first-class teammates." Demand is proven and the design is published ([eesel.ai](https://www.eesel.ai/blog/linear-ai)). Builds on existing scoped tokens + MCP + audit log. | M | Linear has this and is closed/SaaS-only; no self-hosted tool offers it |
-| 2 | **Deterministic run replay + lineage over the activity log** (replay a run from its log; goal→action lineage) | Athena's biggest structural moat — the log already exists as an event source; this makes it load-bearing for agents. Properties no retrieval/summarization "memory" provides ([arxiv.org](https://arxiv.org/abs/2605.21997)). | M–L (needs a determinism contract on event handlers, [arxiv.org](https://arxiv.org/abs/2605.21997)) | Cloud incumbents bolt AI onto a permissions/UI stack and cannot retrofit log-as-truth; OSS rivals don't event-source |
-| 3 | **Run forking** (branch a run at any past event without re-running the shared prefix) | Cheap "what if" exploration for agent workflows; a clean payoff of the event-sourced design ([arxiv.org](https://arxiv.org/abs/2605.21997)). | M | Unique; no competitor offers forkable agent runs in a work tool |
-| 4 | **Free OIDC/SAML SSO (self-hosted, no enterprise gate)** | Directly attacks the most-resented OSS paywall; demonstrably a churn cause for a rival ([github.com](https://github.com/orgs/makeplane/discussions/1266)). Prerequisite for any multi-human org adoption. | M | Plane paywalls OIDC; Athena ships it free |
-| 5 | **Import path from common sources** (issues/pages + history + links) | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | M–L | OSS rivals' import is uneven; clean import wins switchers |
-| 6 | **Lean event-driven automation/rules** ("when event X, do Y"), reacting to the existing event feed/webhooks | Covers most "rules engine" demand for movers without a workflow engine; blackboard/event-driven pattern fits Athena's plumbing ([arxiv.org](https://arxiv.org/abs/2605.21997)). | M | Matches incumbent automation at a fraction of the complexity |
-| 7 | **Coarse permissions parity** (read authorization + per-space/project private/internal/public visibility) | Confidence-to-switch for movers; precondition for scoping events/search to agents. | M–L | Simpler and more comprehensible than the incumbent's scheme-based model |
-| 8 | **Basic dashboards/reporting** over existing data (counts, rollups, simple saved views) | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | S–M | Closes a visible parity gap without bloat |
-| 9 | **One-command / few-container self-host packaging hardening** | Turn "single file, no build chain" into a deployment moat against Plane/Huly's heavy, fragile self-host ([github.com](https://github.com/makeplane/plane/issues/8708), [news.ycombinator.com](https://news.ycombinator.com/item?id=41833902)). | S–M | Plane needs 7+ containers/~200 env lines; Huly needs ~10 services |
+| 1 | **Import path from common sources** (issues/pages + history + links) | Open | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | Export-only project/space JSON bundle, then dry-run import |
+| 2 | **Run replay artifact** (portable replay manifest over one run) | Open | Athena has the event feed, lineage, fork coordinates, and determinism contract; the missing step is a single bundle agents can hand off or audit. | `GET /activity/runs/{id}/replay` or `athena-export-run` |
+| 3 | **Agent administration V2** | Partial V1 shipped | Delegation + contributor model exists; admin-controlled scope/team access is the next teammate primitive. | Admin view/API for agent users, scopes, project/space access, and delegation policy |
+| 4 | **API safety for agent loops** | Partial V1 shipped | Idempotency exists; agents still need bounded request rates, efficient bulk actions, and update-race protection. | Per-token rate limiting first |
+| 5 | **One-command / few-container self-host packaging hardening** | Partial V1 shipped | `athena-doctor` improves deploy preflight; packaging/retention can turn single-file SQLite into a self-hosting moat. | Systemd/env example plus retained/off-host backup helper |
+| 6 | **Deterministic run replay + lineage over the activity log** | Shipped V1 | `/events`, run lineage, replay-safe fields, and determinism docs now exist. | Deepen via replay artifact above |
+| 7 | **Run forking** | Shipped V1 | Fork contract endpoint, headers, MCP parity, and web copy blocks now exist. | Use it from replay/import workflows |
+| 8 | **Agent-as-teammate: delegation + contributor model** | Shipped V1 | Issues can be delegated to agent users while preserving assignee accountability. | Deepen via agent admin above |
+| 9 | **Free OIDC SSO (self-hosted, no enterprise gate)** | OIDC shipped; SAML/SCIM deferred | Basic OIDC closes the near-term self-host SSO gap. | Revisit SAML/SCIM only on concrete demand |
+| 10 | **Lean event-driven automation/rules** | Shipped V1 | Event feed, webhooks, and automation rules exist without a workflow-engine trap. | Keep rules lean; avoid Jira-style schemes |
+| 11 | **Coarse permissions parity** | Shipped V1 | Project/space visibility and membership gate read surfaces. | Decide on optional global read-auth mode before public exposure |
+| 12 | **Basic dashboards/reporting** | Open | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | Counts/rollups only after portability/replay work |
 
-**Sequencing rationale.** Items 1–3 are the differentiation core and build directly on assets Athena already has (scoped tokens, MCP, the activity log as event source). Items 4–5 are the migration gate. Items 6–9 are parity-and-polish that should not precede the differentiators.
+**Sequencing rationale.** The differentiation core has V1 coverage now: scoped
+tokens, MCP, event feed, webhooks, delegation, lineage, and forking. The next best
+work is to make Athena movable and auditable: export/import, replay artifacts, then
+agent-admin/API-safety/packaging follow-ups.
 
 ---
 
