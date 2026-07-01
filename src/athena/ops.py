@@ -10,6 +10,7 @@ import tempfile
 
 from athena.core import db
 from athena.core.backup import backup_database, restore_database
+from athena.core.portability import export_database
 
 
 def _required_migrations() -> list[str]:
@@ -165,6 +166,48 @@ def backup_main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Backed up {args.db_path} to {backup}")
+    return 0
+
+
+def export_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-export",
+        description="Export one Athena project or space to a portable JSON bundle.",
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "kind",
+        choices=("project", "space"),
+        help="container kind to export",
+    )
+    parser.add_argument("target_id", type=int, help="project or space id to export")
+    parser.add_argument("bundle_path", type=Path, help="Destination JSON bundle path")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace an existing bundle path",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        bundle = export_database(
+            args.db_path,
+            args.kind,
+            args.target_id,
+            args.bundle_path,
+            overwrite=args.overwrite,
+        )
+    except (
+        FileNotFoundError,
+        FileExistsError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-export: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Exported {args.kind} {args.target_id} from {args.db_path} to {bundle}")
     return 0
 
 

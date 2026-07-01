@@ -131,6 +131,23 @@ The browser activity feed at `/aegis/activity` includes a CSV download for the
 current audit filters. The export uses the same actor, event, kind, target, and
 search filters as the page and is capped to the newest 1000 matching rows.
 
+## Selective Portability Export
+
+Use `athena-export` when you need a portable JSON bundle for one project or one
+space without taking a whole-database snapshot:
+
+```bash
+athena-export /var/lib/athena/athena.db project 1 /exports/project-1.json
+athena-export /var/lib/athena/athena.db space 1 /exports/space-1.json
+```
+
+The V1 bundle is export-only. It includes the selected container, its child
+issues or pages, page versions where applicable, labels, links, membership rows,
+comments, activity rows, and an attachment manifest. It does not include raw
+attachment blobs, password hashes, API tokens, sessions, OIDC transient state,
+idempotency records, or webhook secrets. Existing export files are not replaced
+unless `--overwrite` is passed.
+
 ## Browser Password Management
 
 Signed-in users can change their own browser password at `/settings/password`.
