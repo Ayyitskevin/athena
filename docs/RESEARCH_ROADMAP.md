@@ -1,7 +1,8 @@
 # Athena — Research Report & Implementation Roadmap
 
-> **Status:** Research deliverable. No product code is changed by this document.
+> **Status:** Historical research deliverable plus current-state reconciliation.
 > **Date:** 2026-06-26 · **Branch:** `claude/athena-research-roadmap`
+> **Reconciled:** 2026-06-30 against `main` through `8bd9a1c`.
 > **Scope:** What it would take to make Athena a serious, self-hosted, agent-native
 > alternative to Jira + Confluence — learning from them without cloning them.
 
@@ -16,29 +17,38 @@ about what Athena is missing, and §7/§11 are equally blunt about what it shoul
 
 ## 1. Executive Summary
 
-Athena today is a small, clean, genuinely API-first core: two modules (Aegis =
-issues, Mentor = docs) over one SQLite database, sharing auth, a unified FTS5
-search index, a cross-link resolver (`[[issue:N]]` / `[[page:N]]`), and an
-append-only audit log. Every write is attributable to a human or an agent through
-scoped bearer tokens. That shared-database, one-audit-trail, agent-as-first-class-actor
-foundation is the right bet and is already Athena's differentiator. **[Interpretation]**
+Athena is a small, clean, genuinely API-first core: two modules (Aegis = issues,
+Mentor = docs) over one SQLite database, sharing auth, a unified FTS5 search
+index, a cross-link resolver (`[[issue:N]]` / `[[page:N]]`), and an append-only
+audit/event log. Every write is attributable to a human or an agent through
+scoped bearer tokens. That shared-database, one-audit-trail,
+agent-as-first-class-actor foundation remains Athena's differentiator.
+**[Interpretation]**
 
-But Athena is not yet "serious." The gaps are not cosmetic — they are structural:
+This document began as a June 26 research snapshot. Many structural gaps it named
+have since landed: read visibility/membership, Markdown rendering with
+sanitization, attachments, webhooks/events, notifications, per-project statuses,
+issue hierarchy, sprints, saved filters, OIDC, idempotency, official MCP access,
+agent delegation, run lineage/forking, and deploy preflight checks. Treat the
+original "absent" lists below as historical context unless the 2026-06-30
+addendum or current code says otherwise. **[Fact, from code]**
 
-- **Reads are completely unauthenticated.** Every `GET` (issues, pages, projects,
-  activity feed, search) is public to anyone who can reach the process. There is
-  no read permission model and no per-space/per-project confidentiality. This is
-  fine for a single operator on localhost and disqualifying for anything else. **[Fact, from code]**
-- **Page and issue bodies are plain text.** `web/render.py` escapes the body,
-  linkifies cross-references, and converts newlines to `<br>`. There is **no
-  Markdown or rich-text rendering**. A Confluence alternative whose pages can't do
-  headings, lists, code blocks, or tables is not credible as a knowledge base. **[Fact, from code]**
-- **No notifications, no attachments, no event stream/webhooks.** An agent cannot
-  subscribe to "what changed"; a human is never told they were mentioned or
-  assigned; you cannot attach a file. **[Fact, from code]**
-- **The issue lifecycle is a hard-coded 3-state global enum** (`open / in_progress
-  / done`). No per-project statuses, no custom fields, no hierarchy (epics/subtasks),
-  no sprints. **[Fact, from code]**
+The current remaining gaps are narrower:
+
+- **Portability is still coarse.** Athena has whole-DB backup/restore and deploy
+  preflight, but no per-project/per-space JSON export or dry-run import. **[Fact]**
+- **Run replay is not yet a packaged artifact.** `/events`, lineage, and fork
+  coordinates exist, but there is no single replay manifest/bundle endpoint or CLI
+  that freezes a run for handoff, audit, or rehydration. **[Fact]**
+- **Agent/team administration is still basic.** Agent users can be delegated issues,
+  but there is no dedicated admin surface for agent scope, allowed projects/spaces,
+  or delegation policy. **[Fact]**
+- **API ergonomics are partial.** Idempotency exists for POST retries; bulk
+  operations, per-token rate limiting, and ETag/`If-Match` concurrency are still
+  open. **[Fact]**
+- **Packaging and retention need hardening.** Athena's single-file posture is a
+  differentiator, but the repo does not yet ship a one-command production package
+  or backup retention/off-host helper. **[Fact + Recommendation]**
 
 The market context sharpens the opportunity. Atlassian killed Server (end of
 support **Feb 15, 2024**), pushing small self-hosters toward expensive Cloud
@@ -54,23 +64,22 @@ sprawl. It should be the *smallest system a solo operator and an AI fleet can ru
 forever*: one file, one API, one audit log, issues and docs that cross-link and
 search together, and an agent surface (webhooks + MCP + idempotent bulk API) that
 is **native, not bolted on**. The next six months of work should buy *substance*
-(read authz, Markdown, attachments, an event stream, configurable-but-simple
-statuses, portability) before any more UI polish.
+(portability, replay bundles, agent/team administration, API safety, packaging)
+before any more UI polish.
 
-**Build next (§12):** (1) Markdown + sanitized rendering, (2) attachments,
-(3) webhooks/event feed, (4) a read-authorization decision and implementation,
-(5) API ergonomics (idempotency keys + cursor pagination) — then the MCP server
-and notifications, which both depend on the event feed.
+**Build next (§12):** (1) per-project/per-space export, (2) dry-run import, (3) run
+replay manifest/bundle, (4) agent administration/policy, (5) API safety follow-ups
+(rate limiting, bulk endpoints, ETags) and self-host packaging.
 
 ---
 
 ## 2. Current Athena Baseline
 
-This section is derived entirely from reading the repository at the research
-branch (no external sources). It is the ground truth the rest of the document
-builds on.
+This section was derived entirely from reading the repository at the original
+research branch (no external sources). It is preserved as a historical baseline,
+not the current source of truth. See §2.7 for the 2026-06-30 implementation delta.
 
-### 2.1 Stack & shape **[Fact]**
+### 2.1 Stack & shape **[Historical Fact]**
 - Python 3.12+, FastAPI, Jinja2, HTMX, SQLite (WAL), FTS5. No JS build chain
   (`static/htmx.min.js`, hand-written `confirm.js`). Dependencies are deliberately
   tiny: `fastapi, jinja2, python-multipart, uvicorn[standard]` (+ `pytest, httpx,
@@ -82,7 +91,7 @@ builds on.
   synchronizer-token CSRF on browser writes, optional `Strict-Transport-Security`.
 - ~50 test files under `tests/`; CI is `.github/workflows/ci.yml` (ruff + pytest).
 
-### 2.2 Data model (20 migrations) **[Fact]**
+### 2.2 Data model (20 migrations) **[Historical Fact]**
 `users` (email, name, password_hash, `role`), `issues` (title, body, status,
 priority, created_by, assignee_id, project_id, project_seq), `api_tokens`
 (token_hash, `scopes`), `sessions` (csrf_token), `comments` (issue-only),
@@ -92,7 +101,7 @@ priority, created_by, assignee_id, project_id, project_seq), `api_tokens`
 over issues+pages), `issue_links` (typed `blocks`/`relates` dependencies),
 `activity` (append-only audit).
 
-### 2.3 Aegis (issues) **[Fact]**
+### 2.3 Aegis (issues) **[Historical Fact]**
 - **Lifecycle is fixed and global:** `STATUSES = ("open","in_progress","done")`,
   `PRIORITIES = ("low","medium","high","urgent")` — hard-coded constants in
   `aegis/issues.py`, validated at the API/web boundary. Boards (`/aegis/boards`)
@@ -108,15 +117,16 @@ over issues+pages), `issue_links` (typed `blocks`/`relates` dependencies),
   Project/space *deletes* are creator-only. There is no project-level role or
   membership; "any authenticated non-viewer" can create issues, labels, projects.
 
-### 2.4 Mentor (docs) **[Fact]**
+### 2.4 Mentor (docs) **[Historical Fact]**
 - Spaces (short key like `ENG`), a page tree (`parent_id` must be in the same
   space; cycle-checked on move), full version history with restore, backlinks.
 - **Edits follow a shared-wiki model:** any authenticated non-viewer may create/
   edit/move pages; only the space creator may delete a space, and a non-empty
   space/page refuses deletion (no silent cascade).
-- **No page comments, no page labels, no attachments.** Page bodies are plain text.
+- **At this snapshot:** page comments, page labels, attachments, and Markdown body
+  rendering had not landed yet.
 
-### 2.5 Core (the shared spine) **[Fact]**
+### 2.5 Core (the shared spine) **[Historical Fact]**
 - **Identity:** bearer token (SHA-256 hashed, scoped) is primary; `X-Athena-Actor`
   header is an off-by-default local-trust fallback used only for headless bootstrap.
 - **Roles (coarse, global):** `admin` / `member` / `viewer`. Last admin can't be
@@ -135,14 +145,31 @@ over issues+pages), `issue_links` (typed `blocks`/`relates` dependencies),
 - **Ops:** `athena-backup` / `athena-restore` CLIs (SQLite online-backup API; refuse
   to clobber without `--overwrite`/`--force`; clean up `-wal`/`-shm` sidecars).
 
-### 2.6 What is *absent* (the blunt list) **[Fact, confirmed by code search]**
-No read authorization · no per-space/project visibility or membership · no
-Markdown/rich text · no attachments · no notifications/watching/@mentions · no
-webhooks or outbound event stream · no MCP server · no custom statuses/workflows ·
-no custom fields · no issue hierarchy (epics/subtasks) · no sprints/cycles · no
-saved filters or query language (no JQL-equivalent) · no page comments/labels · no
-SSO/OIDC/SCIM · no granular (per-space/project) import/export · no bulk API · no
-rate limiting per token · no idempotency keys.
+### 2.6 What was *absent* on 2026-06-26 **[Historical Fact]**
+The original code-read found no read authorization, no per-space/project visibility
+or membership, no Markdown/rich text, no attachments, no notifications/watching/
+mentions, no webhooks or outbound event stream, no MCP server, no custom statuses/
+workflows, no issue hierarchy, no sprints/cycles, no saved filters, no page
+comments/labels, no SSO/OIDC/SCIM, no granular import/export, no bulk API, no
+per-token rate limiting, and no idempotency keys. Many of those gaps are now closed.
+
+### 2.7 2026-06-30 implementation delta **[Fact, from current main]**
+- Database migrations have advanced through `0040_activity_forked_from_event.sql`.
+- Bodies render through Markdown-it with raw HTML disabled and `nh3` sanitization,
+  while preserving cross-links and mentions.
+- Attachments exist for issues and pages with randomized stored names, size caps,
+  authenticated downloads, deletes, and activity records.
+- Project/space visibility and membership gate reads across detail pages, lists,
+  search, activity, notifications, cross-links, and attachments.
+- `/events`, webhooks, notifications/watching/mentions, automation rules, and an
+  official optional MCP server are present.
+- Aegis has per-project statuses, issue hierarchy, dependencies, sprints, labels,
+  saved filters, activity CSV export, idempotent POST replay, and agent delegation.
+- Mentor has page versions, labels, comments, attachments, backlinks, and visibility.
+- Auth includes local sessions, scoped bearer tokens, and OIDC login/provisioning.
+- Operations include `athena-backup`, `athena-restore`, and `athena-doctor`.
+- Run work includes `X-Athena-Run`, parent-run and fork headers, `/events?run_id=`,
+  run lineage pages, a fork contract endpoint, and a documented determinism contract.
 
 ---
 
@@ -418,33 +445,27 @@ premature. §10–§12 sequence this.
 
 ## 8. Architecture Gaps
 
-Ordered by how much they block "serious, multi-actor, agent-native." **[Interpretation over Fact]**
+Ordered by how much they still block "serious, multi-actor, agent-native" after
+the June 30 merge wave. **[Interpretation over Fact]**
 
-1. **No read authorization (highest-leverage gap).** Reads bypass auth entirely.
-   Without a `read_actor` dependency and a visibility model, Athena cannot host
-   anything confidential or serve more than one trust domain. Foundational for
-   *everything* below it.
-2. **No outbound event stream / webhooks.** Agents can only poll. This blocks
-   notifications, MCP "subscribe," and any reactive automation. The `activity`
-   table is already the natural event source — emit from there.
-3. **Plain-text bodies.** No Markdown/sanitized HTML. Mentor is not a credible KB
-   and Aegis descriptions are impoverished. Pure presentation-layer fix + a
-   sanitizer; high value, low structural risk.
-4. **No attachments.** Table stakes for both issues and pages; needs a storage
-   abstraction (filesystem now, pluggable later) and strict validation.
-5. **Rigid lifecycle.** Hard-coded 3 statuses limits real workflows; needs
-   per-project status sets (kept deliberately simple).
-6. **No issue hierarchy.** No epic/parent rollup; limits planning. A single
-   `issues.parent_id` (+ guards) is a small change with big payoff.
-7. **No query/saved-filter layer.** `list_issues` filters are fixed kwargs; agents
-   and humans both need composable queries and saved views (a lean JQL-lite).
-8. **Search is good but not deployable-scale aware.** FTS5 is great for one
-   operator; phrase/field search, ranking tuning, and result pagination in `/find`
-   are missing. (Do **not** add Elasticsearch.)
-9. **API ergonomics for agents:** no idempotency keys, no cursor pagination on
-   list endpoints, no ETags/optimistic concurrency, no bulk endpoints.
-10. **Portability is coarse:** only whole-DB backup/restore. No per-space/project
-    JSON export/import — needed for migration *in* (Notion/Markdown) and *out*.
+1. **Portability is coarse.** Whole-DB backup/restore exists, but there is no
+   selective per-project/per-space JSON export or dry-run import. This is now the
+   biggest migration and data-ownership blocker.
+2. **Replay bundles are incomplete.** The event feed, run lineage, and fork
+   contract exist; operators still need a single replay manifest/bundle that
+   freezes one run's replay-safe facts plus lineage metadata for handoff and audit.
+3. **Agent administration is basic.** Agent users can act through tokens and be
+   delegated issues, but there is no dedicated admin/policy layer for allowed
+   projects/spaces, delegation constraints, or agent roster review.
+4. **API safety is partial.** Idempotent POST replay exists. Remaining agent
+   ergonomics are per-token rate limiting, bulk endpoints, cursor coverage on
+   list endpoints that still lack it, and ETag/`If-Match` concurrency.
+5. **Packaging/retention is still manual.** `athena-doctor` validates deploy
+   prerequisites, but a production install path and retained/off-host backup
+   helper would strengthen Athena's "simple to self-host" moat.
+6. **Search can still improve without new infrastructure.** FTS5 is enough, but
+   phrase/field search, ranking tuning, and result pagination in `/find` remain
+   useful. Do **not** add Elasticsearch.
 
 ---
 
@@ -452,27 +473,26 @@ Ordered by how much they block "serious, multi-actor, agent-native." **[Interpre
 
 **[Fact, from code]** unless marked.
 
-- **Authorization model is coarse and read-blind.** Global roles only; no per-
-  resource ownership beyond creator-or-assignee (issues), creator (project/space
-  delete), author (comments). **Reads are unauthenticated.** **[Recommendation]**
-  Add `read_actor` + a config gate (`ATHENA_REQUIRE_AUTH_READS`) and a visibility
-  column before any exposed deployment.
-- **No per-token rate limiting** and **no idempotency** — an agent loop can hammer
-  or double-write. Add a simple per-token limiter and `Idempotency-Key` support.
-- **No SSO/OIDC/SCIM.** Acceptable for now (single operator), but the *only* human
-  auth is local password + session. Flag OIDC as a deferred enterprise item.
+- **Authorization exists but is public-by-default.** Project/space visibility and
+  membership now gate reads, but new containers default to public and there is no
+  global "all reads require auth" deployment mode. This is acceptable for local/
+  tailnet dogfood, but should be a deliberate hosting decision.
+- **No per-token rate limiting** — an agent loop can still hammer the service.
+  `Idempotency-Key` replay exists for POST retry safety, but rate limits remain open.
+- **OIDC exists; SAML/SCIM do not.** Basic OIDC login/provisioning closes the near-
+  term SSO gap. SAML and SCIM remain deferred enterprise items.
 - **Secrets & transport** are handled sensibly (env, HttpOnly cookies, CSRF, CSP,
   `ATHENA_COOKIE_SECURE`, body limits). Good baseline. **[Fact]**
 - **Audit coverage is strong but read-blind:** writes are well-recorded; there is no
   record of *reads/exports* (often required in regulated contexts). Lower priority.
-- **Backups are manual.** `athena-backup` exists; there's no scheduled/retained/
-  off-host backup guidance beyond the runbook. **[Recommendation]** Document a cron
-  + offsite pattern; consider a `--retention` helper.
-- **Attachment security (when built):** enforce size caps, content-type allowlist,
-  store outside web root, randomized stored names, stream downloads with correct
-  `Content-Disposition`, never trust client filename for paths.
-- **Sanitization (when Markdown lands):** server-side HTML sanitize is mandatory;
-  keep CSP strict; never render raw HTML from user bodies.
+- **Backups are still operator-driven.** `athena-backup`, `athena-restore`, and
+  `athena-doctor` exist; scheduled/retained/off-host backup automation is still
+  documentation or helper-script work.
+- **Attachment security is implemented but should stay watched.** Files live under
+  a configured directory with randomized stored names and authenticated downloads;
+  future import/export work must preserve that invariant.
+- **Markdown sanitization is implemented.** Keep render-on-read, raw HTML disabled,
+  `nh3` sanitization, and the strict CSP as non-negotiable invariants.
 
 ---
 
@@ -481,24 +501,22 @@ Ordered by how much they block "serious, multi-actor, agent-native." **[Interpre
 Six themes, sequenced so each unblocks the next. Each maps to several §11 slices.
 **[Recommendation]**
 
-- **Theme A — Trustworthy for >1 actor (now).** Read authorization + config gate;
-  coarse per-space/project visibility; (later) membership. *Unblocks any non-local
-  deployment.*
-- **Theme B — Credible Mentor (now).** Markdown + sanitized rendering; attachments;
-  page comments. *Makes the KB real.*
-- **Theme C — Agent-native spine (now/next).** Webhooks/event feed from `activity`;
-  idempotency keys + cursor pagination + bulk endpoints; then the **MCP server**.
-  *The signature differentiator.*
-- **Theme D — Flexible-but-lean Aegis (next).** Per-project status sets; issue
-  hierarchy (parent/epic-lite); saved filters + query-lite.
-- **Theme E — Portability (next).** Per-space/project JSON export+import; then
-  migration importers (Markdown/Notion).
-- **Theme F — Notifications (after B+C).** Watching + @mentions + an inbox, driven
-  by the event feed.
+- **Theme A — Data ownership and migration (now).** Per-space/project JSON export,
+  then dry-run import, then source-specific importers.
+- **Theme B — Replayable agent substrate (now).** Package run replay manifests and
+  make log/fork contracts easy to hand off between agents.
+- **Theme C — Agent administration (now/next).** Turn agent users, delegation,
+  scopes, and project/space access into an inspectable admin workflow.
+- **Theme D — API safety and scale (next).** Rate limits, bulk operations, ETags,
+  cursor coverage, and search pagination.
+- **Theme E — Self-host packaging (next).** Retained/off-host backup helper,
+  documented systemd/env layout, and a one-command/few-command install path.
+- **Theme F — Product polish (later).** Dashboards/reporting, richer query-lite,
+  and UX refinements after the data/replay/admin foundation is solid.
 
-**Deferred / risky / over-scoped:** SSO/OIDC/SCIM; real-time collaborative editing;
-sprints + burndown analytics; custom-field zoo; a plugin platform; mobile apps;
-any non-SQLite search backend. Revisit only on concrete demand.
+**Deferred / risky / over-scoped:** SAML/SCIM; real-time collaborative editing;
+burndown analytics; custom-field zoo; a plugin platform; mobile apps; any
+non-SQLite search backend. Revisit only on concrete demand.
 
 ---
 
@@ -510,6 +528,11 @@ risk** (1–10). Files reference real modules.
 
 > **Conventions:** *Size* S≈<150 LOC, M≈150–400, L≈400+. *Risk* = blast radius +
 > reversibility.
+
+> **2026-06-30 status note:** This ranked backlog is preserved because it explains
+> the original build sequence. The following items have V1 implementations on
+> `main`: S1, S2, S3, S4, S5, S6, S7, S8, S9, S12, and S15's OIDC subset. Treat S10
+> plus the new replay/agent-admin/API-safety follow-ups in §12 as the live queue.
 
 ### S1 — Markdown rendering + server-side sanitization · **Score 9**
 - **Why:** Plain-text bodies are the single biggest credibility gap for Mentor and
@@ -734,22 +757,24 @@ risk** (1–10). Files reference real modules.
 
 ## 12. Top 5 Immediate Next Tasks
 
-Chosen for **high value, low regret, small PR, minimal dependencies** — and to buy
-*substance before polish*.
+Chosen after reconciling the June 26 backlog against current `main` on 2026-06-30.
 
-1. **S1 — Markdown + sanitized rendering.** Biggest credibility jump for the least
-   structural risk; no schema; unblocks "Mentor is a real KB." *Start here.*
-2. **S2 — Attachments.** Table stakes for both modules; self-contained; high user value.
-3. **S3 — Event feed + webhooks.** The agent-native backbone; turns the existing
-   audit log into a subscribable stream and unblocks notifications (S8) and MCP (S5).
-4. **S4 — Read authorization + visibility (with a config gate).** Security-critical;
-   the prerequisite for ever exposing Athena beyond localhost and for scoping events/
-   search. Needs one product decision first (see §13) — raise it, then implement.
-5. **S12 — API ergonomics (idempotency + cursor pagination).** Small, broad-benefit
-   hardening that makes every agent integration safe and fast; pairs naturally with S3.
+1. **S10a — Export-only portability V1.** Add `athena-export` for one project or
+   space, producing a stable JSON bundle with content, versions/history, labels,
+   links, and an attachment manifest. Keep import out of the first PR.
+2. **S10b — Dry-run import.** Read the V1 bundle, report conflicts/missing actors/
+   missing attachment blobs, and prove idempotent planning before any writes.
+3. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
+   replay-safe events, parent/fork coordinates, and determinism metadata as a
+   portable handoff/audit artifact.
+4. **Agent administration V2.** Add an admin-facing way to review agent users,
+   token scopes, project/space access, and delegation policy. Do not build a
+   workflow engine.
+5. **API safety follow-up.** Add per-token rate limiting first, then bulk endpoints
+   and ETag/`If-Match` where update races matter.
 
-*Immediate follow-ons:* **S5 (MCP server)** and **S8 (notifications)** — both depend
-on S3 and become the visible payoff of the agent-native spine.
+*Immediate follow-ons:* backup retention/off-host guidance, one-command packaging,
+and `/find` pagination/field search.
 
 ---
 
@@ -760,22 +785,21 @@ These change *what* gets built; they're for Kevin, not for an agent to assume.
 1. **Audience:** Is Athena strictly *solo operator + AI fleet on a tailnet*, or must
    it serve *multiple humans/teams* soon? This sets how much of the permission model
    (S4 + membership) to build now vs. defer.
-2. **Reads:** Should reads stay open by design on a trusted tailnet, or be gated
-   behind auth/visibility? (Recommend: ship the gate **off** by default to preserve
-   current dev behavior, **on** for any exposed deployment.)
-3. **Markdown:** Which flavor (CommonMark + tables/code via `markdown-it-py`?), and
-   which sanitizer (`nh3`/`bleach`)? Render-on-read (simple, current) or store
-   sanitized HTML (faster reads, migration burden)? (Recommend: render-on-read.)
-4. **Workflow depth:** Confirm per-project **status sets only** (no transitions/
-   guards). Is even that needed yet, or is the global 3-state fine for now?
-5. **Attachment storage:** Filesystem dir now (recommended), with a pluggable
-   interface for S3-compatible later? Any max size / type policy?
-6. **Agent surface priority:** Build the **MCP server** now, or webhooks-first and
-   MCP after? (Recommend: webhooks/event feed first — it unblocks more.)
+2. **Reads:** Project/space visibility exists and defaults public. Should there be a
+   deployment-wide `ATHENA_REQUIRE_AUTH_READS` mode, or is public-by-default on a
+   trusted tailnet the intended long-term posture?
+3. **Markdown:** Decided for now: render-on-read, CommonMark via `markdown-it-py`,
+   raw HTML disabled, `nh3` sanitizer.
+4. **Workflow depth:** Per-project status sets exist. Confirm we continue to reject
+   transitions/guards/workflow schemes.
+5. **Attachment storage:** Filesystem storage exists. Decide whether import/export
+   bundles include blobs, an attachment manifest only, or both modes.
+6. **Agent surface priority:** MCP, event feed, webhooks, delegation, lineage, and
+   forking exist. Next choice is replay bundle first vs. agent-admin policy first.
 7. **Migration sources:** What must Athena import first — ORACLE Markdown → Mentor,
    Notion tasks → Aegis, or Jira/Confluence exports? This orders S10's importers.
 8. **Notifications channel:** In-app inbox only (recommended first), or email too?
-9. **SSO/OIDC:** Any near-term need, or firmly deferred?
+9. **SSO/OIDC:** OIDC exists. Any near-term need for SAML/SCIM, or firmly deferred?
 10. **Hosting timeline:** When (if) does Athena move off the laptop to the `flow`
     node? That date is what makes S4 (and rate limiting/backups) urgent vs. nice-to-have.
 
