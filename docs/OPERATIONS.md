@@ -141,12 +141,27 @@ athena-export /var/lib/athena/athena.db project 1 /exports/project-1.json
 athena-export /var/lib/athena/athena.db space 1 /exports/space-1.json
 ```
 
-The V1 bundle is export-only. It includes the selected container, its child
-issues or pages, page versions where applicable, labels, links, membership rows,
-comments, activity rows, and an attachment manifest. It does not include raw
-attachment blobs, password hashes, API tokens, sessions, OIDC transient state,
-idempotency records, or webhook secrets. Existing export files are not replaced
-unless `--overwrite` is passed.
+The V1 bundle includes the selected container, its child issues or pages, page
+versions where applicable, labels, links, membership rows, comments, activity
+rows, and an attachment manifest. It does not include raw attachment blobs,
+password hashes, API tokens, sessions, OIDC transient state, idempotency records,
+or webhook secrets. Existing export files are not replaced unless `--overwrite`
+is passed.
+
+Use `athena-import-dry-run` before planning a selective import into another
+Athena database:
+
+```bash
+athena-import-dry-run /var/lib/athena/athena.db /exports/project-1.json
+athena-import-dry-run /var/lib/athena/athena.db /exports/project-1.json --json
+```
+
+The dry-run is read-only. It validates the bundle schema, checks that referenced
+users can be mapped by email in the target database, detects project name/key or
+space key conflicts, reports labels that would be created or reused, summarizes
+row counts, and warns about external links or attachment manifests that need a
+future import plan. A blocked dry-run exits nonzero; there is still no mutating
+selective import command in V1.
 
 ## Browser Password Management
 
