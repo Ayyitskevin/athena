@@ -15,6 +15,8 @@ import sqlite3
 from typing import Any, Iterable
 
 SCHEMA = "athena.portability.v1"
+MANIFEST_SCHEMA = "athena.import_manifest.v1"
+ATTACHMENT_POLICIES = ("skip", "require-blobs")
 
 _PROJECT_COLS = (
     "id, name, key, description, created_by, created_at, issue_counter, visibility"
@@ -63,17 +65,7 @@ def export_database(
     finally:
         conn.close()
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(bundle, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(destination)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
+    _write_json_file(destination, bundle)
     return destination
 
 
@@ -98,6 +90,44 @@ def dry_run_import_database(db_path: str | Path, bundle_path: str | Path) -> dic
         conn.close()
 
 
+def write_import_manifest_database(
+    db_path: str | Path,
+    bundle_path: str | Path,
+    manifest_path: str | Path,
+    *,
+    attachment_policy: str = "skip",
+    overwrite: bool = False,
+) -> dict:
+    """Write an import replay manifest and return the manifest."""
+    database = Path(db_path)
+    bundle_file = Path(bundle_path)
+    destination = Path(manifest_path)
+    if not database.exists():
+        raise FileNotFoundError(f"database path does not exist: {database}")
+    if not database.is_file():
+        raise FileNotFoundError(f"database path is not a file: {database}")
+    if not bundle_file.exists():
+        raise FileNotFoundError(f"bundle path does not exist: {bundle_file}")
+    if not bundle_file.is_file():
+        raise FileNotFoundError(f"bundle path is not a file: {bundle_file}")
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"manifest path already exists: {destination}")
+
+    bundle = _load_bundle(bundle_file)
+    conn = _connect_readonly(database)
+    try:
+        manifest = build_import_manifest(
+            conn,
+            bundle,
+            attachment_policy=attachment_policy,
+        )
+    finally:
+        conn.close()
+
+    _write_json_file(destination, manifest)
+    return manifest
+
+
 def export_bundle(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
     """Return the in-memory export bundle for one project or space."""
     if kind == "project":
@@ -105,6 +135,50 @@ def export_bundle(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
     if kind == "space":
         return _space_bundle(conn, target_id)
     raise ValueError("export kind must be 'project' or 'space'")
+
+
+def build_import_manifest(
+    conn: sqlite3.Connection,
+    bundle: dict,
+    *,
+    attachment_policy: str = "skip",
+) -> dict:
+    """Build a replay manifest for a future selective import."""
+    if attachment_policy not in ATTACHMENT_POLICIES:
+        raise ValueError(
+            "attachment_policy must be one of: " + ", ".join(ATTACHMENT_POLICIES)
+        )
+    bundle = _validate_bundle(bundle)
+    dry_run = dry_run_import_bundle(conn, bundle)
+    policy = _attachment_policy(bundle["attachments"], attachment_policy)
+    manifest_conflicts = []
+    if policy["status"] == "blocked":
+        manifest_conflicts.append(
+            {
+                "code": "attachment_blobs_required",
+                "message": "attachment_policy=require-blobs blocks bundles with attachment manifests because V1 bundles do not include raw blobs",
+            }
+        )
+
+    id_map = _import_id_map(conn, bundle)
+    conflicts = [*dry_run["conflicts"], *manifest_conflicts]
+    return {
+        "schema": MANIFEST_SCHEMA,
+        "schema_version": 1,
+        "bundle_schema": SCHEMA,
+        "bundle_schema_version": bundle["schema_version"],
+        "kind": bundle["kind"],
+        "root_id": bundle["root_id"],
+        "generated_at": _utc_now(),
+        "ok": not conflicts,
+        "status": "ready" if not conflicts else "blocked",
+        "attachment_policy": policy,
+        "dry_run": dry_run,
+        "conflicts": conflicts,
+        "warnings": dry_run["warnings"],
+        "id_map": id_map,
+        "operations": _import_operations(bundle, policy, id_map),
+    }
 
 
 def dry_run_import_bundle(conn: sqlite3.Connection, bundle: dict) -> dict:
@@ -125,6 +199,20 @@ def _load_bundle(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError("bundle must be a JSON object")
     return data
+
+
+def _write_json_file(destination: Path, data: dict) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
@@ -414,6 +502,208 @@ def _space_import_report(conn: sqlite3.Connection, bundle: dict) -> dict:
     _warn_external_cross_links(report, bundle["cross_links"], {"page": page_ids})
     _warn_attachment_manifests(report, bundle["attachments"])
     return _finish_import_report(report)
+
+
+def _import_id_map(conn: sqlite3.Connection, bundle: dict) -> dict:
+    mapped = {
+        "users": _user_id_map(conn, bundle["users"]),
+        "labels": _label_id_map(conn, bundle["labels"]),
+        "attachments": _attachment_id_map(bundle["attachments"]),
+    }
+    if bundle["kind"] == "project":
+        mapped |= {
+            "project": _create_id_ref("project", bundle["project"]["id"]),
+            "project_statuses": _create_id_refs(
+                "project_status", bundle["statuses"]
+            ),
+            "sprints": _create_id_refs("sprint", bundle["sprints"]),
+            "issues": _create_id_refs("issue", bundle["issues"]),
+            "comments": _create_id_refs("comment", bundle["comments"]),
+            "activity": _create_id_refs("activity", bundle["activity"]),
+        }
+    else:
+        mapped |= {
+            "space": _create_id_ref("space", bundle["space"]["id"]),
+            "pages": _create_id_refs("page", bundle["pages"]),
+            "page_versions": _create_id_refs("page_version", bundle["versions"]),
+            "page_comments": _create_id_refs("page_comment", bundle["comments"]),
+            "activity": _create_id_refs("activity", bundle["activity"]),
+        }
+    return mapped
+
+
+def _user_id_map(conn: sqlite3.Connection, users: list[dict]) -> list[dict]:
+    rows = []
+    for user in users:
+        found = _one(
+            conn,
+            "SELECT id, email FROM users WHERE email = ?",
+            (user["email"],),
+        )
+        rows.append(
+            {
+                "source_id": user["id"],
+                "source_email": user["email"],
+                "action": "reuse" if found else "missing",
+                "target_id": found["id"] if found else None,
+            }
+        )
+    return rows
+
+
+def _label_id_map(conn: sqlite3.Connection, labels: list[dict]) -> list[dict]:
+    rows = []
+    for label in labels:
+        found = _one(
+            conn,
+            "SELECT id, name FROM labels WHERE name = ?",
+            (label["name"],),
+        )
+        row = {
+            "source_id": label["id"],
+            "name": label["name"],
+            "color": label["color"],
+            "action": "reuse" if found else "create",
+            "target_id": found["id"] if found else None,
+        }
+        if found is None:
+            row["target_ref"] = _target_ref("label", label["id"])
+        rows.append(row)
+    return rows
+
+
+def _attachment_id_map(attachments: list[dict]) -> list[dict]:
+    return [
+        {
+            "source_id": attachment["id"],
+            "source_target_kind": attachment["target_kind"],
+            "source_target_id": attachment["target_id"],
+            "filename": attachment["filename"],
+            "action": "policy-controlled",
+            "target_ref": _target_ref("attachment", attachment["id"]),
+        }
+        for attachment in attachments
+    ]
+
+
+def _create_id_refs(kind: str, rows: list[dict]) -> list[dict]:
+    return [_create_id_ref(kind, row["id"]) for row in rows]
+
+
+def _create_id_ref(kind: str, source_id: int) -> dict:
+    return {
+        "source_id": source_id,
+        "action": "create",
+        "target_ref": _target_ref(kind, source_id),
+    }
+
+
+def _target_ref(kind: str, source_id: int) -> str:
+    return f"{kind}:{source_id}"
+
+
+def _attachment_policy(attachments: list[dict], policy: str) -> dict:
+    if policy == "require-blobs" and attachments:
+        return {
+            "mode": policy,
+            "status": "blocked",
+            "attachment_count": len(attachments),
+            "replay_action": "require_external_blobs",
+        }
+    return {
+        "mode": policy,
+        "status": "ready",
+        "attachment_count": len(attachments),
+        "replay_action": "skip" if policy == "skip" else "none",
+    }
+
+
+def _import_operations(bundle: dict, policy: dict, id_map: dict) -> list[dict]:
+    if bundle["kind"] == "project":
+        operations = _project_import_operations(bundle, id_map)
+    else:
+        operations = _space_import_operations(bundle, id_map)
+    operations.append(
+        {
+            "op": "apply_attachment_policy",
+            "policy": policy["mode"],
+            "action": policy["replay_action"],
+            "count": policy["attachment_count"],
+        }
+    )
+    return operations
+
+
+def _project_import_operations(bundle: dict, id_map: dict) -> list[dict]:
+    return [
+        {
+            "op": "map_users",
+            "reuse": _count_actions(id_map["users"], "reuse"),
+            "missing": _count_actions(id_map["users"], "missing"),
+        },
+        {
+            "op": "map_labels",
+            "reuse": _count_actions(id_map["labels"], "reuse"),
+            "create": _count_actions(id_map["labels"], "create"),
+        },
+        {
+            "op": "create_labels",
+            "count": _count_actions(id_map["labels"], "create"),
+        },
+        {
+            "op": "create_project",
+            "source_id": bundle["project"]["id"],
+            "target_ref": id_map["project"]["target_ref"],
+        },
+        {"op": "create_project_statuses", "count": len(bundle["statuses"])},
+        {"op": "create_sprints", "count": len(bundle["sprints"])},
+        {"op": "create_issues", "count": len(bundle["issues"])},
+        {"op": "create_project_members", "count": len(bundle["members"])},
+        {"op": "create_comments", "count": len(bundle["comments"])},
+        {
+            "op": "create_issue_contributors",
+            "count": len(bundle["contributors"]),
+        },
+        {"op": "create_issue_links", "count": len(bundle["issue_links"])},
+        {"op": "create_issue_labels", "count": len(bundle["label_links"])},
+        {"op": "create_cross_links", "count": len(bundle["cross_links"])},
+        {"op": "create_activity_events", "count": len(bundle["activity"])},
+    ]
+
+
+def _space_import_operations(bundle: dict, id_map: dict) -> list[dict]:
+    return [
+        {
+            "op": "map_users",
+            "reuse": _count_actions(id_map["users"], "reuse"),
+            "missing": _count_actions(id_map["users"], "missing"),
+        },
+        {
+            "op": "map_labels",
+            "reuse": _count_actions(id_map["labels"], "reuse"),
+            "create": _count_actions(id_map["labels"], "create"),
+        },
+        {
+            "op": "create_labels",
+            "count": _count_actions(id_map["labels"], "create"),
+        },
+        {
+            "op": "create_space",
+            "source_id": bundle["space"]["id"],
+            "target_ref": id_map["space"]["target_ref"],
+        },
+        {"op": "create_pages", "count": len(bundle["pages"])},
+        {"op": "create_page_versions", "count": len(bundle["versions"])},
+        {"op": "create_space_members", "count": len(bundle["members"])},
+        {"op": "create_page_comments", "count": len(bundle["comments"])},
+        {"op": "create_page_labels", "count": len(bundle["label_links"])},
+        {"op": "create_cross_links", "count": len(bundle["cross_links"])},
+        {"op": "create_activity_events", "count": len(bundle["activity"])},
+    ]
+
+
+def _count_actions(rows: list[dict], action: str) -> int:
+    return sum(1 for row in rows if row["action"] == action)
 
 
 def _base_bundle(kind: str, target_id: int) -> dict:
