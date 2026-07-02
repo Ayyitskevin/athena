@@ -448,11 +448,12 @@ premature. §10–§12 sequence this.
 Ordered by how much they still block "serious, multi-actor, agent-native" after
 the June 30 merge wave. **[Interpretation over Fact]**
 
-1. **Portability has a V1 core; source-specific import is next.** Whole-DB
-   backup/restore exists, and selective project/space export, dry-run, manifest,
-   and manifest-gated replay now cover Athena-to-Athena moves. The remaining
-   migration blocker is common-source import from incumbents, not the internal
-   portability substrate.
+1. **Portability has a V1 core; source-specific import needs real samples.**
+   Whole-DB backup/restore exists, selective project/space export, dry-run,
+   manifest, and manifest-gated replay cover Athena-to-Athena moves, and basic
+   Jira/Confluence JSON mappers can produce bundles. The remaining migration
+   blocker is hardening those mappers against real Atlassian exports, not the
+   internal portability substrate.
 2. **Run replay bundles have V1 coverage.** The event feed, run lineage, fork
    contract, `/activity/runs/{id}/replay`, and `athena-export-run` now freeze one
    run's replay-safe facts plus lineage metadata for handoff and audit. Signed
@@ -763,11 +764,11 @@ risk** (1–10). Files reference real modules.
 
 Chosen after reconciling the June 26 backlog against current `main` on 2026-06-30.
 
-1. **Common-source import mapper.** Convert a small Jira/Confluence export sample
-   into Athena's portability bundle shape, then reuse dry-run/manifest/import.
-2. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
+1. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
    replay-safe events, parent/fork coordinates, and determinism metadata as a
    portable handoff/audit artifact.
+2. **Real Atlassian sample fixtures.** Run the Jira/Confluence JSON mappers against
+   real exports, then add the smallest compatibility fixes and fixtures.
 3. **Agent administration V2.** Add an admin-facing way to review agent users,
    token scopes, project/space access, and delegation policy. Do not build a
    workflow engine.
