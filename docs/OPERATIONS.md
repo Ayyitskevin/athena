@@ -274,6 +274,11 @@ Use the narrowest scope that matches the actor:
 - An operator token for user/token administration: `admin`
 - A dashboard or read-only integration: `read`
 
+Browser admins can use `/admin/agents` to review agent token posture. The page
+flags agent accounts with no live token, live `admin`-scoped tokens, live tokens
+that have never been used, and live tokens unused for 30+ days. These warnings are
+read-only; they do not change authentication or token behavior.
+
 ## Headless Admin Token Bootstrap
 
 If you cannot use the browser UI to create the first admin token, temporarily

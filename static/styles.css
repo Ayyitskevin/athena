@@ -572,6 +572,34 @@ footer {
     opacity: 0.7;
 }
 
+.agent-token-posture {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin: 0 0 0.45rem;
+}
+
+.agent-token-warning {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.agent-token-warning.critical,
+.agent-token-warning.danger {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.agent-token-warning.warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
 .agent-health-summary {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

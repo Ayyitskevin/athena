@@ -182,6 +182,90 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
         assert "open to in_progress" in body
 
 
+def test_agents_admin_shows_token_posture_warnings(tmp_path):
+    db_path = tmp_path / "agent_token_posture.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        no_live = _create_user(client, "offline@e.com", "Offline Bot", is_agent=True)
+        admin_bot = _create_user(client, "adminbot@e.com", "Admin Bot", is_agent=True)
+        never_bot = _create_user(client, "never@e.com", "Never Bot", is_agent=True)
+        stale_bot = _create_user(client, "stale@e.com", "Stale Bot", is_agent=True)
+        fresh_bot = _create_user(client, "fresh@e.com", "Fresh Bot", is_agent=True)
+        _create_user(client, "human@e.com", "Human")
+
+        conn = db.connect(db_path)
+        try:
+            revoked = tokens.create_token(
+                conn,
+                user_id=no_live["id"],
+                name="revoked-only",
+                scopes=[tokens.READ_SCOPE],
+            )
+            assert tokens.revoke_token(
+                conn, user_id=no_live["id"], token_id=revoked["id"]
+            )
+
+            admin_token = tokens.create_token(
+                conn,
+                user_id=admin_bot["id"],
+                name="operator-admin",
+                scopes=[tokens.ADMIN_SCOPE],
+            )
+            tokens.create_token(
+                conn,
+                user_id=never_bot["id"],
+                name="never-used",
+                scopes=[tokens.READ_SCOPE],
+            )
+            stale_token = tokens.create_token(
+                conn,
+                user_id=stale_bot["id"],
+                name="stale-reader",
+                scopes=[tokens.READ_SCOPE],
+            )
+            fresh_token = tokens.create_token(
+                conn,
+                user_id=fresh_bot["id"],
+                name="fresh-reader",
+                scopes=[tokens.READ_SCOPE],
+            )
+            conn.execute(
+                "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
+                (admin_token["id"],),
+            )
+            conn.execute(
+                "UPDATE api_tokens SET last_used_at = datetime('now', '-45 days') "
+                "WHERE id = ?",
+                (stale_token["id"],),
+            )
+            conn.execute(
+                "UPDATE api_tokens SET last_used_at = datetime('now', '-5 days') "
+                "WHERE id = ?",
+                (fresh_token["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        _login(client)
+        page = client.get("/admin/agents")
+        assert page.status_code == 200
+        body = page.text
+
+        assert "Offline Bot" in body
+        assert "No live token" in body
+        assert "Admin Bot" in body
+        assert "Admin scoped" in body
+        assert "Never Bot" in body
+        assert "Never used" in body
+        assert "Stale Bot" in body
+        assert "Stale token" in body
+        assert "Fresh Bot" in body
+        assert "fresh-reader" in body
+        assert "Human" not in body
+
+
 def test_agent_run_health_requires_admin(tmp_path):
     db_path = tmp_path / "agent_run_health_guard.db"
     app = create_app(db_path)

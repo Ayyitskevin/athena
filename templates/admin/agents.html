@@ -36,6 +36,13 @@
         <div class="agent-admin-grid">
             <div class="agent-admin-section">
                 <h3>Tokens</h3>
+                {% if agent.token_warnings %}
+                <div class="agent-token-posture" aria-label="Token posture warnings">
+                    {% for warning in agent.token_warnings %}
+                    <span class="agent-token-warning {{ warning.severity }}" title="{{ warning.detail }}">{{ warning.label }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 {% if agent.tokens %}
                 <ul class="compact-list">
                     {% for token in agent.tokens %}
