@@ -1,7 +1,7 @@
 [project]
 name = "athena"
 version = "0.0.1"
-description = "Self-hosted project management (Aegis) + knowledge base (Mentor)"
+description = "Self-hosted operator workspace: docs, tasks, and cross-links — built for solo operators and AI agents"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi",

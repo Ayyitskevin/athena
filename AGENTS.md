@@ -4,9 +4,45 @@ This is the contract for working in **this repo**. It is re-read every session
 and travels with the code, so it — not a chat prompt — is the source of truth
 for *how* we build here. Read it before you write.
 
-For *what* we're building and why, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 For project-wide rules of conduct (your machine-level handbook) defer to those;
 this file adds the rules **specific to Athena** and wins on Athena-specific conflicts.
+
+---
+
+## Mission (what we are building)
+
+Athena is a **self-hosted operator workspace** — not a Jira/Confluence enterprise
+clone and not a Notion/Obsidian UX clone.
+
+**Product:** markdown docs + issue tracking + cross-links in one SQLite-backed
+app, runnable on the operator's machine or tailnet.
+
+**Audience:** solo operators and tiny teams (2–5) who want data ownership and run
+AI agents alongside them.
+
+**Differentiator:** agents are first-class actors — scoped bearer tokens, MCP
+server, webhooks, idempotent writes, append-only activity log, run replay/lineage,
+delegation/contributors. The audit log is load-bearing, not decorative.
+
+**Modules:**
+
+| Module | Path | Role |
+|--------|------|------|
+| **Mentor** | `src/athena/mentor/` | Knowledge — spaces, page tree, versions, wikilinks |
+| **Aegis** | `src/athena/aegis/` | Work — issues, boards, sprints, labels, automation |
+| **core** | `src/athena/core/` | Shared auth, db, search, links, activity, portability |
+
+**In scope:** API-first design, self-host simplicity (single process, no JS build),
+honest import/export, free OIDC, agent safety (scopes, rate limits, idempotency).
+
+**Out of scope:** multi-tenant SaaS, JQL/custom fields, workflow engines, block
+editors, Obsidian-style vault files, enterprise permission schemes, feature races
+with Notion AI or Atlassian Rovo.
+
+When in doubt, optimize for **operator + agent fleet on one machine**, not
+enterprise parity or consumer polish.
+
+Full design rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
@@ -40,7 +76,7 @@ Therefore:
 |------|------|-----------------|
 | **core** | `src/athena/core/` | db, migrations, auth, users, agent tokens, search, cross-link resolver |
 | **aegis** | `src/athena/aegis/` | issues/projects/statuses/boards — data access + REST API |
-| **mentor** | `src/athena/mentor/` | spaces, pages, versions (later phase) |
+| **mentor** | `src/athena/mentor/` | spaces, pages, versions — knowledge module |
 | **web** | `src/athena/web/` | Jinja templates + HTMX — **thin client over the API only** |
 
 Touch your assigned area. Don't refactor a neighbor's module to make your change
@@ -94,7 +130,7 @@ cheap; a hidden assumption shipped to `main` is expensive.
 src/athena/
   core/      db + migrations + (later) auth/users/tokens/search/cross-link
   aegis/     issues API (issues.py = SQL, api.py = HTTP)
-  mentor/    docs module (later phase)
+  mentor/    spaces, pages, versions — knowledge module
   web/       templates + HTMX — thin client over the API
   config.py  env-driven settings (ATHENA_DB, ...)
   main.py    app factory: create_app(), /healthz, migrate-on-startup, wiring

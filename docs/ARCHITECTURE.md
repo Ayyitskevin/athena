@@ -5,18 +5,26 @@ so anyone (human or agent) joining later can get oriented fast.
 
 ## What Athena is
 
-A single self-hosted platform that does the job of **Jira + Confluence** for a
-solo operator and an AI fleet. Two modules over one shared core:
+A **self-hosted operator workspace** for solo operators and their AI fleet —
+the shape of Notion (docs + tasks in one place), the deployment model of
+self-hosting (one SQLite file, your machine), and an agent layer neither Notion
+nor Obsidian offers natively.
 
-| Module | Replaces | Holds |
-|--------|----------|-------|
-| **Aegis** | Jira | work — issues, statuses, boards, sprints/cycles, comments, labels |
-| **Mentor** | Confluence | knowledge — spaces, pages (a tree), page versions |
+Two modules over one shared core:
 
-The reason to build them together (not as two apps) is the **cross-link**: an
-issue in Aegis can reference a page in Mentor and vice-versa, because they share
-one database. That tight link is the whole value of the Atlassian suite, and we
-get it for free by keeping them under one roof.
+| Module | Role | Holds |
+|--------|------|-------|
+| **Mentor** | Knowledge (Notion/Obsidian-adjacent) | spaces, pages (a tree), markdown bodies, versions, wikilinks |
+| **Aegis** | Work (task tracker) | issues, statuses, boards, sprints/cycles, comments, labels |
+
+We are **not** building a Notion block editor or an Obsidian vault-on-disk. We
+**are** building a unified command center: write docs, track work, cross-link
+both, and let agents do the same through a scoped, audited API.
+
+The reason to build Mentor and Aegis together (not as two apps) is the
+**cross-link**: an issue can reference a page and vice-versa, because they share
+one database. That is the whole value of running notes and tasks in one workspace
+— without paying for three SaaS products and bolting AI on afterward.
 
 ## Principles
 
