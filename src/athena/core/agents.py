@@ -6,6 +6,7 @@ facts an admin needs to supervise them: tokens, activity, access, and delegation
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import sqlite3
 
 from athena.core import activity, tokens, users
@@ -14,6 +15,8 @@ _RECENT_ACTIVITY_LIMIT = 6
 _ASSIGNMENT_LIMIT = 20
 _RUN_HEALTH_EVENT_LIMIT = 200
 _RUN_HEALTH_VISIBLE_RUNS = 5
+_STALE_TOKEN_DAYS = 30
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def agent_admin_summaries(conn: sqlite3.Connection) -> list[dict]:
@@ -66,16 +69,17 @@ def _agent_users(conn: sqlite3.Connection) -> list[dict]:
 
 def _agent_summary(conn: sqlite3.Connection, agent: dict) -> dict:
     token_rows = tokens.list_tokens(conn, agent["id"])
+    live_tokens = [token for token in token_rows if token["revoked_at"] is None]
+    revoked_tokens = [token for token in token_rows if token["revoked_at"] is not None]
     recent_activity = activity.list_activity(
         conn, actor_id=agent["id"], limit=_RECENT_ACTIVITY_LIMIT
     )
     return {
         "user": agent,
         "tokens": token_rows,
-        "live_token_count": sum(1 for token in token_rows if token["revoked_at"] is None),
-        "revoked_token_count": sum(
-            1 for token in token_rows if token["revoked_at"] is not None
-        ),
+        "live_token_count": len(live_tokens),
+        "revoked_token_count": len(revoked_tokens),
+        "token_warnings": _token_posture_warnings(live_tokens),
         "recent_activity": recent_activity,
         "last_activity_at": recent_activity[0]["created_at"]
         if recent_activity
@@ -84,6 +88,94 @@ def _agent_summary(conn: sqlite3.Connection, agent: dict) -> dict:
         "space_memberships": _space_memberships(conn, agent["id"]),
         "assignments": _assignments(conn, agent["id"], limit=_ASSIGNMENT_LIMIT),
     }
+
+
+def _token_posture_warnings(live_tokens: list[dict]) -> list[dict]:
+    warnings: list[dict] = []
+    if not live_tokens:
+        warnings.append(
+            _token_warning(
+                "no_live_token",
+                "No live token",
+                "critical",
+                "This agent has no active API token.",
+                [],
+            )
+        )
+        return warnings
+
+    admin_tokens = [
+        token for token in live_tokens if tokens.ADMIN_SCOPE in token["scopes"]
+    ]
+    if admin_tokens:
+        warnings.append(
+            _token_warning(
+                "admin_scope",
+                "Admin scoped",
+                "danger",
+                "Live admin-scoped token: "
+                + _token_names(admin_tokens),
+                admin_tokens,
+            )
+        )
+
+    never_used = [token for token in live_tokens if not token["last_used_at"]]
+    if never_used:
+        warnings.append(
+            _token_warning(
+                "never_used",
+                "Never used",
+                "warning",
+                "Live token never used: " + _token_names(never_used),
+                never_used,
+            )
+        )
+
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=_STALE_TOKEN_DAYS)
+    stale_tokens = [
+        token
+        for token in live_tokens
+        if (last_used := _token_timestamp(token["last_used_at"])) is not None
+        and last_used < cutoff
+    ]
+    if stale_tokens:
+        warnings.append(
+            _token_warning(
+                "stale_token",
+                "Stale token",
+                "warning",
+                f"Live token unused for {_STALE_TOKEN_DAYS}+ days: "
+                + _token_names(stale_tokens),
+                stale_tokens,
+            )
+        )
+
+    return warnings
+
+
+def _token_warning(
+    kind: str, label: str, severity: str, detail: str, token_rows: list[dict]
+) -> dict:
+    return {
+        "kind": kind,
+        "label": label,
+        "severity": severity,
+        "detail": detail,
+        "token_names": [token["name"] for token in token_rows],
+    }
+
+
+def _token_names(token_rows: list[dict]) -> str:
+    return ", ".join(token["name"] for token in token_rows)
+
+
+def _token_timestamp(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, _TS_FORMAT)
+    except (TypeError, ValueError):
+        return None
 
 
 def _agent_run_health(conn: sqlite3.Connection, agent: dict) -> dict:
