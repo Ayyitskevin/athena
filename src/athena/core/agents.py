@@ -7,6 +7,8 @@ facts an admin needs to supervise them: tokens, activity, access, and delegation
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import re
+import shlex
 import sqlite3
 
 from athena.core import activity, tokens, users
@@ -17,6 +19,7 @@ _RUN_HEALTH_EVENT_LIMIT = 200
 _RUN_HEALTH_VISIBLE_RUNS = 5
 _STALE_TOKEN_DAYS = 30
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+_REPLAY_DB_PATH = "/var/lib/athena/athena.db"
 
 
 def agent_admin_summaries(conn: sqlite3.Connection) -> list[dict]:
@@ -28,11 +31,24 @@ def agent_admin_summaries(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def agent_run_health(conn: sqlite3.Connection) -> dict:
+def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -> dict:
     """Return a fleet-level run-health read model for every agent account."""
-    rows = [_agent_run_health(conn, agent) for agent in _agent_users(conn)]
+    agent_options = _agent_users(conn)
+    selected_agent = None
+    if agent_id is None:
+        selected_agents = agent_options
+    else:
+        selected_agents = [
+            agent for agent in agent_options if int(agent["id"]) == int(agent_id)
+        ]
+        selected_agent = selected_agents[0] if selected_agents else None
+
+    rows = [_agent_run_health(conn, agent) for agent in selected_agents]
     return {
         "agents": rows,
+        "agent_options": agent_options,
+        "selected_agent_id": agent_id,
+        "selected_agent": selected_agent,
         "totals": {
             "agent_count": len(rows),
             "active_agent_count": sum(1 for row in rows if row["run_count"] > 0),
@@ -220,6 +236,7 @@ def _run_summary(conn: sqlite3.Connection, run: dict) -> dict:
         "event_count": run["event_count"],
         "partial": run["partial"],
         "child_run_count": _child_run_count(conn, run_id) if run_id else 0,
+        "replay_export_command": _replay_export_command(run_id) if run_id else None,
     }
 
 
@@ -232,6 +249,23 @@ def _child_run_count(conn: sqlite3.Connection, run_id: str) -> int:
         (run_id, run_id),
     ).fetchone()
     return int(row["count"])
+
+
+def _replay_export_command(run_id: str) -> str:
+    artifact_path = f"/exports/{_artifact_filename(run_id)}"
+    return " ".join(
+        [
+            "athena-export-run",
+            shlex.quote(_REPLAY_DB_PATH),
+            shlex.quote(run_id),
+            shlex.quote(artifact_path),
+        ]
+    )
+
+
+def _artifact_filename(run_id: str) -> str:
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", run_id).strip(".-")
+    return f"{stem or 'agent-run'}.replay.json"
 
 
 def _health_state(

@@ -339,8 +339,25 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
         assert "run agent-goal:child" in body
         assert "/aegis/activity/runs/agent-goal/lineage" in body
         assert "/admin/agents/runs/agent-goal/replay.json" in body
+        assert "athena-export-run /var/lib/athena/athena.db agent-goal /exports/agent-goal.replay.json" in body
+        assert (
+            "athena-export-run /var/lib/athena/athena.db agent-goal:child "
+            "/exports/agent-goal-child.replay.json"
+        ) in body
+        assert 'data-copy-command="athena-export-run' in body
+        assert 'name="agent_id"' in body
         assert "1 child run" in body
         assert "heuristic run" in body
+
+        filtered = client.get(f"/admin/agents/runs?agent_id={bot['id']}")
+        assert filtered.status_code == 200
+        assert "run agent-goal" in filtered.text
+        assert "No activity" not in filtered.text
+
+        human_filter = client.get(f"/admin/agents/runs?agent_id={human['id']}")
+        assert human_filter.status_code == 200
+        assert "No agent runs match this filter" in human_filter.text
+        assert "Human" not in human_filter.text
 
         replay = client.get("/admin/agents/runs/agent-goal/replay.json")
         assert replay.status_code == 200

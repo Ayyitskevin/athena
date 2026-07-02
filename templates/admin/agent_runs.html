@@ -15,6 +15,24 @@
     </div>
 </div>
 
+{% if agent_options %}
+<form method="get" action="/admin/agents/runs" class="agent-run-filter">
+    <label for="agent_id">Agent</label>
+    <select id="agent_id" name="agent_id">
+        <option value="">All agents</option>
+        {% for option in agent_options %}
+        <option value="{{ option.id }}"{% if selected_agent_id == option.id %} selected{% endif %}>
+            {{ option.name }} - {{ option.email }}
+        </option>
+        {% endfor %}
+    </select>
+    <button type="submit">Filter</button>
+    {% if selected_agent_id %}
+    <a href="/admin/agents/runs" class="button secondary">Clear</a>
+    {% endif %}
+</form>
+{% endif %}
+
 {% if agents %}
 <div class="agent-health-summary">
     <div class="agent-health-stat">
@@ -92,8 +110,12 @@
                     {% for run in agent.runs %}
                     <li>
                         {% if run.run_id %}
-                        <a href="/aegis/activity/runs/{{ run.run_id }}/lineage" class="run-id">run {{ run.run_id }}</a>
-                        <a href="/admin/agents/runs/{{ run.run_id }}/replay.json" class="muted">replay.json</a>
+                        <div class="agent-run-main">
+                            <a href="/aegis/activity/runs/{{ run.run_id }}/lineage" class="run-id">run {{ run.run_id }}</a>
+                            <a href="/admin/agents/runs/{{ run.run_id }}/replay.json" class="muted">replay.json</a>
+                            <button type="button" class="copy-command-button" data-copy-command="{{ run.replay_export_command }}">Copy command</button>
+                        </div>
+                        <code class="run-export-command">{{ run.replay_export_command }}</code>
                         {% else %}
                         <span class="muted">heuristic run</span>
                         {% endif %}
@@ -111,9 +133,43 @@
     </tbody>
 </table>
 {% else %}
+{% if agent_options and selected_agent_id %}
+<p class="empty-state">
+    No agent runs match this filter. <a href="/admin/agents/runs">View all agent runs</a>.
+</p>
+{% else %}
 <p class="empty-state">
     No agent accounts yet. Mark a user as an agent from <a href="/admin/users">Admin users</a>
     before monitoring runs.
 </p>
 {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll("[data-copy-command]").forEach((button) => {
+    button.addEventListener("click", async () => {
+        const command = button.getAttribute("data-copy-command") || "";
+        try {
+            await navigator.clipboard.writeText(command);
+            const original = button.textContent;
+            button.textContent = "Copied";
+            window.setTimeout(() => {
+                button.textContent = original;
+            }, 1600);
+        } catch {
+            const fallback = document.createElement("textarea");
+            fallback.value = command;
+            fallback.setAttribute("readonly", "readonly");
+            fallback.style.position = "fixed";
+            fallback.style.opacity = "0";
+            document.body.appendChild(fallback);
+            fallback.select();
+            document.execCommand("copy");
+            document.body.removeChild(fallback);
+        }
+    });
+});
+</script>
 {% endblock %}
