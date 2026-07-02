@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena.aegis import automation, projects, statuses
@@ -374,7 +374,11 @@ def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn))
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)
-def agent_runs_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+def agent_runs_admin(
+    request: Request,
+    agent_id: int | None = Query(None, description="filter to one agent user id"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
     templates = get_templates()
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
@@ -385,7 +389,7 @@ def agent_runs_admin(request: Request, conn: sqlite3.Connection = Depends(get_co
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
-        context=agents.agent_run_health(conn),
+        context=agents.agent_run_health(conn, agent_id=agent_id),
     )
 
 

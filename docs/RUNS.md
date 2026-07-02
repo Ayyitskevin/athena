@@ -30,6 +30,8 @@ athena-export-run /var/lib/athena/athena.db goal-123 /exports/run-goal-123.json
 ```
 
 Existing artifact files are not replaced unless `--overwrite` is passed.
+Admins can also open `/admin/agents/runs`, filter to one agent, and copy the
+matching `athena-export-run` command for any tagged agent run.
 
 ## Determinism Contract
 
