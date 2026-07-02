@@ -30,6 +30,7 @@ athena-export = "athena.ops:export_main"
 athena-import = "athena.ops:import_main"
 athena-import-dry-run = "athena.ops:import_dry_run_main"
 athena-import-manifest = "athena.ops:import_manifest_main"
+athena-map-source = "athena.ops:map_source_main"
 athena-restore = "athena.ops:restore_main"
 athena-mcp = "athena.mcp.server:main"
 

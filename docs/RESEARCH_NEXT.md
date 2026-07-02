@@ -104,8 +104,8 @@ being treated as open backlog. All items are **Recommendations**.
 
 | # | Capability | Status | Why it matters | Next slice |
 |---|---|---|---|---|
-| 1 | **Import path from common sources** (issues/pages + history + links) | Internal portability V1 shipped | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | Map Jira/Confluence samples into Athena bundles, then reuse manifest-gated replay |
-| 2 | **Run replay artifact** (portable replay manifest over one run) | Open | Athena has the event feed, lineage, fork coordinates, and determinism contract; the missing step is a single bundle agents can hand off or audit. | `GET /activity/runs/{id}/replay` or `athena-export-run` |
+| 1 | **Run replay artifact** (portable replay manifest over one run) | Open | Athena has the event feed, lineage, fork coordinates, and determinism contract; the missing step is a single bundle agents can hand off or audit. | `GET /activity/runs/{id}/replay` or `athena-export-run` |
+| 2 | **Import path from common sources** (issues/pages + history + links) | Basic Jira/Confluence JSON mappers shipped | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | Test against real Atlassian export samples; add attachment manifest mapping only after blob policy exists |
 | 3 | **Agent administration V2** | Partial V1 shipped | Delegation + contributor model exists; admin-controlled scope/team access is the next teammate primitive. | Admin view/API for agent users, scopes, project/space access, and delegation policy |
 | 4 | **API safety for agent loops** | Partial V1 shipped | Idempotency exists; agents still need bounded request rates, efficient bulk actions, and update-race protection. | Per-token rate limiting first |
 | 5 | **One-command / few-container self-host packaging hardening** | Partial V1 shipped | `athena-doctor` improves deploy preflight; packaging/retention can turn single-file SQLite into a self-hosting moat. | Systemd/env example plus retained/off-host backup helper |
@@ -118,10 +118,11 @@ being treated as open backlog. All items are **Recommendations**.
 | 12 | **Basic dashboards/reporting** | Open | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | Counts/rollups only after portability/replay work |
 
 **Sequencing rationale.** The differentiation core has V1 coverage now: scoped
-tokens, MCP, event feed, webhooks, delegation, lineage, forking, and
-manifest-gated Athena-to-Athena portability. The next best work is to make Athena
-movable from incumbent exports and auditable across agent runs: common-source
-import mappers, replay artifacts, then agent-admin/API-safety/packaging follow-ups.
+tokens, MCP, event feed, webhooks, delegation, lineage, forking, manifest-gated
+Athena-to-Athena portability, and basic Jira/Confluence JSON bundle mappers. The
+next best work is to make Athena auditable across agent runs and harden migration
+against real-world exports: replay artifacts, real Atlassian sample fixtures, then
+agent-admin/API-safety/packaging follow-ups.
 
 ---
 
