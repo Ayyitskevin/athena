@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from athena.aegis import contributors, issues, projects
-from athena.core import access, activity, db, tokens, users
+from athena.core import access, activity, db, run_context, tokens, users
 from athena.main import create_app
 from athena.mentor import spaces
 
@@ -51,6 +51,23 @@ def _login(client, email="admin@e.com", password="secret"):
     )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
+
+
+def _record_with_run(conn, *, actor_id, run_id, parent_run_id=None, target_id=1):
+    run_token = run_context.set_run_id(run_id)
+    parent_token = run_context.set_parent_run_id(parent_run_id)
+    try:
+        return activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="changed_status",
+            target_kind="issue",
+            target_id=target_id,
+            detail="open to done",
+        )
+    finally:
+        run_context.reset_parent_run_id(parent_token)
+        run_context.reset_run_id(run_token)
 
 
 def test_agents_admin_requires_admin(tmp_path):
@@ -163,3 +180,89 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
         assert "Draft launch plan" in body
         assert "changed status" in body
         assert "open to in_progress" in body
+
+
+def test_agent_run_health_requires_admin(tmp_path):
+    db_path = tmp_path / "agent_run_health_guard.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        _create_user(client, "member@e.com", "Member")
+
+        assert client.get("/admin/agents/runs").status_code == 401
+
+        _login(client, "member@e.com")
+        denied = client.get("/admin/agents/runs")
+        assert denied.status_code == 403
+
+
+def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
+    db_path = tmp_path / "agent_run_health.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        admin = _bootstrap_admin(client)
+        bot = _create_user(client, "bot@e.com", "Bot", is_agent=True)
+        _create_user(client, "quiet@e.com", "Quiet Bot", is_agent=True)
+        human = _create_user(client, "human@e.com", "Human")
+
+        conn = db.connect(db_path)
+        try:
+            issue = issues.create_issue(
+                conn, title="Replay me", body="", created_by=admin["id"]
+            )
+            _record_with_run(
+                conn,
+                actor_id=bot["id"],
+                run_id="agent-goal",
+                target_id=issue["id"],
+            )
+            _record_with_run(
+                conn,
+                actor_id=bot["id"],
+                run_id="agent-goal:child",
+                parent_run_id="agent-goal",
+                target_id=issue["id"],
+            )
+            activity.record(
+                conn,
+                actor_id=bot["id"],
+                verb="commented",
+                target_kind="issue",
+                target_id=issue["id"],
+                detail="heuristic follow-up",
+            )
+            _record_with_run(
+                conn,
+                actor_id=human["id"],
+                run_id="human-goal",
+                target_id=issue["id"],
+            )
+        finally:
+            conn.close()
+
+        _login(client)
+        page = client.get("/admin/agents/runs")
+        assert page.status_code == 200
+        body = page.text
+
+        assert "Agent Run Health" in body
+        assert "Bot" in body
+        assert "Quiet Bot" in body
+        assert "Human" not in body
+        assert "Mixed runs" in body
+        assert "No activity" in body
+        assert "run agent-goal" in body
+        assert "run agent-goal:child" in body
+        assert "/aegis/activity/runs/agent-goal/lineage" in body
+        assert "/admin/agents/runs/agent-goal/replay.json" in body
+        assert "1 child run" in body
+        assert "heuristic run" in body
+
+        replay = client.get("/admin/agents/runs/agent-goal/replay.json")
+        assert replay.status_code == 200
+        artifact = replay.json()
+        assert artifact["run_id"] == "agent-goal"
+        assert artifact["event_count"] == 1
+
+        human_replay = client.get("/admin/agents/runs/human-goal/replay.json")
+        assert human_replay.status_code == 404

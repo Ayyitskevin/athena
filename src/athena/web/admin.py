@@ -5,10 +5,19 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena.aegis import automation, projects, statuses
-from athena.core import activity, agents, identity, oidc, tokens, users, webhooks
+from athena.core import (
+    activity,
+    agents,
+    identity,
+    oidc,
+    run_replay,
+    tokens,
+    users,
+    webhooks,
+)
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -362,6 +371,41 @@ def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn))
         name="admin/agents.html",
         context={"agents": agents.agent_admin_summaries(conn)},
     )
+
+
+@router.get("/admin/agents/runs", response_class=HTMLResponse)
+def agent_runs_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/agent_runs.html",
+        context=agents.agent_run_health(conn),
+    )
+
+
+@router.get("/admin/agents/runs/{run_id}/replay.json")
+def agent_run_replay_admin(
+    request: Request, run_id: str, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    if not agents.agent_run_exists(conn, run_id):
+        return JSONResponse({"detail": "no such agent run"}, status_code=404)
+    try:
+        artifact = run_replay.build_run_replay_artifact(conn, run_id)
+    except ValueError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422)
+    if artifact is None:
+        return JSONResponse({"detail": "no such agent run"}, status_code=404)
+    return JSONResponse(artifact)
 
 
 @router.post(

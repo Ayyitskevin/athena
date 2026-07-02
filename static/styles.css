@@ -572,6 +572,76 @@ footer {
     opacity: 0.7;
 }
 
+.agent-health-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.75rem;
+    margin: 1rem 0;
+}
+
+.agent-health-stat {
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 0.75rem;
+}
+
+.agent-health-stat strong {
+    display: block;
+    font-size: 1.35rem;
+}
+
+.agent-health-stat span {
+    color: #666;
+    font-size: 0.82rem;
+}
+
+.agent-health-state {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.agent-health-state.replay_ready {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.agent-health-state.mixed_runs {
+    background: #e0f2fe;
+    color: #075985;
+}
+
+.agent-health-state.untagged_only {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.agent-health-state.partial_window {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.agent-health-state.quiet {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.agent-health-run-row td {
+    padding-top: 0;
+    background: #fafafa;
+}
+
+.agent-health-runs {
+    display: grid;
+    gap: 0.25rem;
+    padding-left: 0;
+    list-style: none;
+}
+
 /* Issue detail */
 .issue-detail {
     background: #fafafa;

@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Agent Run Health - Admin - Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/admin/agents" class="muted">Back to agents</a>
+        <h1>Agent Run Health</h1>
+        <p class="subtitle">Recent agent runs, replay readiness, and lineage signals.</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/aegis/activity?actor_type=agent" class="button secondary">Agent activity</a>
+        <a href="/aegis/activity/runs" class="button secondary">Run explorer</a>
+    </div>
+</div>
+
+{% if agents %}
+<div class="agent-health-summary">
+    <div class="agent-health-stat">
+        <strong>{{ totals.active_agent_count }}</strong>
+        <span>active agents</span>
+    </div>
+    <div class="agent-health-stat">
+        <strong>{{ totals.replay_ready_count }}</strong>
+        <span>with tagged runs</span>
+    </div>
+    <div class="agent-health-stat">
+        <strong>{{ totals.untagged_only_count }}</strong>
+        <span>untagged only</span>
+    </div>
+    <div class="agent-health-stat">
+        <strong>{{ totals.total_recent_runs }}</strong>
+        <span>recent runs</span>
+    </div>
+</div>
+
+<table class="issues-table agent-health-table">
+    <thead>
+        <tr>
+            <th>Agent</th>
+            <th>Health</th>
+            <th>Latest Run</th>
+            <th>Recent Runs</th>
+            <th>Lineage</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for agent in agents %}
+        <tr>
+            <td>
+                <strong>{{ agent.user.name }}</strong>
+                <span class="agent-badge">agent</span>
+                <div class="muted">{{ agent.user.email }}</div>
+            </td>
+            <td>
+                <span class="agent-health-state {{ agent.health_state }}">{{ agent.health_label }}</span>
+                <div class="muted">{{ agent.recent_event_count }} recent event{{ "s" if agent.recent_event_count != 1 }}</div>
+            </td>
+            <td>
+                {% if agent.latest_run %}
+                    {% if agent.latest_run.run_id %}
+                    <a href="/aegis/activity/runs/{{ agent.latest_run.run_id }}/lineage" class="run-id">run {{ agent.latest_run.run_id }}</a>
+                    {% else %}
+                    <span class="muted">heuristic run</span>
+                    {% endif %}
+                    {% if agent.latest_run.partial %}<span class="run-partial">partial</span>{% endif %}
+                    <div class="muted">{{ agent.latest_run.started_at }} - {{ agent.latest_run.ended_at }}</div>
+                {% else %}
+                    <span class="muted">No activity yet.</span>
+                {% endif %}
+            </td>
+            <td>
+                <strong>{{ agent.run_count }}</strong>
+                <span class="muted">
+                    {{ agent.tagged_run_count }} tagged,
+                    {{ agent.heuristic_run_count }} heuristic
+                </span>
+            </td>
+            <td>
+                {% if agent.child_run_count %}
+                <span class="pill">{{ agent.child_run_count }} child run{{ "s" if agent.child_run_count != 1 }}</span>
+                {% else %}
+                <span class="muted">No child runs</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% if agent.runs %}
+        <tr class="agent-health-run-row">
+            <td colspan="5">
+                <ul class="compact-list agent-health-runs">
+                    {% for run in agent.runs %}
+                    <li>
+                        {% if run.run_id %}
+                        <a href="/aegis/activity/runs/{{ run.run_id }}/lineage" class="run-id">run {{ run.run_id }}</a>
+                        <a href="/admin/agents/runs/{{ run.run_id }}/replay.json" class="muted">replay.json</a>
+                        {% else %}
+                        <span class="muted">heuristic run</span>
+                        {% endif %}
+                        <span class="muted">{{ run.event_count }} event{{ "s" if run.event_count != 1 }}</span>
+                        {% if run.child_run_count %}<span class="pill">{{ run.child_run_count }} child</span>{% endif %}
+                        {% if run.partial %}<span class="run-partial">partial</span>{% endif %}
+                        <span class="muted">{{ run.started_at }} - {{ run.ended_at }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        {% endif %}
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="empty-state">
+    No agent accounts yet. Mark a user as an agent from <a href="/admin/users">Admin users</a>
+    before monitoring runs.
+</p>
+{% endif %}
+{% endblock %}
