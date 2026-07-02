@@ -20,6 +20,16 @@ Browser actions normally omit all three headers and remain ordinary activity row
 - `GET /events?run_id=...` returns one run's activity oldest-first for replay.
 - `GET /activity/runs/{run_id}/lineage` reconstructs the parent/child tree from
   `run_id`, `parent_run_id`, and `forked_from_event_id`.
+- `GET /activity/runs/{run_id}/replay` returns a portable JSON artifact with the
+  run's complete ordered events plus light lineage metadata.
+
+Operators can write the same artifact from a database file:
+
+```bash
+athena-export-run /var/lib/athena/athena.db goal-123 /exports/run-goal-123.json
+```
+
+Existing artifact files are not replaced unless `--overwrite` is passed.
 
 ## Determinism Contract
 
