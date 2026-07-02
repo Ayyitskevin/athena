@@ -18,6 +18,7 @@ from athena.core.portability import (
     import_manifest_database,
     write_import_manifest_database,
 )
+from athena.core.source_import import SOURCE_KINDS, write_source_bundle
 
 
 def _required_migrations() -> list[str]:
@@ -215,6 +216,49 @@ def export_main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Exported {args.kind} {args.target_id} from {args.db_path} to {bundle}")
+    return 0
+
+
+def map_source_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-map-source",
+        description="Map a supported source export into an Athena portability bundle.",
+    )
+    parser.add_argument("source", choices=SOURCE_KINDS, help="source export shape")
+    parser.add_argument("source_path", type=Path, help="Source JSON export path")
+    parser.add_argument("bundle_path", type=Path, help="Destination Athena bundle path")
+    parser.add_argument("--project-key", help="override Jira project key")
+    parser.add_argument("--project-name", help="override Jira project name")
+    parser.add_argument("--space-key", help="override Confluence space key")
+    parser.add_argument("--space-name", help="override Confluence space name")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace an existing bundle path",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        bundle = write_source_bundle(
+            args.source,
+            args.source_path,
+            args.bundle_path,
+            project_key=args.project_key,
+            project_name=args.project_name,
+            space_key=args.space_key,
+            space_name=args.space_name,
+            overwrite=args.overwrite,
+        )
+    except (
+        FileNotFoundError,
+        FileExistsError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"athena-map-source: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Mapped {args.source} export from {args.source_path} to {bundle}")
     return 0
 
 

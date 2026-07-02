@@ -148,6 +148,22 @@ password hashes, API tokens, sessions, OIDC transient state, idempotency records
 or webhook secrets. Existing export files are not replaced unless `--overwrite`
 is passed.
 
+Use `athena-map-source` when you have a small source-system JSON export and want
+to turn it into Athena's portability bundle format before any database write:
+
+```bash
+athena-map-source jira-project /imports/jira-issues.json /exports/jira-project.json
+athena-map-source confluence-space /imports/confluence-pages.json /exports/confluence-space.json
+```
+
+The mapper is intentionally narrow. `jira-project` expects Jira issue-search style
+JSON with an `issues` array. `confluence-space` expects Confluence content/search
+style JSON with a `results` or `pages` array. The output is still only a bundle:
+review it, then run the same dry-run, manifest, and import flow below. Users are
+mapped by email, so create matching Athena users before dry-run. Missing source
+emails become `@import.local` placeholders that dry-run will surface as missing
+users. Raw attachment files are not imported by the mapper.
+
 Use `athena-import-dry-run` before planning a selective import into another
 Athena database:
 
