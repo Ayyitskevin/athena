@@ -1,37 +1,72 @@
 # Athena
 
-Self-hosted **project management + knowledge base** — one platform, two modules:
+**Self-hosted operator workspace** — markdown docs, issue tracking, and cross-links
+in one place. Built for **solo operators** who work alongside an **AI fleet**.
 
-- **Aegis** — work tracking: issues, boards, the "shield" over your work.
-- **Mentor** — docs / knowledge base: the guide that holds what you know.
+> Notion's shape. Your machine. Built for agents.
 
-> Named for the goddess of wisdom *and* strategic craft. **Aegis** is her shield;
-> **Mentor** is the guise she takes in the *Odyssey* to give counsel. Both are facets
-> of Athena — so the platform and its two halves are one designed whole.
+Athena replaces the scattered stack many solo operators run today — Notion or
+Obsidian for notes, a separate tool for tasks, and brittle AI integrations on
+top. One SQLite file, one FastAPI app, full data ownership, no SaaS rent.
+
+## Mission
+
+Athena is an **open-source, self-hosted workspace** for people who:
+
+- Want **docs + tasks together** (not Jira *and* Confluence *and* Notion)
+- Need **data on their own machine** (tailnet or local — not a vendor cloud)
+- Run **AI agents as real teammates** — scoped tokens, MCP, webhooks, audited
+  writes, deterministic run replay, and delegation
+
+We are **not** chasing Atlassian enterprise parity, Notion's block editor, or
+Obsidian's local vault + plugin ecosystem. We **are** building the command center
+a solo operator and their agents can trust.
+
+## Two modules, one workspace
+
+- **Mentor** — knowledge: spaces, page tree, markdown bodies, version history,
+  wikilinks (`[[page:7]]`), backlinks, full-text search
+- **Aegis** — work: issues, boards, sprints, labels, filters, dependencies,
+  automation — linkable from docs via `[[issue:42]]` or `[[ATH-12]]`
+
+Named for the goddess of wisdom *and* strategic craft. **Mentor** is the guise
+she takes in the *Odyssey* to give counsel; **Aegis** is her shield. Both are
+facets of one designed whole.
+
+## Who this is for
+
+| Good fit | Not a fit (yet) |
+|----------|-----------------|
+| Solo operators, indie hackers, small tailnet teams | 20+ person eng orgs expecting JQL and custom fields |
+| People leaving Notion/Obsidian + scattered task tools | Teams wanting Notion-grade block editors |
+| Operators running Claude, Codex, Grok, or custom agents via API/MCP | Enterprises needing SCIM, SAML, and scheme-based permissions |
+| Self-hosters who want OIDC without a paywall | Anyone who needs multi-tenant SaaS today |
 
 ## Status
 
-**Local alpha.** Athena has a working FastAPI app with Aegis issues/projects/boards,
-Mentor spaces/pages/versioning, auth/sessions, CSRF, search, cross-links, and an
-audited activity trail. Operators can export one project or space, dry-run it
-against another Athena database, write a replay manifest, and import it
-transactionally. Operators can also map small Jira/Confluence JSON exports into
-Athena bundles, and tagged agent runs can be exported as replay artifacts with
-ordered events and lineage metadata. It is still developed locally and is not
-hosted yet; self-hosting on the `flow` node is a later decision.
+**Local alpha.** Working FastAPI app: Mentor spaces/pages/versioning, Aegis
+issues/projects/boards/sprints, auth/sessions/OIDC, CSRF, FTS5 search,
+cross-links, webhooks, automation, portability import/export, and an append-only
+activity trail with run replay. Developed locally; production self-host on the
+`flow` node is a later decision.
 
 ## Stack
 
-Python 3.12+ · FastAPI + Jinja2 + HTMX · SQLite (WAL). No JavaScript build chain.
+Python 3.12+ · FastAPI + Jinja2 + HTMX · SQLite (WAL) · FTS5. No JavaScript
+build chain.
 
 ## Why it exists
 
-A self-owned replacement for Jira + Confluence: local control, no recurring SaaS
-fees, and — uniquely — designed so **both humans and an AI fleet are first-class
-API actors** (agents can file/triage issues and read/write docs through the same
-audited, token-scoped API humans use through the web UI).
+Cloud workspaces (Notion, etc.) charge recurring fees, gate AI behind paid
+tiers, and never give you a replayable audit log of what your agents did.
+Obsidian is excellent for local notes but has no unified task layer or
+first-class agent API.
 
-## Local Development
+Athena is the alternative: **one self-owned workspace where humans and agents
+share the same audited, token-scoped API** — file issues, write docs, cross-link
+work and knowledge, and replay any agent run from the log.
+
+## Local development
 
 ```bash
 pip install -e ".[dev]"
@@ -40,21 +75,22 @@ pytest -q
 uvicorn athena.main:app --reload
 ```
 
+Optional MCP server for agent tooling: `pip install -e ".[mcp]"` then `athena-mcp`.
+
 ## Operations
 
-Athena is currently intended for local or tailnet deployment. The app migrates
-SQLite on startup and exposes:
+Intended for local or tailnet deployment. The app migrates SQLite on startup
+and exposes:
 
-- `/healthz` — cheap liveness check.
-- `/readyz` — SQLite reachability and migration readiness check.
+- `/healthz` — liveness
+- `/readyz` — SQLite reachability and migration readiness
 
-First-run bootstrap creates the first user as `admin`. Browser admins can manage
-users at `/admin/users` and scoped API tokens at `/settings/tokens`. See the
-operations runbook for deployment settings, role behavior, token scopes, and
-headless bootstrap commands.
+First-run bootstrap creates the first user as `admin`. Browser admins manage
+users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — the full design and phased roadmap.
-- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, bootstrap, roles, and token scopes.
-- [`docs/RUNS.md`](docs/RUNS.md) — deterministic run replay, lineage, and forking contract.
+- [`AGENTS.md`](AGENTS.md) — mission and contributor contract (read this first if you are an AI agent)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — design of record and phased roadmap
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, bootstrap, roles, token scopes
+- [`docs/RUNS.md`](docs/RUNS.md) — deterministic run replay, lineage, and forking
