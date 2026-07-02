@@ -1,9 +1,12 @@
 """Source export mappers for Athena portability bundles."""
 
 import json
+from pathlib import Path
 
 from athena import ops
 from athena.core import db, portability, source_import
+
+FIXTURES = Path(__file__).parent / "fixtures" / "source_import"
 
 
 def _connect(path):
@@ -19,6 +22,10 @@ def _user(conn, email, name, *, role="member"):
     )
     conn.commit()
     return cur.lastrowid
+
+
+def _fixture(name):
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def _jira_payload():
@@ -225,6 +232,54 @@ def test_jira_mapper_outputs_valid_project_bundle_and_imports(tmp_path):
     assert imported[1]["parent_id"] == 1
 
 
+def test_jira_mapper_handles_cloud_export_and_reports_unmapped_fields(tmp_path):
+    bundle = source_import.map_jira_project(_fixture("jira_cloud_search.json"))
+    report = source_import.source_mapping_report(bundle)
+
+    assert bundle["project"]["key"] == "OPS"
+    assert [issue["title"] for issue in bundle["issues"]] == [
+        "Prepare migration runbook",
+        "Verify deployment checklist",
+    ]
+    assert bundle["issues"][0]["body"].startswith(
+        "Coordinate with [[issue:2]] before cutover."
+    )
+    assert "Back up SQLite database" in bundle["issues"][0]["body"]
+    assert bundle["issues"][0]["assignee_id"] == 2
+    assert bundle["users"][1]["email"] == "557058-agent@import.local"
+    assert bundle["comments"][0]["body"] == "Looks ready."
+    assert bundle["issue_links"] == [
+        {
+            "from_id": 1,
+            "to_id": 2,
+            "kind": "blocks",
+            "created_by": 1,
+            "created_at": "2026-01-01T12:00:00.000+0000",
+        }
+    ]
+    assert bundle["issues"][1]["parent_id"] is None
+
+    assert report["schema"] == source_import.SOURCE_MAPPING_REPORT_SCHEMA
+    assert report["status"] == "mapped_with_gaps"
+    assert report["counts"]["issues"] == 2
+    unmapped = {row["path"]: row for row in report["unmapped_fields"]}
+    assert unmapped["issues[].fields.customfield_10020"]["count"] == 1
+    assert unmapped["issues[].fields.attachment"]["reason"].startswith("raw attachment")
+    assert unmapped["issues[].fields.issuelinks"]["count"] == 1
+    assert unmapped["issues[].fields.parent"]["count"] == 1
+
+    target = _connect(tmp_path / "target-jira-cloud.db")
+    _user(target, "owner@example.com", "Owner", role="admin")
+    _user(target, "557058-agent@import.local", "Migration Agent")
+    _user(target, "reviewer@example.com", "Reviewer")
+    manifest = portability.build_import_manifest(target, bundle)
+    result = portability.replay_import_manifest(target, bundle, manifest)
+    target.close()
+
+    assert manifest["ok"] is True
+    assert result["status"] == "imported"
+
+
 def test_confluence_mapper_outputs_valid_space_bundle_and_imports(tmp_path):
     bundle = source_import.map_confluence_space(_confluence_payload())
 
@@ -261,20 +316,72 @@ def test_confluence_mapper_outputs_valid_space_bundle_and_imports(tmp_path):
     assert imported[1]["parent_id"] == 1
 
 
+def test_confluence_mapper_handles_cloud_export_and_reports_unmapped_fields(tmp_path):
+    bundle = source_import.map_confluence_space(
+        _fixture("confluence_cloud_content.json")
+    )
+    report = source_import.source_mapping_report(bundle)
+
+    assert bundle["space"]["key"] == "OPS"
+    assert bundle["pages"][0]["title"] == "Migration Home"
+    assert bundle["pages"][0]["body"] == "See .\n[[page:2]]"
+    assert bundle["pages"][1]["parent_id"] == 1
+    assert bundle["versions"][0]["body"] == "Initial checklist."
+    assert bundle["comments"][0]["body"] == "Good operating note."
+    assert bundle["cross_links"] == [
+        {
+            "source_kind": "page",
+            "source_id": 1,
+            "target_kind": "page",
+            "target_id": 2,
+        }
+    ]
+
+    assert report["status"] == "mapped_with_gaps"
+    assert report["counts"]["pages"] == 2
+    unmapped = {row["path"]: row for row in report["unmapped_fields"]}
+    assert unmapped["pages[].restrictions"]["count"] == 1
+    assert unmapped["pages[].extensions"]["count"] == 1
+    assert unmapped["pages[].body.storage.links"]["count"] == 1
+
+    target = _connect(tmp_path / "target-confluence-cloud.db")
+    _user(target, "owner@example.com", "Owner", role="admin")
+    _user(target, "editor@example.com", "Editor")
+    _user(target, "reviewer@example.com", "Reviewer")
+    manifest = portability.build_import_manifest(target, bundle)
+    result = portability.replay_import_manifest(target, bundle, manifest)
+    target.close()
+
+    assert manifest["ok"] is True
+    assert result["status"] == "imported"
+
+
 def test_map_source_cli_writes_bundle_and_refuses_overwrite(tmp_path, capsys):
     source_path = tmp_path / "jira.json"
     bundle_path = tmp_path / "bundle.json"
+    report_path = tmp_path / "report.json"
     source_path.write_text(json.dumps(_jira_payload()), encoding="utf-8")
 
     result = ops.map_source_main(
-        ["jira-project", str(source_path), str(bundle_path), "--project-name", "Import"]
+        [
+            "jira-project",
+            str(source_path),
+            str(bundle_path),
+            "--project-name",
+            "Import",
+            "--report-path",
+            str(report_path),
+        ]
     )
     out = capsys.readouterr()
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    report = json.loads(report_path.read_text(encoding="utf-8"))
 
     assert result == 0
     assert "Mapped jira-project export" in out.out
+    assert "Wrote source mapping report" in out.out
     assert bundle["project"]["name"] == "Import"
+    assert report["schema"] == source_import.SOURCE_MAPPING_REPORT_SCHEMA
 
     result = ops.map_source_main(["jira-project", str(source_path), str(bundle_path)])
     out = capsys.readouterr()

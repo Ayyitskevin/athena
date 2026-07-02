@@ -1,0 +1,131 @@
+{
+  "results": [
+    {
+      "id": "2001",
+      "type": "page",
+      "status": "current",
+      "title": "Migration Home",
+      "space": {
+        "id": 900,
+        "key": "OPS",
+        "name": "Operations Wiki"
+      },
+      "history": {
+        "createdBy": {
+          "accountId": "557058:owner",
+          "displayName": "Ops Owner",
+          "email": "owner@example.com"
+        },
+        "createdDate": "2026-01-01T12:00:00.000Z"
+      },
+      "version": {
+        "number": 3,
+        "by": {
+          "accountId": "557058:editor",
+          "displayName": "Editor",
+          "email": "editor@example.com"
+        },
+        "when": "2026-01-02T12:00:00.000Z"
+      },
+      "body": {
+        "storage": {
+          "representation": "storage",
+          "value": "<p>See <ac:link><ri:page ri:content-title=\"Deployment Checklist\" /></ac:link>.</p>"
+        }
+      },
+      "metadata": {
+        "labels": {
+          "results": [
+            {
+              "name": "runbook"
+            }
+          ]
+        }
+      },
+      "comments": {
+        "results": [
+          {
+            "author": {
+              "displayName": "Reviewer",
+              "email": "reviewer@example.com"
+            },
+            "body": {
+              "storage": {
+                "value": "<p>Good operating note.</p>"
+              }
+            },
+            "createdDate": "2026-01-03T12:00:00.000Z"
+          }
+        ]
+      },
+      "restrictions": {
+        "read": {
+          "restrictions": []
+        }
+      },
+      "extensions": {
+        "position": "none"
+      },
+      "_links": {
+        "webui": "/spaces/OPS/pages/2001"
+      }
+    },
+    {
+      "id": "2002",
+      "type": "page",
+      "status": "current",
+      "title": "Deployment Checklist",
+      "space": {
+        "key": "OPS",
+        "name": "Operations Wiki"
+      },
+      "ancestors": [
+        {
+          "id": "2001"
+        }
+      ],
+      "history": {
+        "createdBy": {
+          "displayName": "Editor",
+          "email": "editor@example.com"
+        },
+        "createdDate": "2026-01-04T12:00:00.000Z"
+      },
+      "version": {
+        "number": 1,
+        "by": {
+          "displayName": "Editor",
+          "email": "editor@example.com"
+        },
+        "when": "2026-01-05T12:00:00.000Z"
+      },
+      "body": {
+        "storage": {
+          "representation": "storage",
+          "value": "<p>Check service health.</p><p><ac:link><ri:page ri:content-id=\"9999\" /></ac:link></p>"
+        }
+      },
+      "versions": [
+        {
+          "number": 1,
+          "title": "Deployment Checklist",
+          "body": {
+            "storage": {
+              "value": "<p>Initial checklist.</p>"
+            }
+          },
+          "by": {
+            "displayName": "Editor",
+            "email": "editor@example.com"
+          },
+          "when": "2026-01-04T18:00:00.000Z"
+        }
+      ],
+      "descendants": {
+        "page": {
+          "results": []
+        }
+      }
+    }
+  ]
+}

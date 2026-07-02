@@ -18,6 +18,7 @@ from typing import Any
 from athena.core import links, portability
 
 SOURCE_KINDS = ("jira-project", "confluence-space")
+SOURCE_MAPPING_REPORT_SCHEMA = "athena.source_mapping_report.v1"
 
 _DEFAULT_LABEL_COLOR = "#6b7280"
 _IMPORT_USER_EMAIL = "importer@import.local"
@@ -26,6 +27,42 @@ _ISSUE_KEY_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]{0,9})-(\d+)\b")
 _ATHENA_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,9}$")
 _PAGE_TOKEN_RE = re.compile(r"\[\[page:([A-Za-z0-9_.:-]+)\]\]")
 _RESOURCE_ID_RE = re.compile(r'data-linked-resource-id=["\']([^"\']+)["\']')
+_RI_CONTENT_ID_RE = re.compile(r'ri:content-id=["\']([^"\']+)["\']')
+_RI_CONTENT_TITLE_RE = re.compile(r'ri:content-title=["\']([^"\']+)["\']')
+_JIRA_ISSUE_KEYS = {"id", "key", "self", "fields"}
+_JIRA_FIELD_KEYS = {
+    "assignee",
+    "comment",
+    "created",
+    "description",
+    "issuelinks",
+    "labels",
+    "parent",
+    "priority",
+    "project",
+    "reporter",
+    "status",
+    "summary",
+}
+_CONFLUENCE_PAGE_KEYS = {
+    "ancestors",
+    "body",
+    "comments",
+    "contentId",
+    "createdBy",
+    "history",
+    "id",
+    "key",
+    "labels",
+    "metadata",
+    "parent_id",
+    "parentId",
+    "space",
+    "title",
+    "type",
+    "version",
+    "versions",
+}
 
 
 def write_source_bundle(
@@ -37,6 +74,7 @@ def write_source_bundle(
     project_name: str | None = None,
     space_key: str | None = None,
     space_name: str | None = None,
+    report_path: str | Path | None = None,
     overwrite: bool = False,
 ) -> Path:
     """Map ``source_path`` into an Athena portability bundle at ``bundle_path``."""
@@ -48,6 +86,12 @@ def write_source_bundle(
         raise FileNotFoundError(f"source path is not a file: {source_file}")
     if destination.exists() and not overwrite:
         raise FileExistsError(f"bundle path already exists: {destination}")
+    report_destination = Path(report_path) if report_path is not None else None
+    if report_destination is not None:
+        if report_destination == destination:
+            raise ValueError("report path must be different from bundle path")
+        if report_destination.exists() and not overwrite:
+            raise FileExistsError(f"report path already exists: {report_destination}")
 
     payload = _load_json(source_file)
     if source == "jira-project":
@@ -66,7 +110,18 @@ def write_source_bundle(
         raise ValueError("source must be one of: " + ", ".join(SOURCE_KINDS))
 
     _write_json_file(destination, bundle)
+    if report_destination is not None:
+        _write_json_file(report_destination, source_mapping_report(bundle))
     return destination
+
+
+def source_mapping_report(bundle: dict) -> dict:
+    """Return the source mapping report embedded in a mapped bundle."""
+    source = bundle.get("source") if isinstance(bundle, dict) else {}
+    report = source.get("mapping_report") if isinstance(source, dict) else None
+    if not isinstance(report, dict):
+        raise ValueError("bundle does not contain a source mapping report")
+    return report
 
 
 def map_jira_project(
@@ -81,6 +136,7 @@ def map_jira_project(
         raise ValueError("jira-project payload contains no issues")
 
     now = _utc_now()
+    report = _MappingReport("jira-project", now)
     users = _UserTable(now)
     project = _jira_project_info(issues_in[0], project_key, project_name)
     project_id = 1
@@ -105,6 +161,7 @@ def map_jira_project(
     link_seen: set[tuple[int, int, str]] = set()
 
     for issue in issues_in:
+        _report_jira_unmapped_fields(report, issue)
         key = _jira_issue_key(issue, project["key"], len(issue_rows) + 1)
         issue_id = issue_id_by_key[key]
         fields = issue.get("fields") if isinstance(issue, dict) else {}
@@ -132,6 +189,11 @@ def map_jira_project(
             issue_id_by_key,
         )
         parent_key = _jira_parent_key(fields.get("parent"))
+        if parent_key and parent_key not in issue_id_by_key:
+            report.note_unmapped(
+                "issues[].fields.parent",
+                "parent issue is outside this source export",
+            )
 
         issue_rows.append(
             {
@@ -189,7 +251,7 @@ def map_jira_project(
             )
             comment_id += 1
 
-        for source_id, target_id, kind in _jira_links(issue, issue_id_by_key):
+        for source_id, target_id, kind in _jira_links(issue, issue_id_by_key, report):
             if source_id == target_id:
                 continue
             if kind == "relates" and source_id > target_id:
@@ -212,8 +274,14 @@ def map_jira_project(
     project["created_by"] = owner_id
     project["created_at"] = min((row["created_at"] for row in issue_rows), default=now)
     project["issue_counter"] = max((row["project_seq"] or 0 for row in issue_rows), default=0)
+    report.set_count("issues", len(issue_rows))
+    report.set_count("comments", len(comments))
+    report.set_count("issue_links", len(issue_links))
+    report.set_count("cross_links", len(cross_links))
+    report.set_count("labels", len(labels))
+    report.set_count("users", len(users.rows()))
 
-    return _bundle_base("project", project_id, "jira-project", now) | {
+    bundle = _bundle_base("project", project_id, "jira-project", now) | {
         "project": project,
         "statuses": statuses,
         "members": [],
@@ -232,6 +300,8 @@ def map_jira_project(
         "activity": [],
         "users": users.rows(),
     }
+    bundle["source"]["mapping_report"] = report.as_dict()
+    return bundle
 
 
 def map_confluence_space(
@@ -246,6 +316,7 @@ def map_confluence_space(
         raise ValueError("confluence-space payload contains no pages")
 
     now = _utc_now()
+    report = _MappingReport("confluence-space", now)
     users = _UserTable(now)
     space = _confluence_space_info(pages_in[0], space_key, space_name)
     space_id = 1
@@ -272,17 +343,30 @@ def map_confluence_space(
     for page in pages_in:
         if not isinstance(page, dict):
             continue
+        _report_confluence_unmapped_fields(report, page)
         source_id = _source_id(page, fallback=str(len(pages_out) + 1))
         page_id = page_id_by_source[source_id]
         created_by = users.id_for(_confluence_created_by(page))
         updated_by = users.id_for(_confluence_updated_by(page))
         body_source = _confluence_body_source(page)
+        storage_refs = _confluence_storage_ref_ids(
+            body_source,
+            page_id_by_source,
+            page_id_by_title,
+            report,
+        )
         body = _rewrite_confluence_page_refs(
             _html_to_text(body_source),
             page_id_by_source,
             page_id_by_title,
         )
+        body = _append_missing_page_refs(body, storage_refs)
         parent_id = _confluence_parent_id(page, page_id_by_source)
+        if _confluence_has_unmapped_parent(page, page_id_by_source):
+            report.note_unmapped(
+                "pages[].ancestors",
+                "parent or ancestor page is outside this source export",
+            )
 
         pages_out.append(
             {
@@ -359,8 +443,14 @@ def map_confluence_space(
     labels = sorted(labels_by_name.values(), key=lambda row: row["id"])
     space["created_by"] = owner_id
     space["created_at"] = min((row["created_at"] for row in pages_out), default=now)
+    report.set_count("pages", len(pages_out))
+    report.set_count("versions", len(versions))
+    report.set_count("comments", len(comments))
+    report.set_count("cross_links", len(cross_links))
+    report.set_count("labels", len(labels))
+    report.set_count("users", len(users.rows()))
 
-    return _bundle_base("space", space_id, "confluence-space", now) | {
+    bundle = _bundle_base("space", space_id, "confluence-space", now) | {
         "space": space,
         "members": [],
         "pages": pages_out,
@@ -376,6 +466,8 @@ def map_confluence_space(
         "activity": [],
         "users": users.rows(),
     }
+    bundle["source"]["mapping_report"] = report.as_dict()
+    return bundle
 
 
 def _bundle_base(kind: str, root_id: int, source: str, now: str) -> dict:
@@ -530,7 +622,11 @@ def _jira_comments(comment_field: Any) -> list[dict]:
     return []
 
 
-def _jira_links(issue: dict, issue_id_by_key: dict[str, int]) -> list[tuple[int, int, str]]:
+def _jira_links(
+    issue: dict,
+    issue_id_by_key: dict[str, int],
+    report: "_MappingReport",
+) -> list[tuple[int, int, str]]:
     if not isinstance(issue, dict):
         return []
     current_key = _jira_issue_key(issue, "IMP", 0)
@@ -548,6 +644,10 @@ def _jira_links(issue: dict, issue_id_by_key: dict[str, int]) -> list[tuple[int,
         if isinstance(row.get("outwardIssue"), dict):
             target = issue_id_by_key.get(str(row["outwardIssue"].get("key", "")).upper())
             if target is None:
+                report.note_unmapped(
+                    "issues[].fields.issuelinks",
+                    "linked issue is outside this source export",
+                )
                 continue
             if _jira_link_is_blocks(link_type, outward=True):
                 out.append((current_id, target, "blocks"))
@@ -556,6 +656,10 @@ def _jira_links(issue: dict, issue_id_by_key: dict[str, int]) -> list[tuple[int,
         if isinstance(row.get("inwardIssue"), dict):
             target = issue_id_by_key.get(str(row["inwardIssue"].get("key", "")).upper())
             if target is None:
+                report.note_unmapped(
+                    "issues[].fields.issuelinks",
+                    "linked issue is outside this source export",
+                )
                 continue
             if _jira_link_is_blocks(link_type, outward=False):
                 out.append((target, current_id, "blocks"))
@@ -654,6 +758,23 @@ def _confluence_parent_id(page: dict, page_id_by_source: dict[str, int]) -> int 
     return None
 
 
+def _confluence_has_unmapped_parent(
+    page: dict,
+    page_id_by_source: dict[str, int],
+) -> bool:
+    parent = page.get("parent_id") or page.get("parentId")
+    if parent is not None and str(parent) not in page_id_by_source:
+        return True
+    ancestors = page.get("ancestors")
+    if isinstance(ancestors, list) and ancestors:
+        return not any(
+            isinstance(ancestor, dict)
+            and _source_id(ancestor, fallback="") in page_id_by_source
+            for ancestor in ancestors
+        )
+    return False
+
+
 def _confluence_versions(page: dict) -> list[dict]:
     versions = page.get("versions")
     if isinstance(versions, list):
@@ -710,6 +831,45 @@ def _confluence_body_refs(
     return refs
 
 
+def _confluence_storage_ref_ids(
+    source: str,
+    page_id_by_source: dict[str, int],
+    page_id_by_title: dict[str, int],
+    report: "_MappingReport",
+) -> set[int]:
+    refs: set[int] = set()
+    for raw_id in [*_RESOURCE_ID_RE.findall(source), *_RI_CONTENT_ID_RE.findall(source)]:
+        mapped = page_id_by_source.get(raw_id)
+        if mapped is None:
+            report.note_unmapped(
+                "pages[].body.storage.links",
+                "linked page id is outside this source export",
+            )
+            continue
+        refs.add(mapped)
+    for raw_title in _RI_CONTENT_TITLE_RE.findall(source):
+        mapped = page_id_by_title.get(unescape(raw_title).casefold())
+        if mapped is None:
+            report.note_unmapped(
+                "pages[].body.storage.links",
+                "linked page title is outside this source export",
+            )
+            continue
+        refs.add(mapped)
+    return refs
+
+
+def _append_missing_page_refs(body: str, refs: set[int]) -> str:
+    if not refs:
+        return body
+    existing = {ref_id for kind, ref_id in links.extract_refs(body) if kind == "page"}
+    missing = [ref_id for ref_id in sorted(refs) if ref_id not in existing]
+    if not missing:
+        return body
+    suffix = " ".join(f"[[page:{ref_id}]]" for ref_id in missing)
+    return f"{body}\n{suffix}".strip() if body else suffix
+
+
 def _rewrite_confluence_page_refs(
     text: str,
     page_id_by_source: dict[str, int],
@@ -727,6 +887,65 @@ def _confluence_user(value: Any) -> dict | None:
     if value is None:
         return None
     return _user_from_mapping(value)
+
+
+def _report_jira_unmapped_fields(report: "_MappingReport", issue: Any) -> None:
+    if not isinstance(issue, dict):
+        report.note_unmapped("issues[]", "non-object issue row was skipped")
+        return
+    _note_unmapped_keys(
+        report,
+        "issues[]",
+        issue,
+        _JIRA_ISSUE_KEYS,
+        "Jira issue property is not mapped into Athena V1 bundles",
+    )
+    fields = issue.get("fields")
+    if not isinstance(fields, dict):
+        return
+    for key in sorted(set(fields) - _JIRA_FIELD_KEYS):
+        report.note_unmapped(f"issues[].fields.{key}", _jira_unmapped_field_reason(key))
+
+
+def _jira_unmapped_field_reason(key: str) -> str:
+    if key == "attachment":
+        return "raw attachment blobs are not imported by the source mapper"
+    if key.startswith("customfield_"):
+        return "custom Jira fields are not mapped into Athena V1 fields"
+    if key in {"components", "fixVersions", "versions"}:
+        return "Jira release/component fields are not mapped into Athena V1 fields"
+    if key in {"updated", "resolution", "resolutiondate"}:
+        return "Jira resolution/update metadata is not mapped into Athena V1 fields"
+    return "Jira field is not mapped into Athena V1 fields"
+
+
+def _report_confluence_unmapped_fields(report: "_MappingReport", page: Any) -> None:
+    if not isinstance(page, dict):
+        report.note_unmapped("pages[]", "non-object page row was skipped")
+        return
+    for key in sorted(set(page) - _CONFLUENCE_PAGE_KEYS):
+        report.note_unmapped(f"pages[].{key}", _confluence_unmapped_field_reason(key))
+
+
+def _confluence_unmapped_field_reason(key: str) -> str:
+    if key in {"restrictions", "operations"}:
+        return "Confluence permissions/operations are not mapped into Athena V1 bundles"
+    if key in {"_links", "_expandable", "extensions"}:
+        return "Confluence presentation metadata is not mapped into Athena V1 bundles"
+    if key in {"descendants", "children"}:
+        return "Confluence child expansion metadata is not mapped into Athena V1 bundles"
+    return "Confluence page property is not mapped into Athena V1 bundles"
+
+
+def _note_unmapped_keys(
+    report: "_MappingReport",
+    prefix: str,
+    row: dict,
+    known: set[str],
+    reason: str,
+) -> None:
+    for key in sorted(set(row) - known):
+        report.note_unmapped(f"{prefix}.{key}", reason)
 
 
 def _source_id(row: dict, *, fallback: str) -> str:
@@ -785,6 +1004,15 @@ def _adf_to_text(node: Any) -> str:
 
 
 def _html_to_text(value: Any) -> str:
+    if isinstance(value, dict):
+        for key in ("storage", "view", "export_view"):
+            nested = value.get(key)
+            if isinstance(nested, dict) and isinstance(nested.get("value"), str):
+                value = nested["value"]
+                break
+        else:
+            if isinstance(value.get("value"), str):
+                value = value["value"]
     text = _body_to_text(value)
     if "<" not in text or ">" not in text:
         return unescape(text)
@@ -814,6 +1042,36 @@ class _TextHTMLParser(HTMLParser):
         raw = unescape("".join(self._parts))
         lines = [" ".join(line.split()) for line in raw.splitlines()]
         return "\n".join(line for line in lines if line).strip()
+
+
+class _MappingReport:
+    def __init__(self, source_kind: str, generated_at: str) -> None:
+        self._source_kind = source_kind
+        self._generated_at = generated_at
+        self._counts: dict[str, int] = {}
+        self._unmapped: dict[tuple[str, str], int] = {}
+
+    def set_count(self, name: str, value: int) -> None:
+        self._counts[name] = value
+
+    def note_unmapped(self, path: str, reason: str) -> None:
+        key = (path, reason)
+        self._unmapped[key] = self._unmapped.get(key, 0) + 1
+
+    def as_dict(self) -> dict:
+        unmapped_fields = [
+            {"path": path, "reason": reason, "count": count}
+            for (path, reason), count in sorted(self._unmapped.items())
+        ]
+        return {
+            "schema": SOURCE_MAPPING_REPORT_SCHEMA,
+            "schema_version": 1,
+            "source_kind": self._source_kind,
+            "generated_at": self._generated_at,
+            "status": "mapped_with_gaps" if unmapped_fields else "mapped",
+            "counts": dict(sorted(self._counts.items())),
+            "unmapped_fields": unmapped_fields,
+        }
 
 
 class _UserTable:

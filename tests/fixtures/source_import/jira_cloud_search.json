@@ -1,0 +1,178 @@
+{
+  "expand": "schema,names",
+  "issues": [
+    {
+      "id": "10001",
+      "key": "OPS-12",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10001",
+      "fields": {
+        "project": {
+          "id": "10000",
+          "key": "OPS",
+          "name": "Operations"
+        },
+        "issuetype": {
+          "name": "Task"
+        },
+        "summary": "Prepare migration runbook",
+        "description": {
+          "type": "doc",
+          "version": 1,
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Coordinate with OPS-13 before cutover."
+                }
+              ]
+            },
+            {
+              "type": "bulletList",
+              "content": [
+                {
+                  "type": "listItem",
+                  "content": [
+                    {
+                      "type": "paragraph",
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "Back up SQLite database"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "status": {
+          "name": "In Progress",
+          "statusCategory": {
+            "key": "indeterminate"
+          }
+        },
+        "priority": {
+          "name": "Highest"
+        },
+        "reporter": {
+          "accountId": "557058:owner",
+          "displayName": "Ops Owner",
+          "emailAddress": "owner@example.com"
+        },
+        "assignee": {
+          "accountId": "557058:agent",
+          "displayName": "Migration Agent"
+        },
+        "created": "2026-01-01T12:00:00.000+0000",
+        "updated": "2026-01-02T12:00:00.000+0000",
+        "labels": [
+          "migration",
+          "runbook"
+        ],
+        "components": [
+          {
+            "name": "Platform"
+          }
+        ],
+        "customfield_10020": [
+          {
+            "name": "Sprint 42"
+          }
+        ],
+        "attachment": [
+          {
+            "filename": "runbook.pdf",
+            "size": 12345
+          }
+        ],
+        "comment": {
+          "comments": [
+            {
+              "id": "20001",
+              "author": {
+                "accountId": "557058:reviewer",
+                "displayName": "Reviewer",
+                "emailAddress": "reviewer@example.com"
+              },
+              "body": {
+                "type": "doc",
+                "content": [
+                  {
+                    "type": "paragraph",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "Looks ready."
+                      }
+                    ]
+                  }
+                ]
+              },
+              "created": "2026-01-02T08:00:00.000+0000"
+            }
+          ]
+        },
+        "issuelinks": [
+          {
+            "type": {
+              "name": "Blocks",
+              "outward": "blocks",
+              "inward": "is blocked by"
+            },
+            "outwardIssue": {
+              "key": "OPS-13"
+            }
+          },
+          {
+            "type": {
+              "name": "Relates"
+            },
+            "outwardIssue": {
+              "key": "EXT-44"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "10002",
+      "key": "OPS-13",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10002",
+      "fields": {
+        "project": {
+          "id": "10000",
+          "key": "OPS",
+          "name": "Operations"
+        },
+        "summary": "Verify deployment checklist",
+        "description": "Linked from OPS-12.",
+        "status": {
+          "name": "Done",
+          "statusCategory": {
+            "key": "done"
+          }
+        },
+        "priority": {
+          "name": "Low"
+        },
+        "reporter": {
+          "displayName": "Ops Owner",
+          "emailAddress": "owner@example.com"
+        },
+        "assignee": null,
+        "parent": {
+          "key": "OPS-99"
+        },
+        "created": "2026-01-03T12:00:00.000+0000",
+        "labels": [
+          "migration"
+        ],
+        "resolutiondate": "2026-01-04T12:00:00.000+0000"
+      }
+    }
+  ]
+}
