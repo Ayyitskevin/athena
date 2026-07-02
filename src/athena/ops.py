@@ -269,6 +269,11 @@ def map_source_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--space-key", help="override Confluence space key")
     parser.add_argument("--space-name", help="override Confluence space name")
     parser.add_argument(
+        "--report-path",
+        type=Path,
+        help="optional destination for the source mapping report JSON",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="replace an existing bundle path",
@@ -284,6 +289,7 @@ def map_source_main(argv: list[str] | None = None) -> int:
             project_name=args.project_name,
             space_key=args.space_key,
             space_name=args.space_name,
+            report_path=args.report_path,
             overwrite=args.overwrite,
         )
     except (
@@ -296,6 +302,8 @@ def map_source_main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Mapped {args.source} export from {args.source_path} to {bundle}")
+    if args.report_path is not None:
+        print(f"Wrote source mapping report to {args.report_path}")
     return 0
 
 

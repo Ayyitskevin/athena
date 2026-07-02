@@ -169,6 +169,7 @@ to turn it into Athena's portability bundle format before any database write:
 ```bash
 athena-map-source jira-project /imports/jira-issues.json /exports/jira-project.json
 athena-map-source confluence-space /imports/confluence-pages.json /exports/confluence-space.json
+athena-map-source jira-project /imports/jira-issues.json /exports/jira-project.json --report-path /exports/jira-project.report.json
 ```
 
 The mapper is intentionally narrow. `jira-project` expects Jira issue-search style
@@ -177,7 +178,11 @@ style JSON with a `results` or `pages` array. The output is still only a bundle:
 review it, then run the same dry-run, manifest, and import flow below. Users are
 mapped by email, so create matching Athena users before dry-run. Missing source
 emails become `@import.local` placeholders that dry-run will surface as missing
-users. Raw attachment files are not imported by the mapper.
+users. Raw attachment files are not imported by the mapper. Every mapped bundle
+includes `source.mapping_report`; pass `--report-path` to write that report as a
+standalone JSON file. Review `unmapped_fields` before import so custom Jira
+fields, Confluence restrictions, external links, and source-only metadata are
+handled deliberately instead of silently assumed.
 
 Use `athena-import-dry-run` before planning a selective import into another
 Athena database:
