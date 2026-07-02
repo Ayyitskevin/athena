@@ -18,6 +18,7 @@ from athena.core.portability import (
     import_manifest_database,
     write_import_manifest_database,
 )
+from athena.core.run_replay import export_run_replay_database
 
 
 def _required_migrations() -> list[str]:
@@ -215,6 +216,42 @@ def export_main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Exported {args.kind} {args.target_id} from {args.db_path} to {bundle}")
+    return 0
+
+
+def export_run_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-export-run",
+        description="Export one tagged Athena run to a portable replay JSON artifact.",
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument("run_id", help="run id to export")
+    parser.add_argument("artifact_path", type=Path, help="Destination JSON artifact path")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace an existing artifact path",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        artifact = export_run_replay_database(
+            args.db_path,
+            args.run_id,
+            args.artifact_path,
+            overwrite=args.overwrite,
+        )
+    except (
+        FileNotFoundError,
+        FileExistsError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-export-run: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Exported run {args.run_id} from {args.db_path} to {artifact}")
     return 0
 
 

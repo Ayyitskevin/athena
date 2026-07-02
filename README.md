@@ -15,8 +15,9 @@ Self-hosted **project management + knowledge base** — one platform, two module
 Mentor spaces/pages/versioning, auth/sessions, CSRF, search, cross-links, and an
 audited activity trail. Operators can export one project or space, dry-run it
 against another Athena database, write a replay manifest, and import it
-transactionally. It is still developed locally and is not hosted yet; self-hosting
-on the `flow` node is a later decision.
+transactionally. Tagged agent runs can also be exported as replay artifacts with
+ordered events and lineage metadata. It is still developed locally and is not
+hosted yet; self-hosting on the `flow` node is a later decision.
 
 ## Stack
 

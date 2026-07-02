@@ -453,9 +453,10 @@ the June 30 merge wave. **[Interpretation over Fact]**
    and manifest-gated replay now cover Athena-to-Athena moves. The remaining
    migration blocker is common-source import from incumbents, not the internal
    portability substrate.
-2. **Replay bundles are incomplete.** The event feed, run lineage, and fork
-   contract exist; operators still need a single replay manifest/bundle that
-   freezes one run's replay-safe facts plus lineage metadata for handoff and audit.
+2. **Run replay bundles have V1 coverage.** The event feed, run lineage, fork
+   contract, `/activity/runs/{id}/replay`, and `athena-export-run` now freeze one
+   run's replay-safe facts plus lineage metadata for handoff and audit. Signed
+   artifacts or replay-bundle import should wait for concrete operator demand.
 3. **Agent administration is basic.** Agent users can act through tokens and be
    delegated issues, but there is no dedicated admin/policy layer for allowed
    projects/spaces, delegation constraints, or agent roster review.

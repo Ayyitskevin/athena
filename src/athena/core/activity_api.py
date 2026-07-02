@@ -13,9 +13,9 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from athena.core import activity
+from athena.core import activity, run_replay
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -107,6 +107,23 @@ class RunForkContractOut(BaseModel):
     shared_prefix_event_count: int
     shared_prefix_partial: bool
     headers: dict[str, str]
+
+
+class RunReplayArtifactOut(BaseModel):
+    # A portable, read-only replay artifact for one tagged run. `events` is the
+    # focal run in replay order; `lineage` is light metadata that places the run in
+    # its parent/child tree without duplicating the event payload.
+    schema_: str = Field(alias="schema")
+    schema_version: int
+    generated_at: str
+    run_id: str
+    event_count: int
+    first_event_id: int
+    last_event_id: int
+    replay_order: str
+    determinism_contract: dict[str, object]
+    lineage: RunLineageOut
+    events: list[ActivityOut]
 
 
 @router.get("", response_model=list[ActivityOut])
@@ -247,6 +264,23 @@ def run_lineage(
     if lineage is None:
         raise HTTPException(status_code=404, detail="no such run")
     return lineage
+
+
+@router.get("/runs/{run_id}/replay", response_model=RunReplayArtifactOut)
+def run_replay_artifact(
+    run_id: str,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Freeze the visible run into a handoff/audit artifact. This reuses the same
+    # visibility semantics as /events and /lineage: hidden runs are 404s, not leaks.
+    try:
+        artifact = run_replay.build_run_replay_artifact(conn, run_id, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="no such run")
+    return artifact
 
 
 @router.get("/runs/{run_id}/fork", response_model=RunForkContractOut)

@@ -131,6 +131,21 @@ The browser activity feed at `/aegis/activity` includes a CSV download for the
 current audit filters. The export uses the same actor, event, kind, target, and
 search filters as the page and is capped to the newest 1000 matching rows.
 
+## Run Replay Artifact Export
+
+Use `athena-export-run` when you need to freeze one tagged run for audit, agent
+handoff, or incident review without replaying side effects:
+
+```bash
+athena-export-run /var/lib/athena/athena.db goal-123 /exports/run-goal-123.json
+```
+
+The artifact includes the run's events in `activity.id ASC` order, the
+run/fork coordinates, a light ancestor/descendant lineage tree, and the
+determinism contract that marks which fields are replay-safe facts. It does not
+execute handlers or mutate the database. Existing artifact files are not replaced
+unless `--overwrite` is passed.
+
 ## Selective Portability Export
 
 Use `athena-export` when you need a portable JSON bundle for one project or one
