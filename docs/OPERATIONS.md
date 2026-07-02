@@ -15,6 +15,7 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies. Set to `1` when Athena is served over HTTPS. Leave off for plain local HTTP. |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
 | `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. Set to `0` only if a trusted reverse proxy enforces the limit. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
+| `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
 | `ATHENA_ATTACH_DIR` | `attachments` | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are only reachable via the authenticated download route). |
 | `ATHENA_ATTACH_MAX_BYTES` | `10485760` | Per-attachment size cap (bounded by `ATHENA_MAX_REQUEST_BODY_BYTES`). |
 
@@ -283,6 +284,12 @@ Browser admins can use `/admin/agents` to review agent token posture. The page
 flags agent accounts with no live token, live `admin`-scoped tokens, live tokens
 that have never been used, and live tokens unused for 30+ days. These warnings are
 read-only; they do not change authentication or token behavior.
+
+Bearer-token API traffic is rate limited per token by
+`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`. A rejected request returns `429`, a
+`Retry-After` header, and rate-limit headers. Browser sessions and the trusted
+`X-Athena-Actor` bootstrap path are not token-limited; leave actor-header trust
+off anywhere untrusted.
 
 ## Headless Admin Token Bootstrap
 

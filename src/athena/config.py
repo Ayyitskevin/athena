@@ -30,6 +30,14 @@ MAX_REQUEST_BODY_BYTES = int(
     os.environ.get("ATHENA_MAX_REQUEST_BODY_BYTES", str(1024 * 1024))
 )
 
+# Per-bearer-token request ceiling for agent/API traffic. This is in-process and
+# fixed-window by design: enough to stop a runaway local agent loop without adding
+# a durable coordination table. Set to 0 to disable when a reverse proxy enforces
+# equivalent limits.
+TOKEN_RATE_LIMIT_PER_MINUTE = int(
+    os.environ.get("ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE", "120")
+)
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.
