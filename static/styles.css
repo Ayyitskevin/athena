@@ -508,6 +508,70 @@ footer {
     color: #155724;
 }
 
+/* Admin agent overview: operational read model for token-driven actors. */
+.agent-admin-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.agent-admin-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1rem;
+    background: #fff;
+}
+
+.agent-admin-card-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #eef1f4;
+    padding-bottom: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.agent-admin-card h2 {
+    margin: 0 0 0.15rem;
+    font-size: 1.15rem;
+}
+
+.agent-admin-counts {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.agent-admin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.agent-admin-section {
+    min-width: 0;
+}
+
+.agent-admin-section h3 {
+    margin: 0.35rem 0 0.4rem;
+    font-size: 0.95rem;
+}
+
+.compact-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.9rem;
+}
+
+.compact-list li {
+    margin-bottom: 0.35rem;
+}
+
+.agent-token-revoked {
+    opacity: 0.7;
+}
+
 /* Issue detail */
 .issue-detail {
     background: #fafafa;
