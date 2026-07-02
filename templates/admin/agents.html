@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Agents - Admin - Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Agents</h1>
+        <p class="subtitle">Token posture, access, current delegation, and recent work.</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/admin/users" class="button secondary">Manage users</a>
+        <a href="/aegis/activity?actor_type=agent" class="button secondary">Agent activity</a>
+    </div>
+</div>
+
+{% if agents %}
+<div class="agent-admin-list">
+    {% for agent in agents %}
+    <section class="agent-admin-card">
+        <header class="agent-admin-card-header">
+            <div>
+                <h2>{{ agent.user.name }} <span class="agent-badge">agent</span></h2>
+                <p class="muted">
+                    {{ agent.user.email }} &middot; {{ agent.user.role }} &middot; created {{ agent.user.created_at }}
+                    {% if agent.last_activity_at %} &middot; last active {{ agent.last_activity_at }}{% endif %}
+                </p>
+            </div>
+            <div class="agent-admin-counts">
+                <span class="pill">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
+                <span class="pill">{{ agent.revoked_token_count }} revoked</span>
+            </div>
+        </header>
+
+        <div class="agent-admin-grid">
+            <div class="agent-admin-section">
+                <h3>Tokens</h3>
+                {% if agent.tokens %}
+                <ul class="compact-list">
+                    {% for token in agent.tokens %}
+                    <li class="{{ 'agent-token-revoked' if token.revoked_at else '' }}">
+                        <strong>{{ token.name }}</strong>
+                        <span class="muted">{{ token.scopes | join(", ") }}</span>
+                        <span class="muted">last used {{ token.last_used_at or "never" }}</span>
+                        {% if token.revoked_at %}<span class="muted">revoked</span>{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">No tokens.</p>
+                {% endif %}
+            </div>
+
+            <div class="agent-admin-section">
+                <h3>Project Access</h3>
+                {% if agent.project_memberships %}
+                <ul class="compact-list">
+                    {% for project in agent.project_memberships %}
+                    <li>
+                        <a href="/aegis/projects/{{ project.id }}">{{ project.name }}</a>
+                        <code>{{ project.key }}</code>
+                        <span class="muted">{{ project.visibility }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">No explicit project memberships.</p>
+                {% endif %}
+            </div>
+
+            <div class="agent-admin-section">
+                <h3>Space Access</h3>
+                {% if agent.space_memberships %}
+                <ul class="compact-list">
+                    {% for space in agent.space_memberships %}
+                    <li>
+                        <a href="/mentor/spaces/{{ space.id }}">{{ space.name }}</a>
+                        <code>{{ space.key }}</code>
+                        <span class="muted">{{ space.visibility }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">No explicit space memberships.</p>
+                {% endif %}
+            </div>
+
+            <div class="agent-admin-section">
+                <h3>Current Delegation</h3>
+                {% if agent.assignments %}
+                <ul class="compact-list">
+                    {% for issue in agent.assignments %}
+                    <li>
+                        <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }}</a>
+                        {{ issue.title }}
+                        <span class="status {{ issue.status }}">{{ issue.status }}</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="muted">No active contributor assignments.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="agent-admin-section">
+            <h3>Recent Activity</h3>
+            {% with events=agent.recent_activity, show_target=True %}
+            {% include "aegis/partials/activity_list.html" %}
+            {% endwith %}
+        </div>
+    </section>
+    {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">
+    No agent accounts yet. Mark a user as an agent from <a href="/admin/users">Admin users</a>
+    when you issue tokens for automation.
+</p>
+{% endif %}
+{% endblock %}

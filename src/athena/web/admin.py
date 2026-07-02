@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena.aegis import automation, projects, statuses
-from athena.core import activity, identity, oidc, tokens, users, webhooks
+from athena.core import activity, agents, identity, oidc, tokens, users, webhooks
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -345,6 +345,22 @@ def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         return err
     return templates.TemplateResponse(
         request=request, name="admin/users.html", context=_admin_context(conn)
+    )
+
+
+@router.get("/admin/agents", response_class=HTMLResponse)
+def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/agents.html",
+        context={"agents": agents.agent_admin_summaries(conn)},
     )
 
 
