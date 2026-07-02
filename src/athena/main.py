@@ -34,6 +34,7 @@ from athena.core import (
     idempotency,
     notifications,
     notifications_api,
+    rate_limits,
     run_context,
     search_api,
     sessions,
@@ -331,12 +332,18 @@ def create_app(
     db_path: str | Path | None = None,
     *,
     max_request_body_bytes: int | None = None,
+    token_rate_limit_per_minute: int | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
     body_limit = (
         config.MAX_REQUEST_BODY_BYTES
         if max_request_body_bytes is None
         else max_request_body_bytes
+    )
+    token_limit = (
+        config.TOKEN_RATE_LIMIT_PER_MINUTE
+        if token_rate_limit_per_minute is None
+        else token_rate_limit_per_minute
     )
 
     @asynccontextmanager
@@ -373,6 +380,7 @@ def create_app(
                         await task
 
     app = FastAPI(title="Athena", lifespan=lifespan)
+    app.state.token_rate_limiter = rate_limits.TokenRateLimiter(token_limit)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
     # Stamp the ambient run id (X-Athena-Run) for every event recorded this request.
     app.add_middleware(RunContextMiddleware)

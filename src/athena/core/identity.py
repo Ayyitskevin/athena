@@ -25,10 +25,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 
 from athena import config
-from athena.core import tokens, users
+from athena.core import rate_limits, tokens, users
 from athena.core.deps import get_conn
 
 ACTOR_HEADER = "X-Athena-Actor"
@@ -36,6 +36,7 @@ _BEARER_PREFIX = "bearer "
 
 
 def current_actor(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_athena_actor: str | None = Header(default=None, alias=ACTOR_HEADER),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -48,6 +49,7 @@ def current_actor(
         actor = tokens.resolve_token(conn, raw)
         if actor is None:
             raise HTTPException(status_code=401, detail="invalid or revoked token")
+        _enforce_token_rate_limit(request, actor)
         return actor
 
     # 2. Actor header — local-trust fallback, only if explicitly enabled.
@@ -67,6 +69,7 @@ def current_actor(
 
 
 def optional_actor(
+    request: Request,
     authorization: str | None = Header(default=None),
     x_athena_actor: str | None = Header(default=None, alias=ACTOR_HEADER),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -76,9 +79,34 @@ def optional_actor(
     decides whether a missing actor is acceptable (used by the first-user
     bootstrap path)."""
     try:
-        return current_actor(authorization, x_athena_actor, conn)
-    except HTTPException:
+        return current_actor(request, authorization, x_athena_actor, conn)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
         return None
+
+
+def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
+    token_id = actor.get("_token_id")
+    if token_id is None:
+        return
+    limiter: rate_limits.TokenRateLimiter | None = getattr(
+        request.app.state, "token_rate_limiter", None
+    )
+    if limiter is None:
+        return
+    decision = limiter.check(int(token_id))
+    if decision.allowed:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail="token rate limit exceeded",
+        headers={
+            "Retry-After": str(decision.retry_after_seconds),
+            "X-RateLimit-Limit": str(decision.limit),
+            "X-RateLimit-Remaining": str(decision.remaining),
+        },
+    )
 
 
 def is_admin(actor: dict | None) -> bool:
