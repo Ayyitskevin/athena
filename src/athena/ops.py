@@ -10,7 +10,12 @@ import sys
 import tempfile
 
 from athena.core import db
-from athena.core.backup import backup_database, restore_database
+from athena.core.backup import (
+    backup_database,
+    prune_backup_directory,
+    restore_database,
+    validate_retention_plan,
+)
 from athena.core.portability import (
     ATTACHMENT_POLICIES,
     dry_run_import_database,
@@ -156,17 +161,52 @@ def backup_main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="replace an existing backup path",
     )
+    parser.add_argument(
+        "--keep",
+        type=int,
+        metavar="N",
+        help=(
+            "after a successful backup, keep the newest N backups matching the "
+            "retention glob in the destination directory"
+        ),
+    )
+    parser.add_argument(
+        "--retention-glob",
+        help=(
+            "file-name glob used with --keep; defaults to "
+            "<source-db-stem>-*.db"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.keep is None and args.retention_glob is not None:
+        print("athena-backup: --retention-glob requires --keep", file=sys.stderr)
+        return 1
+    retention_glob = args.retention_glob or f"{args.db_path.stem}-*.db"
 
     try:
+        if args.keep is not None:
+            validate_retention_plan(
+                args.backup_path,
+                retention_glob,
+                keep=args.keep,
+            )
         backup = backup_database(
             args.db_path,
             args.backup_path,
             overwrite=args.overwrite,
         )
+        pruned = []
+        if args.keep is not None:
+            pruned = prune_backup_directory(
+                backup.parent,
+                retention_glob,
+                keep=args.keep,
+                protected=(backup,),
+            )
     except (
         FileNotFoundError,
         FileExistsError,
+        NotADirectoryError,
         OSError,
         sqlite3.Error,
         ValueError,
@@ -175,6 +215,12 @@ def backup_main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Backed up {args.db_path} to {backup}")
+    if args.keep is not None:
+        print(
+            "Pruned "
+            f"{len(pruned)} old backup(s) matching {retention_glob!r}; "
+            f"kept newest {args.keep}"
+        )
     return 0
 
 
