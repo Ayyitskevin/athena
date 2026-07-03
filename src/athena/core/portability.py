@@ -21,6 +21,13 @@ MANIFEST_SCHEMA = "athena.import_manifest.v1"
 IMPORT_RESULT_SCHEMA = "athena.import_result.v1"
 ATTACHMENT_POLICIES = ("skip", "require-blobs")
 
+# Bounds on a bundle before we load/replay it. A bundle is imported by loading the whole
+# JSON into memory and replaying one INSERT per row inside a single write transaction, so
+# an oversized/hostile bundle could exhaust memory or hold the write lock. These caps are
+# generous for a real migration but refuse a pathological input up front.
+_MAX_BUNDLE_BYTES = 64 * 1024 * 1024  # 64 MiB on disk
+_MAX_BUNDLE_ROWS = 500_000  # total rows across every top-level array
+
 _PROJECT_COLS = (
     "id, name, key, description, created_by, created_at, issue_counter, visibility"
 )
@@ -262,6 +269,14 @@ def dry_run_import_bundle(conn: sqlite3.Connection, bundle: dict) -> dict:
 
 
 def _load_bundle(path: Path) -> dict:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"cannot read bundle: {exc}") from exc
+    if size > _MAX_BUNDLE_BYTES:
+        raise ValueError(
+            f"bundle is too large ({size} bytes > {_MAX_BUNDLE_BYTES}); refusing to load"
+        )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -1406,6 +1421,16 @@ def _validate_bundle(bundle: dict) -> dict:
         raise ValueError("bundle.root_id must be an integer")
     if "exported_at" not in bundle:
         raise ValueError("bundle.exported_at is required")
+    # Refuse a bundle with an unreasonable total number of rows before replay materializes
+    # them one INSERT at a time in a single write transaction. Covers every import path
+    # (the file-size cap in _load_bundle only guards the CLI; a bundle handed in-process
+    # skips it).
+    total_rows = sum(len(v) for v in bundle.values() if isinstance(v, list))
+    if total_rows > _MAX_BUNDLE_ROWS:
+        raise ValueError(
+            f"bundle has too many rows ({total_rows} > {_MAX_BUNDLE_ROWS}); "
+            "refusing to import"
+        )
     return bundle
 
 

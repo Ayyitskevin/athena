@@ -118,6 +118,9 @@ class RunReplayArtifactOut(BaseModel):
     generated_at: str
     run_id: str
     event_count: int
+    # True when the run exceeded the artifact's event cap: `events` holds only the first
+    # cap events and event_count is a lower bound on the whole run.
+    partial: bool = False
     first_event_id: int
     last_event_id: int
     replay_order: str
