@@ -142,6 +142,25 @@ def map_jira_project(
     project_id = 1
     owner_id = users.id_for(_jira_user(_field(issues_in[0], "reporter")))
 
+    # This mapper emits ONE project bundle. A Jira search/board/filter export can span
+    # multiple projects; a foreign-project issue would be force-lumped into this one and
+    # its raw key number reused as project_seq, colliding with a same-numbered issue here
+    # (WEB-3 and API-3 both -> seq 3, producing two issues keyed WEB-3). Keep only issues
+    # in the derived project (by key prefix; keyless issues synthesize into it) and report
+    # the rest as skipped.
+    prefix_cf = project["key"].casefold()
+    scoped_issues: list = []
+    for i, issue in enumerate(issues_in, start=1):
+        candidate_key = _jira_issue_key(issue, project["key"], i)
+        if (_jira_key_prefix(candidate_key) or project["key"]).casefold() != prefix_cf:
+            report.note_unmapped(
+                "issues[].fields.project",
+                "issue belongs to a different project and was skipped",
+            )
+            continue
+        scoped_issues.append(issue)
+    issues_in = scoped_issues
+
     issue_id_by_key: dict[str, int] = {}
     issue_seq_by_key: dict[str, int] = {}
     for i, issue in enumerate(issues_in, start=1):
@@ -150,6 +169,7 @@ def map_jira_project(
         issue_seq_by_key[key] = _jira_issue_seq(key, i)
 
     status_ids: dict[str, int] = {}
+    canonical_status: dict[str, str] = {}
     statuses: list[dict] = []
     labels_by_name: dict[str, dict] = {}
     label_links: list[dict] = []
@@ -168,8 +188,10 @@ def map_jira_project(
         fields = fields if isinstance(fields, dict) else {}
 
         status_name = _jira_status_name(fields.get("status"))
-        if status_name.casefold() not in status_ids:
-            status_ids[status_name.casefold()] = len(statuses) + 1
+        status_cf = status_name.casefold()
+        if status_cf not in status_ids:
+            status_ids[status_cf] = len(statuses) + 1
+            canonical_status[status_cf] = status_name
             statuses.append(
                 {
                     "id": len(statuses) + 1,
@@ -200,7 +222,11 @@ def map_jira_project(
                 "id": issue_id,
                 "title": str(fields.get("summary") or key),
                 "body": body,
-                "status": status_name,
+                # The canonical (first-seen) status-row name, not this issue's raw casing:
+                # the project_statuses row keeps one casing under UNIQUE(name COLLATE
+                # NOCASE), and Athena's category_of/is_done compare case-SENSITIVELY, so a
+                # second-casing issue must store the same name to resolve its category.
+                "status": canonical_status[status_cf],
                 "priority": _jira_priority(fields.get("priority")),
                 "created_by": created_by,
                 "created_at": _string_or_now(fields.get("created"), now),
@@ -270,6 +296,16 @@ def map_jira_project(
                 }
             )
 
+    # Backstop: after scoping to one project, no two issues should share a project_seq.
+    # If they still do (a corrupt export with duplicate keys within one project), fail
+    # loudly rather than emit a bundle whose [[KEY]] cross-refs resolve nondeterministically.
+    seqs = [row["project_seq"] for row in issue_rows]
+    if len(seqs) != len(set(seqs)):
+        raise ValueError(
+            "jira-project export produced duplicate issue keys within one project "
+            "(colliding project_seq); the source appears to contain duplicate keys"
+        )
+
     labels = sorted(labels_by_name.values(), key=lambda row: row["id"])
     project["created_by"] = owner_id
     project["created_at"] = min((row["created_at"] for row in issue_rows), default=now)
@@ -318,18 +354,32 @@ def map_confluence_space(
     now = _utc_now()
     report = _MappingReport("confluence-space", now)
     users = _UserTable(now)
-    space = _confluence_space_info(pages_in[0], space_key, space_name)
+    # Derive space + owner from the first PAGE OBJECT, not pages_in[0] blindly — a leading
+    # non-object row (a JSON null) would otherwise crash _confluence_space_info/
+    # _confluence_created_by before the per-row guards below run.
+    first_page = next((p for p in pages_in if isinstance(p, dict)), None)
+    if first_page is None:
+        raise ValueError("confluence-space payload contains no page objects")
+    space = _confluence_space_info(first_page, space_key, space_name)
     space_id = 1
-    owner_id = users.id_for(_confluence_created_by(pages_in[0]))
+    owner_id = users.id_for(_confluence_created_by(first_page))
 
-    page_id_by_source = {
-        _source_id(page, fallback=str(i)): i for i, page in enumerate(pages_in, start=1)
-    }
-    page_id_by_title = {
-        str(page.get("title") or "").casefold(): page_id
-        for page, page_id in zip(pages_in, page_id_by_source.values(), strict=False)
-        if isinstance(page, dict) and page.get("title")
-    }
+    # Assign page ids over the DICT rows only, in order, so a stray non-object row (a
+    # JSON null, a string) is skipped and reported rather than crashing the whole map on
+    # _source_id(...).get(). The main loop below skips the same rows, so len(pages_out)+1
+    # stays in lockstep with these ids.
+    page_id_by_source: dict[str, int] = {}
+    page_id_by_title: dict[str, int] = {}
+    next_page_id = 0
+    for page in pages_in:
+        if not isinstance(page, dict):
+            report.note_unmapped("pages[]", "non-object page row was skipped")
+            continue
+        next_page_id += 1
+        page_id_by_source[_source_id(page, fallback=str(next_page_id))] = next_page_id
+        title = str(page.get("title") or "").casefold()
+        if title:
+            page_id_by_title.setdefault(title, next_page_id)
 
     labels_by_name: dict[str, dict] = {}
     label_links: list[dict] = []
@@ -362,6 +412,13 @@ def map_confluence_space(
         )
         body = _append_missing_page_refs(body, storage_refs)
         parent_id = _confluence_parent_id(page, page_id_by_source)
+        if parent_id == page_id:
+            # A page that lists itself as its own parent would seed a cycle the mentor
+            # move-guard (validate_move) walks forever; drop the self-edge.
+            parent_id = None
+            report.note_unmapped(
+                "pages[].ancestors", "page listed itself as its own parent"
+            )
         if _confluence_has_unmapped_parent(page, page_id_by_source):
             report.note_unmapped(
                 "pages[].ancestors",
@@ -440,6 +497,12 @@ def map_confluence_space(
             )
             comment_id += 1
 
+    # A buggy/hand-edited export can list pages as each other's ancestors (A->B->A); the
+    # self-edge is dropped above, but a longer cycle would still hang mentor's
+    # validate_move (it walks the parent chain with no visited-set). Break any remaining
+    # cycle so the imported tree is acyclic.
+    _break_page_parent_cycles(pages_out, report)
+
     labels = sorted(labels_by_name.values(), key=lambda row: row["id"])
     space["created_by"] = owner_id
     space["created_at"] = min((row["created_at"] for row in pages_out), default=now)
@@ -468,6 +531,28 @@ def map_confluence_space(
     }
     bundle["source"]["mapping_report"] = report.as_dict()
     return bundle
+
+
+def _break_page_parent_cycles(pages_out: list[dict], report: _MappingReport) -> None:
+    """Ensure the page tree is acyclic: for each page, walk up its parent chain and, if
+    it returns to the page itself, cut that page's parent edge (making it a root). A
+    cycle among OTHER pages is left for whichever of its members reaches it — so a page
+    with a legitimately deep chain keeps its parent."""
+    by_id = {page["id"]: page for page in pages_out}
+    for page in pages_out:
+        seen = {page["id"]}
+        node = by_id.get(page["parent_id"]) if page["parent_id"] is not None else None
+        while node is not None:
+            if node["id"] == page["id"]:
+                page["parent_id"] = None  # page sits on its own ancestor chain → a cycle
+                report.note_unmapped(
+                    "pages[].ancestors", "cyclic parent chain was broken"
+                )
+                break
+            if node["id"] in seen:
+                break  # a cycle not involving `page`; broken from one of its own members
+            seen.add(node["id"])
+            node = by_id.get(node["parent_id"]) if node["parent_id"] is not None else None
 
 
 def _bundle_base(kind: str, root_id: int, source: str, now: str) -> dict:
@@ -1022,18 +1107,34 @@ def _html_to_text(value: Any) -> str:
     return parser.text()
 
 
+# Tags that start/end a text block, so their content lands on its own line rather than
+# run together with a neighbour. td/th are included so adjacent table cells don't
+# concatenate ("AB" from <td>A</td><td>B</td>).
+_BLOCK_TAGS = {"br", "p", "div", "li", "tr", "td", "th", "h1", "h2", "h3", "h4"}
+
+
 class _TextHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self._parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"br", "p", "div", "li", "tr", "h1", "h2", "h3", "h4"}:
+        if tag in _BLOCK_TAGS:
             self._parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"p", "div", "li", "tr", "h1", "h2", "h3", "h4"}:
+        if tag in _BLOCK_TAGS:
             self._parts.append("\n")
+
+    def unknown_decl(self, data: str) -> None:
+        # Confluence storage format wraps code/noformat macro bodies in
+        # <ac:plain-text-body><![CDATA[...]]></ac:plain-text-body>. HTMLParser routes a
+        # CDATA section here as "CDATA[<content>"; the base class then DROPS it, so a
+        # runbook's code block vanishes silently on import. Capture the content (as plain
+        # text — the macro's language/formatting is flattened, but the code itself is
+        # preserved rather than lost) on its own lines.
+        if data.startswith("CDATA["):
+            self._parts.append("\n" + data[len("CDATA["):] + "\n")
 
     def handle_data(self, data: str) -> None:
         self._parts.append(data)

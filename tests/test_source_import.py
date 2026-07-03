@@ -356,6 +356,141 @@ def test_confluence_mapper_handles_cloud_export_and_reports_unmapped_fields(tmp_
     assert result["status"] == "imported"
 
 
+def _confluence_page(page_id, title, **extra):
+    return {
+        "id": page_id,
+        "type": "page",
+        "title": title,
+        "space": {"key": "OPS", "name": "Ops"},
+        "body": {"storage": {"value": "<p>body</p>"}},
+        **extra,
+    }
+
+
+def test_confluence_mapper_preserves_code_macro_cdata_content():
+    # WHY: Confluence wraps code/noformat macro bodies in <![CDATA[...]]>; HTMLParser used
+    # to drop CDATA entirely, so runbook code blocks vanished silently while the report
+    # still said "mapped". The content must survive import.
+    macro = (
+        "<p>Run this:</p>"
+        '<ac:structured-macro ac:name="code"><ac:plain-text-body>'
+        "<![CDATA[systemctl restart athena]]>"
+        "</ac:plain-text-body></ac:structured-macro>"
+    )
+    bundle = source_import.map_confluence_space(
+        {"results": [_confluence_page("1", "Runbook", body={"storage": {"value": macro}})]}
+    )
+    assert "systemctl restart athena" in bundle["pages"][0]["body"]
+
+
+def test_confluence_mapper_skips_non_object_rows_without_crashing():
+    # WHY: a JSON null / non-object in results used to crash the whole map (AttributeError
+    # in the id comprehension / space derivation). It must skip-and-report instead —
+    # including when the bad row is first.
+    bundle = source_import.map_confluence_space(
+        {"results": [None, _confluence_page("1", "Home")]}
+    )
+    report = source_import.source_mapping_report(bundle)
+    assert [p["title"] for p in bundle["pages"]] == ["Home"]
+    assert any(
+        u["path"] == "pages[]" and "non-object" in u["reason"]
+        for u in report["unmapped_fields"]
+    )
+
+
+def test_confluence_mapper_breaks_parent_cycles():
+    # WHY: a buggy export can list two pages as each other's parent; imported verbatim,
+    # mentor's validate_move walks the parent chain forever and hangs the worker. The
+    # mapper must emit an acyclic tree.
+    bundle = source_import.map_confluence_space(
+        {
+            "results": [
+                _confluence_page("1", "A", ancestors=[{"id": "2"}]),
+                _confluence_page("2", "B", ancestors=[{"id": "1"}]),
+            ]
+        }
+    )
+    parents = {p["id"]: p["parent_id"] for p in bundle["pages"]}
+    assert not (parents[1] == 2 and parents[2] == 1)  # the mutual edge is broken
+    for start in parents:  # every chain terminates (acyclic)
+        seen, node = set(), start
+        while node is not None:
+            assert node not in seen
+            seen.add(node)
+            node = parents.get(node)
+    report = source_import.source_mapping_report(bundle)
+    assert any("cyclic" in u["reason"] for u in report["unmapped_fields"])
+
+
+def test_jira_mapper_scopes_to_one_project_and_skips_foreign_issues():
+    # WHY: a multi-project Jira export (WEB-3, API-3) used to lump both into one project
+    # reusing the raw key number as project_seq → two issues both keyed WEB-3, so [[WEB-3]]
+    # resolved nondeterministically. The mapper must scope to one project.
+    payload = {
+        "issues": [
+            {
+                "id": "1", "key": "WEB-3",
+                "fields": {
+                    "project": {"key": "WEB", "name": "Web"}, "summary": "web issue",
+                    "status": {"name": "To Do"},
+                    "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
+                },
+            },
+            {
+                "id": "2", "key": "API-3",
+                "fields": {
+                    "project": {"key": "API", "name": "Api"}, "summary": "api issue",
+                    "status": {"name": "To Do"},
+                    "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
+                },
+            },
+        ]
+    }
+    bundle = source_import.map_jira_project(payload)
+    report = source_import.source_mapping_report(bundle)
+    assert bundle["project"]["key"] == "WEB"
+    assert [i["title"] for i in bundle["issues"]] == ["web issue"]
+    assert [i["project_seq"] for i in bundle["issues"]] == [3]  # no collision
+    assert any(
+        u["path"] == "issues[].fields.project" and "different project" in u["reason"]
+        for u in report["unmapped_fields"]
+    )
+
+
+def test_jira_mapper_canonicalizes_issue_status_casing(tmp_path):
+    # WHY: two issues with the same status in different casing ("Done"/"done") used to
+    # store their raw casing while the deduped status row kept the first — so the second
+    # issue's status didn't match any row under Athena's case-sensitive category lookup,
+    # and a closed issue read as open (is_done False).
+    from athena.aegis import statuses as aegis_statuses
+
+    def _issue(iid, key, casing):
+        return {
+            "id": iid, "key": key,
+            "fields": {
+                "project": {"key": "OPS", "name": "Ops"}, "summary": key,
+                "status": {"name": casing, "statusCategory": {"key": "done"}},
+                "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
+                "created": "2025-01-01T00:00:00.000+0000",
+            },
+        }
+
+    bundle = source_import.map_jira_project(
+        {"issues": [_issue("1", "OPS-1", "Done"), _issue("2", "OPS-2", "done")]}
+    )
+    assert [s["name"] for s in bundle["statuses"]] == ["Done"]  # one row, deduped
+    assert [i["status"] for i in bundle["issues"]] == ["Done", "Done"]  # both canonical
+
+    target = _connect(tmp_path / "casing.db")
+    _user(target, "o@e.com", "O", role="admin")
+    manifest = portability.build_import_manifest(target, bundle)
+    portability.replay_import_manifest(target, bundle, manifest)
+    rows = target.execute("SELECT status, project_id FROM issues").fetchall()
+    # The runtime consequence: BOTH imported issues resolve as done.
+    assert all(aegis_statuses.is_done(target, r["project_id"], r["status"]) for r in rows)
+    target.close()
+
+
 def test_map_source_cli_writes_bundle_and_refuses_overwrite(tmp_path, capsys):
     source_path = tmp_path / "jira.json"
     bundle_path = tmp_path / "bundle.json"
