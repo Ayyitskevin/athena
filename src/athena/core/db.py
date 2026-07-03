@@ -50,8 +50,31 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
         version = path.name
         if version in already:
             continue
-        conn.executescript(path.read_text())
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
-        conn.commit()
+        # Apply the migration AND record its version as one atomic unit. Without this,
+        # executescript runs each statement in autocommit (SQLite has no implicit
+        # transaction around a script, and no migration wraps itself in BEGIN/COMMIT),
+        # so a multi-statement migration that failed partway left earlier statements
+        # durably committed but no schema_migrations row — and the next boot re-ran it
+        # from the top and wedged on e.g. "duplicate column name". Wrapping the file's
+        # statements plus the version insert in one BEGIN/COMMIT makes it all-or-nothing:
+        # a partial failure rolls back cleanly and the version is recorded only when the
+        # whole file succeeded. (Safe here because no migration uses PRAGMA or its own
+        # transaction control, which don't compose with an enclosing transaction.) The
+        # version literal is a controlled filename; quotes are escaped defensively.
+        version_literal = version.replace("'", "''")
+        script = (
+            "BEGIN;\n"
+            + path.read_text()
+            + "\n;\n"
+            + f"INSERT INTO schema_migrations (version) VALUES ('{version_literal}');\n"
+            + "COMMIT;"
+        )
+        try:
+            conn.executescript(script)
+        except Exception:
+            # Discard the partial (uncommitted) transaction so a retry starts clean and
+            # the half-applied schema never persists.
+            conn.rollback()
+            raise
         applied.append(version)
     return applied
