@@ -1,5 +1,6 @@
 """Tests for operator database backup and restore commands."""
 
+import os
 import sqlite3
 
 import pytest
@@ -42,6 +43,13 @@ def _migration_count(path):
     count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
     conn.close()
     return count
+
+
+def _write_retained_file(path, *, mtime_ns):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"old backup")
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+    return path
 
 
 def test_backup_database_copies_schema_and_data(tmp_path):
@@ -112,6 +120,60 @@ def test_backup_and_restore_cli_entry_points(tmp_path, capsys):
     out = capsys.readouterr()
     assert "Restored" in out.out
     assert _database_summary(restored)["email"] == "cli@example.com"
+
+
+def test_backup_cli_prunes_old_retained_snapshots(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db", email="retained@example.com")
+    backup_dir = tmp_path / "backups"
+    oldest = _write_retained_file(
+        backup_dir / "athena-2026-01-01.db",
+        mtime_ns=1_000,
+    )
+    kept_old = _write_retained_file(
+        backup_dir / "athena-2026-01-02.db",
+        mtime_ns=2_000,
+    )
+    unrelated = _write_retained_file(
+        backup_dir / "other-2026-01-01.db",
+        mtime_ns=500,
+    )
+    snapshot = backup_dir / "athena-2026-01-03.db"
+
+    assert ops.backup_main([str(source), str(snapshot), "--keep", "2"]) == 0
+
+    out = capsys.readouterr()
+    assert "Pruned 1 old backup(s) matching 'athena-*.db'; kept newest 2" in out.out
+    assert not oldest.exists()
+    assert kept_old.exists()
+    assert unrelated.exists()
+    assert _database_summary(snapshot)["email"] == "retained@example.com"
+
+
+def test_backup_cli_validates_retention_before_writing_snapshot(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    snapshot = tmp_path / "manual.db"
+
+    assert ops.backup_main([str(source), str(snapshot), "--keep", "2"]) == 1
+
+    out = capsys.readouterr()
+    assert "backup path name must match retention glob" in out.err
+    assert not snapshot.exists()
+
+
+def test_backup_cli_retention_glob_requires_keep(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    snapshot = tmp_path / "athena-2026-01-01.db"
+
+    assert (
+        ops.backup_main(
+            [str(source), str(snapshot), "--retention-glob", "athena-*.db"]
+        )
+        == 1
+    )
+
+    out = capsys.readouterr()
+    assert "--retention-glob requires --keep" in out.err
+    assert not snapshot.exists()
 
 
 def test_doctor_cli_checks_database_and_attachment_dir(tmp_path, capsys):

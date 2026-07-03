@@ -88,6 +88,18 @@ athena-backup /var/lib/athena/athena.db /backups/athena-$(date +%F).db
 while the backup is taken. It refuses to overwrite an existing backup unless
 `--overwrite` is passed.
 
+For local retention, keep the newest matching snapshots in the destination
+directory:
+
+```bash
+athena-backup /var/lib/athena/athena.db /backups/athena-$(date +%F).db --keep 14
+```
+
+With `--keep`, the default retention glob is `<source-db-stem>-*.db`
+(`athena-*.db` for `athena.db`). Pass `--retention-glob 'name-*.db'` for another
+file-name pattern. Retention never walks directories; it only deletes older
+matching sibling files after the new backup succeeds.
+
 Restore while Athena is stopped:
 
 ```bash

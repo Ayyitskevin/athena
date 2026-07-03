@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import closing
+from fnmatch import fnmatch
 from pathlib import Path
 import sqlite3
 
@@ -30,6 +31,58 @@ def backup_database(
     _copy_sqlite_database(source, destination)
     _remove_sqlite_sidecars(destination)
     return destination
+
+
+def validate_retention_plan(
+    backup_path: str | Path,
+    retention_glob: str,
+    *,
+    keep: int,
+) -> None:
+    """Validate backup-retention inputs before a snapshot is written."""
+    _validate_retention_inputs(retention_glob, keep=keep)
+    name = Path(backup_path).name
+    if not fnmatch(name, retention_glob):
+        raise ValueError(
+            "backup path name must match retention glob: "
+            f"{name!r} does not match {retention_glob!r}"
+        )
+
+
+def prune_backup_directory(
+    directory_path: str | Path,
+    retention_glob: str,
+    *,
+    keep: int,
+    protected: tuple[str | Path, ...] = (),
+) -> list[Path]:
+    """Delete older backup files matching ``retention_glob`` in one directory.
+
+    This intentionally only accepts a file-name glob, not a path glob. Operators
+    choose the directory through the backup destination; retention then stays
+    bounded to sibling backup files and cannot walk a broader tree.
+    """
+    _validate_retention_inputs(retention_glob, keep=keep)
+    directory = Path(directory_path)
+    if not directory.exists():
+        raise FileNotFoundError(f"backup directory does not exist: {directory}")
+    if not directory.is_dir():
+        raise NotADirectoryError(f"backup path is not a directory: {directory}")
+
+    protected_paths = {Path(path).resolve() for path in protected}
+    candidates = [path for path in directory.glob(retention_glob) if path.is_file()]
+    candidates.sort(
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    keepers = {path.resolve() for path in candidates[:keep]} | protected_paths
+    pruned: list[Path] = []
+    for candidate in candidates:
+        if candidate.resolve() in keepers:
+            continue
+        candidate.unlink()
+        pruned.append(candidate)
+    return pruned
 
 
 def restore_database(
@@ -91,6 +144,25 @@ def _require_existing_source(path: Path) -> None:
 def _require_distinct_paths(source: Path, destination: Path) -> None:
     if source.resolve() == destination.resolve():
         raise ValueError("source and destination database paths must be different")
+
+
+def _validate_retention_glob(retention_glob: str) -> None:
+    if not retention_glob:
+        raise ValueError("retention glob must not be empty")
+    if (
+        Path(retention_glob).is_absolute()
+        or "/" in retention_glob
+        or "\\" in retention_glob
+    ):
+        raise ValueError(
+            "retention glob must be a file-name pattern without path separators"
+        )
+
+
+def _validate_retention_inputs(retention_glob: str, *, keep: int) -> None:
+    if keep < 1:
+        raise ValueError("keep must be at least 1")
+    _validate_retention_glob(retention_glob)
 
 
 def _remove_sqlite_sidecars(path: Path) -> None:
