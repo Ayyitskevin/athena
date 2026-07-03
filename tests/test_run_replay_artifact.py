@@ -103,6 +103,49 @@ def test_run_replay_endpoint_returns_visible_artifact(tmp_path):
         assert client.get("/activity/runs/missing/replay", headers=H1).status_code == 404
 
 
+def test_run_replay_artifact_caps_a_huge_run(tmp_path, monkeypatch):
+    # WHY: a run is tagged by a client header with no server-side event-count limit, so
+    # replay must not materialize an unbounded event list / JSON body. Beyond the cap the
+    # artifact holds the first N events and flags itself partial.
+    monkeypatch.setattr(run_replay, "_MAX_REPLAY_EVENTS", 3)
+    conn = _conn(tmp_path / "cap.db")
+    for i in range(5):
+        _rec(conn, run_id="big", target_id=i + 1)
+    art = run_replay.build_run_replay_artifact(conn, "big")
+    assert art["partial"] is True
+    assert art["event_count"] == 3 and len(art["events"]) == 3
+    assert art["lineage"]["run"]["partial"] is True
+
+    _rec(conn, run_id="small", target_id=99)
+    small = run_replay.build_run_replay_artifact(conn, "small")
+    assert small["partial"] is False  # a run under the cap is whole
+    conn.close()
+
+
+def test_run_replay_endpoint_gates_hidden_runs(tmp_path):
+    # WHY: the "hidden runs are 404s, not leaks" property (build_run_replay_artifact
+    # threads actor= into both list_events and run_lineage) was previously unverified —
+    # every existing test used an ungated call or a single all-seeing admin.
+    h_creator = {"X-Athena-Actor": "2"}
+    h_outsider = {"X-Athena-Actor": "3"}
+    with TestClient(create_app(tmp_path / "gate.db")) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H1)
+        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H1)
+        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H1)
+        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=h_creator).json()["id"]
+        client.post(
+            "/issues", json={"title": "secret", "project_id": pid},
+            headers={**h_creator, "X-Athena-Run": "p1"},
+        )
+        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=h_creator)
+
+        # The outsider can't see the only event, so the run's replay is a 404 — no leak.
+        assert client.get("/activity/runs/p1/replay", headers=h_outsider).status_code == 404
+        # The creator (a member) and the admin (god-view) both get the artifact.
+        assert client.get("/activity/runs/p1/replay", headers=h_creator).status_code == 200
+        assert client.get("/activity/runs/p1/replay", headers=H1).status_code == 200
+
+
 def test_export_run_cli_writes_json_and_refuses_overwrite(tmp_path):
     db_file = tmp_path / "cli.db"
     conn = _conn(db_file)

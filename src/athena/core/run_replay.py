@@ -17,6 +17,12 @@ from athena.core import activity, run_context
 SCHEMA = "athena.run_replay.v1"
 
 _EVENT_PAGE_SIZE = 500
+# A run is tagged by a client-supplied X-Athena-Run header with no server-side limit on
+# how many events may share it, so a single run can accumulate arbitrarily many rows.
+# Bound the artifact the way the lineage endpoint bounds a node (_LINEAGE_MAX_EVENTS):
+# load at most this many focal events into one artifact, and flag it partial when a run
+# exceeds the cap, rather than materializing an unbounded list + JSON body per request.
+_MAX_REPLAY_EVENTS = 5000
 _DEFAULT_ACTOR = object()
 
 _SAFE_FIELDS = [
@@ -85,6 +91,11 @@ def build_run_replay_artifact(
     events = _all_run_events(conn, normalized, actor=actor)
     if not events:
         return None
+    # Cap the focal payload; if the run has more, clip to the cap and flag it partial so
+    # a consumer knows the artifact is a bounded window, not the whole run.
+    partial = len(events) > _MAX_REPLAY_EVENTS
+    if partial:
+        events = events[:_MAX_REPLAY_EVENTS]
 
     lineage = _run_lineage(conn, normalized, actor=actor)
     if lineage is None:
@@ -93,7 +104,7 @@ def build_run_replay_artifact(
     lineage = {
         "run_id": lineage["run_id"],
         "ancestors": [_light_node(node) for node in lineage["ancestors"]],
-        "run": _summary_node(events),
+        "run": _summary_node(events, partial=partial),
         "descendants": [_light_node(node) for node in lineage["descendants"]],
     }
 
@@ -103,6 +114,9 @@ def build_run_replay_artifact(
         "generated_at": _utc_now(),
         "run_id": normalized,
         "event_count": len(events),
+        # True when the run exceeded _MAX_REPLAY_EVENTS and this artifact holds only the
+        # first cap events (event_count is then a lower bound on the whole run).
+        "partial": partial,
         "first_event_id": events[0]["id"],
         "last_event_id": events[-1]["id"],
         "replay_order": "activity.id ASC",
@@ -141,6 +155,10 @@ def _all_run_events(
         after_id = batch[-1]["id"]
         if len(batch) < _EVENT_PAGE_SIZE:
             break
+        # Stop once we hold at least one event past the cap: the caller trims to the cap
+        # and flags partial. This bounds the in-memory list to cap + one page.
+        if len(rows) > _MAX_REPLAY_EVENTS:
+            break
     return rows
 
 
@@ -159,7 +177,7 @@ def _actor_kwargs(actor: dict | None | object) -> dict:
     return {"actor": actor}
 
 
-def _summary_node(events: list[dict]) -> dict:
+def _summary_node(events: list[dict], *, partial: bool = False) -> dict:
     first, last = events[0], events[-1]
     return {
         "actor_id": first["actor_id"],
@@ -167,7 +185,7 @@ def _summary_node(events: list[dict]) -> dict:
         "run_id": first["run_id"],
         "parent_run_id": first["parent_run_id"],
         "forked_from_event_id": first["forked_from_event_id"],
-        "partial": False,
+        "partial": partial,
         "started_at": first["created_at"],
         "ended_at": last["created_at"],
         "first_id": first["id"],
