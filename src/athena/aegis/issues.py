@@ -22,6 +22,15 @@ STATUSES = ("open", "in_progress", "done")
 # the one canonical set the REST API and the web forms both validate against.
 PRIORITIES = ("low", "medium", "high", "urgent")
 
+
+def _like_contains(value: str) -> str:
+    """A LIKE pattern matching rows that CONTAIN `value` literally: %, _ and \\ are
+    escaped so a search term like "run_id" doesn't have its underscore act as a
+    single-char wildcard (silently over-matching "runXid"). Pair with ESCAPE '\\' in the
+    query. Mirrors core.activity._like_pattern; kept local to stay in the aegis lane."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
 # Every read returns the assignee's display name and the project's name + key
 # alongside the row (NULL when unassigned / no project), so callers never resolve
 # the ids themselves. LEFT JOINs, not JOINs: an unassigned or project-less issue
@@ -423,8 +432,8 @@ def list_issues(
         clauses.append("i.assignee_id = ?")
         params.append(assignee_id)
     if search:
-        clauses.append("(i.title LIKE ? OR i.body LIKE ?)")
-        like = f"%{search}%"
+        clauses.append("(i.title LIKE ? ESCAPE '\\' OR i.body LIKE ? ESCAPE '\\')")
+        like = _like_contains(search)
         params.extend([like, like])
     if backlog:
         clauses.append("i.project_id IS NULL")

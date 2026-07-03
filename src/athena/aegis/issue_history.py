@@ -126,8 +126,14 @@ def project_issue_state(
         "issue_id": issue_id,
         "as_of_event_id": last["id"] if last else None,
         "as_of": last["created_at"] if last else None,
+        # "Current" means viewing the present: no cutoff, an event-less issue, or a
+        # cutoff at/after the latest event. A cutoff that resolves to NO visible event
+        # (as_of below the issue's first event id) is the born/PAST state, not the
+        # present — so `last is None` with events present must read False, not True.
         "is_current": (
-            not events or last is None or last["id"] == events[-1]["id"]
+            not events
+            or as_of_event_id is None
+            or (last is not None and last["id"] == events[-1]["id"])
         ),
         "state": {
             "status": _project_before_after(

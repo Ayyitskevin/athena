@@ -165,6 +165,7 @@ def search(
     limit: int = 20,
     offset: int = 0,
     ids: list[int] | None = None,
+    include_archived: bool = False,
     actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
     """Best-first hits for `query` across issues and pages.
@@ -189,7 +190,12 @@ def search(
     is. The default (_UNGATED) applies no gate — for internal callers and ranking
     tests; pass the real actor (a user dict, or None for anonymous) to filter. Gating
     happens in SQL, before LIMIT/OFFSET, so paging stays correct. An admin sees
-    everything, so no predicate is added for them."""
+    everything, so no predicate is added for them.
+
+    `include_archived` defaults False: archived (soft-deleted) issues drop out of every
+    list, so search excludes them too — the derived FTS index doesn't carry the archived
+    flag, so the exclusion is applied here by source. Pages have no archival, so this
+    only ever removes archived issue hits. Pass True to search the archive as well."""
     if not query or not query.strip():
         return []
     if ids is not None and not ids:
@@ -213,6 +219,14 @@ def search(
         if clause:
             sql += clause
             params.extend(vis_params)
+    if not include_archived:
+        # Exclude archived issues by source (the FTS index has no archived flag). Pages
+        # have no archival, so only archived issue hits are removed. In SQL, before
+        # LIMIT/OFFSET, so paging stays correct.
+        sql += (
+            "AND NOT (kind = 'issue' AND source_id IN "
+            "(SELECT id FROM issues WHERE archived_at IS NOT NULL)) "
+        )
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"
     params.extend([limit, offset])

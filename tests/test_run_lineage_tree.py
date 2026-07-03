@@ -142,3 +142,52 @@ def test_lineage_is_visibility_gated(tmp_path):
         # The creator (a member of P) and the admin (god-view) both see it.
         assert client.get("/activity/runs/p1/lineage", headers=H_CREATOR).status_code == 200
         assert client.get("/activity/runs/p1/lineage", headers=H_ADMIN).status_code == 200
+
+
+def test_lineage_partial_tree_gating_does_not_leak_hidden_runs(tmp_path):
+    # A run whose events are all visible must not leak, through its lineage, a run in the
+    # chain that the viewer CAN'T see. Tree: g (public) -> c (PRIVATE) -> gc (public).
+    # An outsider sees g and gc but not c: viewing gc, the hidden parent c must truncate
+    # ancestors to []; viewing g, the hidden child c must drop the whole subtree (c AND
+    # its visible grandchild gc). The creator (a member of the private project) sees all.
+    with TestClient(create_app(tmp_path / "partial.db")) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
+        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
+        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+        pub = client.post("/projects", json={"name": "Pub", "key": "PUB"}, headers=H_CREATOR).json()["id"]
+        priv = client.post("/projects", json={"name": "Priv", "key": "PRIV"}, headers=H_CREATOR).json()["id"]
+
+        # g: create issue A in the public project.
+        a = client.post(
+            "/issues", json={"title": "A", "project_id": pub},
+            headers={**H_CREATOR, "X-Athena-Run": "g"},
+        ).json()["id"]
+        # c (child of g): create issue B in the private project.
+        client.post(
+            "/issues", json={"title": "B", "project_id": priv},
+            headers={**H_CREATOR, "X-Athena-Run": "c", "X-Athena-Parent-Run": "g"},
+        )
+        # gc (child of c): a status change on the public issue A.
+        client.patch(
+            f"/issues/{a}", json={"status": "in_progress"},
+            headers={**H_CREATOR, "X-Athena-Run": "gc", "X-Athena-Parent-Run": "c"},
+        )
+        client.put(f"/projects/{priv}/visibility", json={"visibility": "private"}, headers=H_CREATOR)
+
+        # Outsider viewing gc: focal is visible (public), but the hidden parent c
+        # truncates the ancestor chain — neither c nor g leaks.
+        out_gc = client.get("/activity/runs/gc/lineage", headers=H_OUTSIDER)
+        assert out_gc.status_code == 200
+        assert out_gc.json()["ancestors"] == []
+        # Outsider viewing g: focal visible, but the hidden child c (and its subtree,
+        # including the otherwise-visible grandchild gc) is dropped from descendants.
+        out_g = client.get("/activity/runs/g/lineage", headers=H_OUTSIDER)
+        assert out_g.status_code == 200
+        assert out_g.json()["descendants"] == []
+
+        # The creator is a member of the private project, so the full tree is visible.
+        cre_gc = client.get("/activity/runs/gc/lineage", headers=H_CREATOR).json()
+        assert [x["run_id"] for x in cre_gc["ancestors"]] == ["g", "c"]  # root-first
+        cre_g = client.get("/activity/runs/g/lineage", headers=H_CREATOR).json()
+        assert [d["run_id"] for d in cre_g["descendants"]] == ["c"]
+        assert [gc["run_id"] for gc in cre_g["descendants"][0]["children"]] == ["gc"]

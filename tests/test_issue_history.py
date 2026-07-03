@@ -12,7 +12,7 @@ deliberately absent, never guessed.
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_activity as ia
-from athena.aegis import issue_history, issues
+from athena.aegis import issue_history, issues, projects, sprints
 from athena.core import activity, db, labels
 from athena.main import create_app
 
@@ -72,6 +72,9 @@ def test_projection_folds_status_priority_assignee_labels(tmp_path):
     start = issue_history.project_issue_state(conn, iid, as_of_event_id=0)
     assert start["state"]["status"] == "open" and start["state"]["priority"] == "medium"
     assert start["state"]["assignee"] is None and start["state"]["labels"] == []
+    # A cutoff below the first event is the PAST (born state), not the present — the flag
+    # must say so, and there is no visible cutoff event to echo.
+    assert start["is_current"] is False and start["as_of_event_id"] is None
 
 
 def test_projection_sets_and_clears_parent_and_archive(tmp_path):
@@ -91,6 +94,20 @@ def test_projection_sets_and_clears_parent_and_archive(tmp_path):
     )
     cleared = issue_history.project_issue_state(conn, iid)["state"]
     assert cleared["parent"] is None and cleared["archived"] is False
+
+
+def test_projection_folds_sprint_membership(tmp_path):
+    conn = _conn(tmp_path / "sprint.db")
+    pid = projects.create_project(conn, name="P", key="P", created_by=1)["id"]
+    sid = sprints.create_sprint(conn, project_id=pid, name="Sprint 1")["id"]
+    iid = issues.create_issue(conn, title="x", body="", created_by=1, project_id=pid)["id"]
+
+    ia.record_sprint_change(conn, actor_id=1, issue_id=iid, before=None, after=sid)
+    assert issue_history.project_issue_state(conn, iid)["state"]["sprint"] == "Sprint 1"
+
+    # Removing it from the sprint folds back to no sprint.
+    ia.record_sprint_change(conn, actor_id=1, issue_id=iid, before=sid, after=None)
+    assert issue_history.project_issue_state(conn, iid)["state"]["sprint"] is None
 
 
 def test_unknown_issue_is_none(tmp_path):
@@ -122,6 +139,11 @@ def test_state_endpoint_walks_history_and_gates(tmp_path):
         )
         before = client.get(f"/issues/{iid}/state?as_of={created_id}", headers=H_CREATOR).json()
         assert before["state"]["status"] == "open" and before["is_current"] is False
+
+        # An out-of-range cutoff (below the first event) is the born/past state — it must
+        # NOT report is_current, or a consumer reads the creation snapshot as the present.
+        oor = client.get(f"/issues/{iid}/state?as_of=0", headers=H_CREATOR).json()
+        assert oor["state"]["status"] == "open" and oor["is_current"] is False
 
         assert client.get("/issues/9999/state", headers=H_CREATOR).status_code == 404
 

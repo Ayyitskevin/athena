@@ -2138,8 +2138,8 @@ def board_move_issue(
     board, or a 303 back to /aegis/boards (so a refresh doesn't re-POST) for the form.
 
     Gated like every other write — a logged-out caller is a 401 (the UI only offers
-    the move when signed in), and the move applies only if the session user is the
-    issue's creator or assignee.
+    the move when signed in), a read-only (viewer) role can't move a card at all, and
+    the move applies only if the session user is the issue's creator or assignee.
 
     A move that isn't allowed or doesn't apply — the actor can't write this issue, or
     the target status isn't valid for the issue's project (boards can mix projects
@@ -2154,14 +2154,17 @@ def board_move_issue(
             status_code=401,
         )
     issue = issues.get_issue(conn, issue_id)
-    # Apply only when the move is both VISIBLE to the actor and permitted and valid;
-    # otherwise fall through to a clean re-render (snap-back). The visibility term
-    # matches the detail-page status write (_authorize_issue_write) — a creator/assignee
-    # who lost access when the project went private can't keep moving the card, and a
+    # Apply only when the move is VISIBLE to the actor, the actor may write, is permitted,
+    # and the target is valid; otherwise fall through to a clean re-render (snap-back).
+    # The visibility + write-role + can_modify terms match the detail-page status write
+    # (_authorize_issue_write) and REST PATCH (issue_write_actor): a viewer (read-only
+    # role) can't move a card even on an issue they created/are assigned, a creator/
+    # assignee who lost access when the project went private can't keep moving it, and a
     # hidden issue snaps back exactly like a missing one (no oracle).
     if (
         issue is not None
         and access.can_see_project_or_backlog(conn, user, issue["project_id"])
+        and identity.can_write(user)
         and issues.can_modify(issue, user["id"])
         and new_status != issue["status"]
         and statuses.is_valid(conn, issue["project_id"], new_status)

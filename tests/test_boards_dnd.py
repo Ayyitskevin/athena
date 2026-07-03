@@ -14,6 +14,7 @@ these tests pin down is the contract the gesture rides on:
   * the re-render keeps the active search/status filter, so a move doesn't blow the
     board's current view away.
 """
+from athena.core import db
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -135,6 +136,39 @@ def test_move_write_gate_snaps_back(tmp_path):
             headers=HX,
         )
         assert r.status_code == 200
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "open"
+
+
+def test_move_by_a_demoted_viewer_snaps_back(tmp_path):
+    # WHY: the board is a primary write surface and must enforce the SAME read-only-role
+    # gate as the detail page (_authorize_issue_write) and REST PATCH (issue_write_actor).
+    # A user who created an issue as a member but was later demoted to the viewer role
+    # must not be able to move their own card — creator/assignee is necessary but not
+    # sufficient; write role is also required.
+    db_file = tmp_path / "viewer.db"
+    with TestClient(create_app(db_file)) as client:
+        _admin(client)  # user 1, admin
+        client.post(
+            "/users",
+            json={"email": "c@e.com", "name": "Carol", "password": "pw", "role": "member"},
+            headers=H1,
+        )  # user 2, member
+        iss = client.post(
+            "/issues", json={"title": "carol's"}, headers={"X-Athena-Actor": "2"}
+        ).json()  # Carol is the creator
+        # Admin demotes Carol to the read-only viewer role; she stays the creator.
+        conn = db.connect(db_file)
+        conn.execute("UPDATE users SET role = 'viewer' WHERE email = 'c@e.com'")
+        conn.commit()
+
+        csrf = _login(client, email="c@e.com")
+        r = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={"new_status": "done", "csrf_token": csrf},
+            headers=HX,
+        )
+        assert r.status_code == 200
+        # Snap-back: a viewer can't move even their own card.
         assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "open"
 
 
