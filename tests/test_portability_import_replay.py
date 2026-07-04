@@ -214,9 +214,9 @@ def test_project_import_rebuilds_links_activity_and_search(tmp_path):
     source_triaged = next(
         row for row in bundle["activity"] if row["verb"] == "triaged"
     )
-    source_created = next(
-        row for row in bundle["activity"] if row["verb"] == "created"
-    )
+    # The bundle's triaged event carries run_id/parent_run_id/forked_from_event_id (see the
+    # raw INSERT in _project_bundle) — a forged fork that import must NOT honor.
+    assert source_triaged["run_id"] and source_triaged["forked_from_event_id"]
 
     links_rows = target.execute(
         "SELECT source_kind, source_id, target_kind, target_id FROM links "
@@ -232,7 +232,8 @@ def test_project_import_rebuilds_links_activity_and_search(tmp_path):
         "WHERE target_kind IN ('project', 'issue') ORDER BY id DESC LIMIT 2"
     ).fetchall()
     imported_triaged = target.execute(
-        "SELECT forked_from_event_id FROM activity WHERE id = ?",
+        "SELECT run_id, parent_run_id, forked_from_event_id, imported_at "
+        "FROM activity WHERE id = ?",
         (activity_map[source_triaged["id"]],),
     ).fetchone()
     hits = search.search(target, "Parent")
@@ -248,8 +249,85 @@ def test_project_import_rebuilds_links_activity_and_search(tmp_path):
     ]
     assert dependency["kind"] == "blocks"
     assert {row["verb"] for row in activity_rows} >= {"created", "triaged"}
-    assert imported_triaged["forked_from_event_id"] == activity_map[source_created["id"]]
+    # On import the forged run fields are dropped (foreign history can't tag itself into a
+    # native run) and the row is stamped imported_at instead — its provenance is auditable.
+    assert imported_triaged["run_id"] is None
+    assert imported_triaged["parent_run_id"] is None
+    assert imported_triaged["forked_from_event_id"] is None
+    assert imported_triaged["imported_at"] is not None
     assert any(hit["kind"] == "issue" and hit["source_id"] == parent_id for hit in hits)
+
+
+def test_import_neutralizes_forged_activity_provenance(tmp_path):
+    # WHY: activity travels in the bundle, but a bundle is untrusted input. A hostile bundle
+    # must not be able to (a) splice forged events into a NATIVE run by reusing its run_id,
+    # (b) back/forward-date the trail, or (c) pack the log with a giant/garbage verb. Import
+    # NULLs the run fields, clamps the timestamp to the import instant, bounds the verb, and
+    # stamps imported_at so the row is auditable as foreign history.
+    bundle = _project_bundle(tmp_path)
+    target, owner, member, bot = _prepare_project_target(tmp_path / "forge.db")
+    # The target already has a NATIVE run "ops-run" recorded on its own trail.
+    native = target.execute(
+        "INSERT INTO activity (actor_id, verb, target_kind, target_id, run_id) "
+        "VALUES (?, 'reviewed', 'user', ?, 'ops-run')",
+        (owner, owner),
+    )
+    target.commit()
+    native_id = native.lastrowid
+
+    # Forge an event onto a bundled issue: collide with the native run, jump to the year
+    # 3000, and carry a verb that is BOTH oversized AND laced with control chars in its
+    # first bytes — so the assertion pins the printable-stripping, not just truncation.
+    forged_verb = "a\x07b\tc" + "z" * 100
+    bundle["activity"].append(
+        {
+            "id": 999999,
+            "actor_id": bundle["users"][0]["id"],
+            "verb": forged_verb,
+            "target_kind": "issue",
+            "target_id": bundle["issues"][0]["id"],
+            "detail": "forged",
+            "created_at": "3000-01-01 00:00:00",
+            "run_id": "ops-run",
+            "parent_run_id": "ops-run",
+            "forked_from_event_id": None,
+        }
+    )
+
+    manifest = portability.build_import_manifest(target, bundle)
+    result = portability.replay_import_manifest(target, bundle, manifest)
+
+    forged_id = {
+        row["source_id"]: row["target_id"] for row in result["id_map"]["activity"]
+    }[999999]
+    forged = target.execute(
+        "SELECT verb, created_at, run_id, parent_run_id, imported_at "
+        "FROM activity WHERE id = ?",
+        (forged_id,),
+    ).fetchone()
+    ops_run_ids = [
+        row["id"]
+        for row in target.execute(
+            "SELECT id FROM activity WHERE run_id = 'ops-run' ORDER BY id"
+        ).fetchall()
+    ]
+    native_row = target.execute(
+        "SELECT imported_at FROM activity WHERE id = ?", (native_id,)
+    ).fetchone()
+    target.close()
+
+    # Run fields dropped: the forged event can never appear in the native run's replay.
+    assert forged["run_id"] is None and forged["parent_run_id"] is None
+    assert ops_run_ids == [native_id]
+    # Future timestamp clamped to the import instant (== the row's own imported_at stamp).
+    assert forged["created_at"] != "3000-01-01 00:00:00"
+    assert forged["created_at"] == forged["imported_at"]
+    # Verb: control chars stripped (a\x07b\tc -> abc) AND truncated to the 80-char cap.
+    # Exact-equality pins the stripping — deleting the isprintable filter would fail here.
+    assert forged["verb"] == "abc" + "z" * 77
+    assert forged["imported_at"] is not None
+    # A natively recorded row is never marked imported.
+    assert native_row["imported_at"] is None
 
 
 def test_space_import_replays_manifest_and_rewrites_page_refs(tmp_path):

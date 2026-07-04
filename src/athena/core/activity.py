@@ -45,6 +45,11 @@ _CSV_FIELDS = [
     "target_kind",
     "target_id",
     "detail",
+    # Appended last so existing column positions are stable. Empty for app-recorded rows;
+    # the import instant for rows replayed from a bundle — so the compliance/audit export
+    # can tell imported foreign history from natively recorded provenance, the same
+    # distinction the JSON feed's imported_at makes.
+    "imported_at",
 ]
 
 

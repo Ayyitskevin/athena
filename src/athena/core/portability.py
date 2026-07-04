@@ -28,6 +28,12 @@ ATTACHMENT_POLICIES = ("skip", "require-blobs")
 _MAX_BUNDLE_BYTES = 64 * 1024 * 1024  # 64 MiB on disk
 _MAX_BUNDLE_ROWS = 500_000  # total rows across every top-level array
 
+# An imported activity row's verb/timestamp come from an untrusted bundle. Bound the
+# free-text verb so a hostile bundle can't pack the audit log, and parse timestamps in
+# the trail's stored format (datetime('now')) so a bundle can't back/forward-date events.
+_MAX_IMPORTED_VERB_LEN = 80
+_IMPORT_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 _PROJECT_COLS = (
     "id, name, key, description, created_by, created_at, issue_counter, visibility"
 )
@@ -1075,6 +1081,19 @@ def _insert_activity(
     user_map: dict[int, int],
     target_maps: dict[str, dict[int, int]],
 ) -> tuple[int, dict[int, int]]:
+    # Imported activity is foreign history replayed from an untrusted bundle. We keep it
+    # as data — who/what/when travelled with the project — but must never let it forge
+    # NATIVE provenance:
+    #   - stamp imported_at (one instant per import) so every imported row is
+    #     distinguishable from an app-recorded one and the whole import is auditable;
+    #   - write run_id/parent_run_id/forked_from_event_id as NULL so a bundle can't tag its
+    #     events with a run id that collides with a native run and thereby splice forged
+    #     events into that run's replay / lineage / reconstruction;
+    #   - clamp created_at to the import instant when the bundle's value is unparseable or
+    #     in the future, so a bundle can't back- or forward-date the trail;
+    #   - bound the free-text verb.
+    imported_at = conn.execute("SELECT datetime('now')").fetchone()[0]
+    ceiling = datetime.strptime(imported_at, _IMPORT_TS_FORMAT)
     activity_map: dict[int, int] = {}
     for event in events:
         target_map = target_maps.get(event["target_kind"])
@@ -1083,32 +1102,45 @@ def _insert_activity(
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, created_at, "
-            "run_id, parent_run_id, forked_from_event_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "run_id, parent_run_id, forked_from_event_id, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_map[event["actor_id"]],
-                event["verb"],
+                _bounded_verb(event.get("verb")),
                 event["target_kind"],
                 target_map[event["target_id"]],
                 event.get("detail", ""),
-                event["created_at"],
-                event.get("run_id"),
-                event.get("parent_run_id"),
+                _bounded_created_at(event.get("created_at"), imported_at, ceiling),
                 None,
+                None,
+                None,
+                imported_at,
             ),
         )
         activity_map[event["id"]] = cur.lastrowid
-
-    for event in events:
-        target_id = activity_map.get(event["id"])
-        forked_from = event.get("forked_from_event_id")
-        forked_target_id = activity_map.get(forked_from)
-        if target_id is not None and forked_target_id is not None:
-            conn.execute(
-                "UPDATE activity SET forked_from_event_id = ? WHERE id = ?",
-                (forked_target_id, target_id),
-            )
     return len(activity_map), activity_map
+
+
+def _bounded_verb(raw: object) -> str:
+    # A verb from an untrusted bundle: coerce to a bounded, printable string so it can't
+    # pack or corrupt the trail. Native verbs are short tokens set only by activity.py, so
+    # a well-formed export passes through unchanged; only garbage is neutralized.
+    text = raw if isinstance(raw, str) else ""
+    text = "".join(ch for ch in text if ch.isprintable()).strip()[:_MAX_IMPORTED_VERB_LEN]
+    return text or "imported"
+
+
+def _bounded_created_at(raw: object, fallback: str, ceiling: datetime) -> str:
+    # Keep the bundle's own timestamp (honest migrated history) only when it parses in the
+    # trail's stored format and is not after the import instant; otherwise fall back to the
+    # import instant. Blocks a bundle from back/forward-dating the audit trail.
+    if not isinstance(raw, str):
+        return fallback
+    try:
+        parsed = datetime.strptime(raw, _IMPORT_TS_FORMAT)
+    except ValueError:
+        return fallback
+    return fallback if parsed > ceiling else raw
 
 
 def _index_imported_issues(

@@ -206,10 +206,12 @@ def test_activity_csv_export_has_stable_headers_and_quotes_values(tmp_path):
 
     rows = list(csv.DictReader(StringIO(csv_text)))
     assert csv_text.splitlines()[0] == (
-        "id,created_at,actor_id,actor_name,verb,target_kind,target_id,detail"
+        "id,created_at,actor_id,actor_name,verb,target_kind,target_id,detail,imported_at"
     )
     assert rows[0]["actor_name"] == "Kevin"
     assert rows[0]["detail"] == "contains, comma\nand newline"
+    # Natively recorded rows carry an empty import marker (only bundle imports set it).
+    assert rows[0]["imported_at"] == ""
 
 
 # --- REST feed ------------------------------------------------------------
