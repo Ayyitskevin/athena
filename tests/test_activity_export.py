@@ -16,7 +16,7 @@ from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
 
-_HEADER = ["id", "created_at", "actor_id", "actor_name", "verb", "target_kind", "target_id", "detail"]
+_HEADER = ["id", "created_at", "actor_id", "actor_name", "verb", "target_kind", "target_id", "detail", "imported_at"]
 
 
 def _rows(text):

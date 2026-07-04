@@ -44,6 +44,11 @@ class ActivityOut(BaseModel):
     # The parent activity event this event's run forked from, if the caller used the
     # run-forking contract. NULL means ordinary run or unknown fork point.
     forked_from_event_id: int | None = None
+    # When this row entered via a portability import; NULL for every event the app itself
+    # recorded. Non-NULL marks foreign history: its verb/actor/created_at came from an
+    # untrusted bundle, not the running system — so it can't be mistaken for native
+    # provenance, and its run fields are always NULL (never spliced into a native run).
+    imported_at: str | None = None
 
 
 class RunOut(BaseModel):
