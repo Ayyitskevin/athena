@@ -1076,7 +1076,11 @@ def _render_issue_detail(
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])
-    children = issues.list_children(conn, issue_id)
+    # Gate children by viewer visibility (a child can sit in a private project the
+    # viewer isn't in), matching the JSON API — else the detail page leaks it.
+    children = issues.list_children(
+        conn, issue_id, visible_project_ids=access.visible_project_filter(conn, user)
+    )
 
     context = {
         "issue": issue,

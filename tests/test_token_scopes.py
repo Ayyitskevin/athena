@@ -59,6 +59,38 @@ def test_read_only_token_can_read_but_cannot_write(tmp_path):
         assert remint.json()["detail"] == "token scope required: admin"
 
 
+def test_read_only_token_cannot_mutate_personal_state(tmp_path):
+    # WHY: personal writes (your own saved filters, watches, inbox) don't need the write
+    # ROLE — a viewer may manage their own — but a READ-ONLY bearer token must still be
+    # refused, or the read-vs-write token boundary leaks: a "read" agent could create
+    # filters, watch issues, and clear its owner's inbox.
+    app = create_app(tmp_path / "scope_personal.db")
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        issue = client.post("/issues", json={"title": "watchable"}, headers=_AUTH_ADMIN).json()
+        reader = _bearer(_mint(client, scopes=["read"], name="reader")["token"])
+        writer = _bearer(_mint(client, scopes=["issue:write"], name="writer")["token"])
+
+        # The read token still READS its personal surfaces fine.
+        assert client.get("/notifications", headers=reader).status_code == 200
+        assert client.get("/filters", headers=reader).status_code == 200
+
+        # ...but every personal WRITE is refused (403) with the write-scope message.
+        watch = {"target_kind": "issue", "target_id": issue["id"]}
+        for resp in (
+            client.post("/filters", json={"name": "mine"}, headers=reader),
+            client.post("/watches", json=watch, headers=reader),
+            client.post("/notifications/read_all", headers=reader),
+        ):
+            assert resp.status_code == 403, resp.text
+            assert resp.json()["detail"] == "token scope required: a write scope"
+
+        # A write-capable token (issue:write) may do the same personal writes.
+        assert client.post("/filters", json={"name": "ok"}, headers=writer).status_code == 201
+        assert client.post("/watches", json=watch, headers=writer).status_code == 204
+        assert client.post("/notifications/read_all", headers=writer).status_code == 200
+
+
 def test_issue_write_token_cannot_write_docs_or_admin_users(tmp_path):
     app = create_app(tmp_path / "scope_issue.db")
     with TestClient(app) as client:

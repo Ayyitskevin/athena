@@ -261,11 +261,33 @@ def set_parent(
     return get_issue(conn, issue_id)
 
 
-def list_children(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
-    """The direct children of an issue (one level), oldest first."""
-    rows = conn.execute(
-        f"{_SELECT} WHERE i.parent_id = ? ORDER BY i.id", (issue_id,)
-    ).fetchall()
+def list_children(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    *,
+    visible_project_ids: set[int] | None = None,
+) -> list[dict]:
+    """The direct children of an issue (one level), oldest first.
+
+    visible_project_ids gates the returned children by project visibility exactly as
+    list_issues does: None (the default) means no gating — for internal/admin callers;
+    a set restricts to children whose project is in it, PLUS backlog children (no
+    project to gate on), so an empty set narrows to the backlog alone. This matters
+    because parenting has NO same-project rule — a child can legitimately live in a
+    private project under a public parent — so without this gate a non-member reading
+    the public parent's children would leak the private child's title/body/key/status.
+    """
+    clauses = ["i.parent_id = ?"]
+    params: list = [issue_id]
+    if visible_project_ids is not None:
+        if visible_project_ids:
+            vis_ph = ",".join("?" for _ in visible_project_ids)
+            clauses.append(f"(i.project_id IS NULL OR i.project_id IN ({vis_ph}))")
+            params.extend(visible_project_ids)
+        else:
+            clauses.append("i.project_id IS NULL")
+    where = " WHERE " + " AND ".join(clauses)
+    rows = conn.execute(f"{_SELECT}{where} ORDER BY i.id", params).fetchall()
     return [_to_issue(row) for row in rows]
 
 

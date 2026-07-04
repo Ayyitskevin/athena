@@ -50,6 +50,44 @@ def test_subresource_404s_for_outsider_on_private_issue(tmp_path, sub):
         assert client.get(url, headers=H_OUTSIDER).status_code == 200
 
 
+def test_children_list_hides_a_private_child_under_a_public_parent(tmp_path):
+    # WHY: parenting has NO same-project rule, so a private-project child can legitimately
+    # sit under a public parent. The parent is visible, so /children is 200 — but each
+    # child must still be visibility-gated, or the list leaks the hidden child's
+    # title/body/key/status to anyone who can see the public parent (and identically
+    # through the web detail page and the MCP list_subtasks tool).
+    db_file = tmp_path / "child_leak.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        # Public parent in the backlog (visible to everyone, signed in or not).
+        v = client.post("/issues", json={"title": "Public parent"}, headers=H_CREATOR).json()["id"]
+        # Confidential child in a (soon-to-be) private project.
+        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
+        c = client.post(
+            "/issues", json={"title": "Acquire FooCorp", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
+        # Nest C under V — allowed: creator owns C, V is public, no cycle.
+        assert client.put(
+            f"/issues/{c}/parent", json={"parent_id": v}, headers=H_CREATOR
+        ).status_code == 200
+        conn = db.connect(db_file)
+        conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
+        conn.commit()
+
+        url = f"/issues/{v}/children"
+        # The public parent is visible → 200, but the hidden child is filtered out (no leak).
+        outsider = client.get(url, headers=H_OUTSIDER)
+        assert outsider.status_code == 200 and outsider.json() == []
+        assert client.get(url).json() == []  # signed out, same
+        # The creator and admin (who can see P) get the child.
+        assert [row["id"] for row in client.get(url, headers=H_CREATOR).json()] == [c]
+        assert [row["id"] for row in client.get(url, headers=H_ADMIN).json()] == [c]
+        # Membership reveals it to the outsider.
+        access.add_project_member(conn, pp, 3, added_by=2)
+        assert [row["id"] for row in client.get(url, headers=H_OUTSIDER).json()] == [c]
+        conn.close()
+
+
 def test_backlog_issue_subresources_stay_open(tmp_path):
     db_file = tmp_path / "backlog.db"
     with TestClient(create_app(db_file)) as client:

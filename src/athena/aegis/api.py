@@ -882,9 +882,15 @@ def list_children(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Open read, like backlinks/comments. 404 if the issue is missing OR in a private
-    # project the caller can't see.
+    # project the caller can't see. The children themselves are visibility-gated too:
+    # a child can sit in a private project the caller can't see (parenting spans
+    # projects), so gate the list the same way the issue list is gated — else the
+    # parent's children would leak a hidden child's content.
     _issue_for_read(conn, issue_id, actor)
-    return _with_labels_many(conn, issues.list_children(conn, issue_id))
+    children = issues.list_children(
+        conn, issue_id, visible_project_ids=access.visible_project_filter(conn, actor)
+    )
+    return _with_labels_many(conn, children)
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
@@ -1209,6 +1215,13 @@ def delete_project(
     if issues.count_issues_in_project(conn, project_id) > 0:
         raise HTTPException(
             status_code=409, detail="reassign or delete its issues first"
+        )
+    # sprints.project_id is NOT NULL with no ON DELETE, so a project that owns any
+    # sprint would fail the bare DELETE at the FK and surface as a 500 — permanently
+    # undeletable. Refuse cleanly (409), same block-don't-cascade rule as issues.
+    if sprints.list_sprints(conn, project_id=project_id):
+        raise HTTPException(
+            status_code=409, detail="delete its sprints first"
         )
     projects.delete_project(conn, project_id)
 

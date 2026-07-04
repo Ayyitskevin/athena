@@ -177,15 +177,18 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     target.)"""
     if get_page(conn, page_id) is None:
         return False
-    # page_versions.page_id REFERENCES pages(id) with no ON DELETE, so the history
-    # rows MUST be cleared before the page row (deleting the parent first would
-    # trip the FK). The danger is a half-delete: history gone, page still here, if
-    # the page delete then fails (e.g. a stray child's parent_id FK restricts it).
-    # BEGIN IMMEDIATE + rollback-on-failure makes the pair atomic — exactly the
-    # pattern update_page uses — so a failed page delete restores the history too.
+    # page_versions AND page_comments both REFERENCE pages(id) with no ON DELETE, so
+    # their rows MUST be cleared before the page row (deleting the parent first would
+    # trip the FK — and a page that was ever commented on would be permanently
+    # undeletable, surfacing as a 500). page_labels has ON DELETE CASCADE, so it needs
+    # no explicit clear. The danger is a half-delete: dependents gone, page still here,
+    # if the page delete then fails (e.g. a stray child's parent_id FK restricts it).
+    # BEGIN IMMEDIATE + rollback-on-failure makes the whole set atomic — exactly the
+    # pattern update_page uses — so a failed page delete restores its dependents too.
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
+        conn.execute("DELETE FROM page_comments WHERE page_id = ?", (page_id,))
         conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
         conn.commit()
     except Exception:

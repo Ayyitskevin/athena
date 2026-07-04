@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from athena.core import notifications
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import current_actor, personal_write_actor
 
 router = APIRouter(tags=["core"])
 
@@ -66,7 +66,7 @@ def unread_count(
 @router.post("/notifications/{notification_id}/read", status_code=204)
 def mark_read(
     notification_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # 404 if it isn't an unread notification belonging to this actor — a user can
@@ -77,7 +77,7 @@ def mark_read(
 
 @router.post("/notifications/read_all", response_model=UnreadCount)
 def mark_all_read(
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Returns how many were just cleared.
@@ -96,7 +96,7 @@ def _validate_kind(kind: str) -> str:
 @router.post("/watches", status_code=204)
 def add_watch(
     payload: WatchCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     notifications.watch(
@@ -108,7 +108,7 @@ def add_watch(
 def remove_watch(
     target_kind: str,
     target_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     if not notifications.unwatch(

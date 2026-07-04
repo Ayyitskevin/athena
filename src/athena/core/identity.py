@@ -158,6 +158,23 @@ def write_actor(actor: dict = Depends(current_actor)) -> dict:
     return require_write_role(actor)
 
 
+def personal_write_actor(actor: dict = Depends(current_actor)) -> dict:
+    """A write to the actor's OWN personal state — saved filters, watches, inbox.
+    Unlike a module write it does NOT require the write ROLE (a viewer may manage their
+    own queries/subscriptions, which touch only their own rows), but it MUST refuse a
+    READ-ONLY bearer token: a token minted with only the 'read' scope must never mutate
+    anything (the agent-safety read-vs-write token boundary). Non-token auth (browser
+    session / trusted actor header) is not token-scoped and passes."""
+    scopes = actor.get("_token_scopes")
+    if scopes is not None and not set(scopes) & {
+        tokens.ISSUE_WRITE_SCOPE,
+        tokens.DOCS_WRITE_SCOPE,
+        tokens.ADMIN_SCOPE,
+    }:
+        raise HTTPException(status_code=403, detail="token scope required: a write scope")
+    return actor
+
+
 def issue_write_actor(actor: dict = Depends(current_actor)) -> dict:
     """Authenticated actor allowed to write Aegis issue/project/label state."""
     require_write_role(actor)
