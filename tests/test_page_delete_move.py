@@ -68,6 +68,26 @@ def test_delete_missing_page_returns_false(tmp_path):
     assert pages.delete_page(conn, 999) is False
 
 
+def test_delete_removes_a_page_that_has_comments(tmp_path):
+    # WHY: page_comments.page_id REFERENCES pages(id) with no ON DELETE — before this fix
+    # the FK rejected the row delete, so any page that was ever commented on was
+    # permanently undeletable (the DELETE surfaced as a 500). delete_page must clear its
+    # comments alongside its versions, inside the same atomic transaction.
+    from athena.mentor import page_comments
+
+    conn = _migrated_conn(tmp_path / "del_comments.db")
+    _seed_user(conn)
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    pg = pages.create_page(conn, space_id=sp["id"], title="Chatty", body="hi", created_by=1)
+    page_comments.add_comment(conn, page_id=pg["id"], author_id=1, body="a note")
+    assert page_comments.list_comments(conn, pg["id"]) != []
+
+    assert pages.delete_page(conn, pg["id"]) is True
+    assert pages.get_page(conn, pg["id"]) is None
+    assert page_comments.list_comments(conn, pg["id"]) == []
+    conn.close()
+
+
 def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
     # WHY: delete clears history (page_versions) BEFORE the page row, because the
     # FK forces that order. If the page delete then fails — a stray child's

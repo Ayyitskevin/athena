@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from athena.aegis import api, saved_filters
 from athena.core import access
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import current_actor, personal_write_actor
 
 router = APIRouter(prefix="/filters", tags=["aegis"])
 
@@ -85,7 +85,7 @@ def _owned_filter_or_404(
 @router.post("", response_model=FilterOut, status_code=201)
 def create(
     payload: FilterCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     name = payload.name.strip()
@@ -123,7 +123,7 @@ def show(
 def update(
     filter_id: int,
     payload: FilterUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     _owned_filter_or_404(conn, filter_id, actor)
@@ -150,7 +150,7 @@ def update(
 @router.delete("/{filter_id}", status_code=204)
 def delete(
     filter_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     _owned_filter_or_404(conn, filter_id, actor)

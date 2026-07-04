@@ -226,6 +226,35 @@ def test_delete_with_issues_is_409_and_project_survives(tmp_path):
         assert client.get(f"/projects/{proj['id']}").status_code == 200  # survives
 
 
+def test_delete_with_sprint_is_409_and_project_survives(tmp_path):
+    # WHY: sprints.project_id is NOT NULL with no ON DELETE — a project owning any sprint
+    # (even empty) would trip the FK on the bare DELETE and surface as a 500, permanently
+    # undeletable. Refuse cleanly (409), the same no-cascade rule as issues; the project
+    # survives, and once the sprint is gone the delete goes through.
+    db_file = tmp_path / "sprint_del.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_two_users(db_file)
+        proj = _make_project(client)
+        sprint = client.post(
+            f"/projects/{proj['id']}/sprints",
+            json={"name": "Launch"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        assert sprint.status_code == 201, sprint.text
+
+        refused = client.delete(f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"})
+        assert refused.status_code == 409
+        assert client.get(f"/projects/{proj['id']}").status_code == 200  # survives
+
+        assert client.delete(
+            f"/sprints/{sprint.json()['id']}", headers={"X-Athena-Actor": "1"}
+        ).status_code == 204
+        assert client.delete(
+            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
+        ).status_code == 204
+
+
 def test_delete_unknown_project_is_404(tmp_path):
     db_file = tmp_path / "l.db"
     app = create_app(db_file)
