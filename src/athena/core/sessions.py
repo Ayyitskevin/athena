@@ -90,3 +90,20 @@ def destroy_session(conn: sqlite3.Connection, raw: str | None) -> None:
         return
     conn.execute("DELETE FROM sessions WHERE session_hash = ?", (_hash(raw),))
     conn.commit()
+
+
+def revoke_other_sessions(
+    conn: sqlite3.Connection, user_id: int, keep_raw: str | None
+) -> int:
+    """Delete every OTHER session of a user, keeping only the one `keep_raw` names.
+    Called after a password change so an older or stolen cookie can't outlive the
+    rotation, while the user who just changed it stays logged in. Returns how many
+    were revoked. If keep_raw is missing (no current cookie), this revokes ALL of the
+    user's sessions — the safe direction, forcing a fresh login everywhere."""
+    keep_hash = _hash(keep_raw) if keep_raw else ""
+    cur = conn.execute(
+        "DELETE FROM sessions WHERE user_id = ? AND session_hash != ?",
+        (user_id, keep_hash),
+    )
+    conn.commit()
+    return cur.rowcount

@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from athena import config
 from athena.aegis import automation, projects, statuses
 from athena.core import (
     activity,
@@ -14,6 +15,7 @@ from athena.core import (
     identity,
     oidc,
     run_replay,
+    sessions,
     tokens,
     users,
     webhooks,
@@ -166,6 +168,13 @@ def update_own_password(
         )
 
     users.set_password(conn, user["id"], new_password)
+    # Revoke every OTHER session of this user, so a device signed in on the old
+    # password (a shared/stolen/forgotten browser) can't keep riding a live cookie for
+    # up to SESSION_TTL_DAYS. The current browser's session is kept — the user who just
+    # rotated the password stays logged in here.
+    sessions.revoke_other_sessions(
+        conn, user["id"], request.cookies.get(config.SESSION_COOKIE)
+    )
     return RedirectResponse("/settings/password?updated=1", status_code=303)
 
 
