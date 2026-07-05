@@ -619,16 +619,26 @@ def list_page_comments(
 
 
 def _author_page_comment_or_error(
-    conn: sqlite3.Connection, page_id: int, comment_id: int, actor: dict
+    conn: sqlite3.Connection,
+    page_id: int,
+    comment_id: int,
+    actor: dict,
+    *,
+    allow_admin: bool = False,
 ) -> dict:
     """Fetch a comment that belongs to this page, requiring the actor to be its
     author. 404 if the comment is missing or hangs off another page, 403 if someone
     other than the author tries to change it — the same author-ownership rule the
-    Aegis issue comments enforce."""
+    Aegis issue comments enforce.
+
+    allow_admin lifts the author restriction for admins — a moderation override used
+    ONLY on delete, so an admin can remove another user's comment. Edit stays strictly
+    author-only even for admins (removing words is moderation; rewriting them is not),
+    exactly as Aegis issue comments do. The delete is still audited to the admin."""
     existing = page_comments.get_comment(conn, comment_id)
     if existing is None or existing["page_id"] != page_id:
         raise HTTPException(status_code=404, detail="no such comment")
-    if existing["author_id"] != actor["id"]:
+    if existing["author_id"] != actor["id"] and not (allow_admin and is_admin(actor)):
         raise HTTPException(status_code=403, detail="not the comment author")
     return existing
 
@@ -662,7 +672,7 @@ def delete_page_comment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
-    _author_page_comment_or_error(conn, page_id, comment_id, actor)
+    _author_page_comment_or_error(conn, page_id, comment_id, actor, allow_admin=True)
     if not page_comments.delete_comment(conn, comment_id):
         # vanished between the author check and the delete (a race) — don't record
         # an event for a deletion that didn't happen.
