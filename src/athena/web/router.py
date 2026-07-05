@@ -2378,8 +2378,9 @@ def project_delete(
     request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     """Delete a project from the edit page. Creator-only (401/403/404). Refused
-    with 409 if the project still owns issues — we don't cascade or detach, so the
-    issues must be reassigned/deleted first (same rule as the REST API)."""
+    with 409 if the project still owns issues OR sprints — we don't cascade or
+    detach, so those must be emptied first (the same block-don't-cascade rule the
+    REST API's delete enforces at aegis/api.py:delete_project)."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -2392,6 +2393,14 @@ def project_delete(
     if issues.count_issues_in_project(conn, project_id) > 0:
         return HTMLResponse(
             '<div class="error">Reassign or delete this project\'s issues first.</div>',
+            status_code=409,
+        )
+    # sprints.project_id is NOT NULL with no ON DELETE, so a project owning any sprint
+    # would trip the FK on the bare DELETE and 500 (undeletable from the UI). Refuse
+    # cleanly, matching the REST twin — the web delete had drifted from it.
+    if sprints.list_sprints(conn, project_id=project_id):
+        return HTMLResponse(
+            '<div class="error">Delete this project\'s sprints first.</div>',
             status_code=409,
         )
     projects.delete_project(conn, project_id)
