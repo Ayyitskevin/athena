@@ -1843,10 +1843,16 @@ def unwatch_issue(
 # --- Saved filters: a user's named, reusable issue queries ------------------
 
 
-def _describe_criteria(conn, criteria: dict) -> str:
+def _describe_criteria(conn, criteria: dict, actor: dict | None) -> str:
     """A short human description of a filter's criteria for the list/detail views,
     resolving ids to names (assignee → display name, project id → project name).
-    Empty criteria reads as "all issues" — an unconstrained filter is still a view."""
+    Empty criteria reads as "all issues" — an unconstrained filter is still a view.
+
+    The project NAME is resolved only when `actor` may see that project: a private
+    project the viewer isn't in renders as its id (#N), never its name. Otherwise any
+    user could save a filter with `project: <private_id>` and read a hidden project's
+    name back here (validate_criteria accepts any numeric id) — the same hidden==missing
+    rule the rest of the app enforces."""
     parts: list[str] = []
     if criteria.get("status"):
         parts.append(f"status: {criteria['status']}")
@@ -1862,8 +1868,12 @@ def _describe_criteria(conn, criteria: dict) -> str:
         if value.lower() == "none":
             parts.append("project: backlog")
         elif value.isdigit():
-            project = projects.get_project(conn, int(value))
-            parts.append(f"project: {project['name'] if project else '#' + value}")
+            pid = int(value)
+            if access.can_see_project_or_backlog(conn, actor, pid):
+                project = projects.get_project(conn, pid)
+                parts.append(f"project: {project['name'] if project else '#' + value}")
+            else:
+                parts.append(f"project: #{value}")  # id only — never the hidden name
         else:
             parts.append(f"project: {value}")
     if criteria.get("search"):
@@ -1888,7 +1898,7 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
         )
     my_filters = saved_filters.list_filters(conn, user["id"])
     for flt in my_filters:
-        flt["summary"] = _describe_criteria(conn, flt["criteria"])
+        flt["summary"] = _describe_criteria(conn, flt["criteria"], user)
     # Pre-fill values for the create form, taken from the query string (all blank by
     # default). project/label/assignee dropdowns echo the chosen option as selected.
     prefill = {
@@ -1991,7 +2001,7 @@ def filter_detail(
     flt = saved_filters.get_filter(conn, filter_id)
     if flt is None or flt["owner_id"] != user["id"]:
         return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
-    flt["summary"] = _describe_criteria(conn, flt["criteria"])
+    flt["summary"] = _describe_criteria(conn, flt["criteria"], user)
     crit = flt["criteria"]
     q = (request.query_params.get("q") or "").strip()
     context: dict = {"filter": flt, "q": q, "searching": bool(q)}
