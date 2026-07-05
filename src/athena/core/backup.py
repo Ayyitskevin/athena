@@ -94,8 +94,8 @@ def restore_database(
     """Restore ``backup_path`` into ``target_path``.
 
     Restores should be run while Athena is stopped. If ``force`` is true and the
-    target exists, the main database file is replaced and stale WAL/shm sidecars
-    for the target are removed.
+    target exists, stale WAL/shm sidecars for the target are removed and then the
+    main database file is replaced.
     """
     source = Path(backup_path)
     target = Path(target_path)
@@ -104,8 +104,14 @@ def restore_database(
     if target.exists() and not force:
         raise FileExistsError(f"target database already exists: {target}")
 
-    _copy_sqlite_database(source, target)
+    # Drop the target's stale -wal/-shm BEFORE swapping in the new main file, not after.
+    # The sidecars belong to the OLD database; if they outlived the atomic replace even
+    # briefly, a reader opening the freshly-restored file in that window would replay the
+    # old WAL onto the new database and corrupt it. Removing them first means the
+    # dangerous "new main file + old WAL" state never exists. (The restored copy is made
+    # in the default rollback journal mode, so it lands with no sidecars of its own.)
     _remove_sqlite_sidecars(target)
+    _copy_sqlite_database(source, target)
     return target
 
 

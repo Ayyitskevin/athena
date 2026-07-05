@@ -107,6 +107,39 @@ def test_restore_database_refuses_existing_target_without_force(tmp_path):
     }
 
 
+def test_restore_removes_stale_sidecars_before_replacing_the_main_file(tmp_path, monkeypatch):
+    # WHY: the target's stale -wal/-shm must go BEFORE the new main file is swapped in,
+    # not after. If they outlived the atomic replace even briefly, a reader opening the
+    # freshly-restored db in that window would replay the OLD wal onto the NEW file and
+    # corrupt it. We spy on the copy/replace step and assert the sidecars are ALREADY gone
+    # by the time it runs — a plain "gone afterward" check can't tell the orderings apart.
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    wal = target.with_name(f"{target.name}-wal")
+    shm = target.with_name(f"{target.name}-shm")
+    wal.write_bytes(b"stale-wal")
+    shm.write_bytes(b"stale-shm")
+
+    seen = {}
+    real_copy = backup._copy_sqlite_database
+
+    def _spy(src, dest):
+        # Capture whether the target's sidecars still exist at the moment of the replace.
+        seen["wal"] = wal.exists()
+        seen["shm"] = shm.exists()
+        return real_copy(src, dest)
+
+    monkeypatch.setattr(backup, "_copy_sqlite_database", _spy)
+    backup.restore_database(snapshot, target, force=True)
+
+    # Gone BEFORE the copy/replace ran (this is what the ordering fix guarantees)...
+    assert seen == {"wal": False, "shm": False}
+    # ...and still gone afterward, with the restored content in place.
+    assert not wal.exists() and not shm.exists()
+    assert _database_summary(target)["email"] == "saved@example.com"
+
+
 def test_backup_and_restore_cli_entry_points(tmp_path, capsys):
     source = _seed_database(tmp_path / "athena.db", email="cli@example.com")
     snapshot = tmp_path / "athena.snapshot.db"
