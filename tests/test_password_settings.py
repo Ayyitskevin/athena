@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from athena.core import db
+from athena.core import db, sessions
 from athena.main import create_app
 
 
@@ -91,6 +91,39 @@ def test_user_can_change_their_own_password(tmp_path):
             follow_redirects=False,
         )
         assert new_password.status_code == 303
+
+
+def test_password_change_revokes_other_sessions_but_keeps_current(tmp_path):
+    # WHY: changing the password must revoke sessions on OTHER devices — a shared/stolen/
+    # forgotten browser signed in on the old password must not keep riding a live cookie
+    # for up to SESSION_TTL_DAYS — while the browser that made the change stays logged in.
+    db_path = tmp_path / "revoke.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        user = _user(client, password="old-pass")
+        _login(client, password="old-pass")  # this browser's session
+        # A second device's live session for the same user, created out-of-band.
+        conn = db.connect(db_path)
+        other_raw = sessions.create_session(conn, user["id"])
+        assert sessions.resolve_session(conn, other_raw) is not None
+        conn.close()
+
+        changed = client.post(
+            "/settings/password",
+            data={
+                "current_password": "old-pass",
+                "new_password": "new-pass",
+                "confirm_password": "new-pass",
+            },
+            follow_redirects=False,
+        )
+        assert changed.status_code == 303
+
+        conn = db.connect(db_path)
+        # The other device is signed out; the browser that changed it is not.
+        assert sessions.resolve_session(conn, other_raw) is None
+        conn.close()
+        assert client.get("/settings/password").status_code == 200
 
 
 def test_password_settings_validates_current_password_and_confirmation(tmp_path):
