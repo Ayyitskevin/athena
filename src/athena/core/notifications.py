@@ -67,6 +67,25 @@ def unwatch(
     return cur.rowcount > 0
 
 
+def delete_watches_for(
+    conn: sqlite3.Connection, target_kind: str, target_id: int
+) -> int:
+    """Delete every watch ON a target and return how many were removed. Does NOT
+    commit — it is meant to run INSIDE the owning delete's transaction so the watches
+    vanish atomically with the target. Called when a page is deleted: a watch keys
+    its target polymorphically (no foreign key to lean on), so without this the row
+    dangles, pointing at a target that no longer exists — and because page ids can be
+    REUSED (rowid alias, not AUTOINCREMENT), a stale watch could later re-bind a
+    stranger to an unrelated new page. Notifications are deliberately NOT purged here:
+    they reference the append-only activity log, which outlives the target, so they
+    never dangle — deleting them would erase valid inbox history."""
+    cur = conn.execute(
+        "DELETE FROM watches WHERE target_kind = ? AND target_id = ?",
+        (target_kind, target_id),
+    )
+    return cur.rowcount
+
+
 def is_watching(
     conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
 ) -> bool:

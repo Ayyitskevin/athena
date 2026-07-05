@@ -141,3 +141,38 @@ def delete(
     except OSError:
         pass  # the row is gone; a leftover blob is harmless and never served
     return True
+
+
+def purge_target(
+    conn: sqlite3.Connection, target_kind: str, target_id: int
+) -> list[str]:
+    """Delete every attachment ROW for a target and return their stored disk names,
+    for the caller to unlink AFTER its transaction commits. Does NOT commit and does
+    NOT touch the filesystem: this is meant to run INSIDE the owning delete's
+    BEGIN IMMEDIATE so the metadata vanishes atomically with the target, while the
+    blobs — a non-transactional side effect — are removed post-commit via unlink_blobs.
+    Called when a page is deleted: attachments key their target polymorphically with
+    NO foreign key, so nothing at the DB level clears them; without this the metadata
+    rows and on-disk blobs would dangle forever."""
+    rows = conn.execute(
+        "SELECT stored_name FROM attachments WHERE target_kind = ? AND target_id = ?",
+        (target_kind, target_id),
+    ).fetchall()
+    conn.execute(
+        "DELETE FROM attachments WHERE target_kind = ? AND target_id = ?",
+        (target_kind, target_id),
+    )
+    return [r["stored_name"] for r in rows]
+
+
+def unlink_blobs(attach_dir: str | Path, stored_names: list[str]) -> None:
+    """Best-effort unlink of blob files by stored name — the filesystem half of
+    purge_target, run after its transaction has committed. A missing file is fine
+    (the row is already gone, and the row is the truth); an OS error is swallowed —
+    a leftover blob is harmless and never served, since nothing addresses it now."""
+    directory = Path(attach_dir)
+    for stored in stored_names:
+        try:
+            disk_path(directory, stored).unlink(missing_ok=True)
+        except OSError:
+            pass
