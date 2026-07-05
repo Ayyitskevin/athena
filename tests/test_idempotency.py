@@ -1,16 +1,20 @@
 """Idempotency-Key: replay the first response to a retried write.
 
-Agent-native safety — an agent whose POST times out and is retried must not
-double-create. When a POST carries an Idempotency-Key from an identifiable caller,
-the first 2xx response is stored and replayed verbatim on a repeat. These pin the
-replay (one create, identical body), per-key and per-identity scoping, the
-no-header passthrough, that a non-2xx is NOT cached, and that a replay still carries
-the security headers.
+Agent-native safety — an agent whose mutation times out and is retried must not
+double-apply. When a mutating request (POST/PUT/PATCH/DELETE) carries an
+Idempotency-Key from an identifiable caller, the first 2xx response is stored and
+replayed verbatim on a repeat. These pin the replay (one create, identical body),
+per-key and per-identity scoping, the no-header passthrough, that a non-2xx is NOT
+cached, that a replay still carries the security headers, that the dedup extends to
+PATCH/DELETE (no duplicate page version; a clean replayed 204, not a 404), and that
+the (method, path) fingerprint refuses a key reused across methods.
 """
 from fastapi.testclient import TestClient
 
 from athena import config
+from athena.core import db
 from athena.main import create_app
+from athena.mentor import pages
 
 H1 = {"X-Athena-Actor": "1"}
 H2 = {"X-Athena-Actor": "2"}
@@ -114,3 +118,66 @@ def test_unidentified_caller_is_passed_through(tmp_path, monkeypatch):
         monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
         r = client.post("/issues", json={"title": "x"}, headers={"Idempotency-Key": "k"})
         assert r.status_code == 401
+
+
+def _space_and_page(client, *, body=""):
+    sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1).json()
+    return client.post(
+        f"/spaces/{sp['id']}/pages", json={"title": "Doc", "body": body}, headers=H1
+    ).json()
+
+
+def test_patch_replay_does_not_duplicate_a_page_version(tmp_path):
+    # WHY: idempotency now covers PATCH, not just POST. pages.update_page snapshots a
+    # version EVERY time it writes (no same-value guard), so a retried edit under the
+    # same key would otherwise cut a DUPLICATE version into history — junk in a
+    # load-bearing record. The retry must replay the first response and snapshot nothing.
+    db_path = tmp_path / "patch.db"
+    with TestClient(create_app(db_path)) as client:
+        _bootstrap(client)
+        pg = _space_and_page(client, body="")
+        key = {"Idempotency-Key": "edit-1", **H1}
+        first = client.patch(f"/pages/{pg['id']}", json={"body": "new text"}, headers=key)
+        second = client.patch(f"/pages/{pg['id']}", json={"body": "new text"}, headers=key)
+        assert first.status_code == 200 and second.status_code == 200
+        assert second.json() == first.json()
+        assert second.headers.get("idempotent-replay") == "true"
+        assert first.headers.get("idempotent-replay") is None
+    # Exactly ONE version was snapshotted (the pre-edit empty body), not two.
+    conn = db.connect(db_path)
+    assert len(pages.list_page_versions(conn, pg["id"])) == 1
+    conn.close()
+
+
+def test_delete_replays_success_instead_of_404(tmp_path):
+    # WHY: DELETE is idempotent at the resource level, but a retried delete returns a
+    # confusing 404 the second time. With the key, the retry replays the first 204 — a
+    # clean success — and the page is deleted exactly once.
+    with TestClient(create_app(tmp_path / "del.db")) as client:
+        _bootstrap(client)
+        pg = _space_and_page(client)
+        key = {"Idempotency-Key": "del-1", **H1}
+        first = client.delete(f"/pages/{pg['id']}", headers=key)
+        second = client.delete(f"/pages/{pg['id']}", headers=key)
+        assert first.status_code == 204
+        assert second.status_code == 204  # a replay, not the 404 a real second delete gives
+        assert second.headers.get("idempotent-replay") == "true"
+        # Proof the replay MASKED a real 404: the same delete without the key is a 404.
+        assert client.delete(f"/pages/{pg['id']}", headers=H1).status_code == 404
+
+
+def test_key_reused_across_methods_is_409(tmp_path):
+    # WHY: method is part of the fingerprint. The SAME key on the SAME path but a
+    # DIFFERENT method is a different request — replaying the PATCH's 200 for a DELETE
+    # would silently skip the delete behind a false success. Refuse loudly (409).
+    with TestClient(create_app(tmp_path / "xmethod.db")) as client:
+        _bootstrap(client)
+        pg = _space_and_page(client)
+        key = {"Idempotency-Key": "shared", **H1}
+        patched = client.patch(f"/pages/{pg['id']}", json={"body": "x"}, headers=key)
+        assert patched.status_code == 200
+        clash = client.delete(f"/pages/{pg['id']}", headers=key)
+        assert clash.status_code == 409
+        assert clash.json()["detail"] == "Idempotency-Key reused for a different request"
+        # The delete never ran — the page is still there.
+        assert client.get(f"/pages/{pg['id']}").status_code == 200
