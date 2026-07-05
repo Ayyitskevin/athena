@@ -368,6 +368,7 @@ def create_app(
     *,
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
+    anon_rate_limit_per_minute: int | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
     body_limit = (
@@ -379,6 +380,11 @@ def create_app(
         config.TOKEN_RATE_LIMIT_PER_MINUTE
         if token_rate_limit_per_minute is None
         else token_rate_limit_per_minute
+    )
+    anon_limit = (
+        config.ANON_RATE_LIMIT_PER_MINUTE
+        if anon_rate_limit_per_minute is None
+        else anon_rate_limit_per_minute
     )
 
     # Cookies without the Secure flag ride over plain HTTP too, so a network attacker
@@ -428,7 +434,9 @@ def create_app(
                         await task
 
     app = FastAPI(title="Athena", lifespan=lifespan)
-    app.state.token_rate_limiter = rate_limits.TokenRateLimiter(token_limit)
+    app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
+    # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
+    app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
     # Stamp the ambient run id (X-Athena-Run) for every event recorded this request.
     app.add_middleware(RunContextMiddleware)
