@@ -83,6 +83,10 @@ def optional_actor(
     except HTTPException as exc:
         if exc.status_code != 401:
             raise
+        # No valid credential: this is an anonymous request. Throttle it by client IP so
+        # a credential-free caller can't hammer these public reads — the per-token limiter
+        # only guards authenticated paths, leaving anonymous reads otherwise unbounded.
+        _enforce_anon_rate_limit(request)
         return None
 
 
@@ -101,6 +105,35 @@ def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
     raise HTTPException(
         status_code=429,
         detail="token rate limit exceeded",
+        headers={
+            "Retry-After": str(decision.retry_after_seconds),
+            "X-RateLimit-Limit": str(decision.limit),
+            "X-RateLimit-Remaining": str(decision.remaining),
+        },
+    )
+
+
+def _client_ip(request: Request) -> str:
+    """The direct peer's IP — the anon-limit key. Deliberately NOT X-Forwarded-For:
+    a directly-exposed box (Athena's common shape) must not let a caller spoof the key
+    and evade the limit. Behind a trusted proxy every anonymous request shares the
+    proxy's IP; account for that at the proxy or leave the limit off (see config)."""
+    client = request.client
+    return client.host if client is not None else "unknown"
+
+
+def _enforce_anon_rate_limit(request: Request) -> None:
+    limiter: rate_limits.FixedWindowRateLimiter | None = getattr(
+        request.app.state, "anon_rate_limiter", None
+    )
+    if limiter is None:
+        return
+    decision = limiter.check(_client_ip(request))
+    if decision.allowed:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail="anonymous rate limit exceeded",
         headers={
             "Retry-After": str(decision.retry_after_seconds),
             "X-RateLimit-Limit": str(decision.limit),

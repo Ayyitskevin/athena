@@ -38,6 +38,18 @@ TOKEN_RATE_LIMIT_PER_MINUTE = int(
     os.environ.get("ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE", "120")
 )
 
+# Per-client-IP limit on ANONYMOUS reads (optional_actor endpoints reached with no
+# valid credential). The per-token limiter never runs for these, so without this a
+# credential-free caller can hammer public reads unbounded. Defaults to 0 (OFF): a
+# local/tailnet box behind auth doesn't need it, and normal anonymous browsing (and
+# the test suite) hits these paths freely. Turn it on (e.g. 120) for any deployment
+# that exposes anonymous reads to an untrusted network. Keyed by the direct peer IP
+# (request.client.host), NOT X-Forwarded-For — so front it with a proxy that either
+# terminates anonymous traffic or is accounted for separately.
+ANON_RATE_LIMIT_PER_MINUTE = int(
+    os.environ.get("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", "0")
+)
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.
