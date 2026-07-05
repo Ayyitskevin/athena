@@ -11,6 +11,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 import hashlib
 import json
+import logging
 from pathlib import Path
 import sqlite3
 from typing import Awaitable, Callable
@@ -70,6 +71,12 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
 }
+
+_logger = logging.getLogger("athena")
+
+# Emit the "cookies are not Secure" warning at most once per process, no matter how
+# many apps a test suite builds. Flipped true the first time create_app() warns.
+_cookie_secure_warned = False
 
 
 class RequestBodyLimitMiddleware:
@@ -357,6 +364,19 @@ def create_app(
         if token_rate_limit_per_minute is None
         else token_rate_limit_per_minute
     )
+
+    # Cookies without the Secure flag ride over plain HTTP too, so a network attacker
+    # on an HTTPS deploy could capture the session/CSRF cookie. We keep the default OFF
+    # (http dev + the test suite need it), but warn loudly once so a real HTTPS deploy
+    # doesn't ship insecure by accident. There is no dev/prod signal to key off, so this
+    # is a warning, not a hard flip.
+    global _cookie_secure_warned
+    if not config.COOKIE_SECURE and not _cookie_secure_warned:
+        _cookie_secure_warned = True
+        _logger.warning(
+            "Session/CSRF cookies are NOT marked Secure (ATHENA_COOKIE_SECURE is off); "
+            "set ATHENA_COOKIE_SECURE=1 for any deployment served over HTTPS."
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
