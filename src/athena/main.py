@@ -238,6 +238,18 @@ class IdempotencyMiddleware:
         try:
             existing = idempotency.get(conn, key=key, identity=identity)
             if existing is not None:
+                # An Idempotency-Key is a promise that this is a retry of the SAME write.
+                # If the key comes back on a DIFFERENT path, the client reused it for a
+                # different request — replaying the first response would silently drop this
+                # write behind a false 2xx. Refuse loudly instead. (Same-path/different-body
+                # reuse is still replayed; a request-body fingerprint is a follow-up.)
+                if existing["path"] != scope.get("path", ""):
+                    await _send_json_response(
+                        send,
+                        {"detail": "Idempotency-Key reused for a different request"},
+                        status_code=409,
+                    )
+                    return
                 await self._replay(send, existing)
                 return
 

@@ -130,19 +130,29 @@ def start_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
     sprint has that id. Raises SprintStateError if the sprint isn't planned, or if
     its project already has an active sprint (one cadence at a time). Stamps
     start_date with today if it wasn't set."""
-    sprint = get_sprint(conn, sprint_id)
-    if sprint is None:
-        return None
-    if sprint["state"] != PLANNED:
-        raise SprintStateError("only a planned sprint can be started")
-    if active_sprint(conn, sprint["project_id"]) is not None:
-        raise SprintStateError("this project already has an active sprint")
-    conn.execute(
-        "UPDATE sprints SET state = ?, start_date = COALESCE(start_date, date('now')) "
-        "WHERE id = ?",
-        (ACTIVE, sprint_id),
-    )
-    conn.commit()
+    # The "one active sprint per project" rule is a check (active_sprint) then a write.
+    # Run both inside one BEGIN IMMEDIATE so two concurrent starts can't each read "no
+    # active sprint" and both flip to active: the write lock serializes them, so the
+    # second re-checks against the first's committed result and is rejected.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        sprint = get_sprint(conn, sprint_id)
+        if sprint is None:
+            conn.rollback()
+            return None
+        if sprint["state"] != PLANNED:
+            raise SprintStateError("only a planned sprint can be started")
+        if active_sprint(conn, sprint["project_id"]) is not None:
+            raise SprintStateError("this project already has an active sprint")
+        conn.execute(
+            "UPDATE sprints SET state = ?, start_date = COALESCE(start_date, date('now')) "
+            "WHERE id = ?",
+            (ACTIVE, sprint_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return get_sprint(conn, sprint_id)
 
 

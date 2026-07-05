@@ -15,8 +15,8 @@ def get(conn: sqlite3.Connection, *, key: str, identity: str) -> dict | None:
     time we've seen it. identity scopes the key to the caller so two callers reusing
     the same key string never read each other's responses."""
     row = conn.execute(
-        "SELECT status_code, content_type, response_body FROM idempotency_keys "
-        "WHERE idempotency_key = ? AND identity = ?",
+        "SELECT method, path, status_code, content_type, response_body "
+        "FROM idempotency_keys WHERE idempotency_key = ? AND identity = ?",
         (key, identity),
     ).fetchone()
     return dict(row) if row else None
