@@ -88,6 +88,50 @@ def test_delete_removes_a_page_that_has_comments(tmp_path):
     conn.close()
 
 
+def test_delete_purges_orphan_attachments_and_watches_but_keeps_notifications(tmp_path):
+    # WHY: attachments and watches key this page POLYMORPHICALLY (target_kind='page',
+    # target_id) with NO foreign key, so nothing at the DB level clears them — and page
+    # ids are a REUSED rowid alias (not AUTOINCREMENT), so a dangling row could later
+    # re-bind to an unrelated new page: a stranger's watch, a ghost attachment. So delete
+    # must purge both, including the on-disk blob. Notifications are the deliberate
+    # EXCEPTION: they point at the append-only activity log (which outlives the page), so
+    # they must SURVIVE — purging them would erase valid inbox history.
+    from athena import config
+    from athena.core import activity, attachments, notifications
+
+    conn = _migrated_conn(tmp_path / "orphans.db")
+    _seed_user(conn)  # user 1 = actor / uploader
+    conn.execute("INSERT INTO users (email, name) VALUES ('w@e.com', 'W')")  # user 2 = watcher
+    conn.commit()
+    sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    pg = pages.create_page(conn, space_id=sp["id"], title="Doc", body="", created_by=1)
+
+    # A blob-backed attachment, a watch, and — via a watched event — an inbox entry.
+    att = attachments.store(
+        conn, target_kind="page", target_id=pg["id"], filename="d.txt",
+        content_type="text/plain", data=b"bytes", uploaded_by=1,
+        attach_dir=config.ATTACH_DIR,
+    )
+    blob = attachments.disk_path(
+        config.ATTACH_DIR, attachments.get_stored_name(conn, att["id"])
+    )
+    assert blob.exists()
+    notifications.watch(conn, 2, "page", pg["id"])
+    activity.record(conn, actor_id=1, verb="page.updated", target_kind="page", target_id=pg["id"])
+    events_before = [n["event_id"] for n in notifications.list_notifications(conn, 2)]
+    assert events_before != []  # the watcher got an inbox entry
+
+    assert pages.delete_page(conn, pg["id"]) is True
+
+    # Orphans are gone: no attachment rows, no watch row, and the blob is unlinked.
+    assert attachments.list_for(conn, "page", pg["id"]) == []
+    assert notifications.is_watching(conn, 2, "page", pg["id"]) is False
+    assert not blob.exists()
+    # But the inbox entry survives — it references the append-only activity row.
+    assert [n["event_id"] for n in notifications.list_notifications(conn, 2)] == events_before
+    conn.close()
+
+
 def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
     # WHY: delete clears history (page_versions) BEFORE the page row, because the
     # FK forces that order. If the page delete then fails — a stray child's

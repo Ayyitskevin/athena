@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import links, search
+from athena import config
+from athena.core import attachments, links, notifications, search
 
 
 def create_page(
@@ -187,6 +188,16 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     # pattern update_page uses — so a failed page delete restores its dependents too.
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # attachments and watches key this page POLYMORPHICALLY (target_kind='page',
+        # target_id) with NO foreign key, so the DB clears neither. Purge them in THIS
+        # transaction so they die WITH the page — otherwise the rows dangle, and since
+        # page ids are a reused rowid alias (not AUTOINCREMENT), a later page could
+        # inherit a stranger's watch or a ghost attachment. purge_target returns the
+        # blob names to unlink post-commit (a filesystem side effect can't be atomic).
+        # Notifications are left alone on purpose: they point at the append-only
+        # activity log, which outlives the page, so they never dangle (see notifications.py).
+        stored_names = attachments.purge_target(conn, "page", page_id)
+        notifications.delete_watches_for(conn, "page", page_id)
         conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
         conn.execute("DELETE FROM page_comments WHERE page_id = ?", (page_id,))
         conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
@@ -194,6 +205,9 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     except Exception:
         conn.rollback()
         raise
+    # Post-commit, non-transactional side effects: unlink the now-orphaned blob files
+    # (best-effort), then maintain the derived link/search indexes as before.
+    attachments.unlink_blobs(config.ATTACH_DIR, stored_names)
     links.sync_links(conn, source_kind="page", source_id=page_id, body="")
     search.index_document(conn, kind="page", source_id=page_id)
     return True
