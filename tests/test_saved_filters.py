@@ -262,6 +262,37 @@ def test_web_create_list_and_summary(tmp_path):
         assert "assignee: Alice" in page
 
 
+def test_web_summary_hides_a_private_project_name(tmp_path):
+    # WHY: _describe_criteria renders a saved filter's `project` id as the project NAME,
+    # and validate_criteria accepts any numeric id — so without an actor gate any user
+    # could save `project: <private_id>` and read a hidden project's name back on
+    # /aegis/filters. A viewer who can't see the project must get the id (#N), never the
+    # name (the hidden==missing rule). The two web callers pass the session user through;
+    # this pins the gate itself for member/admin/outsider/anonymous.
+    from athena.aegis import projects
+    from athena.core import db, users
+    from athena.web.router import _describe_criteria
+
+    conn = db.connect(tmp_path / "leak.db")
+    db.migrate(conn)
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('admin@e.com', 'Admin', 'admin')")
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('c@e.com', 'Creator', 'member')")
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('o@e.com', 'Outsider', 'member')")
+    conn.commit()
+    proj = projects.create_project(conn, name="Acquisition", key="ACQ", created_by=2)
+    conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (proj["id"],))
+    conn.commit()
+    crit = {"project": str(proj["id"])}
+
+    # The creator (a member) and an admin (god-view) see the real name...
+    assert _describe_criteria(conn, crit, users.get_user(conn, 2)) == "project: Acquisition"
+    assert _describe_criteria(conn, crit, users.get_user(conn, 1)) == "project: Acquisition"
+    # ...but an outsider and an anonymous viewer get only the id — no name leak.
+    assert _describe_criteria(conn, crit, users.get_user(conn, 3)) == f"project: #{proj['id']}"
+    assert _describe_criteria(conn, crit, None) == f"project: #{proj['id']}"
+    conn.close()
+
+
 def test_web_run_shows_matches(tmp_path):
     """The web detail view runs the filter and lists matching issues (and excludes
     non-matching ones), through the same run path as the API."""
