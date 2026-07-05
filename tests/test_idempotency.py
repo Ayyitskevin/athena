@@ -43,6 +43,24 @@ def test_same_key_replays_one_create(tmp_path):
         assert second.headers.get("x-content-type-options") == "nosniff"
 
 
+def test_key_reused_on_a_different_path_is_409(tmp_path):
+    # WHY: an Idempotency-Key promises "this is a retry of the SAME write". If the client
+    # reuses it on a DIFFERENT path, replaying the first response would silently drop this
+    # second write behind a false 2xx. Refuse loudly (409) instead of replaying.
+    with TestClient(create_app(tmp_path / "reuse.db")) as client:
+        _bootstrap(client)
+        key = {"Idempotency-Key": "shared-key", **H1}
+        first = client.post("/issues", json={"title": "an issue"}, headers=key)
+        assert first.status_code == 201
+        # Same key, different path — the middleware refuses before the route runs.
+        clash = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=key)
+        assert clash.status_code == 409
+        assert clash.json()["detail"] == "Idempotency-Key reused for a different request"
+        # The second write never happened; the first is intact.
+        assert client.get("/spaces", headers=H1).json() == []
+        assert _ids(client) == [first.json()["id"]]
+
+
 def test_distinct_keys_create_distinctly(tmp_path):
     with TestClient(create_app(tmp_path / "distinct.db")) as client:
         _bootstrap(client)

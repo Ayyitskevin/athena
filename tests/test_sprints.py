@@ -74,6 +74,27 @@ def test_one_active_sprint_per_project(tmp_path):
     conn.close()
 
 
+def test_rejected_start_rolls_back_and_leaves_conn_usable(tmp_path):
+    # WHY: start_sprint now runs the "no other active sprint" check + the activate write
+    # inside one BEGIN IMMEDIATE, so two concurrent starts can't both read "none active"
+    # and both flip to active. The rejected path must roll back cleanly — the second
+    # sprint stays PLANNED and the connection isn't left mid-transaction (which would
+    # break the next write).
+    conn, _, pid = _setup(tmp_path)
+    a = sprints.create_sprint(conn, project_id=pid, name="A")
+    b = sprints.create_sprint(conn, project_id=pid, name="B")
+    sprints.start_sprint(conn, a["id"])
+    with pytest.raises(sprints.SprintStateError):
+        sprints.start_sprint(conn, b["id"])
+    # B untouched by the rejected start (rollback), A still the only active sprint.
+    assert sprints.get_sprint(conn, b["id"])["state"] == sprints.PLANNED
+    assert sprints.active_sprint(conn, pid)["id"] == a["id"]
+    # The connection is not stuck in a dangling transaction — a later write still commits.
+    c = sprints.create_sprint(conn, project_id=pid, name="C")
+    assert sprints.get_sprint(conn, c["id"])["name"] == "C"
+    conn.close()
+
+
 def test_another_project_can_have_its_own_active_sprint(tmp_path):
     conn, uid, pid = _setup(tmp_path)
     other = projects.create_project(conn, name="Web", key="WEB", created_by=uid)["id"]
