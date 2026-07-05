@@ -196,6 +196,60 @@ def test_login_rotates_session_and_kills_the_prior_one(tmp_path):
         c.close()
 
 
+def test_cross_site_login_post_is_blocked(tmp_path):
+    # WHY: /login has no session yet, so it can't use the session-bound CSRF token
+    # every other mutating route does. A cross-site POST (a page on evil.example
+    # auto-submitting the attacker's own credentials) would silently log the victim
+    # into an attacker-controlled account — a login-CSRF. A browser always stamps
+    # Origin on a cross-origin POST, so we reject when it names a different host.
+    app = create_app(tmp_path / "login_csrf.db")
+    with TestClient(app) as client:
+        _user(client, password="secret")
+        r = client.post(
+            "/login",
+            data={"email": "kevin@example.com", "password": "secret"},
+            headers={"Origin": "https://evil.example"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 403
+        assert "Cross-site login blocked" in r.text
+        # No session was minted despite the correct password.
+        assert config.SESSION_COOKIE not in r.cookies
+
+
+def test_same_origin_login_post_is_allowed(tmp_path):
+    # WHY: the Origin guard must not break a legitimate same-origin form POST — a
+    # browser submitting the login form from Athena's own page stamps our own host
+    # in Origin, and that must sail through to a normal login.
+    app = create_app(tmp_path / "login_same_origin.db")
+    with TestClient(app) as client:
+        _user(client, password="secret")
+        r = client.post(
+            "/login",
+            data={"email": "kevin@example.com", "password": "secret"},
+            headers={"Origin": "http://testserver"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert config.SESSION_COOKIE in r.cookies
+
+
+def test_login_post_without_origin_is_allowed(tmp_path):
+    # WHY: non-browser clients (curl, scripts) omit Origin entirely, and there is no
+    # CSRF risk without a browser — so a missing Origin is treated as same-site and
+    # the login proceeds. (This is the path the rest of the suite exercises.)
+    app = create_app(tmp_path / "login_no_origin.db")
+    with TestClient(app) as client:
+        _user(client, password="secret")
+        r = client.post(
+            "/login",
+            data={"email": "kevin@example.com", "password": "secret"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert config.SESSION_COOKIE in r.cookies
+
+
 def test_switching_accounts_invalidates_the_first_account_session(tmp_path):
     # WHY: rotation is per-login, not per-user. Logging in as a SECOND user from
     # the same browser must kill the first user's session — the cookie a shared

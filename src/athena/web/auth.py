@@ -13,6 +13,7 @@ from __future__ import annotations
 import secrets
 import sqlite3
 import urllib.error
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -63,6 +64,20 @@ def _set_csrf_cookie(response, csrf: str) -> None:
     )
 
 
+def _is_cross_site_post(request: Request) -> bool:
+    """True when the request carries an Origin whose host differs from ours — a cross-site
+    form POST, the login-CSRF vector. A browser ALWAYS sends Origin on a cross-origin POST,
+    so the actual attack (a victim's browser auto-submitting an attacker's login form to
+    log them into an attacker-controlled account) is caught. A missing Origin is treated as
+    same-site: non-browser clients (curl, the API) omit it, and there is no CSRF risk
+    without a browser. (Deploy note: front Athena so the request's Host header is the public
+    host — a proxy that rewrites Host without forwarding the original could false-positive.)"""
+    origin = request.headers.get("origin")
+    if not origin:
+        return False
+    return urlsplit(origin).netloc != request.headers.get("host", "")
+
+
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     templates = get_templates()
@@ -88,6 +103,15 @@ def login(
     templates = get_templates()
     if templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+
+    # Login CSRF defense: /login has no session yet, so it can't use the session-bound
+    # double-submit token every other mutating route does. Reject a cross-site POST so an
+    # attacker can't auto-submit their own credentials and silently log the victim into an
+    # attacker-controlled account (SameSite=Lax does not stop this — login needs no cookie).
+    if _is_cross_site_post(request):
+        return HTMLResponse(
+            '<div class="error">Cross-site login blocked.</div>', status_code=403
+        )
 
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:
