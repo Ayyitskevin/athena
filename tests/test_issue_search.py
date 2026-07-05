@@ -133,6 +133,21 @@ def test_endpoint_rejects_bad_project_filter(tmp_path):
         assert client.get("/issues/search", params={"q": "x", "project": "abc"}).status_code == 422
 
 
+def test_endpoint_bounds_limit_and_offset(tmp_path):
+    # WHY: this endpoint is anonymously reachable (optional_actor) and no per-token rate
+    # limit covers the anon path, so an unbounded limit is a DoS lever — `limit=-1` would
+    # reach SQLite as `LIMIT -1` and disable the cap, materializing every visible hit.
+    # Bounds must match the core /search endpoint (Query(20, ge=1, le=100)).
+    app = create_app(tmp_path / "apibound.db")
+    with TestClient(app) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A"})
+        assert client.get("/issues/search", params={"q": "x", "limit": -1}).status_code == 422
+        assert client.get("/issues/search", params={"q": "x", "limit": 0}).status_code == 422
+        assert client.get("/issues/search", params={"q": "x", "limit": 1000}).status_code == 422
+        assert client.get("/issues/search", params={"q": "x", "offset": -1}).status_code == 422
+        assert client.get("/issues/search", params={"q": "x", "limit": 50}).status_code == 200
+
+
 # --- web --------------------------------------------------------------------
 
 

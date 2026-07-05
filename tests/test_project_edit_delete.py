@@ -16,7 +16,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from athena.aegis import projects
+from athena.aegis import projects, sprints
 from athena.core import db
 from athena.main import create_app
 
@@ -392,6 +392,24 @@ def test_web_delete_with_issues_is_409_and_survives(tmp_path):
         r = client.post(f"/aegis/projects/{proj['id']}/delete")
         assert r.status_code == 409
         assert client.get(f"/projects/{proj['id']}").status_code == 200
+
+
+def test_web_delete_with_sprint_is_409_and_survives(tmp_path):
+    # WHY: the web delete had drifted from its REST twin — it only checked issues, so a
+    # project owning a sprint (but no issues) tripped the sprint FK on the bare DELETE and
+    # 500'd, leaving it undeletable from the UI. It must be a clean 409, and survive.
+    db_file = tmp_path / "web_sprint.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _bootstrap_first_user(client)
+        proj = _make_project(client, actor="1")
+        conn = db.connect(db_file)
+        sprints.create_sprint(conn, project_id=proj["id"], name="Launch")
+        conn.close()
+
+        r = client.post(f"/aegis/projects/{proj['id']}/delete")
+        assert r.status_code == 409
+        assert client.get(f"/projects/{proj['id']}").status_code == 200  # survives
 
 
 def test_web_bystander_cannot_delete(tmp_path):

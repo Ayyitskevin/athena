@@ -405,8 +405,8 @@ def search_issues_endpoint(
     assignee: int | None = None,
     label: str | None = None,
     project: str | None = None,
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
