@@ -160,6 +160,69 @@ def test_non_author_cannot_delete_comment(tmp_path):
         assert len(client.get(f"/issues/{issue_id}/comments").json()) == 1
 
 
+def _seed_admin_and_two_members(db_file):
+    # user 1 = admin (moderator), user 2 = member (author), user 3 = member (bystander)
+    conn = db.connect(db_file)
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('mod@e.com', 'Mod', 'admin')")
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('ann@e.com', 'Ann', 'member')")
+    conn.execute("INSERT INTO users (email, name, role) VALUES ('bob@e.com', 'Bob', 'member')")
+    conn.commit()
+    conn.close()
+
+
+def test_admin_can_delete_another_users_comment_but_member_cannot(tmp_path):
+    # WHY: the moderation override — an admin may remove ANY comment (spam/abuse), while a
+    # non-admin non-author still cannot. Ann (member) writes; Bob (member) is refused (403);
+    # the admin deletes it (204). The removal is audited to the admin, not the author.
+    db_file = tmp_path / "admin_del.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_admin_and_two_members(db_file)
+        issue_id = _make_issue(client, actor="2")  # Ann's issue
+        comment_id = _make_comment(client, issue_id, body="ann's words", actor="2")
+
+        # A different member (non-author) is still forbidden.
+        member = client.delete(
+            f"/issues/{issue_id}/comments/{comment_id}", headers={"X-Athena-Actor": "3"}
+        )
+        assert member.status_code == 403
+        assert len(client.get(f"/issues/{issue_id}/comments").json()) == 1
+
+        # The admin may moderate it away.
+        admin = client.delete(
+            f"/issues/{issue_id}/comments/{comment_id}", headers={"X-Athena-Actor": "1"}
+        )
+        assert admin.status_code == 204
+        assert client.get(f"/issues/{issue_id}/comments").json() == []
+
+    conn = db.connect(db_file)
+    latest = conn.execute(
+        "SELECT actor_id FROM activity WHERE target_kind = 'issue' AND target_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (issue_id,),
+    ).fetchone()
+    conn.close()
+    assert latest["actor_id"] == 1  # the moderation is on the record, stamped to the admin
+
+
+def test_admin_cannot_edit_another_users_comment(tmp_path):
+    # WHY: moderation is REMOVAL, not rewriting. An admin may delete spam, but editing
+    # another user's words (putting words in their mouth) stays forbidden even for an admin.
+    db_file = tmp_path / "admin_noedit.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_admin_and_two_members(db_file)
+        issue_id = _make_issue(client, actor="2")
+        comment_id = _make_comment(client, issue_id, body="ann's words", actor="2")
+        r = client.patch(
+            f"/issues/{issue_id}/comments/{comment_id}",
+            json={"body": "admin rewrite"},
+            headers={"X-Athena-Actor": "1"},  # the admin — still refused on edit
+        )
+        assert r.status_code == 403
+        assert client.get(f"/issues/{issue_id}/comments").json()[0]["body"] == "ann's words"
+
+
 def test_delete_missing_comment_is_404(tmp_path):
     db_file = tmp_path / "del_missing.db"
     app = create_app(db_file)
@@ -225,6 +288,27 @@ def test_web_author_can_delete_then_non_author_cannot(tmp_path):
         assert ok.status_code == 303
         remaining = client.get(f"/issues/{issue_id}/comments").json()
         assert [r["id"] for r in remaining] == [c1]
+
+
+def test_web_admin_can_delete_another_users_comment(tmp_path):
+    # WHY: the web write path honors the same moderation override as the API. The
+    # bootstrap admin removes a member's comment through the browser form (303), and it's
+    # gone — the delete control is gated by is_admin, not just authorship.
+    db_file = tmp_path / "web_admin_del.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _login(client, "ann@e.com", "Ann")  # user 1 = bootstrap ADMIN
+        _login(client, "bob@e.com", "Bob")  # user 2 = member
+        issue_id = _make_issue(client, actor="2")
+        cid = _make_comment(client, issue_id, body="bob's words", actor="2")
+
+        # Back to the admin's session; the browser delete succeeds on Bob's comment.
+        _login(client, "ann@e.com", "Ann")
+        ok = client.post(
+            f"/aegis/issues/{issue_id}/comments/{cid}/delete", follow_redirects=False
+        )
+        assert ok.status_code == 303
+        assert client.get(f"/issues/{issue_id}/comments").json() == []
 
 
 def test_web_author_can_edit_own_comment(tmp_path):

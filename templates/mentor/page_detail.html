@@ -96,8 +96,10 @@
                 <span class="muted">{{ c.created_at }}</span>
             </div>
             <div class="comment-body">{{ c.body_html }}</div>
-            {% if can_write and request.state.user and c.author_id == request.state.user.id %}
+            {% set is_author = can_write and request.state.user and c.author_id == request.state.user.id %}
+            {% if is_author or (can_write and is_admin) %}
             <div class="comment-actions">
+                {% if is_author %}
                 <details class="comment-edit">
                     <summary class="muted">Edit</summary>
                     <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/edit">
@@ -106,6 +108,7 @@
                         <button type="submit" class="button small">Save</button>
                     </form>
                 </details>
+                {% endif %}
                 <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/delete"
                       data-confirm="Delete this comment?">
                     {% include "partials/csrf.html" %}

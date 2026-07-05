@@ -927,17 +927,28 @@ def list_comments(
 
 
 def _author_comment_or_error(
-    conn: sqlite3.Connection, issue_id: int, comment_id: int, actor: dict
+    conn: sqlite3.Connection,
+    issue_id: int,
+    comment_id: int,
+    actor: dict,
+    *,
+    allow_admin: bool = False,
 ) -> dict:
     """Fetch a comment that belongs to this issue, requiring the actor to be its
     author. Raises 404 if the comment is missing or hangs off another issue, 403
     if someone other than the author tries to change it. This author-ownership
     check is the one place we enforce per-row ownership today (issues themselves
-    are still 'any authenticated actor' — a separate, deferred design)."""
+    are still 'any authenticated actor' — a separate, deferred design).
+
+    allow_admin lifts the author restriction for admins — a moderation override used
+    ONLY on delete, so an admin can remove another user's comment (spam, abuse). Edit
+    stays strictly author-only even for admins: removing someone's words is moderation,
+    but rewriting them would put words in their mouth. The delete is still audited to
+    the admin, so the moderation is on the record."""
     existing = comments.get_comment(conn, comment_id)
     if existing is None or existing["issue_id"] != issue_id:
         raise HTTPException(status_code=404, detail="no such comment")
-    if existing["author_id"] != actor["id"]:
+    if existing["author_id"] != actor["id"] and not (allow_admin and is_admin(actor)):
         raise HTTPException(status_code=403, detail="not the comment author")
     return existing
 
@@ -969,7 +980,7 @@ def delete_comment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
-    _author_comment_or_error(conn, issue_id, comment_id, actor)
+    _author_comment_or_error(conn, issue_id, comment_id, actor, allow_admin=True)
     if not comments.delete_comment(conn, comment_id):
         # vanished between the author check and the delete (a race) — don't record
         # an event for a deletion that didn't happen.

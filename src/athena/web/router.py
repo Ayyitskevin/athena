@@ -1129,6 +1129,9 @@ def _render_issue_detail(
         ),
         "can_modify": can_modify,
         "can_write": can_write,
+        # Admins may moderate (delete) any comment, not just their own — drives the
+        # per-comment Delete control the same way the server-side override gates it.
+        "is_admin": user is not None and identity.is_admin(user),
         # This issue's own audit trail (newest first) — the same data-layer read
         # the REST feed serves, scoped to this target.
         "activity": activity.list_activity(
@@ -1635,14 +1638,16 @@ def add_issue_comment(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-def _own_comment_or_response(conn, issue_id, comment_id, user):
+def _own_comment_or_response(conn, issue_id, comment_id, user, *, allow_admin=False):
     """Return the comment if it belongs to this issue and the session user is its
     author; otherwise an HTMLResponse (404/403) to return as-is. Mirrors the
-    API's author-ownership rule on the web write paths."""
+    API's author-ownership rule on the web write paths. allow_admin lets an admin
+    through for moderation — used only on delete, matching the API override; edit
+    stays author-only."""
     existing = comments.get_comment(conn, comment_id)
     if existing is None or existing["issue_id"] != issue_id:
         return None, HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
-    if existing["author_id"] != user["id"]:
+    if existing["author_id"] != user["id"] and not (allow_admin and identity.is_admin(user)):
         return None, HTMLResponse('<div class="error">You can only change your own comments.</div>', status_code=403)
     return existing, None
 
@@ -1701,7 +1706,7 @@ def delete_issue_comment(
     _, err = _issue_visible_or_404(conn, issue_id, user)
     if err is not None:
         return err
-    _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
+    _, err = _own_comment_or_response(conn, issue_id, comment_id, user, allow_admin=True)
     if err is not None:
         return err
     if not comments.delete_comment(conn, comment_id):

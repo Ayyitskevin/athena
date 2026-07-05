@@ -81,6 +81,37 @@ def test_author_only_edit_and_delete(tmp_path):
         assert client.get(f"/pages/{pid}/comments").json() == []
 
 
+def test_admin_can_delete_but_not_edit_another_users_comment(tmp_path):
+    # WHY: the moderation override. H1 is the bootstrap ADMIN, H2 a member. An admin may
+    # DELETE any comment (spam/abuse) but still may NOT EDIT another's words (that would put
+    # words in their mouth). So H2 writes, the admin is refused the edit but allowed the
+    # delete, and the removal lands on the audit trail stamped to the admin.
+    db_file = tmp_path / "admin_mod.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        pid = _page(client, _space(client))
+        cid = client.post(
+            f"/pages/{pid}/comments", json={"body": "b's words"}, headers=H2
+        ).json()["id"]
+
+        # Admin cannot rewrite another user's comment...
+        assert client.patch(
+            f"/pages/{pid}/comments/{cid}", json={"body": "admin rewrite"}, headers=H1
+        ).status_code == 403
+        # ...but CAN delete it (moderation).
+        assert client.delete(f"/pages/{pid}/comments/{cid}", headers=H1).status_code == 204
+        assert client.get(f"/pages/{pid}/comments").json() == []
+
+    conn = db.connect(db_file)
+    row = conn.execute(
+        "SELECT actor_id FROM activity WHERE target_kind = 'page' AND target_id = ? "
+        "AND verb = 'page_comment_deleted' ORDER BY id DESC LIMIT 1",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row["actor_id"] == 1  # audited to the admin moderator, not the author
+
+
 def test_comment_must_belong_to_the_named_page(tmp_path):
     with TestClient(create_app(tmp_path / "wrongpage.db")) as client:
         _bootstrap(client)
