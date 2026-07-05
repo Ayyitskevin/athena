@@ -222,9 +222,17 @@ def validate_move(
     if parent is None or parent["space_id"] != page["space_id"]:
         return "Parent must be a page in this space."
     node = parent
+    seen: set[int] = set()
     while node is not None:
         if node["id"] == page["id"]:
             return "A page cannot be moved under one of its own descendants."
+        if node["id"] in seen:
+            # A pre-existing cycle in the stored tree that does NOT pass through the moved
+            # page (e.g. from a concurrent-move race or a crafted import): stop rather than
+            # walk it forever. This bounds the walk so one bad row can't spin a worker at
+            # 100% CPU and exhaust the request thread-pool.
+            break
+        seen.add(node["id"])
         node = get_page(conn, node["parent_id"]) if node["parent_id"] else None
     return None
 
@@ -243,6 +251,34 @@ def set_parent(
     if cur.rowcount == 0:
         return None
     return get_page(conn, page_id)
+
+
+def move(
+    conn: sqlite3.Connection, page: dict, new_parent_id: int | None
+) -> tuple[dict | None, str | None]:
+    """Re-parent a page ATOMICALLY: run validate_move and the UPDATE inside one
+    BEGIN IMMEDIATE. validate_move alone can't stop a check-then-write race — two
+    concurrent moves (move A under B / move B under A) each validate against the
+    pre-move tree, both pass, then both write, forming a cycle. Holding the write lock
+    across validate+write serializes them, so the second move re-validates against the
+    first's committed result and is rejected. Returns (updated_page, None) on success,
+    or (None, reason) when the move is illegal — the caller turns `reason` into its
+    422/400. `page` is the already-fetched row; only its id/space_id are read (a move
+    changes neither), while validate_move re-reads the live tree under the lock."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        reason = validate_move(conn, page, new_parent_id)
+        if reason is not None:
+            conn.rollback()
+            return None, reason
+        conn.execute(
+            "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page["id"])
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return get_page(conn, page["id"]), None
 
 
 def list_page_versions(conn: sqlite3.Connection, page_id: int) -> list[dict]:
