@@ -187,20 +187,32 @@ class RunContextMiddleware:
             run_context.reset_run_id(run_token)
 
 
+# The HTTP methods that mutate, and so are worth deduping on retry. Reads (GET/HEAD/
+# OPTIONS) are never deduped — replaying a stale cached read would be a bug, not a fix.
+# PUT/DELETE are idempotent at the RESOURCE level, but a retried write can still duplicate
+# a SIDE EFFECT the resource state doesn't capture — a re-run PATCH cuts a second page
+# version (update_page snapshots unconditionally), and a retried DELETE returns a confusing
+# 404 where a clean replayed 204 belongs — so the Idempotency-Key opt-in covers them too.
+_IDEMPOTENT_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
 class IdempotencyMiddleware:
-    """Replay the first response to a retried write, so an agent's POST that times out
-    on a network blip and gets retried can't double-create (two issues, two comments).
+    """Replay the first response to a retried write, so an agent's mutation that times
+    out on a network blip and gets retried can't double-apply (two issues, a duplicate
+    audit event, a spurious extra page version).
 
-    When a POST carries an `Idempotency-Key` header from an identifiable caller, the
-    first 2xx response is stored and any later request with the same key REPLAYS it
-    verbatim instead of running the write again. Pure-ASGI (like RunContextMiddleware)
-    so it can both short-circuit with the stored response and capture the live one by
-    wrapping `send`.
+    When a mutating request (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key` header
+    from an identifiable caller, the first 2xx response is stored and any later request
+    with the same key REPLAYS it verbatim instead of running the write again. Pure-ASGI
+    (like RunContextMiddleware) so it can both short-circuit with the stored response and
+    capture the live one by wrapping `send`. The stored fingerprint is (key, identity,
+    method, path): reusing a key on a different method OR path is a different request and
+    is refused with a 409 rather than served a misleading replay.
 
-    Bounded blast radius: anything that is not POST + Idempotency-Key + an identifiable
-    credential passes straight through untouched, so non-opt-in traffic is unaffected.
-    Only 2xx is stored — a retry of a *failed* write should re-run, not replay the
-    error. Registered INSIDE harden_http, so a replayed response still gets the
+    Bounded blast radius: anything that is not a mutating method + Idempotency-Key + an
+    identifiable credential passes straight through untouched, so non-opt-in traffic is
+    unaffected. Only 2xx is stored — a retry of a *failed* write should re-run, not replay
+    the error. Registered INSIDE harden_http, so a replayed response still gets the
     security headers. Sequential retries (the common case) are fully covered; truly
     concurrent same-key requests may both run, with the second store ignored — a
     future claim-first pass could close that.
@@ -227,7 +239,7 @@ class IdempotencyMiddleware:
         return None
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("method") != "POST":
+        if scope["type"] != "http" or scope.get("method") not in _IDEMPOTENT_METHODS:
             await self.app(scope, receive, send)
             return
         headers = {name.lower(): value for name, value in scope.get("headers", [])}
@@ -246,11 +258,15 @@ class IdempotencyMiddleware:
             existing = idempotency.get(conn, key=key, identity=identity)
             if existing is not None:
                 # An Idempotency-Key is a promise that this is a retry of the SAME write.
-                # If the key comes back on a DIFFERENT path, the client reused it for a
-                # different request — replaying the first response would silently drop this
-                # write behind a false 2xx. Refuse loudly instead. (Same-path/different-body
-                # reuse is still replayed; a request-body fingerprint is a follow-up.)
-                if existing["path"] != scope.get("path", ""):
+                # If the key comes back on a DIFFERENT method or path, the client reused it
+                # for a different request — replaying the first response would silently drop
+                # this write behind a false 2xx. Refuse loudly instead. (Same-method-and-path
+                # /different-body reuse is still replayed; a request-body fingerprint is a
+                # follow-up.)
+                if (
+                    existing["path"] != scope.get("path", "")
+                    or existing["method"] != scope["method"]
+                ):
                     await _send_json_response(
                         send,
                         {"detail": "Idempotency-Key reused for a different request"},
@@ -285,7 +301,7 @@ class IdempotencyMiddleware:
                     conn,
                     key=key,
                     identity=identity,
-                    method="POST",
+                    method=scope["method"],
                     path=scope.get("path", ""),
                     status_code=captured["status"],
                     content_type=content_type,
