@@ -531,10 +531,9 @@ def move_page(
     # missing or hidden; 422 if the new parent is invalid (another space, the page
     # itself, or its own descendant — a cycle).
     page = _page_for_read(conn, page_id, actor)
-    err = pages.validate_move(conn, page, payload.parent_id)
+    moved, err = pages.move(conn, page, payload.parent_id)
     if err is not None:
         raise HTTPException(status_code=422, detail=err)
-    moved = pages.set_parent(conn, page_id, payload.parent_id)
     page_activity.record_page_moved(
         conn,
         actor_id=actor["id"],

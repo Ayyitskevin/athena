@@ -182,6 +182,42 @@ def test_move_rejects_cross_space_parent(tmp_path):
     assert pages.validate_move(conn, a, foreign["id"]) is not None
 
 
+def test_move_walk_terminates_on_a_preexisting_cycle(tmp_path):
+    # WHY: the upward parent-walk had no visited-set, so a pages.parent_id cycle that does
+    # NOT contain the moved page (reachable via a concurrent-move race or a crafted import)
+    # would spin forever at 100% CPU and exhaust the request thread-pool. The seen-set
+    # bounds it: an unrelated move past the cycle returns instead of hanging. (If the
+    # seen-set is ever removed this test hangs — that IS the regression signal.)
+    conn = _migrated_conn(tmp_path / "cycle.db")
+    sp, a, b, c, d = _tree(conn)
+    # Force a direct a<->b cycle straight into storage, bypassing validate_move.
+    conn.execute("UPDATE pages SET parent_id = ? WHERE id = ?", (b["id"], a["id"]))
+    conn.execute("UPDATE pages SET parent_id = ? WHERE id = ?", (a["id"], b["id"]))
+    conn.commit()
+    # Moving the unrelated page d under a walks up through the a<->b cycle; d isn't part
+    # of it, so the move is allowed — and, crucially, the walk terminates.
+    assert pages.validate_move(conn, d, a["id"]) is None
+    conn.close()
+
+
+def test_move_validates_and_writes_atomically(tmp_path):
+    # WHY: pages.move runs validate_move + the UPDATE inside one BEGIN IMMEDIATE so two
+    # concurrent moves can't each validate against the pre-move tree and interleave into a
+    # cycle. It returns (page, None) on a legal move (and re-parents), or (None, reason) on
+    # an illegal one, writing nothing.
+    conn = _migrated_conn(tmp_path / "atomic.db")
+    sp, a, b, c, d = _tree(conn)  # a > b > c ; d is a separate root
+    # Illegal: move a under its own descendant c — rejected, nothing written.
+    rejected, err = pages.move(conn, a, c["id"])
+    assert rejected is None and err is not None
+    assert pages.get_page(conn, a["id"])["parent_id"] is None  # a stays a root
+    # Legal: move b under the unrelated root d — succeeds and re-parents.
+    moved, err = pages.move(conn, b, d["id"])
+    assert err is None and moved["parent_id"] == d["id"]
+    assert pages.get_page(conn, b["id"])["parent_id"] == d["id"]
+    conn.close()
+
+
 # --- API --------------------------------------------------------------------
 
 

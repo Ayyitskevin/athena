@@ -662,12 +662,11 @@ def move_page(
             return HTMLResponse('<div class="error">Invalid parent page.</div>', status_code=400)
         new_parent = int(parent_id)
 
-    err = pages.validate_move(conn, page, new_parent)
+    _moved, err = pages.move(conn, page, new_parent)
     if err is not None:
         return HTMLResponse(
             f'<div class="error">{html.escape(err)}</div>', status_code=400
         )
-    pages.set_parent(conn, page_id, new_parent)
     page_activity.record_page_moved(
         conn,
         actor_id=user["id"],
