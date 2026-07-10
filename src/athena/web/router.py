@@ -159,8 +159,8 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     # Every number is counted only over the projects this viewer may see (admins all;
-    # the backlog is always in). recent_activity is gated with the rest of the
-    # activity surfaces in a later slice.
+    # the backlog is always in). recent_activity is gated the same way: actor=user
+    # makes list_activity drop events whose target the viewer can't see.
     vis = access.visible_project_filter(conn, user)
     return _templates.TemplateResponse(
         request=request,

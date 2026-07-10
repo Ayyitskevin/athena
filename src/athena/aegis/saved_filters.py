@@ -26,16 +26,17 @@ import sqlite3
 from athena.aegis import issues
 from athena.core import labels
 
-# The legal criteria keys. Anything else in a submitted criteria object is dropped
-# by normalize_criteria — a filter can only constrain the dimensions the issue list
-# actually supports, so a stored filter can always be run.
+# The legal criteria dimensions — anything else in a submitted criteria object is
+# dropped by normalize_criteria, so a stored filter can only constrain what the
+# issue list actually supports and can always be run. The string-valued keys live
+# in _STRING_KEYS; assignee_id (the one int-valued key) is normalized separately
+# in normalize_criteria.
 #   status      — exact status (free string; an unknown status simply matches none)
 #   priority    — exact priority (validated against issues.PRIORITIES)
 #   assignee_id — exact assignee user id (an unknown user matches none)
 #   label       — label name resolved to issue ids (an unknown label matches none)
 #   project     — "none" (backlog) or a project id, via issues.parse_project_filter
 #   search      — case-insensitive substring in title/body
-CRITERIA_KEYS = ("status", "priority", "assignee_id", "label", "project", "search")
 _STRING_KEYS = ("status", "priority", "label", "project", "search")
 
 

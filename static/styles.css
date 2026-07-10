@@ -496,18 +496,6 @@ footer {
     margin-bottom: 0.5rem;
 }
 
-.success-banner {
-    background: #d4edda;
-    border: 1px solid #c3e6cb;
-    padding: 1rem;
-    border-radius: 6px;
-    margin-top: 1rem;
-}
-
-.success-banner strong {
-    color: #155724;
-}
-
 /* Admin agent overview: operational read model for token-driven actors. */
 .agent-admin-list {
     display: grid;
