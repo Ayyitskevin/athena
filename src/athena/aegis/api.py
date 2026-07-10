@@ -1164,9 +1164,14 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
     if the actor isn't its creator. Edit/delete is creator-only — projects have no
     assignee, so unlike issues there is no second eligible writer. Reading the
     project (and creating one) stay open; only changing or removing an existing
-    one is gated here."""
+    one is gated here.
+
+    Visibility first, THEN the creator check: a hidden private project must read as
+    "no such project" (404), never as "exists but not yours" (403) — otherwise
+    PATCH/DELETE is an existence oracle for names the read path deliberately hides.
+    Same order as _project_for_privacy and the web's _authorize_project_write."""
     project = projects.get_project(conn, project_id)
-    if project is None:
+    if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     if project["created_by"] != actor["id"]:
         raise HTTPException(

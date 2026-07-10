@@ -174,7 +174,9 @@ def delete_space(
         return err
 
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    # Visibility first, THEN the creator check: a hidden private space must read as
+    # "not found" (404), never "exists but not yours" (403) — no existence leak.
+    if space is None or not access.can_see_space(conn, user, space_id):
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
     if space["created_by"] != user["id"]:
         return HTMLResponse(
@@ -209,7 +211,10 @@ def edit_space_form(
         return err
 
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    # Can't prefill a form for a space you can't see — a private space reads as
+    # "not found", no leak. Same gate as the POST twin below; without it the GET
+    # form leaked a hidden space's key/name/description to any signed-in member.
+    if space is None or not access.can_see_space(conn, user, space_id):
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
     return templates.TemplateResponse(
         request=request, name="mentor/space_edit.html", context={"space": space}

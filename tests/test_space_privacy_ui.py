@@ -60,6 +60,34 @@ def test_toggle_visibility_and_manage_members_via_web(tmp_path):
         assert "badge-private" in client.get("/mentor").text
 
 
+def test_hidden_space_edit_form_and_delete_do_not_leak(tmp_path):
+    # WHY (load-bearing): the GET edit form used to skip the visibility gate its own
+    # POST twin enforces, serving a hidden private space's key/name/description
+    # prefilled to ANY signed-in member — a content leak, not just an existence one.
+    # The web delete likewise answered 403 ("exists, not yours") where every read
+    # says 404. Both must read as "not found" with none of the space's data in the
+    # response body.
+    db_file = tmp_path / "sleak.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        sid = client.post("/spaces", json={"key": "HUSH", "name": "Skunkworks"}, headers=H_CREATOR).json()["id"]
+        conn = db.connect(db_file)
+        conn.execute("UPDATE spaces SET visibility='private' WHERE id=?", (sid,))
+        conn.commit()
+
+        _login(client, "o@e.com")  # a signed-in member NOT on the roster
+        form = client.get(f"/mentor/spaces/{sid}/edit")
+        assert form.status_code == 404
+        assert "Skunkworks" not in form.text and "HUSH" not in form.text
+        assert client.post(f"/mentor/spaces/{sid}/delete").status_code == 404
+
+        # The creator still gets the prefilled form.
+        _logout(client)
+        _login(client, "c@e.com")
+        ok = client.get(f"/mentor/spaces/{sid}/edit")
+        assert ok.status_code == 200 and "Skunkworks" in ok.text
+
+
 def test_space_access_page_authz(tmp_path):
     db_file = tmp_path / "saz.db"
     with TestClient(create_app(db_file)) as client:
