@@ -16,6 +16,12 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
 | `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. Set to `0` only if a trusted reverse proxy enforces the limit. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
 | `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous (credential-free) reads. Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever anonymous reads face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
+| `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
+| `ATHENA_WEBHOOK_INTERVAL` | `5` | Seconds between webhook delivery passes. |
+| `ATHENA_WEBHOOK_TIMEOUT` | `5` | Cap in seconds on each outbound webhook POST, so one slow receiver cannot stall the loop. |
+| `ATHENA_AUTOMATION` | `true` | Run the in-process automation rules loop. Same single-runner rule as webhook delivery. |
+| `ATHENA_AUTOMATION_INTERVAL` | `5` | Seconds between automation passes. |
 | `ATHENA_ATTACH_DIR` | `attachments` | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are only reachable via the authenticated download route). |
 | `ATHENA_ATTACH_MAX_BYTES` | `10485760` | Per-attachment size cap (bounded by `ATHENA_MAX_REQUEST_BODY_BYTES`). |
 
@@ -52,6 +58,31 @@ curl -fsS http://127.0.0.1:8000/readyz
 Migrations run automatically during app startup. A failing `/readyz` usually
 means the app cannot open the configured `ATHENA_DB` path or the schema did not
 finish migrating.
+
+## Background Loops (Webhooks and Automation)
+
+Athena runs two in-process background loops: webhook delivery (pushes new
+events to registered webhooks) and the automation rules engine (drains new
+activity events and fires matching rules' actions). Both default on.
+
+Each loop must run in exactly one process per deployment. If you run multiple
+uvicorn workers, keep the loops enabled in one worker and start the others with
+`ATHENA_WEBHOOK_DELIVERY=0` and `ATHENA_AUTOMATION=0` — otherwise webhooks
+double-deliver and rules fire twice.
+
+## Single Sign-On (OIDC)
+
+SSO is off unless all four connection settings are present; until then the SSO
+routes 404 and the login page shows no SSO button. Local email+password login
+keeps working either way — SSO is an additional way to authenticate.
+
+| Variable | Use |
+|----------|-----|
+| `ATHENA_OIDC_ISSUER` | The IdP's issuer URL; its `/.well-known/openid-configuration` is discovered from it. |
+| `ATHENA_OIDC_CLIENT_ID` | Client id registered with the IdP. |
+| `ATHENA_OIDC_CLIENT_SECRET` | Client secret registered with the IdP. |
+| `ATHENA_OIDC_REDIRECT_URL` | This app's callback URL. Must exactly match what the IdP has registered. |
+| `ATHENA_OIDC_ALLOWED_DOMAINS` | Optional comma-separated email-domain allow-list for first-login auto-provisioning (e.g. `acme.com,acme.io`). Empty = any domain the IdP asserts. Set it to lock SSO to your organization. |
 
 ## Deploy Preflight
 
@@ -107,8 +138,9 @@ athena-restore /backups/athena-YYYY-MM-DD.db /var/lib/athena/athena.db
 ```
 
 `athena-restore` refuses to overwrite an existing database unless `--force` is
-passed. When forcing a restore, it also removes stale `-wal` and `-shm` sidecar
-files for the target database after replacing the main file.
+passed. When forcing a restore, it removes stale `-wal` and `-shm` sidecar
+files for the target database before replacing the main file, so a reader can
+never replay the old write-ahead log on top of the restored database.
 
 ## First User Bootstrap
 
@@ -370,6 +402,10 @@ Before leaving laptop-only development:
   address for tailnet-only use.
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
+- Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads are
+  reachable from an untrusted network.
+- If you run multiple worker processes, disable the webhook and automation
+  loops in all but one (see Background Loops).
 - Keep `/readyz` in the service or reverse-proxy health check.
 - Run `athena-doctor` against the configured database and attachment directory
   before exposing a restored, moved, or upgraded instance.
