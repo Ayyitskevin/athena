@@ -49,6 +49,7 @@ from athena.web import admin as web_admin
 from athena.web import auth as web_auth
 from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
+from athena.web import projects as web_projects
 from athena.web import init_templates, router as web_router
 
 
@@ -495,6 +496,7 @@ def create_app(
     templates = Jinja2Templates(directory=repo_root / "templates")
     init_templates(templates)
     app.include_router(web_router)
+    app.include_router(web_projects.router)
     app.include_router(web_auth.router)
     app.include_router(web_mentor.router)
     app.include_router(web_labels.router)
