@@ -188,28 +188,39 @@ def labels_for_issue(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def labels_for_issues(
-    conn: sqlite3.Connection, issue_ids: list[int]
+def _labels_for_many(
+    conn: sqlite3.Connection, join_table: str, id_col: str, ids: list[int]
 ) -> dict[int, list[dict]]:
-    """Labels for many issues in ONE query, returned as {issue_id: [labels]}.
-    Avoids the N+1 that per-issue lookups would cause on list/board views. Issues
-    with no labels are simply absent from the dict (caller defaults to [])."""
-    if not issue_ids:
+    """Labels for many targets in ONE query, returned as {target_id: [labels]}.
+    The shared body of labels_for_issues/labels_for_pages — the two joins differ
+    only in table and id column, and those are hardcoded literals supplied by the
+    wrappers below (never caller input), so the f-string is safe; values stay
+    parameterized. Targets with no labels are simply absent from the dict (caller
+    defaults to [])."""
+    if not ids:
         return {}
-    placeholders = ",".join("?" for _ in issue_ids)
+    placeholders = ",".join("?" for _ in ids)
     rows = conn.execute(
-        f"SELECT il.issue_id, l.* FROM labels l "
-        f"JOIN issue_labels il ON il.label_id = l.id "
-        f"WHERE il.issue_id IN ({placeholders}) "
+        f"SELECT j.{id_col}, l.* FROM labels l "
+        f"JOIN {join_table} j ON j.label_id = l.id "
+        f"WHERE j.{id_col} IN ({placeholders}) "
         f"ORDER BY l.name COLLATE NOCASE",
-        issue_ids,
+        ids,
     ).fetchall()
     out: dict[int, list[dict]] = {}
     for row in rows:
         d = dict(row)
-        issue_id = d.pop("issue_id")
-        out.setdefault(issue_id, []).append(d)
+        target_id = d.pop(id_col)
+        out.setdefault(target_id, []).append(d)
     return out
+
+
+def labels_for_issues(
+    conn: sqlite3.Connection, issue_ids: list[int]
+) -> dict[int, list[dict]]:
+    """Labels for many issues in ONE query. Avoids the N+1 that per-issue lookups
+    would cause on list/board views."""
+    return _labels_for_many(conn, "issue_labels", "issue_id", issue_ids)
 
 
 # --- The page<->label join (the Mentor twin of the issue join above) ---------
@@ -263,3 +274,11 @@ def labels_for_page(conn: sqlite3.Connection, page_id: int) -> list[dict]:
         (page_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def labels_for_pages(
+    conn: sqlite3.Connection, page_ids: list[int]
+) -> dict[int, list[dict]]:
+    """Labels for many pages in ONE query — the Mentor twin of labels_for_issues,
+    so a space's page list doesn't pay one label query per page."""
+    return _labels_for_many(conn, "page_labels", "page_id", page_ids)
