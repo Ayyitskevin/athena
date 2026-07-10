@@ -140,3 +140,14 @@ def revoke_token(conn: sqlite3.Connection, *, user_id: int, token_id: int) -> bo
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def revoke_all_tokens(conn: sqlite3.Connection, *, user_id: int) -> int:
+    """Revoke every live token for ``user_id``. Returns how many tokens closed."""
+    cur = conn.execute(
+        "UPDATE api_tokens SET revoked_at = datetime('now')"
+        " WHERE user_id = ? AND revoked_at IS NULL",
+        (user_id,),
+    )
+    conn.commit()
+    return int(cur.rowcount)

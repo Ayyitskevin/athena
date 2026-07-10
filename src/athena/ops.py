@@ -353,6 +353,149 @@ def map_source_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def validate_source_main(argv: list[str] | None = None) -> int:
+    """Map a source export, print the mapping report, and dry-run import it.
+
+    End-to-end preflight for real Atlassian dumps without writing a target DB.
+    """
+    parser = argparse.ArgumentParser(
+        prog="athena-validate-source",
+        description=(
+            "Map a Jira/Confluence JSON export to an Athena bundle, print the "
+            "mapping report summary, and dry-run import into a throwaway DB."
+        ),
+    )
+    parser.add_argument("source", choices=SOURCE_KINDS, help="source export shape")
+    parser.add_argument("source_path", type=Path, help="Source JSON export path")
+    parser.add_argument(
+        "--project-key", help="override Jira project key (jira-project only)"
+    )
+    parser.add_argument("--project-name", help="override Jira project name")
+    parser.add_argument("--space-key", help="override Confluence space key")
+    parser.add_argument("--space-name", help="override Confluence space name")
+    args = parser.parse_args(argv)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="athena-validate-source-") as tmp:
+            tmp_path = Path(tmp)
+            bundle_path = tmp_path / "bundle.json"
+            report_path = tmp_path / "report.json"
+            write_source_bundle(
+                args.source,
+                args.source_path,
+                bundle_path,
+                project_key=args.project_key,
+                project_name=args.project_name,
+                space_key=args.space_key,
+                space_name=args.space_name,
+                report_path=report_path,
+                overwrite=True,
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            print(f"athena-validate-source: mapped {args.source}")
+            print(f"status: {report.get('status')}")
+            counts = report.get("counts") or {}
+            if counts:
+                print("counts:")
+                for key, value in sorted(counts.items()):
+                    print(f"  {key}: {value}")
+            unmapped = report.get("unmapped_fields") or []
+            if unmapped:
+                print(f"unmapped_fields: {len(unmapped)} path/reason pairs")
+                for item in unmapped[:12]:
+                    print(
+                        f"  - {item.get('path')}: {item.get('reason')} "
+                        f"(×{item.get('count', 1)})"
+                    )
+                if len(unmapped) > 12:
+                    print(f"  ... {len(unmapped) - 12} more")
+            attachments = report.get("attachment_manifest") or []
+            if attachments:
+                print(f"attachment_manifest: {len(attachments)} file(s) not imported")
+                for item in attachments[:8]:
+                    print(
+                        f"  - {item.get('filename')} "
+                        f"({item.get('size_bytes') or '?'} bytes)"
+                    )
+                if len(attachments) > 8:
+                    print(f"  ... {len(attachments) - 8} more")
+            target_db = tmp_path / "target.db"
+            conn = db.connect(target_db)
+            try:
+                db.migrate(conn)
+            finally:
+                conn.close()
+            dry = dry_run_import_database(target_db, bundle_path)
+            print("dry-run import: ok")
+            _print_count_block("would_create", dry.get("created") or {})
+            if dry.get("warnings"):
+                print("dry-run warnings:")
+                for item in dry["warnings"][:10]:
+                    print(f"  - {item.get('code')}: {item.get('message')}")
+    except (
+        FileNotFoundError,
+        FileExistsError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
+        print(f"athena-validate-source: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def prune_backups_main(argv: list[str] | None = None) -> int:
+    """Prune backup files in a directory without taking a new snapshot."""
+    parser = argparse.ArgumentParser(
+        prog="athena-backup-prune",
+        description=(
+            "Delete older Athena backup files matching a file-name glob, "
+            "keeping the newest N. Does not walk outside the directory."
+        ),
+    )
+    parser.add_argument(
+        "directory",
+        type=Path,
+        help="directory containing backup files",
+    )
+    parser.add_argument(
+        "--keep",
+        type=int,
+        required=True,
+        metavar="N",
+        help="number of newest matching backups to keep",
+    )
+    parser.add_argument(
+        "--glob",
+        dest="retention_glob",
+        default="athena-*.db",
+        help="file-name glob (default: athena-*.db)",
+    )
+    args = parser.parse_args(argv)
+    try:
+        pruned = prune_backup_directory(
+            args.directory,
+            args.retention_glob,
+            keep=args.keep,
+        )
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"athena-backup-prune: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"Pruned {len(pruned)} backup(s) in {args.directory} "
+        f"matching {args.retention_glob!r}; kept newest {args.keep}"
+    )
+    for path in pruned:
+        print(f"  removed {path.name}")
+    return 0
+
+
 def import_dry_run_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="athena-import-dry-run",

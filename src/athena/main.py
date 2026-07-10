@@ -29,6 +29,7 @@ from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.core import (
     activity_api,
+    agents_api,
     attachments_api,
     db,
     events_api,
@@ -503,6 +504,7 @@ def create_app(
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
     app.include_router(tokens_api.router)
+    app.include_router(agents_api.router)
     app.include_router(search_api.router)
     app.include_router(activity_api.router)
     app.include_router(events_api.router)

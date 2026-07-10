@@ -32,10 +32,13 @@ _RI_CONTENT_TITLE_RE = re.compile(r'ri:content-title=["\']([^"\']+)["\']')
 _JIRA_ISSUE_KEYS = {"id", "key", "self", "fields"}
 _JIRA_FIELD_KEYS = {
     "assignee",
+    "attachment",  # recorded in attachment_manifest, not blob-imported
     "comment",
+    "components",  # mapped into labels (name only)
     "created",
     "description",
     "issuelinks",
+    "issuetype",  # mapped into a type: label
     "labels",
     "parent",
     "priority",
@@ -43,6 +46,7 @@ _JIRA_FIELD_KEYS = {
     "reporter",
     "status",
     "summary",
+    "subtasks",  # reported; parents/children still via parent field when present
 }
 _CONFLUENCE_PAGE_KEYS = {
     "ancestors",
@@ -251,15 +255,34 @@ def map_jira_project(
                 )
 
         for label_name in _jira_labels(fields.get("labels")):
-            label = labels_by_name.setdefault(
-                label_name.casefold(),
-                {
-                    "id": len(labels_by_name) + 1,
-                    "name": label_name,
-                    "color": _DEFAULT_LABEL_COLOR,
-                },
+            _link_label(labels_by_name, label_links, issue_id, label_name)
+
+        # Components become plain labels (no Athena component model in V1).
+        for component_name in _jira_component_names(fields.get("components")):
+            _link_label(
+                labels_by_name,
+                label_links,
+                issue_id,
+                f"component:{component_name}",
             )
-            label_links.append({"issue_id": issue_id, "label_id": label["id"]})
+
+        issue_type = _jira_issue_type_name(fields.get("issuetype"))
+        if issue_type:
+            _link_label(
+                labels_by_name, label_links, issue_id, f"type:{issue_type}"
+            )
+
+        # Attachment metadata only — never copy blobs in the source mapper.
+        for attachment in _jira_attachment_manifest_rows(fields.get("attachment")):
+            report.note_attachment(attachment)
+
+        subtasks = fields.get("subtasks")
+        if isinstance(subtasks, list) and subtasks:
+            report.note_unmapped(
+                "issues[].fields.subtasks",
+                "subtask expansion lists are not expanded; import parent links "
+                "when the parent field is present on each issue",
+            )
 
         for comment in _jira_comments(fields.get("comment")):
             author = _jira_user(comment.get("author") if isinstance(comment, dict) else None)
@@ -316,6 +339,7 @@ def map_jira_project(
     report.set_count("cross_links", len(cross_links))
     report.set_count("labels", len(labels))
     report.set_count("users", len(users.rows()))
+    report.set_count("attachment_manifest", len(report.attachment_manifest))
 
     bundle = _bundle_base("project", project_id, "jira-project", now) | {
         "project": project,
@@ -328,6 +352,8 @@ def map_jira_project(
         "issue_links": issue_links,
         "labels": labels,
         "label_links": _dedupe_dicts(label_links, ("issue_id", "label_id")),
+        # Blobs stay empty until an attachment policy exists; the mapping report
+        # carries a name/url/size manifest so operators know what was skipped.
         "attachments": [],
         "cross_links": _dedupe_dicts(
             cross_links,
@@ -699,6 +725,79 @@ def _jira_labels(labels: Any) -> list[str]:
     return out
 
 
+def _link_label(
+    labels_by_name: dict[str, dict],
+    label_links: list[dict],
+    issue_id: int,
+    label_name: str,
+) -> None:
+    name = label_name.strip()
+    if not name:
+        return
+    label = labels_by_name.setdefault(
+        name.casefold(),
+        {
+            "id": len(labels_by_name) + 1,
+            "name": name,
+            "color": _DEFAULT_LABEL_COLOR,
+        },
+    )
+    label_links.append({"issue_id": issue_id, "label_id": label["id"]})
+
+
+def _jira_component_names(components: Any) -> list[str]:
+    if not isinstance(components, list):
+        return []
+    out: list[str] = []
+    for item in components:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        else:
+            name = str(item).strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _jira_issue_type_name(issuetype: Any) -> str | None:
+    if isinstance(issuetype, dict):
+        name = str(issuetype.get("name") or "").strip()
+        return name or None
+    if issuetype is None:
+        return None
+    name = str(issuetype).strip()
+    return name or None
+
+
+def _jira_attachment_manifest_rows(attachment_field: Any) -> list[dict]:
+    if not isinstance(attachment_field, list):
+        return []
+    rows: list[dict] = []
+    for item in attachment_field:
+        if not isinstance(item, dict):
+            continue
+        filename = str(item.get("filename") or item.get("name") or "").strip()
+        if not filename:
+            continue
+        size = item.get("size")
+        try:
+            size_int = int(size) if size is not None else None
+        except (TypeError, ValueError):
+            size_int = None
+        rows.append(
+            {
+                "filename": filename,
+                "size_bytes": size_int,
+                "mime_type": str(item.get("mimeType") or item.get("mime_type") or "")
+                or None,
+                "content_url": str(item.get("content") or item.get("url") or "")
+                or None,
+                "note": "blob not imported — attachment policy required",
+            }
+        )
+    return rows
+
+
 def _jira_comments(comment_field: Any) -> list[dict]:
     if isinstance(comment_field, dict) and isinstance(comment_field.get("comments"), list):
         return [c for c in comment_field["comments"] if isinstance(c, dict)]
@@ -994,13 +1093,16 @@ def _report_jira_unmapped_fields(report: "_MappingReport", issue: Any) -> None:
 
 def _jira_unmapped_field_reason(key: str) -> str:
     if key == "attachment":
-        return "raw attachment blobs are not imported by the source mapper"
+        return (
+            "attachment blobs are not imported; names/sizes land in "
+            "mapping_report.attachment_manifest"
+        )
     if key.startswith("customfield_"):
         return "custom Jira fields are not mapped into Athena V1 fields"
-    if key in {"components", "fixVersions", "versions"}:
-        return "Jira release/component fields are not mapped into Athena V1 fields"
-    if key in {"updated", "resolution", "resolutiondate"}:
-        return "Jira resolution/update metadata is not mapped into Athena V1 fields"
+    if key in {"fixVersions", "versions"}:
+        return "Jira release/version fields are not mapped into Athena V1 fields"
+    if key in {"updated", "resolution", "resolutiondate", "changelog"}:
+        return "Jira resolution/update/changelog metadata is not mapped into Athena V1 fields"
     return "Jira field is not mapped into Athena V1 fields"
 
 
@@ -1151,6 +1253,7 @@ class _MappingReport:
         self._generated_at = generated_at
         self._counts: dict[str, int] = {}
         self._unmapped: dict[tuple[str, str], int] = {}
+        self.attachment_manifest: list[dict] = []
 
     def set_count(self, name: str, value: int) -> None:
         self._counts[name] = value
@@ -1159,19 +1262,27 @@ class _MappingReport:
         key = (path, reason)
         self._unmapped[key] = self._unmapped.get(key, 0) + 1
 
+    def note_attachment(self, row: dict) -> None:
+        """Record attachment metadata without importing the blob."""
+        self.attachment_manifest.append(row)
+
     def as_dict(self) -> dict:
         unmapped_fields = [
             {"path": path, "reason": reason, "count": count}
             for (path, reason), count in sorted(self._unmapped.items())
         ]
+        gaps = bool(unmapped_fields) or bool(self.attachment_manifest)
         return {
             "schema": SOURCE_MAPPING_REPORT_SCHEMA,
             "schema_version": 1,
             "source_kind": self._source_kind,
             "generated_at": self._generated_at,
-            "status": "mapped_with_gaps" if unmapped_fields else "mapped",
+            "status": "mapped_with_gaps" if gaps else "mapped",
             "counts": dict(sorted(self._counts.items())),
             "unmapped_fields": unmapped_fields,
+            # Name/size/url only — never file contents. Operators use this to
+            # decide what still needs a manual blob policy.
+            "attachment_manifest": list(self.attachment_manifest),
         }
 
 

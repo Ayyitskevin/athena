@@ -1,0 +1,31 @@
+# Athena — systemd unit (system-wide).
+# Adjust User= and paths for your install. Pair with deploy/athena.env.example.
+#
+#   sudo cp deploy/athena.service /etc/systemd/system/athena.service
+#   sudo cp deploy/athena.env.example /etc/athena/athena.env   # then edit
+#   sudo systemctl daemon-reload && sudo systemctl enable --now athena
+
+[Unit]
+Description=Athena operator workspace (Mentor + Aegis)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=athena
+Group=athena
+WorkingDirectory=/opt/athena
+EnvironmentFile=/etc/athena/athena.env
+ExecStart=/opt/athena/.venv/bin/uvicorn athena.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+# Hardening — network for OIDC/webhooks; own data dir only.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/athena
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

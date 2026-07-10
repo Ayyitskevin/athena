@@ -1,0 +1,24 @@
+# Athena — user-level systemd unit (no root). Useful on mickey/flow with linger.
+#
+#   mkdir -p ~/opt/athena-data/{attachments,backups}
+#   cp deploy/athena.env.example ~/opt/athena-data/athena.env  # edit ATHENA_DB paths
+#   systemctl --user enable --now athena-desk.service
+#
+# Distinct from any other "hermes" / agent gateway units.
+
+[Unit]
+Description=Athena operator workspace (user service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ai-workspace/athena-claude
+EnvironmentFile=%h/opt/athena-data/athena.env
+Environment=PATH=%h/ai-workspace/athena-claude/.venv/bin:/usr/local/bin:/usr/bin
+ExecStart=%h/ai-workspace/athena-claude/.venv/bin/uvicorn athena.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

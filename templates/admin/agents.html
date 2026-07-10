@@ -30,6 +30,13 @@
             <div class="agent-admin-counts">
                 <span class="pill">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
                 <span class="pill">{{ agent.revoked_token_count }} revoked</span>
+                {% if agent.live_token_count %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/revoke-tokens" class="inline-form"
+                      onsubmit="return confirm('Revoke all live tokens for {{ agent.user.name }}?');">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary danger-ish">Revoke all tokens</button>
+                </form>
+                {% endif %}
             </div>
         </header>
 

@@ -76,6 +76,19 @@ athena-doctor /var/lib/athena/athena.db --migrate \
 
 Follow the preflight with the service-level `/readyz` check after startup.
 
+## Source import preflight
+
+Map a Jira or Confluence JSON export, inspect the mapping report (including
+attachment manifest), and dry-run import into a temporary database:
+
+```bash
+athena-validate-source jira-project /path/to/jira-export.json
+athena-validate-source confluence-space /path/to/confluence-export.json
+```
+
+Attachment blobs are never imported by the mapper; the report lists filenames
+and sizes under `attachment_manifest`.
+
 ## Backup and Restore
 
 Use the packaged commands for SQLite snapshots:

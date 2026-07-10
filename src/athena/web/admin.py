@@ -422,6 +422,27 @@ def agent_run_replay_admin(
 
 
 @router.post(
+    "/admin/agents/{agent_id}/revoke-tokens",
+    dependencies=[Depends(verify_csrf)],
+)
+def agent_revoke_tokens_web(
+    request: Request,
+    agent_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Browser form: revoke every live token for one agent account."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    target = users.get_user(conn, agent_id)
+    if target is None or not target.get("is_agent"):
+        return HTMLResponse("<h1>Agent not found</h1>", status_code=404)
+    tokens.revoke_all_tokens(conn, user_id=agent_id)
+    return RedirectResponse("/admin/agents", status_code=303)
+
+
+@router.post(
     "/admin/users", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)]
 )
 def create_user(

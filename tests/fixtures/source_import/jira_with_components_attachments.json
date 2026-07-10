@@ -1,0 +1,80 @@
+{
+  "expand": "schema,names",
+  "issues": [
+    {
+      "id": "10001",
+      "key": "DOG-1",
+      "self": "https://example.atlassian.net/rest/api/2/issue/10001",
+      "fields": {
+        "summary": "Bootstrap dogfood project",
+        "description": "First issue with components and an attachment reference.",
+        "created": "2026-06-01T12:00:00.000+0000",
+        "updated": "2026-06-02T12:00:00.000+0000",
+        "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+        "priority": {"name": "High"},
+        "issuetype": {"name": "Task"},
+        "project": {"key": "DOG", "name": "Dogfood"},
+        "reporter": {
+          "accountId": "r1",
+          "displayName": "Reporter One",
+          "emailAddress": "reporter@example.com"
+        },
+        "assignee": {
+          "accountId": "a1",
+          "displayName": "Assignee One",
+          "emailAddress": "assignee@example.com"
+        },
+        "labels": ["dogfood"],
+        "components": [{"name": "Backend"}, {"name": "API"}],
+        "attachment": [
+          {
+            "filename": "notes.pdf",
+            "size": 2048,
+            "mimeType": "application/pdf",
+            "content": "https://example.atlassian.net/secure/attachment/100/notes.pdf"
+          }
+        ],
+        "comment": {
+          "comments": [
+            {
+              "author": {
+                "displayName": "Reporter One",
+                "emailAddress": "reporter@example.com"
+              },
+              "body": "Kickoff note",
+              "created": "2026-06-01T13:00:00.000+0000"
+            }
+          ]
+        },
+        "issuelinks": [],
+        "parent": null,
+        "subtasks": []
+      }
+    },
+    {
+      "id": "10002",
+      "key": "DOG-2",
+      "fields": {
+        "summary": "Child-shaped issue",
+        "description": "Has a parent link to DOG-1",
+        "created": "2026-06-03T12:00:00.000+0000",
+        "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority": {"name": "Medium"},
+        "issuetype": {"name": "Sub-task"},
+        "project": {"key": "DOG", "name": "Dogfood"},
+        "reporter": {
+          "displayName": "Reporter One",
+          "emailAddress": "reporter@example.com"
+        },
+        "assignee": null,
+        "labels": [],
+        "components": [{"name": "Backend"}],
+        "attachment": [],
+        "comment": {"comments": []},
+        "issuelinks": [],
+        "parent": {"key": "DOG-1"},
+        "subtasks": []
+      }
+    }
+  ]
+}

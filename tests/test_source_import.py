@@ -264,9 +264,16 @@ def test_jira_mapper_handles_cloud_export_and_reports_unmapped_fields(tmp_path):
     assert report["counts"]["issues"] == 2
     unmapped = {row["path"]: row for row in report["unmapped_fields"]}
     assert unmapped["issues[].fields.customfield_10020"]["count"] == 1
-    assert unmapped["issues[].fields.attachment"]["reason"].startswith("raw attachment")
-    assert unmapped["issues[].fields.issuelinks"]["count"] == 1
-    assert unmapped["issues[].fields.parent"]["count"] == 1
+    # Attachments are inventory-only (manifest), not unmapped blob paths.
+    assert report["counts"].get("attachment_manifest", 0) >= 1
+    assert any(
+        row.get("filename") for row in report.get("attachment_manifest") or []
+    )
+    # Components / issuetype map into labels.
+    label_names = {row["name"] for row in bundle["labels"]}
+    assert any(name.startswith("component:") for name in label_names) or any(
+        name.startswith("type:") for name in label_names
+    )
 
     target = _connect(tmp_path / "target-jira-cloud.db")
     _user(target, "owner@example.com", "Owner", role="admin")
@@ -522,3 +529,34 @@ def test_map_source_cli_writes_bundle_and_refuses_overwrite(tmp_path, capsys):
     out = capsys.readouterr()
     assert result == 1
     assert "bundle path already exists" in out.err
+
+
+def test_jira_mapper_maps_components_issuetype_and_attachment_manifest():
+    bundle = source_import.map_jira_project(
+        _fixture("jira_with_components_attachments.json")
+    )
+    report = bundle["source"]["mapping_report"]
+    label_names = {row["name"] for row in bundle["labels"]}
+    assert "component:Backend" in label_names
+    assert "component:API" in label_names
+    assert "type:Task" in label_names
+    assert "type:Sub-task" in label_names
+    assert report["counts"]["attachment_manifest"] >= 1
+    assert report["attachment_manifest"][0]["filename"] == "notes.pdf"
+    # Blobs stay empty in the bundle itself.
+    assert bundle["attachments"] == []
+    parent = next(i for i in bundle["issues"] if i["project_seq"] == 1)
+    child = next(i for i in bundle["issues"] if i["project_seq"] == 2)
+    assert child["parent_id"] == parent["id"]
+
+
+def test_validate_source_cli_maps_and_dry_runs(tmp_path, capsys):
+    source = Path("tests/fixtures/source_import/jira_with_components_attachments.json")
+    code = ops.validate_source_main(
+        ["jira-project", str(source.resolve())]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "mapped jira-project" in out
+    assert "dry-run import: ok" in out
+    assert "attachment_manifest" in out
