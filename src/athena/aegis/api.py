@@ -354,6 +354,8 @@ def index(
     project: str | None = None,
     sprint: int | None = None,
     include_archived: bool = False,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -367,6 +369,9 @@ def index(
     # The read is open (optional_actor → None for anonymous), but it only ever
     # returns issues in projects the caller may see (public + their private ones);
     # admins see all, the backlog is always in.
+    # limit/offset are bounded (page ≤ 100, default 50), mirroring GET /issues/search
+    # — an anonymous caller can't pull the whole issues table in one request. The web
+    # board reaches issues.list_issues directly (uncapped) and is unaffected.
     project_id, backlog = _parse_project_filter(project)
     ids = labels.issue_ids_for_label(conn, label) if label else None
     rows = issues.list_issues(
@@ -381,6 +386,8 @@ def index(
         include_archived=include_archived,
         ids=ids,
         visible_project_ids=access.visible_project_filter(conn, actor),
+        limit=limit,
+        offset=offset,
     )
     return _with_labels_many(conn, rows)
 

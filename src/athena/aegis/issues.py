@@ -409,6 +409,8 @@ def list_issues(
     include_archived: bool = False,
     ids: list[int] | None = None,
     visible_project_ids: set[int] | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict]:
     """List issues, optionally filtered. This is the ONE filtering path the API
     and the web list both use, so the two never disagree on what matches.
@@ -438,6 +440,12 @@ def list_issues(
       backlog issues (no project, so nothing to gate on); an empty set therefore
       yields only the backlog. Callers get the set from access.visible_project_filter
       (which hands back None for an admin, skipping the clause entirely).
+    - limit / offset: page the result at the SQL level. limit=None (the default)
+      returns every match — the historical behaviour every internal/aggregate caller
+      relies on (board, dashboard, saved filters, search resolution). The REST list
+      endpoint passes a bounded limit so an anonymous caller can't pull the whole
+      table in one request; offset walks the pages. Ordering is stable (id ASC) so
+      paging is well-defined.
 
     Column names below are hardcoded literals; all values stay parameterized."""
     if ids is not None and not ids:
@@ -481,5 +489,12 @@ def list_issues(
         else:
             clauses.append("i.project_id IS NULL")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    rows = conn.execute(f"{_SELECT}{where} ORDER BY i.id", params).fetchall()
+    query = f"{_SELECT}{where} ORDER BY i.id"
+    if limit is not None:
+        # Bound the result at the DB, not in Python — an unbounded caller must not be
+        # able to make SQLite materialize the whole table. Only appended when a caller
+        # opts in, so the uncapped internal callers are byte-for-byte unchanged.
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+    rows = conn.execute(query, params).fetchall()
     return [_to_issue(row) for row in rows]
