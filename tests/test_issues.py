@@ -239,3 +239,42 @@ def test_list_no_filters_returns_all(tmp_path):
         _mk(client, "one")
         _mk(client, "two")
         assert len(client.get("/issues").json()) == 2
+
+
+def test_list_is_paginated_and_bounded(tmp_path):
+    # WHY: GET /issues is anon-reachable, so an unbounded list is a credential-free
+    # DoS vector (pull the whole table in one request) — the same gap A5 closed on
+    # /issues/search. The page is capped (≤ 100, default 50) and offset walks it, over
+    # a stable id order; out-of-range limits are rejected at the boundary (422).
+    db_file = tmp_path / "page.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        ids = [_mk(client, f"i{n}")["id"] for n in range(5)]
+
+        first_two = client.get("/issues?limit=2")
+        assert first_two.status_code == 200
+        assert [i["id"] for i in first_two.json()] == ids[:2]
+        # offset walks the pages, same stable order.
+        assert [i["id"] for i in client.get("/issues?limit=2&offset=2").json()] == ids[2:4]
+        assert [i["id"] for i in client.get("/issues?limit=2&offset=4").json()] == ids[4:]
+
+        # The cap is enforced at the boundary — no unbounded/garbage page sizes.
+        assert client.get("/issues?limit=0").status_code == 422
+        assert client.get("/issues?limit=-1").status_code == 422
+        assert client.get("/issues?limit=101").status_code == 422
+        assert client.get("/issues?offset=-1").status_code == 422
+
+
+def test_list_default_page_size_is_bounded(tmp_path):
+    # WHY: even with no limit param, the response is capped at the default page (50),
+    # not the whole table — the point of the fix. 55 issues, default GET returns 50.
+    db_file = tmp_path / "default_cap.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        for n in range(55):
+            _mk(client, f"n{n}")
+        assert len(client.get("/issues").json()) == 50
+        # The tail is reachable by paging past the first page.
+        assert len(client.get("/issues?offset=50").json()) == 5
