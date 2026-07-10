@@ -373,6 +373,19 @@ def validate_source_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-name", help="override Jira project name")
     parser.add_argument("--space-key", help="override Confluence space key")
     parser.add_argument("--space-name", help="override Confluence space name")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print mapping report + dry-run summary as one JSON object",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "exit 1 when the mapping has gaps (unmapped fields, skipped foreign "
+            "issues, or attachment blobs not imported) or the dry-run reports warnings"
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -392,33 +405,6 @@ def validate_source_main(argv: list[str] | None = None) -> int:
                 overwrite=True,
             )
             report = json.loads(report_path.read_text(encoding="utf-8"))
-            print(f"athena-validate-source: mapped {args.source}")
-            print(f"status: {report.get('status')}")
-            counts = report.get("counts") or {}
-            if counts:
-                print("counts:")
-                for key, value in sorted(counts.items()):
-                    print(f"  {key}: {value}")
-            unmapped = report.get("unmapped_fields") or []
-            if unmapped:
-                print(f"unmapped_fields: {len(unmapped)} path/reason pairs")
-                for item in unmapped[:12]:
-                    print(
-                        f"  - {item.get('path')}: {item.get('reason')} "
-                        f"(×{item.get('count', 1)})"
-                    )
-                if len(unmapped) > 12:
-                    print(f"  ... {len(unmapped) - 12} more")
-            attachments = report.get("attachment_manifest") or []
-            if attachments:
-                print(f"attachment_manifest: {len(attachments)} file(s) not imported")
-                for item in attachments[:8]:
-                    print(
-                        f"  - {item.get('filename')} "
-                        f"({item.get('size_bytes') or '?'} bytes)"
-                    )
-                if len(attachments) > 8:
-                    print(f"  ... {len(attachments) - 8} more")
             target_db = tmp_path / "target.db"
             conn = db.connect(target_db)
             try:
@@ -426,12 +412,61 @@ def validate_source_main(argv: list[str] | None = None) -> int:
             finally:
                 conn.close()
             dry = dry_run_import_database(target_db, bundle_path)
-            print("dry-run import: ok")
-            _print_count_block("would_create", dry.get("created") or {})
-            if dry.get("warnings"):
-                print("dry-run warnings:")
-                for item in dry["warnings"][:10]:
-                    print(f"  - {item.get('code')}: {item.get('message')}")
+            payload = {
+                "source": args.source,
+                "source_path": str(args.source_path),
+                "mapping_report": report,
+                "dry_run": dry,
+            }
+            if args.json:
+                print(json.dumps(payload, indent=2, sort_keys=True))
+            else:
+                print(f"athena-validate-source: mapped {args.source}")
+                print(f"status: {report.get('status')}")
+                counts = report.get("counts") or {}
+                if counts:
+                    print("counts:")
+                    for key, value in sorted(counts.items()):
+                        print(f"  {key}: {value}")
+                unmapped = report.get("unmapped_fields") or []
+                if unmapped:
+                    print(f"unmapped_fields: {len(unmapped)} path/reason pairs")
+                    for item in unmapped[:12]:
+                        print(
+                            f"  - {item.get('path')}: {item.get('reason')} "
+                            f"(×{item.get('count', 1)})"
+                        )
+                    if len(unmapped) > 12:
+                        print(f"  ... {len(unmapped) - 12} more")
+                attachments = report.get("attachment_manifest") or []
+                if attachments:
+                    print(
+                        f"attachment_manifest: {len(attachments)} file(s) not imported"
+                    )
+                    for item in attachments[:8]:
+                        print(
+                            f"  - {item.get('filename')} "
+                            f"({item.get('size_bytes') or '?'} bytes)"
+                        )
+                    if len(attachments) > 8:
+                        print(f"  ... {len(attachments) - 8} more")
+                print("dry-run import: ok")
+                _print_count_block("would_create", dry.get("created") or {})
+                if dry.get("warnings"):
+                    print("dry-run warnings:")
+                    for item in dry["warnings"][:10]:
+                        print(f"  - {item.get('code')}: {item.get('message')}")
+            if args.strict:
+                gaps = report.get("status") != "mapped"
+                dry_warnings = bool(dry.get("warnings"))
+                if gaps or dry_warnings:
+                    if not args.json:
+                        print(
+                            "athena-validate-source: strict mode failed "
+                            f"(gaps={gaps}, dry_run_warnings={dry_warnings})",
+                            file=sys.stderr,
+                        )
+                    return 1
     except (
         FileNotFoundError,
         FileExistsError,

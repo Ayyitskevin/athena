@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from athena import config
 from athena.aegis import automation, projects, statuses
 from athena.core import (
+    access,
     activity,
     agents,
     identity,
@@ -21,6 +22,7 @@ from athena.core import (
     webhooks,
 )
 from athena.core.deps import get_conn
+from athena.mentor import spaces
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
@@ -366,6 +368,24 @@ def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
 
 
+def _agents_admin_context(
+    conn: sqlite3.Connection,
+    *,
+    error: str | None = None,
+    success: str | None = None,
+    minted: dict | None = None,
+) -> dict:
+    return {
+        "agents": agents.agent_admin_summaries(conn),
+        "projects": projects.list_projects(conn),
+        "spaces": spaces.list_spaces(conn),
+        "scope_presets": tokens.list_scope_presets(),
+        "error": error,
+        "success": success,
+        "minted": minted,
+    }
+
+
 @router.get("/admin/agents", response_class=HTMLResponse)
 def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
@@ -378,7 +398,7 @@ def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
-        context={"agents": agents.agent_admin_summaries(conn)},
+        context=_agents_admin_context(conn),
     )
 
 
@@ -440,6 +460,117 @@ def agent_revoke_tokens_web(
         return HTMLResponse("<h1>Agent not found</h1>", status_code=404)
     tokens.revoke_all_tokens(conn, user_id=agent_id)
     return RedirectResponse("/admin/agents", status_code=303)
+
+
+@router.post(
+    "/admin/agents/{agent_id}/mint-token",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+async def agent_mint_token_web(
+    request: Request,
+    agent_id: int,
+    name: str = Form(""),
+    preset: str = Form("aegis"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Browser form: mint a token for an agent using a named scope preset."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    target = users.get_user(conn, agent_id)
+    if target is None or not target.get("is_agent"):
+        return HTMLResponse("<h1>Agent not found</h1>", status_code=404)
+    token_name = name.strip() or f"{target['name']}-token"
+    try:
+        scopes = tokens.resolve_scope_preset(preset)
+        created = tokens.create_token(
+            conn, user_id=agent_id, name=token_name, scopes=scopes
+        )
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/agents.html",
+            context=_agents_admin_context(conn, error=str(exc)),
+            status_code=400,
+        )
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/agents.html",
+        context=_agents_admin_context(
+            conn,
+            success=f"Minted token for {target['name']} with preset {preset!r}.",
+            minted=created,
+        ),
+    )
+
+
+@router.post(
+    "/admin/agents/{agent_id}/bulk-grant",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+async def agent_bulk_grant_web(
+    request: Request,
+    agent_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Browser form: grant many project/space memberships to one agent."""
+    templates = get_templates()
+    if templates is None:
+        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    actor = getattr(request.state, "user", None)
+    err = _admin_required(actor)
+    if err is not None:
+        return err
+    target = users.get_user(conn, agent_id)
+    if target is None or not target.get("is_agent"):
+        return HTMLResponse("<h1>Agent not found</h1>", status_code=404)
+
+    form = await request.form()
+    project_ids = [
+        int(value)
+        for value in form.getlist("project_ids")
+        if str(value).isdigit()
+    ]
+    space_ids = [
+        int(value)
+        for value in form.getlist("space_ids")
+        if str(value).isdigit()
+    ]
+    if not project_ids and not space_ids:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/agents.html",
+            context=_agents_admin_context(
+                conn, error="Select at least one project or space to grant."
+            ),
+            status_code=400,
+        )
+    projects_result = access.add_project_members(
+        conn, agent_id, project_ids, actor["id"]
+    )
+    spaces_result = access.add_space_members(
+        conn, agent_id, space_ids, actor["id"]
+    )
+    granted_n = len(projects_result["granted"]) + len(spaces_result["granted"])
+    already_n = len(projects_result["already"]) + len(spaces_result["already"])
+    missing_n = len(projects_result["missing"]) + len(spaces_result["missing"])
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/agents.html",
+        context=_agents_admin_context(
+            conn,
+            success=(
+                f"Bulk grant for {target['name']}: "
+                f"{granted_n} new, {already_n} already held, {missing_n} missing."
+            ),
+        ),
+    )
 
 
 @router.post(

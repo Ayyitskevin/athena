@@ -104,18 +104,18 @@ being treated as open backlog. All items are **Recommendations**.
 
 | # | Capability | Status | Why it matters | Next slice |
 |---|---|---|---|---|
-| 1 | **Import path from common sources** (issues/pages + history + links) | Hardened V1 (2026-07): components/issuetype→labels, attachment_manifest, `athena-validate-source` preflight | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | Feed real operator dumps into validate-source; blob policy still deferred |
+| 1 | **Import path from common sources** (issues/pages + history + links) | Hardened V2 (2026-07): real-dump envelopes, multi-project skip counts, subtask parent backfill, version labels, `athena-validate-source --json/--strict` | The adoption gate for movers; users cite smooth import as a deciding factor ([github.com](https://github.com/orgs/makeplane/discussions/1266)). | Feed live operator dumps through validate-source; blob policy still deferred |
 | 2 | **Run replay artifact** (portable replay manifest over one run) | Shipped V1 | Athena now freezes one run's ordered events plus lineage metadata for agent handoff and audit. | Deepen with signed artifacts or bundle import only after real operator demand |
-| 3 | **Agent administration V2** | V2 REST + web revoke-all (2026-07): `/api/admin/agents`, mint/revoke tokens, memberships, role/flag | Delegation + contributor model exists; admin-controlled scope/team access is the next teammate primitive. | Optional default-scope policy and bulk project grants UI |
+| 3 | **Agent administration V2** | V2+ (2026-07): scope presets, bulk project/space grants (REST + admin UI), mint-by-preset | Delegation + contributor model exists; admin-controlled scope/team access is the teammate primitive. | Optional org-default preset policy only if operators ask |
 | 4 | **API safety for agent loops** | Partial V1 shipped (idempotency + per-token/anon rate limits) | Idempotency exists; agents still need efficient bulk actions and update-race protection. | Bulk actions / If-Match next |
-| 5 | **One-command / few-container self-host packaging hardening** | Hardened V1 (2026-07): `deploy/` systemd+env, `athena-backup-prune` | `athena-doctor` improves deploy preflight; packaging/retention can turn single-file SQLite into a self-hosting moat. | Off-host rsync helper; flow production cutover when ready |
+| 5 | **One-command / few-container self-host packaging hardening** | Hardened V2 (2026-07): `deploy/` systemd + nightly backup timer units, `athena-backup-prune` | `athena-doctor` improves deploy preflight; packaging/retention turns single-file SQLite into a self-hosting moat. | Off-host rsync helper; flow production cutover when ready |
 | 6 | **Deterministic run replay + lineage over the activity log** | Shipped V1 | `/events`, run lineage, replay-safe fields, and determinism docs now exist. | Deepen via replay artifact above |
 | 7 | **Run forking** | Shipped V1 | Fork contract endpoint, headers, MCP parity, and web copy blocks now exist. | Use it from replay/import workflows |
 | 8 | **Agent-as-teammate: delegation + contributor model** | Shipped V1 | Issues can be delegated to agent users while preserving assignee accountability. | Deepen via agent admin above |
 | 9 | **Free OIDC SSO (self-hosted, no enterprise gate)** | OIDC shipped; SAML/SCIM deferred | Basic OIDC closes the near-term self-host SSO gap. | Revisit SAML/SCIM only on concrete demand |
 | 10 | **Lean event-driven automation/rules** | Shipped V1 | Event feed, webhooks, and automation rules exist without a workflow-engine trap. | Keep rules lean; avoid Jira-style schemes |
 | 11 | **Coarse permissions parity** | Shipped V1 | Project/space visibility and membership gate read surfaces. | Decide on optional global read-auth mode before public exposure |
-| 12 | **Basic dashboards/reporting** | Open | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | Counts/rollups only after portability/replay work |
+| 12 | **Basic dashboards/reporting** | Shipped V2 (2026-07): Aegis operator dashboard + home glance + JSON API | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | Keep counts-only; avoid chart engines |
 
 **Sequencing rationale.** The differentiation core has V1 coverage now: scoped
 tokens, MCP, event feed, webhooks, delegation, lineage, forking, manifest-gated

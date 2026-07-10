@@ -1,0 +1,24 @@
+# Daily Athena SQLite backup (user unit — no root/sudo).
+# Pair with athena-backup.user.service (install as athena-backup.timer).
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/athena-backup.user.service ~/.config/systemd/user/athena-backup.service
+#   cp deploy/athena-backup.user.timer ~/.config/systemd/user/athena-backup.timer
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now athena-backup.timer
+#   systemctl --user list-timers athena-backup.timer
+#
+# Requires linger if backups should fire while logged out:
+#   loginctl enable-linger "$USER"
+
+[Unit]
+Description=Daily Athena database backup (user)
+Requires=athena-backup.service
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

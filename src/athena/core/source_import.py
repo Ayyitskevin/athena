@@ -37,6 +37,7 @@ _JIRA_FIELD_KEYS = {
     "components",  # mapped into labels (name only)
     "created",
     "description",
+    "fixVersions",  # mapped into version: labels (name only)
     "issuelinks",
     "issuetype",  # mapped into a type: label
     "labels",
@@ -46,7 +47,8 @@ _JIRA_FIELD_KEYS = {
     "reporter",
     "status",
     "summary",
-    "subtasks",  # reported; parents/children still via parent field when present
+    "subtasks",  # used to backfill parent_id when child omits parent
+    "versions",  # mapped into version: labels (name only)
 }
 _CONFLUENCE_PAGE_KEYS = {
     "ancestors",
@@ -135,16 +137,26 @@ def map_jira_project(
     project_name: str | None = None,
 ) -> dict:
     """Map a Jira issue search/export JSON object into a project bundle."""
-    issues_in = _extract_rows(payload, "issues")
+    issues_in = _extract_rows(
+        payload,
+        "issues",
+        "values",
+        nested_paths=(("data", "issues"), ("data", "values")),
+    )
     if not issues_in:
         raise ValueError("jira-project payload contains no issues")
 
     now = _utc_now()
     report = _MappingReport("jira-project", now)
     users = _UserTable(now)
-    project = _jira_project_info(issues_in[0], project_key, project_name)
+    # Prefer the first real issue object so a leading null/string does not crash
+    # project-info derivation before per-row guards run.
+    first_issue = next((row for row in issues_in if isinstance(row, dict)), None)
+    if first_issue is None:
+        raise ValueError("jira-project payload contains no issue objects")
+    project = _jira_project_info(first_issue, project_key, project_name)
     project_id = 1
-    owner_id = users.id_for(_jira_user(_field(issues_in[0], "reporter")))
+    owner_id = users.id_for(_jira_user(_field(first_issue, "reporter")))
 
     # This mapper emits ONE project bundle. A Jira search/board/filter export can span
     # multiple projects; a foreign-project issue would be force-lumped into this one and
@@ -154,9 +166,14 @@ def map_jira_project(
     # the rest as skipped.
     prefix_cf = project["key"].casefold()
     scoped_issues: list = []
+    skipped_foreign = 0
     for i, issue in enumerate(issues_in, start=1):
+        if not isinstance(issue, dict):
+            report.note_unmapped("issues[]", "non-object issue row was skipped")
+            continue
         candidate_key = _jira_issue_key(issue, project["key"], i)
         if (_jira_key_prefix(candidate_key) or project["key"]).casefold() != prefix_cf:
+            skipped_foreign += 1
             report.note_unmapped(
                 "issues[].fields.project",
                 "issue belongs to a different project and was skipped",
@@ -164,6 +181,13 @@ def map_jira_project(
             continue
         scoped_issues.append(issue)
     issues_in = scoped_issues
+    report.set_count("source_issues", len(issues_in) + skipped_foreign)
+    report.set_count("skipped_foreign_project", skipped_foreign)
+    if not issues_in:
+        raise ValueError(
+            "jira-project payload had issues, but none matched the target project "
+            f"key {project['key']!r} after multi-project filtering"
+        )
 
     issue_id_by_key: dict[str, int] = {}
     issue_seq_by_key: dict[str, int] = {}
@@ -272,17 +296,19 @@ def map_jira_project(
                 labels_by_name, label_links, issue_id, f"type:{issue_type}"
             )
 
+        # fixVersions / versions become version: labels (no Athena release model in V1).
+        for version_name in _jira_version_names(fields.get("fixVersions")):
+            _link_label(
+                labels_by_name, label_links, issue_id, f"version:{version_name}"
+            )
+        for version_name in _jira_version_names(fields.get("versions")):
+            _link_label(
+                labels_by_name, label_links, issue_id, f"version:{version_name}"
+            )
+
         # Attachment metadata only — never copy blobs in the source mapper.
         for attachment in _jira_attachment_manifest_rows(fields.get("attachment")):
             report.note_attachment(attachment)
-
-        subtasks = fields.get("subtasks")
-        if isinstance(subtasks, list) and subtasks:
-            report.note_unmapped(
-                "issues[].fields.subtasks",
-                "subtask expansion lists are not expanded; import parent links "
-                "when the parent field is present on each issue",
-            )
 
         for comment in _jira_comments(fields.get("comment")):
             author = _jira_user(comment.get("author") if isinstance(comment, dict) else None)
@@ -318,6 +344,10 @@ def map_jira_project(
                     "created_at": _string_or_now(fields.get("created"), now),
                 }
             )
+
+    # Real Jira dumps often list children under parent.fields.subtasks without
+    # setting fields.parent on the child row. Backfill parent_id from that list.
+    _backfill_parents_from_subtasks(issues_in, issue_rows, issue_id_by_key, report)
 
     # Backstop: after scoping to one project, no two issues should share a project_seq.
     # If they still do (a corrupt export with duplicate keys within one project), fail
@@ -373,7 +403,18 @@ def map_confluence_space(
     space_name: str | None = None,
 ) -> dict:
     """Map a Confluence content/search JSON object into a space bundle."""
-    pages_in = _extract_rows(payload, "results", "pages")
+    pages_in = _extract_rows(
+        payload,
+        "results",
+        "pages",
+        "values",
+        nested_paths=(
+            ("data", "results"),
+            ("data", "pages"),
+            ("content", "results"),
+            ("page", "results"),
+        ),
+    )
     if not pages_in:
         raise ValueError("confluence-space payload contains no pages")
 
@@ -613,7 +654,16 @@ def _write_json_file(destination: Path, data: dict) -> None:
         raise
 
 
-def _extract_rows(payload: Any, *keys: str) -> list:
+def _extract_rows(
+    payload: Any,
+    *keys: str,
+    nested_paths: tuple[tuple[str, ...], ...] = (),
+) -> list:
+    """Pull a row list from common export envelopes.
+
+    Accepts a bare array, top-level keys (``issues``, ``results``, …), and a few
+    nested shapes real Cloud/Server dumps use (``data.issues``, ``content.results``).
+    """
     if isinstance(payload, list):
         return payload
     if not isinstance(payload, dict):
@@ -622,7 +672,17 @@ def _extract_rows(payload: Any, *keys: str) -> list:
         value = payload.get(key)
         if isinstance(value, list):
             return value
-    raise ValueError("source payload did not contain any of: " + ", ".join(keys))
+    for path in nested_paths:
+        cursor: Any = payload
+        for part in path:
+            if not isinstance(cursor, dict):
+                cursor = None
+                break
+            cursor = cursor.get(part)
+        if isinstance(cursor, list):
+            return cursor
+    labels = list(keys) + [".".join(path) for path in nested_paths]
+    raise ValueError("source payload did not contain any of: " + ", ".join(labels))
 
 
 def _jira_project_info(
@@ -767,6 +827,72 @@ def _jira_issue_type_name(issuetype: Any) -> str | None:
         return None
     name = str(issuetype).strip()
     return name or None
+
+
+def _jira_version_names(versions: Any) -> list[str]:
+    """Extract release/version names from Jira fixVersions or versions arrays."""
+    if not isinstance(versions, list):
+        return []
+    out: list[str] = []
+    for item in versions:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        else:
+            name = str(item).strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _backfill_parents_from_subtasks(
+    issues_in: list,
+    issue_rows: list[dict],
+    issue_id_by_key: dict[str, int],
+    report: "_MappingReport",
+) -> None:
+    """Set parent_id from parent.fields.subtasks when the child omits parent."""
+    row_by_id = {row["id"]: row for row in issue_rows}
+    filled = 0
+    for issue in issues_in:
+        if not isinstance(issue, dict):
+            continue
+        fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
+        subtasks = fields.get("subtasks")
+        if not isinstance(subtasks, list) or not subtasks:
+            continue
+        parent_key = None
+        raw_key = issue.get("key")
+        if isinstance(raw_key, str) and _ISSUE_KEY_RE.match(raw_key):
+            parent_key = raw_key.upper()
+        parent_id = issue_id_by_key.get(parent_key) if parent_key else None
+        if parent_id is None:
+            continue
+        for sub in subtasks:
+            if not isinstance(sub, dict):
+                continue
+            child_key = sub.get("key")
+            if not isinstance(child_key, str):
+                continue
+            child_id = issue_id_by_key.get(child_key.upper())
+            if child_id is None:
+                report.note_unmapped(
+                    "issues[].fields.subtasks",
+                    "subtask key is outside this source export",
+                )
+                continue
+            child = row_by_id.get(child_id)
+            if child is None:
+                continue
+            if child.get("parent_id") is None:
+                child["parent_id"] = parent_id
+                filled += 1
+            elif child.get("parent_id") != parent_id:
+                report.note_unmapped(
+                    "issues[].fields.subtasks",
+                    "subtask parent conflict between parent field and subtasks list",
+                )
+    if filled:
+        report.set_count("parent_links_from_subtasks", filled)
 
 
 def _jira_attachment_manifest_rows(attachment_field: Any) -> list[dict]:
@@ -1099,8 +1225,6 @@ def _jira_unmapped_field_reason(key: str) -> str:
         )
     if key.startswith("customfield_"):
         return "custom Jira fields are not mapped into Athena V1 fields"
-    if key in {"fixVersions", "versions"}:
-        return "Jira release/version fields are not mapped into Athena V1 fields"
     if key in {"updated", "resolution", "resolutiondate", "changelog"}:
         return "Jira resolution/update/changelog metadata is not mapped into Athena V1 fields"
     return "Jira field is not mapped into Athena V1 fields"

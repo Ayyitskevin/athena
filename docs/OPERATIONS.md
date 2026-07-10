@@ -86,8 +86,22 @@ athena-validate-source jira-project /path/to/jira-export.json
 athena-validate-source confluence-space /path/to/confluence-export.json
 ```
 
-Attachment blobs are never imported by the mapper; the report lists filenames
+The mapper accepts common real-dump envelopes (`issues`, `values`,
+`data.issues`, Confluence `results` / `content.results`), scopes multi-project
+search exports to one project key, backfills parent links from `subtasks` lists
+when children omit `parent`, and maps components / issue types / fix versions
+into labels. Attachment blobs are never imported; the report lists filenames
 and sizes under `attachment_manifest`.
+
+For automation, prefer machine-readable output and fail on residual gaps:
+
+```bash
+athena-validate-source jira-project /path/to/jira-export.json --json --strict
+```
+
+`--strict` exits non-zero when the mapping status is not fully `mapped` (for
+example skipped foreign-project issues or attachment blobs) or the dry-run
+reports warnings.
 
 ## Backup and Restore
 
@@ -112,6 +126,11 @@ With `--keep`, the default retention glob is `<source-db-stem>-*.db`
 (`athena-*.db` for `athena.db`). Pass `--retention-glob 'name-*.db'` for another
 file-name pattern. Retention never walks directories; it only deletes older
 matching sibling files after the new backup succeeds.
+
+For an unattended daily snapshot, install the packaged timer units under
+`deploy/` (user-level `athena-backup.user.{service,timer}` without sudo, or the
+system units). They call `athena-backup` with `--keep` using `ATHENA_BACKUP_DIR`
+and `ATHENA_BACKUP_KEEP` from the env file. See `deploy/README.md`.
 
 Restore while Athena is stopped:
 
@@ -305,7 +324,11 @@ Use the narrowest scope that matches the actor:
 - An operator token for user/token administration: `admin`
 - A dashboard or read-only integration: `read`
 
-Browser admins can use `/admin/agents` to review agent token posture. The page
+Browser admins can use `/admin/agents` to review agent token posture, mint tokens
+from named **scope presets** (`read`, `aegis`, `mentor`, `operator`, `admin`),
+and **bulk-grant** project/space memberships. The same surfaces exist under
+`/api/admin/agents` (including `GET /api/admin/agents/scope-presets` and
+`POST /api/admin/agents/{id}/memberships/bulk`). The page
 flags agent accounts with no live token, live `admin`-scoped tokens, live tokens
 that have never been used, and live tokens unused for 30+ days. These warnings are
 read-only; they do not change authentication or token behavior.

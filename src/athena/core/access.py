@@ -95,6 +95,35 @@ def list_project_members(conn: sqlite3.Connection, project_id: int) -> list[dict
     return [dict(r) for r in rows]
 
 
+def add_project_members(
+    conn: sqlite3.Connection,
+    user_id: int,
+    project_ids: list[int],
+    added_by: int | None,
+) -> dict:
+    """Grant a user membership on many projects. Idempotent per id; reports counts."""
+    granted: list[int] = []
+    already: list[int] = []
+    missing: list[int] = []
+    for project_id in project_ids:
+        exists = conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if exists is None:
+            missing.append(project_id)
+            continue
+        try:
+            changed = add_project_member(conn, project_id, user_id, added_by)
+        except sqlite3.IntegrityError:
+            missing.append(project_id)
+            continue
+        if changed:
+            granted.append(project_id)
+        else:
+            already.append(project_id)
+    return {"granted": granted, "already": already, "missing": missing}
+
+
 # --- space membership -------------------------------------------------------
 
 def add_space_member(
@@ -143,6 +172,35 @@ def list_space_members(conn: sqlite3.Connection, space_id: int) -> list[dict]:
         (space_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def add_space_members(
+    conn: sqlite3.Connection,
+    user_id: int,
+    space_ids: list[int],
+    added_by: int | None,
+) -> dict:
+    """Grant a user membership on many spaces. Idempotent per id; reports counts."""
+    granted: list[int] = []
+    already: list[int] = []
+    missing: list[int] = []
+    for space_id in space_ids:
+        exists = conn.execute(
+            "SELECT 1 FROM spaces WHERE id = ?", (space_id,)
+        ).fetchone()
+        if exists is None:
+            missing.append(space_id)
+            continue
+        try:
+            changed = add_space_member(conn, space_id, user_id, added_by)
+        except sqlite3.IntegrityError:
+            missing.append(space_id)
+            continue
+        if changed:
+            granted.append(space_id)
+        else:
+            already.append(space_id)
+    return {"granted": granted, "already": already, "missing": missing}
 
 
 # --- the read-side resolver -------------------------------------------------

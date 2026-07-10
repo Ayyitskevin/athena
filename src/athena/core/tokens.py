@@ -27,8 +27,65 @@ ADMIN_SCOPE = "admin"
 SCOPES = (READ_SCOPE, ISSUE_WRITE_SCOPE, DOCS_WRITE_SCOPE, ADMIN_SCOPE)
 DEFAULT_SCOPES = (ADMIN_SCOPE,)
 
+# Named scope presets for agent token minting. Keys are stable API identifiers;
+# labels/descriptions are for admin UI copy. Admin remains a deliberate opt-in.
+SCOPE_PRESETS: dict[str, tuple[str, ...]] = {
+    "read": (READ_SCOPE,),
+    "aegis": (READ_SCOPE, ISSUE_WRITE_SCOPE),
+    "mentor": (READ_SCOPE, DOCS_WRITE_SCOPE),
+    "operator": (READ_SCOPE, ISSUE_WRITE_SCOPE, DOCS_WRITE_SCOPE),
+    "admin": (ADMIN_SCOPE,),
+}
+SCOPE_PRESET_META: dict[str, dict[str, str]] = {
+    "read": {
+        "label": "Read only",
+        "description": "List and read issues, pages, and search.",
+    },
+    "aegis": {
+        "label": "Aegis worker",
+        "description": "Read + create/update issues (typical triage/agent loop).",
+    },
+    "mentor": {
+        "label": "Mentor worker",
+        "description": "Read + create/update Mentor pages.",
+    },
+    "operator": {
+        "label": "Operator",
+        "description": "Read + Aegis writes + Mentor writes (no admin).",
+    },
+    "admin": {
+        "label": "Admin (full)",
+        "description": "Full token access including admin APIs. Prefer narrower presets.",
+    },
+}
+
 # Columns safe to return to a caller — never the hash.
 _PUBLIC_COLS = "id, user_id, name, scopes, created_at, last_used_at, revoked_at"
+
+
+def list_scope_presets() -> list[dict]:
+    """Return named scope presets for admin UI and agent mint helpers."""
+    out: list[dict] = []
+    for name, scopes in SCOPE_PRESETS.items():
+        meta = SCOPE_PRESET_META.get(name, {})
+        out.append(
+            {
+                "name": name,
+                "scopes": list(scopes),
+                "label": meta.get("label", name),
+                "description": meta.get("description", ""),
+            }
+        )
+    return out
+
+
+def resolve_scope_preset(name: str) -> tuple[str, ...]:
+    """Expand a preset name into a normalized scope tuple."""
+    key = name.strip().lower()
+    if key not in SCOPE_PRESETS:
+        known = ", ".join(SCOPE_PRESETS)
+        raise ValueError(f"unknown scope preset {name!r}; expected one of: {known}")
+    return SCOPE_PRESETS[key]
 
 
 def _hash(raw: str) -> str:

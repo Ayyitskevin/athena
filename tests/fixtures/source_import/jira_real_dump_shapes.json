@@ -1,0 +1,87 @@
+{
+  "expand": "schema,names",
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 3,
+  "data": {
+    "issues": [
+      {
+        "id": "20001",
+        "key": "OPS-10",
+        "fields": {
+          "summary": "Parent with subtasks list only",
+          "description": "Child omits parent field; subtasks list should backfill.",
+          "created": "2026-05-01T10:00:00.000+0000",
+          "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+          "priority": {"name": "High"},
+          "issuetype": {"name": "Story"},
+          "project": {"key": "OPS", "name": "Operations"},
+          "reporter": {
+            "accountId": "r-ops",
+            "displayName": "Ops Owner",
+            "emailAddress": "ops@example.com"
+          },
+          "assignee": null,
+          "labels": ["migration"],
+          "components": [{"name": "Platform"}],
+          "fixVersions": [{"name": "2026.07"}],
+          "versions": [{"name": "2026.06"}],
+          "attachment": [],
+          "comment": {"comments": []},
+          "issuelinks": [],
+          "parent": null,
+          "subtasks": [{"key": "OPS-11", "fields": {"summary": "Child"}}]
+        }
+      },
+      {
+        "id": "20002",
+        "key": "OPS-11",
+        "fields": {
+          "summary": "Child without parent field",
+          "description": "Linked only via parent subtasks list.",
+          "created": "2026-05-02T10:00:00.000+0000",
+          "status": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+          "priority": {"name": "Medium"},
+          "issuetype": {"name": "Sub-task"},
+          "project": {"key": "OPS", "name": "Operations"},
+          "reporter": {
+            "displayName": "Ops Owner",
+            "emailAddress": "ops@example.com"
+          },
+          "assignee": null,
+          "labels": [],
+          "components": [],
+          "attachment": [],
+          "comment": {"comments": []},
+          "issuelinks": [],
+          "parent": null,
+          "subtasks": []
+        }
+      },
+      {
+        "id": "30001",
+        "key": "WEB-1",
+        "fields": {
+          "summary": "Foreign project issue should be skipped",
+          "description": "Belongs to WEB, not OPS.",
+          "created": "2026-05-03T10:00:00.000+0000",
+          "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+          "priority": {"name": "Low"},
+          "issuetype": {"name": "Bug"},
+          "project": {"key": "WEB", "name": "Website"},
+          "reporter": {
+            "displayName": "Web Owner",
+            "emailAddress": "web@example.com"
+          },
+          "labels": [],
+          "components": [],
+          "attachment": [],
+          "comment": {"comments": []},
+          "issuelinks": [],
+          "parent": null,
+          "subtasks": []
+        }
+      }
+    ]
+  }
+}

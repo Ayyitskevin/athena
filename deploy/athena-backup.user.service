@@ -1,0 +1,21 @@
+# One-shot Athena SQLite backup (user unit — no root). Driven by
+# athena-backup.user.timer (install both as athena-backup.{service,timer}).
+#
+# EnvironmentFile should set absolute paths, e.g.:
+#   ATHENA_DB=%h/opt/athena-data/athena.db
+#   ATHENA_BACKUP_DIR=%h/opt/athena-data/backups
+#   ATHENA_BACKUP_KEEP=14
+#
+# Note: systemd does not expand %h inside EnvironmentFile values; put real
+# absolute paths in ~/opt/athena-data/athena.env.
+
+[Unit]
+Description=Athena SQLite backup snapshot (user)
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/opt/athena-data/athena.env
+Environment=PATH=%h/ai-workspace/athena-claude/.venv/bin:/usr/local/bin:/usr/bin
+Environment=ATHENA_BACKUP_KEEP=14
+ExecStart=/bin/bash -c 'set -euo pipefail; mkdir -p "${ATHENA_BACKUP_DIR}"; athena-backup "${ATHENA_DB}" "${ATHENA_BACKUP_DIR}/athena-$(date +%%F).db" --keep "${ATHENA_BACKUP_KEEP}" --retention-glob "athena-*.db"'
+Nice=10

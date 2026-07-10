@@ -37,6 +37,31 @@ athena-backup-prune "$HOME/opt/athena-data/backups" --keep 14 --glob 'athena-*.d
 
 Optional off-host: rsync the `backups/` directory to another node after each snapshot.
 
+### Backup timer (user, no sudo)
+
+Add `ATHENA_BACKUP_DIR` and `ATHENA_BACKUP_KEEP` to `~/opt/athena-data/athena.env`, then:
+
+```bash
+cp deploy/athena-backup.user.service ~/.config/systemd/user/athena-backup.service
+cp deploy/athena-backup.user.timer ~/.config/systemd/user/athena-backup.timer
+systemctl --user daemon-reload
+systemctl --user enable --now athena-backup.timer
+systemctl --user list-timers athena-backup.timer
+# fire once now to verify:
+systemctl --user start athena-backup.service
+```
+
+Use `loginctl enable-linger "$USER"` if the timer must run while logged out.
+
+### Backup timer (system / root)
+
+```bash
+sudo cp deploy/athena-backup.service deploy/athena-backup.timer /etc/systemd/system/
+# ensure /etc/athena/athena.env has ATHENA_DB + ATHENA_BACKUP_DIR
+sudo systemctl daemon-reload
+sudo systemctl enable --now athena-backup.timer
+```
+
 ## System unit (root)
 
 See `athena.service` + `athena.env.example` for `/opt/athena` installs.
@@ -46,4 +71,6 @@ See `athena.service` + `athena.env.example` for `/opt/athena` installs.
 ```bash
 athena-validate-source jira-project path/to/jira-export.json
 athena-validate-source confluence-space path/to/confluence-export.json
+# machine-readable + fail on mapping gaps:
+athena-validate-source jira-project path/to/export.json --json --strict
 ```

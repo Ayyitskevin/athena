@@ -15,6 +15,20 @@
     </div>
 </div>
 
+{% if error %}
+<div class="flash error" role="alert">{{ error }}</div>
+{% endif %}
+{% if success %}
+<div class="flash success" role="status">{{ success }}</div>
+{% endif %}
+{% if minted %}
+<div class="flash success" role="status">
+    <p><strong>Copy this token now</strong> — it will not be shown again.</p>
+    <code class="token-secret">{{ minted.token }}</code>
+    <p class="muted">Scopes: {{ minted.scopes | join(", ") }} · name: {{ minted.name }}</p>
+</div>
+{% endif %}
+
 {% if agents %}
 <div class="agent-admin-list">
     {% for agent in agents %}
@@ -64,6 +78,27 @@
                 {% else %}
                 <p class="muted">No tokens.</p>
                 {% endif %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/mint-token" class="agent-admin-form">
+                    {% include "partials/csrf.html" %}
+                    <label>
+                        Token name
+                        <input type="text" name="name" maxlength="80"
+                               placeholder="{{ agent.user.name }}-loop" />
+                    </label>
+                    <label>
+                        Scope preset
+                        <select name="preset">
+                            {% for preset in scope_presets %}
+                            <option value="{{ preset.name }}"
+                                {% if preset.name == "aegis" %}selected{% endif %}
+                                title="{{ preset.description }}">
+                                {{ preset.label }} ({{ preset.scopes | join(", ") }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </label>
+                    <button type="submit" class="button secondary">Mint token</button>
+                </form>
             </div>
 
             <div class="agent-admin-section">
@@ -116,6 +151,47 @@
                 <p class="muted">No active contributor assignments.</p>
                 {% endif %}
             </div>
+        </div>
+
+        <div class="agent-admin-section">
+            <h3>Bulk grant access</h3>
+            <p class="muted">Add this agent to private projects/spaces in one step (idempotent).</p>
+            <form method="post" action="/admin/agents/{{ agent.user.id }}/bulk-grant" class="agent-admin-form">
+                {% include "partials/csrf.html" %}
+                {% if projects %}
+                <fieldset>
+                    <legend>Projects</legend>
+                    <div class="checkbox-grid">
+                        {% for project in projects %}
+                        <label class="checkbox-row">
+                            <input type="checkbox" name="project_ids" value="{{ project.id }}" />
+                            {{ project.name }} <code>{{ project.key }}</code>
+                            <span class="muted">{{ project.visibility }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+                {% else %}
+                <p class="muted">No projects yet.</p>
+                {% endif %}
+                {% if spaces %}
+                <fieldset>
+                    <legend>Spaces</legend>
+                    <div class="checkbox-grid">
+                        {% for space in spaces %}
+                        <label class="checkbox-row">
+                            <input type="checkbox" name="space_ids" value="{{ space.id }}" />
+                            {{ space.name }} <code>{{ space.key }}</code>
+                            <span class="muted">{{ space.visibility }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                </fieldset>
+                {% else %}
+                <p class="muted">No spaces yet.</p>
+                {% endif %}
+                <button type="submit" class="button secondary">Grant selected</button>
+            </form>
         </div>
 
         <div class="agent-admin-section">

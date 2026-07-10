@@ -2,7 +2,7 @@
 
 JSON surface over the same read models and write helpers the browser admin UI
 uses. Agents remain ordinary users; this only exposes supervision + policy
-actions (revoke tokens, membership grants, role/agent flags).
+actions (revoke tokens, membership grants, role/agent flags, scope presets).
 """
 
 from __future__ import annotations
@@ -32,9 +32,17 @@ class MembershipBody(BaseModel):
     space_id: int | None = None
 
 
+class BulkMembershipBody(BaseModel):
+    project_ids: list[int] = Field(default_factory=list)
+    space_ids: list[int] = Field(default_factory=list)
+
+
 class MintTokenBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    scopes: list[str] = Field(default_factory=lambda: [tokens.READ_SCOPE, tokens.ISSUE_WRITE_SCOPE])
+    # Either an explicit scope list or a named preset. Default matches the
+    # historical "aegis worker" mint (read + issue:write).
+    scopes: list[str] | None = None
+    preset: str | None = None
 
 
 @router.get("")
@@ -47,7 +55,17 @@ def list_agents(
         "agents": summaries,
         "count": len(summaries),
         "run_health": agents.agent_run_health(conn)["totals"],
+        "scope_presets": tokens.list_scope_presets(),
     }
+
+
+@router.get("/scope-presets")
+def list_scope_presets(
+    _admin: dict = Depends(admin_actor),
+) -> dict:
+    """Named token-scope presets for agent minting (static catalog)."""
+    presets = tokens.list_scope_presets()
+    return {"presets": presets, "count": len(presets)}
 
 
 @router.get("/{agent_id}")
@@ -61,6 +79,7 @@ def get_agent(
     return {
         **summary,
         "run_health": health["agents"][0] if health["agents"] else None,
+        "scope_presets": tokens.list_scope_presets(),
     }
 
 
@@ -88,11 +107,12 @@ def mint_agent_token(
 ) -> dict:
     _agent_or_404(conn, agent_id)
     try:
+        scopes = _resolve_mint_scopes(body)
         created = tokens.create_token(
             conn,
             user_id=agent_id,
             name=body.name.strip(),
-            scopes=body.scopes,
+            scopes=scopes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -100,6 +120,7 @@ def mint_agent_token(
     return {
         "agent_id": agent_id,
         "token": created,
+        "preset": body.preset.strip().lower() if body.preset else None,
         "actor_id": admin["id"],
         "note": "Store the raw token now; it is not retrievable later.",
     }
@@ -187,6 +208,64 @@ def grant_membership(
         "granted": True,
         "changed": bool(changed),
     }
+
+
+@router.post("/{agent_id}/memberships/bulk")
+def grant_memberships_bulk(
+    agent_id: int,
+    body: BulkMembershipBody,
+    conn: sqlite3.Connection = Depends(get_conn),
+    admin: dict = Depends(admin_actor),
+) -> dict:
+    """Grant many project/space memberships in one call (idempotent per id)."""
+    _agent_or_404(conn, agent_id)
+    project_ids = _unique_positive_ids(body.project_ids)
+    space_ids = _unique_positive_ids(body.space_ids)
+    if not project_ids and not space_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="provide at least one project_id or space_id",
+        )
+    projects = access.add_project_members(
+        conn, agent_id, project_ids, admin["id"]
+    )
+    spaces = access.add_space_members(conn, agent_id, space_ids, admin["id"])
+    return {
+        "agent_id": agent_id,
+        "projects": projects,
+        "spaces": spaces,
+        "actor_id": admin["id"],
+    }
+
+
+def _resolve_mint_scopes(body: MintTokenBody) -> list[str]:
+    """Resolve mint scopes from an explicit list or a named preset."""
+    has_preset = body.preset is not None and body.preset.strip() != ""
+    has_scopes = body.scopes is not None
+    if has_preset and has_scopes:
+        raise ValueError("provide either preset or scopes, not both")
+    if has_preset:
+        return list(tokens.resolve_scope_preset(body.preset or ""))
+    if has_scopes:
+        if not body.scopes:
+            raise ValueError("at least one token scope is required")
+        return list(body.scopes)
+    return [tokens.READ_SCOPE, tokens.ISSUE_WRITE_SCOPE]
+
+
+def _unique_positive_ids(raw: list[int]) -> list[int]:
+    seen: set[int] = set()
+    out: list[int] = []
+    for value in raw:
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            continue
+        if item < 1 or item in seen:
+            continue
+        seen.add(item)
+        out.append(item)
+    return out
 
 
 def _agent_or_404(conn: sqlite3.Connection, agent_id: int) -> dict:

@@ -560,3 +560,42 @@ def test_validate_source_cli_maps_and_dry_runs(tmp_path, capsys):
     assert "mapped jira-project" in out
     assert "dry-run import: ok" in out
     assert "attachment_manifest" in out
+
+
+def test_jira_real_dump_shapes_nested_versions_and_subtask_parent():
+    bundle = source_import.map_jira_project(
+        _fixture("jira_real_dump_shapes.json"),
+        project_key="OPS",
+    )
+    report = bundle["source"]["mapping_report"]
+    assert report["counts"]["issues"] == 2
+    assert report["counts"]["skipped_foreign_project"] == 1
+    assert report["counts"]["parent_links_from_subtasks"] == 1
+    label_names = {row["name"] for row in bundle["labels"]}
+    assert "version:2026.07" in label_names
+    assert "version:2026.06" in label_names
+    assert "component:Platform" in label_names
+    assert "type:Story" in label_names
+    parent = next(i for i in bundle["issues"] if i["project_seq"] == 10)
+    child = next(i for i in bundle["issues"] if i["project_seq"] == 11)
+    assert child["parent_id"] == parent["id"]
+    keys = {i["project_seq"] for i in bundle["issues"]}
+    assert 1 not in keys  # WEB-1 foreign project skipped
+
+
+def test_validate_source_json_and_strict(tmp_path, capsys):
+    source = Path("tests/fixtures/source_import/jira_real_dump_shapes.json")
+    code = ops.validate_source_main(
+        ["jira-project", str(source.resolve()), "--json"]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["mapping_report"]["counts"]["issues"] == 2
+    assert payload["dry_run"]
+
+    # Foreign-project skip leaves mapped_with_gaps → strict fails.
+    code = ops.validate_source_main(
+        ["jira-project", str(source.resolve()), "--strict"]
+    )
+    assert code == 1

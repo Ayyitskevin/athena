@@ -1,0 +1,25 @@
+# One-shot Athena SQLite backup (system unit). Driven by athena-backup.timer.
+#
+# Requires EnvironmentFile with at least:
+#   ATHENA_DB=/var/lib/athena/athena.db
+#   ATHENA_BACKUP_DIR=/var/lib/athena/backups
+# Optional:
+#   ATHENA_BACKUP_KEEP=14
+#
+#   sudo systemctl start athena-backup.service
+
+[Unit]
+Description=Athena SQLite backup snapshot
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=athena
+Group=athena
+EnvironmentFile=/etc/athena/athena.env
+Environment=ATHENA_BACKUP_KEEP=14
+# %% becomes % for systemd; date +%F yields YYYY-MM-DD.
+ExecStart=/bin/bash -c 'set -euo pipefail; mkdir -p "${ATHENA_BACKUP_DIR}"; /opt/athena/.venv/bin/athena-backup "${ATHENA_DB}" "${ATHENA_BACKUP_DIR}/athena-$(date +%%F).db" --keep "${ATHENA_BACKUP_KEEP}" --retention-glob "athena-*.db"'
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
