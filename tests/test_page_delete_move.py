@@ -204,7 +204,8 @@ def test_move_to_root_and_under_sibling_is_allowed(tmp_path):
     sp, a, b, c, d = _tree(conn)
     assert pages.validate_move(conn, b, None) is None  # to top level
     assert pages.validate_move(conn, b, d["id"]) is None  # under an unrelated page
-    moved = pages.set_parent(conn, b["id"], d["id"])
+    moved, err = pages.move(conn, b, d["id"])
+    assert err is None
     assert moved["parent_id"] == d["id"]
 
 

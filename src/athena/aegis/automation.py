@@ -215,15 +215,6 @@ def _matches(conn: sqlite3.Connection, rule: dict, event: dict) -> bool:
     return all(issue.get(key) == want for key, want in conditions.items())
 
 
-def matching_rules(
-    conn: sqlite3.Connection, event: dict, rules: list[dict] | None = None
-) -> list[dict]:
-    """The enabled rules that fire for this event, in id order. `rules` may be passed to
-    avoid a re-query when scanning many events in one pass."""
-    rules = rules if rules is not None else list_rules(conn, enabled_only=True)
-    return [r for r in rules if r["enabled"] and _matches(conn, r, event)]
-
-
 # --- cursor + engine --------------------------------------------------------
 
 

@@ -518,7 +518,7 @@ def create_app(
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
 
-    # Mentor REST API (spaces + pages; versions later).
+    # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)
     app.include_router(mentor_api.pages_router)
 

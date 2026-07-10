@@ -251,22 +251,6 @@ def validate_move(
     return None
 
 
-def set_parent(
-    conn: sqlite3.Connection, page_id: int, new_parent_id: int | None
-) -> dict | None:
-    """Re-parent a page (the structural half of a move). Returns the updated page,
-    or None if no page has that id. Validation (same-space, no cycle) is the
-    caller's job via validate_move — this only writes. Moving doesn't touch
-    title/body, so there's nothing to re-index for links or search."""
-    cur = conn.execute(
-        "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page_id)
-    )
-    conn.commit()
-    if cur.rowcount == 0:
-        return None
-    return get_page(conn, page_id)
-
-
 def move(
     conn: sqlite3.Connection, page: dict, new_parent_id: int | None
 ) -> tuple[dict | None, str | None]:
