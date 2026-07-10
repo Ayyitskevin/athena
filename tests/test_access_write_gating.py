@@ -131,6 +131,44 @@ def test_link_to_hidden_issue_blocked(tmp_path):
         assert ok.status_code == 201
 
 
+# --- Container writes (the project/space row itself) ------------------------
+
+
+def test_container_writes_require_visibility_without_leak(tmp_path):
+    # WHY: PATCH/DELETE on the container itself must gate visibility BEFORE the
+    # creator-only check. A hidden private project/space answering 403 ("exists but
+    # not yours") to an outsider is an existence oracle — the write path would leak
+    # exactly what the read path (GET -> 404) hides. All container-modify endpoints
+    # must 404 for an actor who can't see it, and only turn into 403 once
+    # membership grants visibility (proving the two gates are distinct).
+    db_file = tmp_path / "cw.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        pid, _ = _private_project_with_issue(client, db_file)
+        sid = client.post("/spaces", json={"key": "SEC", "name": "Hush"}, headers=H_CREATOR).json()["id"]
+        conn = db.connect(db_file)
+        conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (sid,))
+        conn.commit()
+
+        # Outsider: every container write reads as "no such thing" — 404, never 403.
+        assert client.patch(f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER).status_code == 404
+        assert client.delete(f"/projects/{pid}", headers=H_OUTSIDER).status_code == 404
+        assert client.post(f"/projects/{pid}/statuses", json={"name": "qa", "category": "doing"}, headers=H_OUTSIDER).status_code == 404
+        assert client.delete(f"/projects/{pid}/statuses/qa", headers=H_OUTSIDER).status_code == 404
+        assert client.delete(f"/spaces/{sid}", headers=H_OUTSIDER).status_code == 404
+
+        # Membership grants visibility: the same writes now 403 (visible, not the
+        # creator) — the earlier 404 was the visibility gate, not the creator gate.
+        access.add_project_member(conn, pid, 3, added_by=2)
+        access.add_space_member(conn, sid, 3, added_by=2)
+        assert client.patch(f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER).status_code == 403
+        assert client.delete(f"/spaces/{sid}", headers=H_OUTSIDER).status_code == 403
+
+        # The creator still modifies and deletes normally.
+        assert client.patch(f"/projects/{pid}", json={"name": "Renamed"}, headers=H_CREATOR).status_code == 200
+        assert client.delete(f"/spaces/{sid}", headers=H_CREATOR).status_code == 204
+
+
 # --- Sprint writes ---------------------------------------------------------
 
 

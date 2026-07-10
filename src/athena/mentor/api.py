@@ -263,9 +263,14 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
     the actor isn't its creator. Deleting a space is creator-only — tighter than
     Mentor's otherwise-open write model (any signed-in actor may create spaces and
     edit pages), because removing a whole container is destructive and wipes a
-    documentation tree. Mirrors aegis _project_for_write."""
+    documentation tree. Mirrors aegis _project_for_write.
+
+    Visibility first, THEN the creator check: a hidden private space must read as
+    "no such space" (404), never as "exists but not yours" (403) — otherwise DELETE
+    is an existence oracle, and it would disagree with PATCH on the same space,
+    which already 404s. Same order as _space_for_privacy."""
     space = spaces.get_space(conn, space_id)
-    if space is None:
+    if space is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
     if space["created_by"] != actor["id"]:
         raise HTTPException(
