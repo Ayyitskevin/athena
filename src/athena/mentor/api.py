@@ -156,10 +156,12 @@ def _with_labels(conn: sqlite3.Connection, page: dict) -> dict:
 
 
 def _with_labels_many(conn: sqlite3.Connection, page_rows: list[dict]) -> list[dict]:
-    """labels for a list of pages, attached in place. Mirrors _with_labels for the
-    list endpoint; small page sets, so a per-page lookup is fine."""
+    """Labels for a list of pages, attached in place — ONE bulk query, not one per
+    page (a wiki space can hold hundreds). The Mentor twin of aegis _with_labels_many,
+    now on the same core bulk helper so the two can't drift again."""
+    by_page = labels.labels_for_pages(conn, [p["id"] for p in page_rows])
     for page in page_rows:
-        page["labels"] = labels.labels_for_page(conn, page["id"])
+        page["labels"] = by_page.get(page["id"], [])
     return page_rows
 
 
