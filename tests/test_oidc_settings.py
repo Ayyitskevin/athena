@@ -171,10 +171,10 @@ def test_nav_shows_signins_link_only_when_oidc_enabled(tmp_path, monkeypatch):
         uid = _make_user(db_file, "a@e.com", "A", password="pw")
         _login_as(client, db_file, uid)
         # Off: no nav link.
-        assert "/settings/identities" not in client.get("/aegis").text
+        assert "/settings/identities" not in client.get("/aegis/dashboard").text
         # Configured: the link appears.
         monkeypatch.setattr(config, "OIDC_ISSUER", "https://idp.example.com")
         monkeypatch.setattr(config, "OIDC_CLIENT_ID", "c")
         monkeypatch.setattr(config, "OIDC_CLIENT_SECRET", "s")
         monkeypatch.setattr(config, "OIDC_REDIRECT_URL", "https://app/cb")
-        assert "/settings/identities" in client.get("/aegis").text
+        assert "/settings/identities" in client.get("/aegis/dashboard").text

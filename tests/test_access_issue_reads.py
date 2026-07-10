@@ -115,7 +115,7 @@ def test_web_surfaces_hide_private_from_anonymous(tmp_path):
         # The list, the board, and the Aegis landing never name the private issue...
         assert "Hidden bug" not in client.get("/aegis/issues").text
         assert "Hidden bug" not in client.get("/aegis/boards").text
-        assert "Hidden bug" not in client.get("/aegis").text
+        assert "Hidden bug" not in client.get("/aegis/dashboard").text
         # ...but do show the public one.
         assert "Open bug" in client.get("/aegis/issues").text
         # The detail page is a 404 for the hidden issue, a 200 for the public one.

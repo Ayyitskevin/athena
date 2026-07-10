@@ -6,7 +6,14 @@
 <div class="page-header">
     <div>
         <h1>Dashboard</h1>
-        <p class="subtitle">A live overview of the work</p>
+        <p class="subtitle">Live overview — counts only, no reporting engine</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/aegis/issues" class="button secondary">Issues</a>
+        <a href="/aegis/boards" class="button secondary">Boards</a>
+        {% if request.state.user and request.state.user.role == 'admin' %}
+        <a href="/admin/agents" class="button secondary">Agents</a>
+        {% endif %}
     </div>
 </div>
 
@@ -14,6 +21,22 @@
     <div class="stat-card">
         <span class="stat-number">{{ totals.active_issues }}</span>
         <span class="stat-label">Active issues</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.open_issues }}</span>
+        <span class="stat-label">Todo</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.doing_issues }}</span>
+        <span class="stat-label">In flight</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.done_issues }}</span>
+        <span class="stat-label">Done</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ totals.delegated_to_agents }}</span>
+        <span class="stat-label">With agents</span>
     </div>
     <div class="stat-card">
         <span class="stat-number">{{ totals.projects }}</span>
@@ -43,6 +66,51 @@
         {% endif %}
     </section>
     {% endif %}
+
+    <section class="dashboard-card">
+        <h3>Delegated to agents</h3>
+        {% if delegated_to_agents %}
+        <ul class="dashboard-list">
+            {% for i in delegated_to_agents %}
+            <li>
+                <a href="/aegis/issues/{{ i.id }}">{{ i.key or "#" ~ i.id }} — {{ i.title }}</a>
+                <span class="muted">{{ i.agent_names }}</span>
+                {% if i.assignee_name %}<span class="muted"> · owner {{ i.assignee_name }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="note-small">No open issues with agent contributors.</p>
+        {% endif %}
+    </section>
+
+    <section class="dashboard-card">
+        <h3>Agent load</h3>
+        {% if agent_loads %}
+        <ul class="dashboard-bars">
+            {% for a in agent_loads %}
+            <li>
+                <span>{{ a.agent_name }}</span>
+                <span class="bar-count">{{ a.open_count }} open</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="note-small">No agent contributions in open work.</p>
+        {% endif %}
+    </section>
+
+    <section class="dashboard-card">
+        <h3>By lifecycle</h3>
+        <ul class="dashboard-bars">
+            {% for c in category_counts %}
+            <li>
+                <span class="status">{{ c.category }}</span>
+                <span class="bar-count">{{ c.count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
 
     <section class="dashboard-card">
         <h3>By status</h3>
@@ -89,13 +157,18 @@
     </section>
 
     <section class="dashboard-card">
-        <h3>In flight</h3>
+        <h3>In flight (sprints)</h3>
         {% if active_sprints %}
         <ul class="dashboard-list">
             {% for s in active_sprints %}
             <li>
                 <a href="/aegis/projects/{{ s.project_id }}/sprints">{{ s.name }}</a>
-                <span class="muted">{{ s.project_name }} · {{ s.issue_count }} issue{{ "s" if s.issue_count != 1 else "" }}</span>
+                <span class="muted">
+                    {{ s.project_name }} ·
+                    {{ s.open_count }} open /
+                    {{ s.done_count }} done
+                    ({{ s.issue_count }} total)
+                </span>
             </li>
             {% endfor %}
         </ul>

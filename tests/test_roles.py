@@ -143,7 +143,7 @@ def test_viewer_web_controls_hidden_and_writes_rejected(tmp_path):
         ).json()
 
         _csrf_login(client, "viewer@e.com", "secret")
-        dashboard = client.get("/aegis")
+        dashboard = client.get("/aegis/dashboard")
         assert dashboard.status_code == 200
         assert "/aegis/issues/new" not in dashboard.text
 

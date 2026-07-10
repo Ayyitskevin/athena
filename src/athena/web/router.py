@@ -137,24 +137,36 @@ def _statuses_in_use(conn, visible_project_ids: set[int] | None = None) -> list[
 
 
 @router.get("/", response_class=HTMLResponse)
-def home(request: Request):
-    """Simple landing page. No dynamic data yet — just the foundation."""
+def home(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+    """Landing page. Signed-in operators get a glance strip over visible work;
+    anonymous visitors still see the product intro."""
     if _templates is None:
         # Should never happen in normal operation (wired in lifespan).
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
+    user = getattr(request.state, "user", None)
+    glance = None
+    if user is not None:
+        vis = access.visible_project_filter(conn, user)
+        glance = dashboard.totals(conn, vis)
+        glance["my_open"] = len(
+            dashboard.my_open_issues(
+                conn, user["id"], limit=50, visible_project_ids=vis
+            )
+        )
     return _templates.TemplateResponse(
         request=request,
         name="home.html",
+        context={"glance": glance, "user": user},
     )
 
 
 @router.get("/aegis/dashboard", response_class=HTMLResponse)
 def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """A live overview of the work: headline totals, the issue distribution by status
-    and priority, per-project and backlog counts, what's in flight (active sprints),
-    the signed-in user's open plate, and the latest activity. Read-only — every
-    number comes from aegis.dashboard (the one home for the counting SQL), so this
-    route only lays them out. Open to read, like the issue list."""
+    """A live overview of the work: headline totals, category/status/priority
+    splits, per-project and backlog counts, sprint progress, agent-delegated
+    work, the signed-in user's open plate, and the latest activity. Read-only —
+    every number comes from aegis.dashboard (the one home for the counting SQL).
+    """
     if _templates is None:
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
@@ -162,18 +174,16 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     # the backlog is always in). recent_activity is gated the same way: actor=user
     # makes list_activity drop events whose target the viewer can't see.
     vis = access.visible_project_filter(conn, user)
+    snap = dashboard.snapshot(
+        conn,
+        visible_project_ids=vis,
+        user_id=user["id"] if user else None,
+    )
     return _templates.TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
         context={
-            "totals": dashboard.totals(conn, vis),
-            "status_counts": dashboard.status_counts(conn, vis),
-            "priority_counts": dashboard.priority_counts(conn, vis),
-            "projects": dashboard.project_open_counts(conn, vis),
-            "backlog_count": dashboard.backlog_count(conn),
-            "active_sprints": dashboard.active_sprints(conn, vis),
-            # The user's own plate only makes sense when we know who they are.
-            "my_issues": dashboard.my_open_issues(conn, user["id"], visible_project_ids=vis) if user else [],
+            **snap,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )
@@ -349,34 +359,8 @@ def mark_inbox_all_read(
 
 @router.get("/aegis", response_class=HTMLResponse)
 def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Aegis dashboard using real data from list_issues."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
-
-    user = getattr(request.state, "user", None)
-    # Only count/show issues in projects this viewer may see (public + their own
-    # private ones; admins see all; the backlog is always in).
-    all_issues = issues.list_issues(
-        conn, visible_project_ids=access.visible_project_filter(conn, user)
-    )
-    from collections import Counter
-    status_counts = Counter(issue["status"] for issue in all_issues)
-    # Recent issues (newest first)
-    recent_issues = sorted(
-        all_issues, key=lambda x: x.get("created_at", ""), reverse=True
-    )[:5]
-
-    can_write = user is not None and identity.can_write(user)
-    return _templates.TemplateResponse(
-        request=request,
-        name="aegis.html",
-        context={
-            "status_counts": dict(status_counts),
-            "recent_issues": recent_issues,
-            "total_issues": len(all_issues),
-            "can_write": can_write,
-        },
-    )
+    """Aegis landing — redirect to the live dashboard (one overview surface)."""
+    return RedirectResponse("/aegis/dashboard", status_code=303)
 
 
 @router.get("/aegis/issues", response_class=HTMLResponse)

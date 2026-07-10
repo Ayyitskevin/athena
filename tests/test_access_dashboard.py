@@ -66,12 +66,21 @@ def test_totals_count_only_visible(tmp_path):
 
         # Outsider: public issue + backlog = 2; one project; one active sprint.
         out = dashboard.totals(conn, _vis(conn, 3))
-        assert out == {"active_issues": 2, "projects": 1, "active_sprints": 1}
+        assert out["active_issues"] == 2
+        assert out["projects"] == 1
+        assert out["active_sprints"] == 1
+        assert out["open_issues"] == 2
+        assert out["delegated_to_agents"] == 0
         # Admin (visible filter is None): everything — 4 issues, 2 projects, 2 sprints.
         admin = dashboard.totals(conn, _vis(conn, 1))
-        assert admin == {"active_issues": 4, "projects": 2, "active_sprints": 2}
+        assert admin["active_issues"] == 4
+        assert admin["projects"] == 2
+        assert admin["active_sprints"] == 2
         # Creator sees their private project too, so the same totals as admin here.
-        assert dashboard.totals(conn, _vis(conn, 2)) == admin
+        creator = dashboard.totals(conn, _vis(conn, 2))
+        assert creator["active_issues"] == admin["active_issues"]
+        assert creator["projects"] == admin["projects"]
+        assert creator["active_sprints"] == admin["active_sprints"]
 
 
 def test_status_and_priority_counts_exclude_hidden(tmp_path):

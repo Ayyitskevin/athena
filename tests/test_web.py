@@ -53,13 +53,13 @@ def test_aegis_dashboard_renders(tmp_path):
             json={"title": "Dashboard test issue"},
             headers={"X-Athena-Actor": "1"},
         )
-        response = client.get("/aegis")
+        response = client.get("/aegis/dashboard")
     assert response.status_code == 200
-    assert "Aegis" in response.text
-    assert "Issues" in response.text
+    assert "Dashboard" in response.text
     assert "/aegis/issues" in response.text
-    assert "Dashboard test issue" in response.text or "Recent Issues" in response.text
-    assert "Issues (" in response.text  # count from status
+    assert "Active issues" in response.text
+    # Backlog row shows the unproject issue count (1).
+    assert "Backlog" in response.text
 
 
 def _seed_user(db_file):

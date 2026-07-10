@@ -13,8 +13,37 @@
     </p>
 </div>
 
+{% if glance %}
+<div class="stat-row home-glance" aria-label="Your workspace glance">
+    <div class="stat-card">
+        <span class="stat-number">{{ glance.active_issues }}</span>
+        <span class="stat-label">Active issues</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ glance.my_open }}</span>
+        <span class="stat-label">Mine open</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ glance.doing_issues }}</span>
+        <span class="stat-label">In flight</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ glance.delegated_to_agents }}</span>
+        <span class="stat-label">With agents</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-number">{{ glance.active_sprints }}</span>
+        <span class="stat-label">Sprints</span>
+    </div>
+</div>
+<p class="note-small" style="margin-top:0.5rem">
+    <a href="/aegis/dashboard">Open full dashboard →</a>
+</p>
+{% endif %}
+
 <nav class="quick-nav" aria-label="Primary sections">
-    <a href="/aegis" class="card">Aegis — Issues &amp; Boards</a>
+    <a href="/aegis/dashboard" class="card">Aegis — Dashboard</a>
+    <a href="/aegis/issues" class="card">Aegis — Issues</a>
     <a href="/mentor" class="card">Mentor — Docs &amp; Spaces</a>
 </nav>
 {% endblock %}

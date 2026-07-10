@@ -112,22 +112,36 @@ def active_sprints(
     page; sprints.count_issues_in_sprint counts ALL rows on purpose (its job is the
     delete guard), so the dashboard does its own count here. A sprint in a project the
     viewer can't see is dropped; its issues are all in that project, so once the sprint
-    is shown its whole count is visible too."""
+    is shown its whole count is visible too.
+
+    Also returns open_count / done_count (done = category 'done') so the UI can show
+    a simple progress split without a reporting engine.
+    """
     out: list[dict] = []
     for sprint in sprints.list_sprints(conn, state=sprints.ACTIVE):
         if visible_project_ids is not None and sprint["project_id"] not in visible_project_ids:
             continue
         project = projects.get_project(conn, sprint["project_id"])
-        issue_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM issues "
+        rows = conn.execute(
+            "SELECT id, status, project_id FROM issues "
             "WHERE sprint_id = ? AND archived_at IS NULL",
             (sprint["id"],),
-        ).fetchone()["n"]
+        ).fetchall()
+        open_count = 0
+        done_count = 0
+        for row in rows:
+            if statuses.is_done(conn, row["project_id"], row["status"]):
+                done_count += 1
+            else:
+                open_count += 1
+        issue_count = open_count + done_count
         out.append(
             {
                 **sprint,
                 "project_name": project["name"] if project else None,
                 "issue_count": issue_count,
+                "open_count": open_count,
+                "done_count": done_count,
             }
         )
     return out
@@ -160,12 +174,25 @@ def totals(
     conn: sqlite3.Connection, visible_project_ids: set[int] | None = None
 ) -> dict:
     """Headline numbers: active issues, projects, and active sprints — each counted
-    only over what the viewer may see."""
+    only over what the viewer may see. Also open/done/doing splits and agent
+    delegation load (open issues with at least one agent contributor)."""
     scope, params = _issue_scope(visible_project_ids)
     where = "WHERE archived_at IS NULL" + (f" AND {scope}" if scope else "")
-    active_issues = conn.execute(
-        f"SELECT COUNT(*) AS n FROM issues {where}", params
-    ).fetchone()["n"]
+    active_rows = conn.execute(
+        f"SELECT id, status, project_id FROM issues {where}", params
+    ).fetchall()
+    active_issues = len(active_rows)
+    open_issues = 0
+    doing_issues = 0
+    done_issues = 0
+    for row in active_rows:
+        cat = statuses.category_of(conn, row["project_id"], row["status"]) or "todo"
+        if cat == "done":
+            done_issues += 1
+        elif cat == "doing":
+            doing_issues += 1
+        else:
+            open_issues += 1
 
     if visible_project_ids is None:
         project_count = conn.execute(
@@ -188,8 +215,157 @@ def totals(
             f"WHERE state = ? AND project_id IN ({placeholders})",
             [sprints.ACTIVE, *vis],
         ).fetchone()["n"]
+
+    delegated = delegated_to_agents(conn, visible_project_ids=visible_project_ids, limit=10_000)
     return {
         "active_issues": active_issues,
+        "open_issues": open_issues,
+        "doing_issues": doing_issues,
+        "done_issues": done_issues,
         "projects": project_count,
         "active_sprints": active_sprint_count,
+        "delegated_to_agents": len(delegated),
+    }
+
+
+def category_counts(
+    conn: sqlite3.Connection, visible_project_ids: set[int] | None = None
+) -> list[dict]:
+    """Active issues grouped by lifecycle category (todo / doing / done).
+
+    Status *names* are free strings per project; categories are the stable shape
+    the dashboard uses for a glanceable open/in-flight/closed split.
+    """
+    scope, params = _issue_scope(visible_project_ids)
+    where = "WHERE archived_at IS NULL" + (f" AND {scope}" if scope else "")
+    rows = conn.execute(
+        f"SELECT status, project_id FROM issues {where}", params
+    ).fetchall()
+    tallies = {"todo": 0, "doing": 0, "done": 0}
+    for row in rows:
+        cat = statuses.category_of(conn, row["project_id"], row["status"]) or "todo"
+        if cat not in tallies:
+            cat = "doing"
+        tallies[cat] += 1
+    return [{"category": key, "count": tallies[key]} for key in ("todo", "doing", "done")]
+
+
+def delegated_to_agents(
+    conn: sqlite3.Connection,
+    *,
+    visible_project_ids: set[int] | None = None,
+    limit: int = 8,
+) -> list[dict]:
+    """Open (non-done) active issues that have at least one agent contributor.
+
+    Primary assignee stays human-accountable; agents show up as teammates on the
+    issue. Visibility-gated like every other dashboard number.
+    """
+    scope, params = _issue_scope(visible_project_ids)
+    where = "i.archived_at IS NULL" + (f" AND {scope.replace('project_id', 'i.project_id')}" if scope else "")
+    # Rewrite bare project_id references in scope for the aliased issues table.
+    if scope:
+        where = "i.archived_at IS NULL AND " + scope.replace(
+            "project_id", "i.project_id"
+        )
+    rows = conn.execute(
+        "SELECT i.id, i.title, i.status, i.priority, i.project_id, i.project_seq, "
+        "i.assignee_id, p.key AS project_key, p.name AS project_name, "
+        "ua.name AS assignee_name, "
+        "GROUP_CONCAT(u.name, ', ') AS agent_names, "
+        "COUNT(u.id) AS agent_count "
+        "FROM issues i "
+        "JOIN issue_contributors ic ON ic.issue_id = i.id "
+        "JOIN users u ON u.id = ic.user_id AND u.is_agent = 1 "
+        "LEFT JOIN projects p ON p.id = i.project_id "
+        "LEFT JOIN users ua ON ua.id = i.assignee_id "
+        f"WHERE {where} "
+        "GROUP BY i.id "
+        "ORDER BY i.id ASC",
+        params,
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        if statuses.is_done(conn, row["project_id"], row["status"]):
+            continue
+        item = dict(row)
+        if item.get("project_key") and item.get("project_seq") is not None:
+            item["key"] = f"{item['project_key']}-{item['project_seq']}"
+        else:
+            item["key"] = None
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def agent_loads(
+    conn: sqlite3.Connection,
+    *,
+    visible_project_ids: set[int] | None = None,
+    limit: int = 8,
+) -> list[dict]:
+    """Per-agent open contribution load (non-done issues they contribute to)."""
+    scope, params = _issue_scope(visible_project_ids)
+    if scope:
+        where = "i.archived_at IS NULL AND " + scope.replace(
+            "project_id", "i.project_id"
+        )
+    else:
+        where = "i.archived_at IS NULL"
+    rows = conn.execute(
+        "SELECT u.id AS agent_id, u.name AS agent_name, u.email AS agent_email, "
+        "i.id AS issue_id, i.status, i.project_id "
+        "FROM users u "
+        "JOIN issue_contributors ic ON ic.user_id = u.id "
+        "JOIN issues i ON i.id = ic.issue_id "
+        f"WHERE u.is_agent = 1 AND {where} "
+        "ORDER BY u.name COLLATE NOCASE, i.id",
+        params,
+    ).fetchall()
+    loads: dict[int, dict] = {}
+    for row in rows:
+        if statuses.is_done(conn, row["project_id"], row["status"]):
+            continue
+        bucket = loads.setdefault(
+            row["agent_id"],
+            {
+                "agent_id": row["agent_id"],
+                "agent_name": row["agent_name"],
+                "agent_email": row["agent_email"],
+                "open_count": 0,
+            },
+        )
+        bucket["open_count"] += 1
+    ordered = sorted(
+        loads.values(),
+        key=lambda r: (-r["open_count"], r["agent_name"].casefold()),
+    )
+    return ordered[:limit]
+
+
+def snapshot(
+    conn: sqlite3.Connection,
+    *,
+    visible_project_ids: set[int] | None = None,
+    user_id: int | None = None,
+) -> dict:
+    """Full dashboard payload for web + JSON API (one owner, one shape)."""
+    return {
+        "totals": totals(conn, visible_project_ids),
+        "category_counts": category_counts(conn, visible_project_ids),
+        "status_counts": status_counts(conn, visible_project_ids),
+        "priority_counts": priority_counts(conn, visible_project_ids),
+        "projects": project_open_counts(conn, visible_project_ids),
+        "backlog_count": backlog_count(conn),
+        "active_sprints": active_sprints(conn, visible_project_ids),
+        "delegated_to_agents": delegated_to_agents(
+            conn, visible_project_ids=visible_project_ids
+        ),
+        "agent_loads": agent_loads(conn, visible_project_ids=visible_project_ids),
+        "my_issues": (
+            my_open_issues(conn, user_id, visible_project_ids=visible_project_ids)
+            if user_id is not None
+            else []
+        ),
     }

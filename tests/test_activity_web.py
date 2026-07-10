@@ -255,7 +255,7 @@ def test_activity_in_nav(tmp_path):
     db_file = tmp_path / "nav.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        page = client.get("/aegis")
+        page = client.get("/aegis/dashboard")
     assert page.status_code == 200
     assert 'href="/aegis/activity"' in page.text
 

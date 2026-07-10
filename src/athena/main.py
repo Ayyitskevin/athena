@@ -25,6 +25,7 @@ from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
 from athena.aegis import automation_api as aegis_automation_api
+from athena.aegis import dashboard_api as aegis_dashboard_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.core import (
@@ -519,6 +520,7 @@ def create_app(
     app.include_router(aegis_filters_api.router)
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
+    app.include_router(aegis_dashboard_api.router)
 
     # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)

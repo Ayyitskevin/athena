@@ -251,3 +251,74 @@ def test_dashboard_backlog_row_links_to_projectless_issues(tmp_path):
         # The backlog row is always rendered, linking into the projectless view.
         assert "Backlog (no project)" in text
         assert "/aegis/issues?project=none" in text
+
+
+def test_totals_include_lifecycle_and_delegation(tmp_path):
+    db_file = tmp_path / "lifecycle.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        client.post(
+            "/users",
+            json={"email": "bot@e.com", "name": "Bot", "is_agent": True},
+            headers=H1,
+        )
+        pid = _project(client)
+        open_id = _issue(client, "open work", project_id=pid)
+        done_id = _issue(client, "finished", project_id=pid)
+        _set_status(client, done_id, "done")
+        # Delegate open work to the agent (user 2).
+        r = client.post(
+            f"/issues/{open_id}/contributors",
+            json={"user_id": 2},
+            headers=H1,
+        )
+        assert r.status_code in (200, 201), r.text
+
+    conn = db.connect(db_file)
+    t = dashboard.totals(conn)
+    assert t["active_issues"] == 2
+    assert t["open_issues"] == 1
+    assert t["done_issues"] == 1
+    assert t["delegated_to_agents"] == 1
+    cats = {c["category"]: c["count"] for c in dashboard.category_counts(conn)}
+    assert cats["todo"] == 1 and cats["done"] == 1
+    delegated = dashboard.delegated_to_agents(conn)
+    assert len(delegated) == 1
+    assert "Bot" in delegated[0]["agent_names"]
+    loads = dashboard.agent_loads(conn)
+    assert loads and loads[0]["agent_name"] == "Bot" and loads[0]["open_count"] == 1
+
+
+def test_dashboard_json_api(tmp_path):
+    db_file = tmp_path / "dash_api.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        _project(client)
+        _issue(client, "x")
+        r = client.get("/api/aegis/dashboard", headers=H1)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["totals"]["active_issues"] == 1
+        assert "category_counts" in body
+        assert "delegated_to_agents" in body
+        assert "agent_loads" in body
+
+
+def test_home_glance_for_signed_in_user(tmp_path):
+    db_file = tmp_path / "home.db"
+    with TestClient(create_app(db_file)) as client:
+        _login(client)
+        _issue(client, "mine", assignee_id=1)
+        home = client.get("/")
+        assert home.status_code == 200
+        assert "Mine open" in home.text
+        assert "Open full dashboard" in home.text
+
+
+def test_aegis_root_redirects_to_dashboard(tmp_path):
+    db_file = tmp_path / "redir.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        r = client.get("/aegis", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"] == "/aegis/dashboard"
