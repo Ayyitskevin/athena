@@ -50,43 +50,80 @@ one database. That is the whole value of running notes and tasks in one workspac
   operator. Full-text search via SQLite's built-in **FTS5**.
 - Filesystem store for attachments. No external services required to run.
 
-## Layout (target)
+## Layout
 
 ```
 src/athena/
-  core/      auth, users, agent tokens, db, search (FTS5), attachments,
-             activity log, the issue<->doc cross-link resolver
-  aegis/     issues, projects, statuses, boards, sprints, labels, comments
-  mentor/    spaces, pages (tree), versions
-  api/       the REST surface
-  web/       Jinja templates + HTMX (built on top of api/)
+  core/      auth, users, agent tokens, db + migrations, search (FTS5),
+             attachments, activity log, notifications, webhooks, backups,
+             portability (export/import), OIDC, the issue<->doc cross-link resolver
+  aegis/     issues, projects, statuses, boards, sprints, labels, comments,
+             saved filters, automation rules
+  mentor/    spaces, pages (tree), versions, page comments
+  web/       route handlers for the browser UI (Jinja + HTMX) — a thin client
+             over the same data the REST API serves, never a second data owner
+  mcp/       optional MCP server — a thin client over the REST API for agents
+  config.py  env-driven settings (ATHENA_DB, ...)
+  main.py    app factory: create_app(), middleware, router wiring, /healthz
+  ops.py     operator CLIs (athena-backup, athena-doctor, athena-export, ...)
+templates/   Jinja templates (repo root, mounted by main.py)
+static/      CSS + HTMX + small JS helpers — no build step
 tests/       pytest
-docs/        this file and design notes
+docs/        this file, OPERATIONS.md (the runbook), design notes
 ```
+
+There is no separate `api/` package: each module owns its REST surface
+(`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves
+`/issues` lives next to the SQL that backs it.
 
 ## Roadmap (dogfood-first)
 
-- **Phase 0 — Project setup** *(current)*: repo, skeleton, dev environment,
+- **Phase 0 — Project setup** *(done)*: repo, skeleton, dev environment,
   first commit, GitHub remote.
-- **Phase 1 — Core + Aegis**: auth, users, agent tokens, DB + migrations, FTS
-  search, activity log → then issues/projects/statuses/boards + REST API + web
-  UI. *Done when Kevin can run real work in it.*
-- **Phase 2 — Mentor, tracked in Aegis**: spaces, page tree, versions, the
-  cross-links. Every task for this phase is an Aegis issue — eat our own cooking.
-- **Phase 3 — Migration tooling**: ORACLE (markdown + wikilinks) → Mentor pages;
-  Notion Tasks → Aegis issues. Dry-run, verify, then cut over.
-- **Phase 4 — Fleet wiring & polish**: Hermes/Odysseus push to Aegis; search
-  across both modules; backups; (optional) self-host on `flow`.
+- **Phase 1 — Core + Aegis** *(done)*: auth, users, agent tokens, DB +
+  migrations, FTS search, activity log; issues/projects/statuses/boards +
+  REST API + web UI.
+- **Phase 2 — Mentor** *(done)*: spaces, page tree, versions (with restore),
+  and the cross-links/backlinks that justify one workspace — tracked in Aegis
+  along the way.
+- **Phase 3 — Migration tooling** *(current)*: the generic machinery is built —
+  selective export bundles, read-only dry-run validation, replay manifests,
+  manifest-gated import, plus Jira/Confluence source mappers. Still open: the
+  ORACLE (markdown + wikilinks) → Mentor and Notion Tasks → Aegis mappers,
+  then dry-run, verify, cut over.
+- **Phase 4 — Fleet wiring & polish** *(largely done, landed alongside 2-3)*:
+  MCP server, outbound webhooks, automation rules, cross-module search,
+  backups/restore/doctor, run replay & lineage export, idempotent writes,
+  per-token and anonymous rate limits, OIDC SSO, agent admin dashboards.
+  Remaining: (optional) self-host on `flow`.
 
 ## Security
 
-- Secrets in a `.env` file, never committed (see `.gitignore`).
-- Browser sessions use HttpOnly cookies and CSRF tokens for state-changing forms.
+- Config is environment-driven (`config.py`); secrets live in the environment,
+  never in the repo (`.gitignore` excludes `.env` files). Nothing loads a
+  `.env` automatically — inject it via your shell or process manager (e.g.
+  systemd `EnvironmentFile=`).
+- Browser sessions use HttpOnly, SameSite=Lax cookies and synchronizer CSRF
+  tokens on every state-changing form (submitted as a form field or an
+  `X-CSRF-Token` header). The login form, which has no session yet to bind a
+  token to, rejects cross-site POSTs by Origin check instead (login-CSRF
+  defense). Changing a password revokes the user's other sessions.
+- Cookies carry the `Secure` flag only when `ATHENA_COOKIE_SECURE=1`; the app
+  warns at startup when it's off so an HTTPS deploy doesn't ship insecure by
+  accident. With it on, responses also send HSTS.
+- Every response gets hardening headers (CSP `default-src 'self'`,
+  `X-Frame-Options: DENY`, `nosniff`, ...), and request bodies are capped
+  (`ATHENA_MAX_REQUEST_BODY_BYTES`).
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
   user is bootstrapped as admin, and the last admin cannot be demoted.
 - Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`);
   every write records *who* did it. Scopes narrow bearer tokens but never expand
-  a user's role.
+  a user's role. Bearer traffic is rate-limited per token
+  (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); anonymous reads can be throttled per
+  client IP (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default).
+- Optional OIDC single sign-on activates only when all four `ATHENA_OIDC_*`
+  connection settings are present; first-login auto-provisioning can be locked
+  to an email-domain allow-list. Local email+password login is unaffected.
 - The `X-Athena-Actor` fallback is disabled by default and should be enabled only
   on trusted local/tailnet deployments, usually just long enough for headless
   token bootstrap.
