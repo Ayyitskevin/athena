@@ -83,9 +83,9 @@ def delete_watches_for(
     commit — it is meant to run INSIDE the owning delete's transaction so the watches
     vanish atomically with the target. Called when a page is deleted: a watch keys
     its target polymorphically (no foreign key to lean on), so without this the row
-    dangles, pointing at a target that no longer exists — and because page ids can be
-    REUSED (rowid alias, not AUTOINCREMENT), a stale watch could later re-bind a
-    stranger to an unrelated new page. Notifications are deliberately NOT purged here:
+    dangles, pointing at a target that no longer exists. Activity-target
+    reservations prevent numeric-id reuse as a second defense, but deleting the
+    subscription is still the only honest lifecycle. Notifications stay intact:
     they reference the append-only activity log, which outlives the target, so they
     never dangle — deleting them would erase valid inbox history."""
     cur = conn.execute(

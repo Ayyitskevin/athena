@@ -90,11 +90,10 @@ def test_delete_removes_a_page_that_has_comments(tmp_path):
 
 def test_delete_purges_orphan_attachments_and_watches_but_keeps_notifications(tmp_path):
     # WHY: attachments and watches key this page POLYMORPHICALLY (target_kind='page',
-    # target_id) with NO foreign key, so nothing at the DB level clears them — and page
-    # ids are a REUSED rowid alias (not AUTOINCREMENT), so a dangling row could later
-    # re-bind to an unrelated new page: a stranger's watch, a ghost attachment. So delete
-    # must purge both, including the on-disk blob. Notifications are the deliberate
-    # EXCEPTION: they point at the append-only activity log (which outlives the page), so
+    # target_id) with NO foreign key, so nothing at the DB level clears them.
+    # Durable target-id reservations prevent rebinding, but dangling watches/files
+    # would still be false state. Delete must purge both, including the on-disk blob.
+    # Notifications are the exception: they point at the append-only activity log, so
     # they must SURVIVE — purging them would erase valid inbox history.
     from athena import config
     from athena.core import activity, attachments, notifications

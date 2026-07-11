@@ -156,6 +156,38 @@ def _prepare_project_target(path):
     return target, owner, member, bot
 
 
+def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
+    # A bare SQLite insert would recycle the deleted highest id and trip the
+    # reservation trigger. Import must allocate from the same monotonic sequence as
+    # native creates so portability remains usable after deletions.
+    bundle = _project_bundle(tmp_path)
+    target = _connect(tmp_path / "target-after-delete.db")
+    extra = _user(target, "extra@example.com", "Extra")
+    deleted = projects.create_project(
+        target, name="Deleted", key="DEL", created_by=extra
+    )
+    assert projects.delete_project(target, deleted["id"])
+
+    owner = _user(target, "owner@example.com", "Owner", role="admin")
+    member = _user(target, "member@example.com", "Member")
+    bot = _user(target, "bot@example.com", "Bot", is_agent=True)
+    labels.create_label(target, name="bug", color="#ff0000")
+    manifest = portability.build_import_manifest(target, bundle)
+
+    result = portability.replay_import_manifest(target, bundle, manifest)
+
+    imported = target.execute(
+        "SELECT id FROM projects WHERE key = 'RPL'"
+    ).fetchone()
+    assert result["status"] == "imported"
+    assert imported["id"] > deleted["id"]
+    assert result["reused"]["users"] == 3
+    assert {owner, member, bot} == {
+        row["target_id"] for row in result["id_map"]["users"]
+    }
+    target.close()
+
+
 def test_project_import_replays_manifest_and_rewrites_internal_refs(tmp_path):
     bundle = _project_bundle(tmp_path)
     target, owner, member, bot = _prepare_project_target(tmp_path / "target.db")

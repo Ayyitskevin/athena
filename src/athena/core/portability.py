@@ -632,9 +632,10 @@ def _replay_project_import(
     issue_counter = max(project.get("issue_counter") or 0, max_seq)
     cur = conn.execute(
         "INSERT INTO projects "
-        "(name, key, description, created_by, created_at, issue_counter, visibility, "
+        "(id, name, key, description, created_by, created_at, issue_counter, visibility, "
         "activity_scope_key) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ? "
+        "FROM activity_target_id_sequences WHERE target_kind = 'project'",
         (
             project["name"],
             project["key"],
@@ -825,8 +826,9 @@ def _replay_space_import(
     space = bundle["space"]
     cur = conn.execute(
         "INSERT INTO spaces "
-        "(key, name, description, created_by, created_at, visibility) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        "(id, key, name, description, created_by, created_at, visibility) "
+        "SELECT next_id, ?, ?, ?, ?, ?, ? "
+        "FROM activity_target_id_sequences WHERE target_kind = 'space'",
         (
             space["key"],
             space["name"],
@@ -842,8 +844,9 @@ def _replay_space_import(
     for page in bundle["pages"]:
         cur = conn.execute(
             "INSERT INTO pages "
-            "(space_id, parent_id, title, body, created_by, created_at, updated_by, "
-            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, space_id, parent_id, title, body, created_by, created_at, updated_by, "
+            "updated_at) SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ? "
+            "FROM activity_target_id_sequences WHERE target_kind = 'page'",
             (
                 space_id,
                 None,

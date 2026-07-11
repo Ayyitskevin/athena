@@ -331,57 +331,114 @@ def _project_scope_keys(
     }
 
 
+def _container_access_clause(
+    alias: str,
+    actor: dict | None,
+    *,
+    membership_table: str,
+    container_id_column: str,
+) -> tuple[str, list]:
+    """SQL access predicate for one project/space alias in the caller's statement."""
+    if actor is None:
+        return f"{alias}.visibility = 'public'", []
+    clause = (
+        f"({alias}.visibility = 'public' OR {alias}.created_by = ? OR EXISTS ("
+        f"SELECT 1 FROM {membership_table} membership "
+        f"WHERE membership.{container_id_column} = {alias}.id "
+        "AND membership.user_id = ?))"
+    )
+    return clause, [actor["id"], actor["id"]]
+
+
+def _event_project_scope_clause(
+    event_alias: str, actor: dict | None
+) -> tuple[str, list]:
+    project_access, params = _container_access_clause(
+        "scope_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+    return (
+        "NOT EXISTS (SELECT 1 FROM activity_visibility_projects avp "
+        "LEFT JOIN projects scope_project "
+        "ON scope_project.activity_scope_key = avp.project_scope_key "
+        f"WHERE avp.event_id = {event_alias}.id "
+        f"AND (scope_project.id IS NULL OR NOT ({project_access})))",
+        params,
+    )
+
+
 def event_visibility_clause(
     conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
 ) -> tuple[str, list]:
-    """Return the shared SQL visibility predicate for activity and notifications.
+    """Return the shared, single-statement event visibility predicate.
 
-    An issue event is visible only when the actor can see the issue in its current
-    container, the row has trustworthy event-time scope, and the actor can see EVERY
-    project attached to that event. Requiring all scopes preserves privacy across
-    repeated moves (A → B → C); current-project gating alone would re-publish history.
-    Other target kinds retain their existing current-container rules. Admins are the
-    ungated forensic view, including legacy/imported issue rows that fail closed.
+    Every current-container and event-scope membership check is correlated inside the
+    caller's SELECT/UPDATE. That makes authorization and data access one SQLite
+    snapshot instead of materializing visible ids before a later statement.
     """
     if _is_admin(actor):
         return "", []
-    visible_projects = visible_project_ids(conn, actor)
-    proj_ph, proj_params = _in_or_null(visible_projects)
-    scope_ph, scope_params = _in_or_null(
-        _project_scope_keys(conn, visible_projects)
+
+    current_project_access, current_project_params = _container_access_clause(
+        "current_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
     )
-    space_ph, space_params = _in_or_null(visible_space_ids(conn, actor))
+    issue_scope_access, issue_scope_params = _event_project_scope_clause(alias, actor)
+    page_space_access, page_space_params = _container_access_clause(
+        "page_space",
+        actor,
+        membership_table="space_members",
+        container_id_column="space_id",
+    )
+    target_space_access, target_space_params = _container_access_clause(
+        "target_space",
+        actor,
+        membership_table="space_members",
+        container_id_column="space_id",
+    )
+    target_project_access, target_project_params = _container_access_clause(
+        "target_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+    project_scope_access, project_scope_params = _event_project_scope_clause(
+        alias, actor
+    )
+
     clause = (
         f"(({alias}.target_kind = 'issue' "
         f"AND {alias}.visibility_restricted = 0 "
         f"AND EXISTS (SELECT 1 FROM issues i "
         f"WHERE i.id = {alias}.target_id "
-        f"AND (i.project_id IS NULL OR i.project_id IN ({proj_ph}))) "
-        f"AND (SELECT COUNT(*) FROM activity_visibility_projects avp "
-        f"WHERE avp.event_id = {alias}.id) = "
-        f"(SELECT COUNT(*) FROM activity_visibility_projects avp "
-        f"WHERE avp.event_id = {alias}.id "
-        f"AND avp.project_scope_key IN ({scope_ph}))) "
+        f"AND (i.project_id IS NULL OR EXISTS (SELECT 1 FROM projects current_project "
+        f"WHERE current_project.id = i.project_id AND {current_project_access}))) "
+        f"AND {issue_scope_access}) "
         f"OR ({alias}.target_kind = 'page' AND EXISTS ("
-        f"SELECT 1 FROM pages pg WHERE pg.id = {alias}.target_id "
-        f"AND pg.space_id IN ({space_ph}))) "
-        f"OR ({alias}.target_kind = 'space' AND {alias}.target_id IN ({space_ph})) "
+        f"SELECT 1 FROM pages pg JOIN spaces page_space "
+        f"ON page_space.id = pg.space_id WHERE pg.id = {alias}.target_id "
+        f"AND {page_space_access})) "
+        f"OR ({alias}.target_kind = 'space' AND EXISTS ("
+        f"SELECT 1 FROM spaces target_space "
+        f"WHERE target_space.id = {alias}.target_id AND {target_space_access})) "
         f"OR ({alias}.target_kind = 'project' "
         f"AND {alias}.visibility_restricted = 0 "
-        f"AND {alias}.target_id IN ({proj_ph}) "
-        f"AND (SELECT COUNT(*) FROM activity_visibility_projects avp "
-        f"WHERE avp.event_id = {alias}.id) = "
-        f"(SELECT COUNT(*) FROM activity_visibility_projects avp "
-        f"WHERE avp.event_id = {alias}.id "
-        f"AND avp.project_scope_key IN ({scope_ph}))))"
+        f"AND EXISTS (SELECT 1 FROM projects target_project "
+        f"WHERE target_project.id = {alias}.target_id "
+        f"AND {target_project_access}) "
+        f"AND {project_scope_access}))"
     )
     params = [
-        *proj_params,
-        *scope_params,
-        *space_params,
-        *space_params,
-        *proj_params,
-        *scope_params,
+        *current_project_params,
+        *issue_scope_params,
+        *page_space_params,
+        *target_space_params,
+        *target_project_params,
+        *project_scope_params,
     ]
     return clause, params
 
