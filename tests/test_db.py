@@ -3,6 +3,7 @@
 Each test gets its own throwaway database file via pytest's `tmp_path`, so the
 tests never touch real data and never interfere with each other.
 """
+from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 
 import pytest
@@ -48,6 +49,19 @@ def test_connect_sets_a_busy_timeout(tmp_path):
     # error the day the fleet hits the API in parallel as actors.
     conn = db.connect(tmp_path / "busy.db")
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+
+
+def test_connection_can_follow_a_request_across_worker_threads(tmp_path):
+    # WHY: FastAPI's synchronous yield dependency can create the connection in one
+    # worker and execute/close it in another. The handoff is sequential, not shared
+    # concurrency, but SQLite's creator-thread default rejects it in real Uvicorn.
+    conn = db.connect(tmp_path / "thread-handoff.db")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        result = pool.submit(
+            lambda: conn.execute("SELECT 1").fetchone()[0]
+        ).result()
+    assert result == 1
+    conn.close()
 
 
 def test_can_insert_a_user_and_their_issue(tmp_path):

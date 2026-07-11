@@ -37,7 +37,9 @@ _SOURCE = {"issue": "issues", "page": "pages"}
 _UNGATED = object()
 
 
-def index_document(conn: sqlite3.Connection, *, kind: str, source_id: int) -> None:
+def index_document(
+    conn: sqlite3.Connection, *, kind: str, source_id: int, commit: bool = True
+) -> None:
     """Make the search_index entry for one source match its live row exactly.
 
     Called from the data-access layer after an issue/page is created or edited.
@@ -45,8 +47,8 @@ def index_document(conn: sqlite3.Connection, *, kind: str, source_id: int) -> No
     source of truth, so re-deriving from it is simplest and always correct — and,
     crucially, re-reading the WHOLE row means a title-only or body-only edit still
     indexes the full current text, not a stale half. If the row is gone (defensive
-    — there is no delete path today), the entry is simply removed. Commits, since
-    the data-access callers commit their own write too."""
+    — there is no delete path today), the entry is simply removed. ``commit=False``
+    lets an application command commit the source, projections, and audit together."""
     table = _SOURCE[kind]
     row = conn.execute(
         f"SELECT title, body FROM {table} WHERE id = ?", (source_id,)
@@ -60,7 +62,8 @@ def index_document(conn: sqlite3.Connection, *, kind: str, source_id: int) -> No
             "VALUES (?, ?, ?, ?)",
             (kind, source_id, row["title"], row["body"]),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _to_match(query: str) -> str:

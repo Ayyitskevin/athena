@@ -1,10 +1,9 @@
 """Recording issue lifecycle events onto the activity trail.
 
-One owner for the "what counts as an event, and how is it phrased" rules, so the
-two endpoint surfaces that can change an issue — the REST API (aegis/api.py) and
-the web forms (web/router.py) — record the SAME facts the same way. Without this
-the browser path and the API path would each grow their own copy of the
-record-only-if-it-changed logic and inevitably drift.
+One owner for the "what counts as an event, and how is it phrased" rules. Shared
+application commands call these helpers so REST, web, bulk, and automation writes
+record the SAME facts the same way. Legacy mutation paths are migrating behind
+those commands incrementally.
 
 These helpers only ever *append* (through core.activity.record); they never
 change the issue itself. The caller does the write, then hands us the before/after
@@ -20,22 +19,41 @@ from athena.core import activity, labels, notifications, users
 
 
 def record_created(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, body: str = ""
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    body: str = "",
+    commit: bool = True,
 ) -> None:
     """An issue was created. The first audit fact in its history. The creator starts
     watching it, so they hear about later activity without opting in; anyone named
     by [[user:N]] in the body is mentioned (notified + auto-watched)."""
-    event = activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="created",
-        target_kind="issue",
-        target_id=issue_id,
-    )
-    notifications.watch(conn, actor_id, "issue", issue_id)
-    notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=body
-    )
+    try:
+        event = activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="created",
+            target_kind="issue",
+            target_id=issue_id,
+            commit=False,
+        )
+        notifications.watch(
+            conn, actor_id, "issue", issue_id, commit=False
+        )
+        notifications.process_mentions(
+            conn,
+            event_id=event["id"],
+            actor_id=actor_id,
+            text=body,
+            commit=False,
+        )
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
+    if commit:
+        conn.commit()
 
 
 def record_edited(
@@ -45,6 +63,7 @@ def record_edited(
     issue_id: int,
     before: dict,
     after: dict,
+    commit: bool = True,
 ) -> None:
     """An issue's title or body was edited. No-op if neither actually changed — a
     resubmit of identical content (both surfaces send every field) isn't an audit
@@ -54,18 +73,30 @@ def record_edited(
     deliberately ignores them."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
-    event = activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="issue_edited",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=after["title"],
-    )
-    # A newly-added [[user:N]] in the edited body mentions that person.
-    notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=after["body"]
-    )
+    try:
+        event = activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="issue_edited",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=after["title"],
+            commit=False,
+        )
+        # A newly-added [[user:N]] in the edited body mentions that person.
+        notifications.process_mentions(
+            conn,
+            event_id=event["id"],
+            actor_id=actor_id,
+            text=after["body"],
+            commit=False,
+        )
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
+    if commit:
+        conn.commit()
 
 
 def record_status_change(
@@ -75,6 +106,7 @@ def record_status_change(
     issue_id: int,
     before: str,
     after: str,
+    commit: bool = True,
 ) -> None:
     """Record a status transition as "before → after". No-op if unchanged — the
     lifecycle moment only matters when the status actually moved."""
@@ -87,6 +119,7 @@ def record_status_change(
         target_kind="issue",
         target_id=issue_id,
         detail=f"{before} → {after}",
+        commit=commit,
     )
 
 
@@ -97,6 +130,7 @@ def record_priority_change(
     issue_id: int,
     before: str,
     after: str,
+    commit: bool = True,
 ) -> None:
     """Record a priority transition as "before -> after". No-op if unchanged."""
     if before == after:
@@ -108,6 +142,7 @@ def record_priority_change(
         target_kind="issue",
         target_id=issue_id,
         detail=f"{before} → {after}",
+        commit=commit,
     )
 
 

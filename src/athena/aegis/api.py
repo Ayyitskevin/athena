@@ -18,6 +18,7 @@ from athena.aegis import (
     contributors,
     dependencies,
     issue_activity,
+    issue_commands,
     issue_history,
     issue_search,
     issues,
@@ -260,6 +261,19 @@ class CommentOut(BaseModel):
     created_at: str
 
 
+def _issue_command_http_error(
+    exc: issue_commands.IssueCommandError,
+) -> HTTPException:
+    """Translate a framework-free command rejection at the REST boundary."""
+    status_code = {
+        "unauthorized": 401,
+        "forbidden": 403,
+        "not_found": 404,
+        "invalid": 422,
+    }[exc.kind]
+    return HTTPException(status_code=status_code, detail=exc.detail)
+
+
 def _validate_key(key: str) -> str:
     """Normalize and validate a project key, or raise 422. Returns the uppercased
     key the boundary should pass on to the data layer / dup check. The shape rule
@@ -295,42 +309,20 @@ def create(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # created_by is the authenticated actor, never a value the caller supplied.
-    # Reject a blank title at the boundary (422) so the API matches the web form,
-    # which already strips and rejects empties — persist the stripped value.
-    title = payload.title.strip()
-    if not title:
-        raise HTTPException(status_code=422, detail="title cannot be empty")
-    # Reject an unknown OR invisible project here (422) rather than letting the FK
-    # raise a 500. can_see_project is False for a missing project too, so a private
-    # project the actor can't see can't be discovered (or written into) via create —
-    # same 422 as a nonexistent one, no existence leak.
-    if payload.project_id is not None and not access.can_see_project(
-        conn, actor, payload.project_id
-    ):
-        raise HTTPException(status_code=422, detail="no such project")
-    # Status is validated against the TARGET project's set (the backlog uses the
-    # default set). Unset means "start at the project's first status".
-    if payload.status is None:
-        status = statuses.first_status(conn, payload.project_id)
-    elif not statuses.is_valid(conn, payload.project_id, payload.status):
-        raise HTTPException(
-            status_code=422, detail="no such status for this project"
+    # The shared command owns actor/target authorization, normalization,
+    # validation, persistence, projections, and the required audit event.
+    try:
+        issue = issue_commands.create_issue(
+            conn,
+            actor=actor,
+            title=payload.title,
+            body=payload.body,
+            status=payload.status,
+            priority=payload.priority,
+            project_id=payload.project_id,
         )
-    else:
-        status = payload.status
-    issue = issues.create_issue(
-        conn,
-        title=title,
-        body=payload.body,
-        status=status,
-        priority=payload.priority,
-        project_id=payload.project_id,
-        created_by=actor["id"],
-    )
-    issue_activity.record_created(
-        conn, actor_id=actor["id"], issue_id=issue["id"], body=issue["body"]
-    )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, issue)
 
 
@@ -551,61 +543,15 @@ def update(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Creator or assignee only (404 if missing, 403 if not permitted).
-    before = _issue_for_write(conn, issue_id, actor)
-    # Only the fields the client actually sent are touched (exclude_unset).
+    # Only the fields the client actually sent are touched. The shared command is
+    # the one owner of authorization, validation, write, projections, and audit.
     fields = payload.model_dump(exclude_unset=True)
-    if not fields:
-        raise HTTPException(status_code=422, detail="no fields to update")
-    title = payload.title.strip() if payload.title is not None else None
-    if title is not None and not title:
-        raise HTTPException(status_code=422, detail="title cannot be empty")
-    # A new status must belong to the issue's project's set (backlog uses defaults).
-    if payload.status is not None and not statuses.is_valid(
-        conn, before["project_id"], payload.status
-    ):
-        raise HTTPException(
-            status_code=422, detail="no such status for this project"
+    try:
+        updated = issue_commands.update_issue(
+            conn, actor=actor, issue_id=issue_id, **fields
         )
-    updated = issues.update_issue(
-        conn,
-        issue_id,
-        title=title,
-        body=payload.body,
-        status=payload.status,
-        priority=payload.priority,
-    )
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such issue")
-    # Record a status change as its own audit fact (the lifecycle moment that
-    # matters: "open → done"). The helper no-ops if status didn't actually move,
-    # so an edit that only touches title/body records nothing.
-    if "status" in fields:
-        issue_activity.record_status_change(
-            conn,
-            actor_id=actor["id"],
-            issue_id=issue_id,
-            before=before["status"],
-            after=updated["status"],
-        )
-    if "priority" in fields:
-        issue_activity.record_priority_change(
-            conn,
-            actor_id=actor["id"],
-            issue_id=issue_id,
-            before=before["priority"],
-            after=updated["priority"],
-        )
-    # A title/body edit is its own audit fact, separate from a status move; the
-    # helper no-ops if neither actually changed, so a status/priority-only edit
-    # records nothing here.
-    issue_activity.record_edited(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before,
-        after=updated,
-    )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -693,12 +639,14 @@ def _apply_bulk_update(
     gate, validation, and activity recorders the single-issue endpoints use, so the
     bulk path can never diverge from them. ALL requested fields are validated before
     any are written, so a rejected issue is never left half-updated."""
-    before = _issue_for_write(conn, issue_id, actor)  # 404 / 403
-    # Validate everything up front (same rules as the single-issue endpoints).
-    if "status" in provided and not statuses.is_valid(
-        conn, before["project_id"], provided["status"]
-    ):
-        raise HTTPException(status_code=422, detail="no such status for this project")
+    try:
+        before = issue_commands.get_writable_issue(
+            conn, actor=actor, issue_id=issue_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
+    # Validate every relationship field before the core command applies anything.
+    # Status/priority validation stays in that command, its one policy owner.
     if (
         "assignee_id" in provided
         and provided["assignee_id"] is not None
@@ -714,27 +662,21 @@ def _apply_bulk_update(
                 status_code=422,
                 detail="sprint belongs to a different project than the issue",
             )
-    # Apply — each write commits on its own (best-effort persists per issue), and
-    # each recorder no-ops when its field didn't actually move.
+    # Apply. Core editable fields use the same atomic command as the single REST
+    # and browser writes; the remaining nullable relationships will migrate in
+    # later vertical slices.
     if "status" in provided or "priority" in provided:
-        updated = issues.update_issue(
-            conn,
-            issue_id,
-            status=provided.get("status"),
-            priority=provided.get("priority"),
-        )
-        if updated is None:  # vanished mid-batch (a race) — report, don't 500
-            raise HTTPException(status_code=404, detail="no such issue")
-        if "status" in provided:
-            issue_activity.record_status_change(
-                conn, actor_id=actor["id"], issue_id=issue_id,
-                before=before["status"], after=updated["status"],
+        core_fields = {
+            key: provided[key]
+            for key in ("status", "priority")
+            if key in provided
+        }
+        try:
+            issue_commands.update_issue(
+                conn, actor=actor, issue_id=issue_id, **core_fields
             )
-        if "priority" in provided:
-            issue_activity.record_priority_change(
-                conn, actor_id=actor["id"], issue_id=issue_id,
-                before=before["priority"], after=updated["priority"],
-            )
+        except issue_commands.IssueCommandError as exc:
+            raise _issue_command_http_error(exc) from exc
     if "assignee_id" in provided:
         issues.set_assignee(conn, issue_id, provided["assignee_id"])
         issue_activity.record_assignee_change(

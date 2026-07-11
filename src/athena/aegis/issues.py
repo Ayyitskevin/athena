@@ -69,6 +69,7 @@ def create_issue(
     status: str = "open",
     priority: str = "medium",
     project_id: int | None = None,
+    commit: bool = True,
 ) -> dict:
     """Insert an issue and return it. Raises sqlite3.IntegrityError if
     created_by isn't a real user, or if project_id is a non-NULL id with no
@@ -78,18 +79,34 @@ def create_issue(
     # If the issue is born into a project, allocate its per-project number from
     # that project's counter. next_seq doesn't commit, so the counter bump and the
     # INSERT below land together under the single commit (or roll back together).
-    project_seq = projects.next_seq(conn, project_id) if project_id is not None else None
-    cur = conn.execute(
-        "INSERT INTO issues "
-        "(title, body, status, priority, created_by, project_id, project_seq) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (title, body, status, priority, created_by, project_id, project_seq),
-    )
-    conn.commit()
-    # Index any [[issue:N]]/[[page:N]] references this issue's body makes.
-    links.sync_links(conn, source_kind="issue", source_id=cur.lastrowid, body=body)
-    # Index its title + body for full-text search.
-    search.index_document(conn, kind="issue", source_id=cur.lastrowid)
+    try:
+        project_seq = (
+            projects.next_seq(conn, project_id) if project_id is not None else None
+        )
+        cur = conn.execute(
+            "INSERT INTO issues "
+            "(title, body, status, priority, created_by, project_id, project_seq) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (title, body, status, priority, created_by, project_id, project_seq),
+        )
+        # Derived rows belong to the same unit as their source. The command layer
+        # may keep all three uncommitted until it appends the required audit event.
+        links.sync_links(
+            conn,
+            source_kind="issue",
+            source_id=cur.lastrowid,
+            body=body,
+            commit=False,
+        )
+        search.index_document(
+            conn, kind="issue", source_id=cur.lastrowid, commit=False
+        )
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
+    if commit:
+        conn.commit()
     return get_issue(conn, cur.lastrowid)
 
 
@@ -101,6 +118,7 @@ def update_issue(
     body: str | None = None,
     status: str | None = None,
     priority: str | None = None,
+    commit: bool = True,
 ) -> dict | None:
     """Partial update: only the fields passed as non-None change. Returns the
     updated issue, or None if no issue has that id (so the caller can 404).
@@ -124,31 +142,48 @@ def update_issue(
         # real but unchanged issue, so the boundary's 404 stays correct.
         return get_issue(conn, issue_id)
     assignments = ", ".join(f"{col} = ?" for col in fields)
-    cur = conn.execute(
-        f"UPDATE issues SET {assignments} WHERE id = ?",
-        (*fields.values(), issue_id),
-    )
-    conn.commit()
-    if cur.rowcount == 0:
-        return None
-    # Re-index references only when the body actually changed (the only field
-    # that carries [[...]] tokens); a status/priority/title edit leaves them be.
-    if "body" in fields:
-        links.sync_links(
-            conn, source_kind="issue", source_id=issue_id, body=fields["body"]
+    try:
+        cur = conn.execute(
+            f"UPDATE issues SET {assignments} WHERE id = ?",
+            (*fields.values(), issue_id),
         )
-    # Re-index for search whenever an indexed field (title or body) changed; a
-    # status/priority-only edit can't affect the text index.
-    if "title" in fields or "body" in fields:
-        search.index_document(conn, kind="issue", source_id=issue_id)
+        if cur.rowcount == 0:
+            if commit:
+                conn.commit()
+            return None
+        # Re-index references only when the body actually changed (the only field
+        # that carries [[...]] tokens); a status/priority/title edit leaves them be.
+        if "body" in fields:
+            links.sync_links(
+                conn,
+                source_kind="issue",
+                source_id=issue_id,
+                body=fields["body"],
+                commit=False,
+            )
+        # Re-index for search whenever an indexed field (title or body) changed; a
+        # status/priority-only edit can't affect the text index.
+        if "title" in fields or "body" in fields:
+            search.index_document(
+                conn, kind="issue", source_id=issue_id, commit=False
+            )
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
+    if commit:
+        conn.commit()
     return get_issue(conn, issue_id)
 
 
 def update_status(
     conn: sqlite3.Connection, issue_id: int, status: str
 ) -> dict | None:
-    """Move an issue to a new status. Thin wrapper over update_issue, kept as a
-    named operation for the status-change call sites (web route + API)."""
+    """Move an issue to a new status. Thin data-layer wrapper over update_issue.
+
+    User-facing and automation writes go through issue_commands so this mutation
+    and its audit event share one transaction.
+    """
     return update_issue(conn, issue_id, status=status)
 
 

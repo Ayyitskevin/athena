@@ -6,8 +6,10 @@ settings (and the schema) live in exactly one place.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager, suppress
 import sqlite3
 from pathlib import Path
+from typing import Iterator
 
 # The .sql migration files live next to this module, in migrations/.
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -15,7 +17,11 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a connection with the settings Athena always wants."""
-    conn = sqlite3.connect(db_path)
+    # FastAPI may enter a synchronous yield dependency and run its endpoint/exit
+    # on different worker threads. A request still uses this connection serially,
+    # but SQLite's default creator-thread affinity would turn that legitimate handoff
+    # into a production-only 500 (TestClient does not reproduce the scheduler hop).
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row              # rows act like dicts: row["email"]
     conn.execute("PRAGMA journal_mode = WAL")   # readers don't block the writer
     conn.execute("PRAGMA foreign_keys = ON")    # actually enforce REFERENCES
@@ -25,6 +31,55 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # concurrent actors queue behind each other rather than erroring out.
     conn.execute("PRAGMA busy_timeout = 5000")
     return conn
+
+
+@contextmanager
+def transaction(
+    conn: sqlite3.Connection, *, immediate: bool = False
+) -> Iterator[None]:
+    """Run a group of writes as one atomic unit.
+
+    Request handlers normally arrive with a fresh connection, so the outer form
+    opens a real transaction and owns the final commit/rollback. A command may
+    also be composed inside an existing transaction (imports and future compound
+    commands need that), in which case a savepoint gives it the same all-or-nothing
+    boundary without committing the caller's work.
+
+    ``immediate`` acquires SQLite's single-writer reservation before any read used
+    to validate the command. That closes the check-then-write race for commands
+    whose authorization or audit detail depends on the current row. When composing
+    inside an existing transaction, the caller owns its transaction mode; an outer
+    writer must already have acquired the reservation if it needs that guarantee.
+
+    Functions called inside this context must not commit independently; their
+    transaction-aware variants receive ``commit=False`` from the command owner.
+    """
+    nested = conn.in_transaction
+    savepoint = "athena_command"
+    if nested:
+        conn.execute(f"SAVEPOINT {savepoint}")
+    else:
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+    try:
+        yield
+        if nested:
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        else:
+            conn.commit()
+    except BaseException:
+        if nested and conn.in_transaction:
+            try:
+                conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except sqlite3.Error:
+                # If finalizing destroyed/invalidated the savepoint, prefer a clean
+                # connection over leaving the caller in a poisoned transaction.
+                with suppress(sqlite3.Error):
+                    conn.rollback()
+        else:
+            with suppress(sqlite3.Error):
+                conn.rollback()
+        raise
 
 
 def migrate(conn: sqlite3.Connection) -> list[str]:

@@ -76,6 +76,7 @@ def record(
     target_kind: str,
     target_id: int,
     detail: str = "",
+    commit: bool = True,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
@@ -110,7 +111,8 @@ def record(
         target_kind=target_kind,
         target_id=target_id,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_activity(conn, cur.lastrowid)
 
 

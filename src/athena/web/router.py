@@ -20,6 +20,7 @@ from athena.aegis import (
     dashboard,
     dependencies,
     issue_activity,
+    issue_commands,
     issue_history,
     issue_search,
     issues,
@@ -63,6 +64,23 @@ def _readonly_response() -> HTMLResponse:
     return HTMLResponse(
         '<div class="blocked">Viewer role is read-only.</div>',
         status_code=403,
+    )
+
+
+def _issue_command_response(
+    exc: issue_commands.IssueCommandError,
+) -> HTMLResponse:
+    """Translate a shared issue-command rejection at the HTML boundary."""
+    status_code = {
+        "unauthorized": 401,
+        "forbidden": 403,
+        "not_found": 404,
+        "invalid": 400,
+    }[exc.kind]
+    css_class = "blocked" if exc.kind in {"unauthorized", "forbidden"} else "error"
+    return HTMLResponse(
+        f'<div class="{css_class}">{html.escape(exc.detail.capitalize())}.</div>',
+        status_code=status_code,
     )
 
 
@@ -603,36 +621,26 @@ def create_issue(
     if not identity.can_write(user):
         return _readonly_response()
 
-    title = title.strip()
-    if not title:
-        return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
-    if priority not in issues.PRIORITIES:
-        return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
-    # Project is optional ("" = no project); if given it must be a real project.
+    # Project is optional ("" = no project); parsing the HTML value is a transport
+    # concern, while existence/visibility belongs to the shared command.
     project_id = project_id.strip()
     if project_id == "":
         project: int | None = None
     else:
-        if not project_id.isdigit() or not access.can_see_project(conn, user, int(project_id)):
-            # can_see_project is False for a missing project too, so a private project the
-            # actor can't see gives the SAME 400 — no write into (or discovery of) a
-            # hidden project, mirroring the REST API.
+        if not project_id.isdigit():
             return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         project = int(project_id)
-    body = body.strip()
-    # New issues start at the chosen project's first status (the backlog uses the
-    # default set).
-    status = statuses.first_status(conn, project)
-
-    issue = issues.create_issue(
-        conn, title=title, body=body, status=status, priority=priority,
-        project_id=project, created_by=user["id"],
-    )
-    # Record onto the audit trail — same fact the REST create records, so a
-    # browser-created issue and an API-created one read identically in the feed.
-    issue_activity.record_created(
-        conn, actor_id=user["id"], issue_id=issue["id"], body=issue["body"]
-    )
+    try:
+        issue = issue_commands.create_issue(
+            conn,
+            actor=user,
+            title=title,
+            body=body,
+            priority=priority,
+            project_id=project,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>',
@@ -643,26 +651,14 @@ def create_issue(
 def _authorize_issue_write(conn, issue_id, user):
     """Return (issue, None) if the session user may modify this issue, else
     (None, HTMLResponse) with the right status. 404 if no such issue, 403 if the
-    user is neither its creator nor its current assignee. Mirrors the API's
-    _issue_for_write so the browser paths enforce the same creator-or-assignee
-    rule. The 401 (logged-out) check stays at each call site, before this."""
-    issue = issues.get_issue(conn, issue_id)
-    # Visibility first: a private issue the user can't see is "not found" (same 404 as a
-    # missing one), so neither its existence nor a write path leaks — the browser twin of
-    # the API's _issue_for_write gate, and it catches a creator/assignee who lost access
-    # when the project went private.
-    if not issue or not access.can_see_project_or_backlog(
-        conn, user, issue["project_id"]
-    ):
-        return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
-    if not identity.can_write(user):
-        return None, _readonly_response()
-    if not issues.can_modify(issue, user["id"]):
-        return None, HTMLResponse(
-            '<div class="error">Only the issue creator or assignee may modify it.</div>',
-            status_code=403,
-        )
-    return issue, None
+    user is neither its creator nor its current assignee. Delegates to the shared
+    command policy owner; the 401 (logged-out) check stays at each call site."""
+    try:
+        return issue_commands.get_writable_issue(
+            conn, actor=user, issue_id=issue_id
+        ), None
+    except issue_commands.IssueCommandError as exc:
+        return None, _issue_command_response(exc)
 
 
 def _issue_visible_or_404(conn, issue_id, user):
@@ -721,20 +717,15 @@ def edit_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    before, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    title = title.strip()
-    if not title:
-        return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
-
-    updated = issues.update_issue(conn, issue_id, title=title, body=body.strip())
-    # Record the content edit (helper no-ops if title+body are unchanged),
-    # attributed to the session user — the browser path leaves the same trail
-    # as the API.
-    issue_activity.record_edited(
-        conn, actor_id=user["id"], issue_id=issue_id, before=before, after=updated
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, title=title, body=body
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -763,9 +754,6 @@ def change_issue_status(
     issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    if not statuses.is_valid(conn, issue["project_id"], status):
-        return HTMLResponse('<div class="error">Unknown status.</div>', status_code=400)
-
     if statuses.is_done(conn, issue["project_id"], status) and not confirm.strip():
         # Gate the blocker warning by the viewer: a blocker in a private project they
         # can't see is omitted, so its key/title never leaks through the close warning.
@@ -773,19 +761,17 @@ def change_issue_status(
         if blockers:
             # Don't apply the close — show the warning and let the user confirm.
             return _render_issue_detail(
-                request, conn, issue, extra={"blocked_warning": blockers}
+                request,
+                conn,
+                issue,
+                extra={"blocked_warning": blockers, "pending_status": status},
             )
-
-    issues.update_status(conn, issue_id, status)
-    # Record the transition (helper no-ops if it didn't actually move), attributed
-    # to the session user — the browser path now leaves the same trail as the API.
-    issue_activity.record_status_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["status"],
-        after=status,
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, status=status
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -805,20 +791,15 @@ def change_issue_priority(
             '<div class="blocked">Please <a href="/login">sign in</a> to change priority.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    if priority not in issues.PRIORITIES:
-        return HTMLResponse('<div class="error">Unknown priority.</div>', status_code=400)
-
-    issues.update_issue(conn, issue_id, priority=priority)
-    issue_activity.record_priority_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["priority"],
-        after=priority,
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, priority=priority
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
