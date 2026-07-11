@@ -271,7 +271,7 @@ def test_web_summary_hides_a_private_project_name(tmp_path):
     # this pins the gate itself for member/admin/outsider/anonymous.
     from athena.aegis import projects
     from athena.core import db, users
-    from athena.web.router import _describe_criteria
+    from athena.web.filters import _describe_criteria
 
     conn = db.connect(tmp_path / "leak.db")
     db.migrate(conn)

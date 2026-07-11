@@ -45,8 +45,11 @@ from athena.core import (
     webhooks_api,
 )
 from athena.mentor import api as mentor_api
+from athena.web import activity as web_activity
 from athena.web import admin as web_admin
 from athena.web import auth as web_auth
+from athena.web import boards as web_boards
+from athena.web import filters as web_filters
 from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
 from athena.web import projects as web_projects
@@ -497,6 +500,9 @@ def create_app(
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)
+    app.include_router(web_activity.router)
+    app.include_router(web_boards.router)
+    app.include_router(web_filters.router)
     app.include_router(web_auth.router)
     app.include_router(web_mentor.router)
     app.include_router(web_labels.router)
