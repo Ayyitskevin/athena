@@ -39,7 +39,9 @@ from athena.core import (
     run_context,
     search_api,
     sessions,
+    tokens,
     tokens_api,
+    users,
     users_api,
     webhooks,
     webhooks_api,
@@ -191,136 +193,643 @@ class RunContextMiddleware:
             run_context.reset_run_id(run_token)
 
 
-# The HTTP methods that mutate, and so are worth deduping on retry. Reads (GET/HEAD/
-# OPTIONS) are never deduped — replaying a stale cached read would be a bug, not a fix.
-# PUT/DELETE are idempotent at the RESOURCE level, but a retried write can still duplicate
-# a SIDE EFFECT the resource state doesn't capture — a re-run PATCH cuts a second page
-# version (update_page snapshots unconditionally), and a retried DELETE returns a confusing
-# 404 where a clean replayed 204 belongs — so the Idempotency-Key opt-in covers them too.
+# Mutating REST APIs that support durable Idempotency-Key semantics. Browser and
+# session endpoints are deliberately outside this contract: replaying HTML, CSRF
+# state, redirects, or cookies would be unsafe. New API roots must opt in here.
 _IDEMPOTENT_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_IDEMPOTENCY_API_ROOTS = (
+    "/attachments",
+    "/automation",
+    "/filters",
+    "/issues",
+    "/labels",
+    "/notifications",
+    "/pages",
+    "/projects",
+    "/spaces",
+    "/sprints",
+    "/tokens",
+    "/users",
+    "/watches",
+    "/webhooks",
+)
+_SECRET_CREATE_PATHS = frozenset(
+    {"/tokens", "/webhooks", "/settings/tokens", "/admin/webhooks"}
+)
+_FINGERPRINT_HEADERS = (
+    b"accept",
+    b"content-encoding",
+    b"content-type",
+    b"if-match",
+    b"if-unmodified-since",
+    b"x-athena-fork-from-event",
+    b"x-athena-parent-run",
+    b"x-athena-run",
+)
+_REPLAYABLE_RESPONSE_HEADERS = frozenset(
+    {
+        b"cache-control",
+        b"content-language",
+        b"content-type",
+        b"etag",
+        b"last-modified",
+        b"location",
+    }
+)
+_MAX_IDEMPOTENCY_KEY_BYTES = 255
+_MAX_STORED_HEADER_COUNT = 64
+_MAX_STORED_HEADERS_BYTES = 16 * 1024
+
+
+class _IdempotencyCaptureError(RuntimeError):
+    """The downstream response cannot be stored and replayed safely."""
 
 
 class IdempotencyMiddleware:
-    """Replay the first response to a retried write, so an agent's mutation that times
-    out on a network blip and gets retried can't double-apply (two issues, a duplicate
-    audit event, a spurious extra page version).
+    """Durably single-flight mutating API retries across workers and restarts.
 
-    When a mutating request (POST/PUT/PATCH/DELETE) carries an `Idempotency-Key` header
-    from an identifiable caller, the first 2xx response is stored and any later request
-    with the same key REPLAYS it verbatim instead of running the write again. Pure-ASGI
-    (like RunContextMiddleware) so it can both short-circuit with the stored response and
-    capture the live one by wrapping `send`. The stored fingerprint is (key, identity,
-    method, path): reusing a key on a different method OR path is a different request and
-    is refused with a 409 rather than served a misleading replay.
+    A bounded, authenticated request first commits an executing ownership row.
+    Exactly one owner runs the route; concurrent identical requests briefly wait
+    and then replay its completed result. The owner buffers a successful response,
+    commits that response to SQLite, and only then sends the first client byte.
 
-    Bounded blast radius: anything that is not a mutating method + Idempotency-Key + an
-    identifiable credential passes straight through untouched, so non-opt-in traffic is
-    unaffected. Only 2xx is stored — a retry of a *failed* write should re-run, not replay
-    the error. Registered INSIDE harden_http, so a replayed response still gets the
-    security headers. Sequential retries (the common case) are fully covered; truly
-    concurrent same-key requests may both run, with the second store ignored — a
-    future claim-first pass could close that.
+    Domain mutations still use a different connection from the ownership row. A
+    crash between the domain commit and response finalization is therefore
+    unknowable. Athena never steals such an expired claim: retries receive an
+    explicit indeterminate 409 until an operator reconciles it.
     """
 
-    def __init__(self, app, db_path):
+    def __init__(
+        self,
+        app,
+        db_path,
+        *,
+        wait_seconds: float,
+        lease_seconds: int,
+        ttl_seconds: int,
+        max_response_bytes: int,
+    ):
         self.app = app
         self.db_path = db_path
+        self.wait_seconds = max(0.0, float(wait_seconds))
+        self.lease_seconds = max(1, int(lease_seconds))
+        self.ttl_seconds = max(1, int(ttl_seconds))
+        self.max_response_bytes = max(1, int(max_response_bytes))
 
     @staticmethod
-    def _identity(headers: dict) -> str | None:
-        """Scope the key to the caller, WITHOUT a DB lookup: a bearer token by its
-        hash (never the raw value), or the trusted actor header by id. None means the
-        request isn't identifiably authenticated, so we don't dedupe it (it will be
-        handled — likely 401 — like any other request)."""
-        auth = headers.get(b"authorization")
-        if auth is not None and auth.lower().startswith(b"bearer "):
-            token = auth[len(b"bearer "):].strip()
-            return "tok:" + hashlib.sha256(token).hexdigest()
+    def _is_api_path(path: str) -> bool:
+        return any(
+            path == root or path.startswith(root + "/")
+            for root in _IDEMPOTENCY_API_ROOTS
+        )
+
+    @staticmethod
+    def _headers(scope) -> dict[bytes, bytes]:
+        return {name.lower(): value for name, value in scope.get("headers", [])}
+
+    @staticmethod
+    def _header_values(scope, wanted: bytes) -> list[bytes]:
+        return [
+            value
+            for name, value in scope.get("headers", [])
+            if name.lower() == wanted
+        ]
+
+    @staticmethod
+    def _run_db(db_path, operation, **kwargs):
+        conn = db.connect(db_path)
+        try:
+            return operation(conn, **kwargs)
+        finally:
+            conn.close()
+
+    async def _authenticate(
+        self, headers: dict[bytes, bytes]
+    ) -> tuple[str | None, int | None]:
+        """Return a canonical live credential identity and optional token id."""
+        authorization = headers.get(b"authorization")
+        if authorization is not None and authorization.lower().startswith(b"bearer "):
+            raw = authorization[len(b"bearer ") :].strip().decode("latin-1")
+            actor = await asyncio.to_thread(self._resolve_token, raw)
+            if actor is None:
+                return None, None
+            return "tok:" + tokens._hash(raw), int(actor["_token_id"])
+
         if config.TRUST_ACTOR_HEADER:
-            actor = headers.get(b"x-athena-actor")
-            if actor is not None:
-                return "actor:" + actor.decode("latin-1")
-        return None
+            raw_actor = headers.get(b"x-athena-actor")
+            if raw_actor is not None:
+                try:
+                    actor_id = int(raw_actor.decode("latin-1"))
+                except ValueError:
+                    return None, None
+                actor = await asyncio.to_thread(self._resolve_actor, actor_id)
+                if actor is not None:
+                    return f"actor:{actor_id}", None
+        return None, None
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope.get("method") not in _IDEMPOTENT_METHODS:
-            await self.app(scope, receive, send)
-            return
-        headers = {name.lower(): value for name, value in scope.get("headers", [])}
-        key_raw = headers.get(b"idempotency-key")
-        if not key_raw:
-            await self.app(scope, receive, send)
-            return
-        key = key_raw.decode("latin-1").strip()
-        identity = self._identity(headers)
-        if not key or identity is None:
-            await self.app(scope, receive, send)
-            return
-
+    def _resolve_token(self, raw: str) -> dict | None:
         conn = db.connect(self.db_path)
         try:
-            existing = idempotency.get(conn, key=key, identity=identity)
-            if existing is not None:
-                # An Idempotency-Key is a promise that this is a retry of the SAME write.
-                # If the key comes back on a DIFFERENT method or path, the client reused it
-                # for a different request — replaying the first response would silently drop
-                # this write behind a false 2xx. Refuse loudly instead. (Same-method-and-path
-                # /different-body reuse is still replayed; a request-body fingerprint is a
-                # follow-up.)
-                if (
-                    existing["path"] != scope.get("path", "")
-                    or existing["method"] != scope["method"]
-                ):
-                    await _send_json_response(
-                        send,
-                        {"detail": "Idempotency-Key reused for a different request"},
-                        status_code=409,
-                    )
-                    return
-                await self._replay(send, existing)
-                return
+            return tokens.resolve_token(conn, raw)
+        finally:
+            conn.close()
 
-            captured: dict = {"status": 500, "headers": [], "body": []}
+    def _resolve_actor(self, actor_id: int) -> dict | None:
+        conn = db.connect(self.db_path)
+        try:
+            return users.get_user(conn, actor_id)
+        finally:
+            conn.close()
 
-            async def capture_send(message):
-                if message["type"] == "http.response.start":
-                    captured["status"] = message["status"]
-                    captured["headers"] = message.get("headers", [])
-                elif message["type"] == "http.response.body":
-                    captured["body"].append(message.get("body", b""))
-                await send(message)
-
-            await self.app(scope, receive, capture_send)
-
-            if 200 <= captured["status"] < 300:
-                content_type = next(
-                    (
-                        v.decode("latin-1")
-                        for n, v in captured["headers"]
-                        if n.lower() == b"content-type"
-                    ),
-                    None,
-                )
-                idempotency.store(
-                    conn,
-                    key=key,
-                    identity=identity,
-                    method=scope["method"],
-                    path=scope.get("path", ""),
-                    status_code=captured["status"],
-                    content_type=content_type,
-                    response_body=b"".join(captured["body"]),
-                )
+    def _has_users(self) -> bool:
+        conn = db.connect(self.db_path)
+        try:
+            return conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
         finally:
             conn.close()
 
     @staticmethod
-    async def _replay(send: Callable[[dict], Awaitable[None]], record: dict) -> None:
+    async def _read_body(receive):
+        messages: list[dict] = []
+        body_parts: list[bytes] = []
+        disconnected = False
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] == "http.request":
+                body_parts.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    break
+            elif message["type"] == "http.disconnect":
+                disconnected = True
+                break
+
+        replay_index = 0
+
+        async def replay_receive():
+            nonlocal replay_index
+            if replay_index < len(messages):
+                message = messages[replay_index]
+                replay_index += 1
+                return message
+            return await receive()
+
+        return b"".join(body_parts), replay_receive, disconnected
+
+    @classmethod
+    def _fingerprint(cls, scope, body: bytes) -> str:
+        digest = hashlib.sha256()
+
+        def add(label: bytes, value: bytes) -> None:
+            digest.update(len(label).to_bytes(2, "big"))
+            digest.update(label)
+            digest.update(len(value).to_bytes(8, "big"))
+            digest.update(value)
+
+        add(b"version", b"athena-idempotency-v2")
+        add(b"method", scope.get("method", "").encode("ascii"))
+        raw_path = scope.get("raw_path")
+        if raw_path is None:
+            raw_path = scope.get("path", "").encode("utf-8")
+        add(b"path", raw_path)
+        add(b"query", scope.get("query_string", b""))
+        for header_name in _FINGERPRINT_HEADERS:
+            values = cls._header_values(scope, header_name)
+            add(header_name + b"-count", str(len(values)).encode("ascii"))
+            for value in values:
+                add(header_name, value)
+        add(b"body-sha256", hashlib.sha256(body).digest())
+        return digest.hexdigest()
+
+    async def _claim(
+        self,
+        *,
+        key: str,
+        identity: str,
+        method: str,
+        path: str,
+        fingerprint: str,
+    ) -> idempotency.ClaimResult:
+        return await asyncio.to_thread(
+            self._run_db,
+            self.db_path,
+            idempotency.claim_or_read,
+            key=key,
+            identity=identity,
+            method=method,
+            path=path,
+            request_fingerprint=fingerprint,
+            lease_seconds=self.lease_seconds,
+        )
+
+    async def _mark_indeterminate(
+        self,
+        *,
+        key: str,
+        identity: str,
+        owner_token: str,
+        failure_code: str,
+    ) -> None:
+        try:
+            await asyncio.shield(
+                asyncio.to_thread(
+                    self._run_db,
+                    self.db_path,
+                    idempotency.mark_indeterminate,
+                    key=key,
+                    identity=identity,
+                    owner_token=owner_token,
+                    failure_code=failure_code,
+                )
+            )
+        except BaseException:
+            # The durable executing row itself is already fail-closed. If the
+            # database is unavailable, leave it to age into the same outcome.
+            _logger.exception("could not mark idempotency key indeterminate")
+
+    @staticmethod
+    def _serialize_headers(headers: list[tuple[bytes, bytes]]) -> str:
+        selected = [
+            (name.decode("latin-1"), value.decode("latin-1"))
+            for name, value in headers
+            if name.lower() in _REPLAYABLE_RESPONSE_HEADERS
+        ]
+        if len(selected) > _MAX_STORED_HEADER_COUNT:
+            raise _IdempotencyCaptureError("too many replayable response headers")
+        encoded = json.dumps(selected, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > _MAX_STORED_HEADERS_BYTES:
+            raise _IdempotencyCaptureError("replayable response headers are too large")
+        return encoded
+
+    async def __call__(self, scope, receive, send):
+        method = scope.get("method")
+        if scope["type"] != "http" or method not in _IDEMPOTENT_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        is_secret_create = method == "POST" and path in _SECRET_CREATE_PATHS
+        key_values = self._header_values(scope, b"idempotency-key")
+        if not key_values:
+            await self.app(scope, receive, send)
+            return
+        if not self._is_api_path(path) and not is_secret_create:
+            await _send_json_response(
+                send,
+                {"detail": "Idempotency-Key is not supported for this endpoint"},
+                status_code=400,
+            )
+            return
+        if len(key_values) != 1:
+            await _send_json_response(
+                send,
+                {"detail": "exactly one Idempotency-Key header is required"},
+                status_code=400,
+            )
+            return
+        key_bytes = key_values[0]
+        if (
+            not key_bytes
+            or len(key_bytes) > _MAX_IDEMPOTENCY_KEY_BYTES
+            or any(value < 0x21 or value > 0x7E for value in key_bytes)
+        ):
+            await _send_json_response(
+                send,
+                {
+                    "detail": (
+                        "Idempotency-Key must be 1-255 visible ASCII characters"
+                    )
+                },
+                status_code=400,
+            )
+            return
+        key = key_bytes.decode("ascii")
+        if is_secret_create:
+            await _send_json_response(
+                send,
+                {
+                    "detail": (
+                        "Idempotency-Key is not supported for endpoints that "
+                        "return a one-time secret"
+                    )
+                },
+                status_code=400,
+            )
+            return
+        headers = self._headers(scope)
+        if (
+            len(self._header_values(scope, b"authorization")) > 1
+            or len(self._header_values(scope, b"x-athena-actor")) > 1
+        ):
+            await _send_json_response(
+                send,
+                {"detail": "ambiguous authentication headers"},
+                status_code=400,
+            )
+            return
+
+        try:
+            identity, token_id = await self._authenticate(headers)
+        except sqlite3.Error:
+            _logger.exception("could not authenticate idempotent request")
+            await _send_json_response(
+                send,
+                {"detail": "idempotency service unavailable"},
+                status_code=503,
+                extra_headers={"Retry-After": "1"},
+            )
+            return
+        if identity is None:
+            # First-user bootstrap uniquely permits an anonymous/invalid caller;
+            # refuse its key so that path cannot mutate while silently bypassing
+            # retry protection. Ordinary protected routes keep their established
+            # 401 by reaching the normal dependency.
+            if method == "POST" and path == "/users":
+                try:
+                    has_users = await asyncio.to_thread(self._has_users)
+                except sqlite3.Error:
+                    _logger.exception("could not inspect user bootstrap state")
+                    await _send_json_response(
+                        send,
+                        {"detail": "idempotency service unavailable"},
+                        status_code=503,
+                        extra_headers={"Retry-After": "1"},
+                    )
+                    return
+                if not has_users:
+                    await _send_json_response(
+                        send,
+                        {
+                            "detail": (
+                                "Idempotency-Key requires an authenticated API "
+                                "credential for user creation"
+                            )
+                        },
+                        status_code=400,
+                    )
+                    return
+            await self.app(scope, receive, send)
+            return
+
+        if token_id is not None:
+            limiter = getattr(scope["app"].state, "token_rate_limiter", None)
+            if limiter is not None:
+                decision = limiter.check(token_id)
+                if not decision.allowed:
+                    await _send_json_response(
+                        send,
+                        {"detail": "token rate limit exceeded"},
+                        status_code=429,
+                        extra_headers={
+                            "Retry-After": str(decision.retry_after_seconds),
+                            "X-RateLimit-Limit": str(decision.limit),
+                            "X-RateLimit-Remaining": str(decision.remaining),
+                        },
+                    )
+                    return
+            scope.setdefault("state", {})[
+                "_athena_idempotency_rate_limited_token_id"
+            ] = token_id
+
+        body, replay_receive, disconnected = await self._read_body(receive)
+        if disconnected:
+            await self.app(scope, replay_receive, send)
+            return
+        fingerprint = self._fingerprint(scope, body)
+
+        deadline = asyncio.get_running_loop().time() + self.wait_seconds
+        poll_delay = 0.025
+        while True:
+            try:
+                claim = await self._claim(
+                    key=key,
+                    identity=identity,
+                    method=method,
+                    path=path,
+                    fingerprint=fingerprint,
+                )
+            except sqlite3.Error:
+                _logger.exception("could not claim idempotency key")
+                await _send_json_response(
+                    send,
+                    {"detail": "idempotency service unavailable"},
+                    status_code=503,
+                    extra_headers={"Retry-After": "1"},
+                )
+                return
+
+            if claim.kind == "owner":
+                owner_token = claim.record["owner_token"]
+                break
+            if claim.kind == "replay":
+                await self._replay(send, claim.record)
+                return
+            if claim.kind == "mismatch":
+                await _send_json_response(
+                    send,
+                    {"detail": "Idempotency-Key reused for a different request"},
+                    status_code=409,
+                )
+                return
+            if claim.kind == "authorization_changed":
+                await _send_json_response(
+                    send,
+                    {
+                        "detail": (
+                            "Authorization changed after this Idempotency-Key "
+                            "was claimed; its stored response cannot be replayed"
+                        ),
+                        "code": "idempotency_authorization_changed",
+                    },
+                    status_code=409,
+                )
+                return
+            if claim.kind == "indeterminate":
+                await _send_json_response(
+                    send,
+                    {
+                        "detail": (
+                            "The earlier request outcome is indeterminate; "
+                            "reconcile it before reusing this Idempotency-Key"
+                        ),
+                        "code": "idempotency_indeterminate",
+                    },
+                    status_code=409,
+                )
+                return
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                await _send_json_response(
+                    send,
+                    {
+                        "detail": (
+                            "A request with this Idempotency-Key is still in progress"
+                        ),
+                        "code": "idempotency_in_progress",
+                    },
+                    status_code=409,
+                    extra_headers={"Retry-After": "1"},
+                )
+                return
+            await asyncio.sleep(min(poll_delay, remaining))
+            poll_delay = min(0.25, poll_delay * 2)
+
+        captured: dict = {
+            "status": None,
+            "headers": [],
+            "body": [],
+            "size": 0,
+            "finished": False,
+        }
+
+        async def capture_send(message):
+            if message["type"] == "http.response.start":
+                if captured["status"] is not None:
+                    raise _IdempotencyCaptureError("duplicate response start")
+                captured["status"] = int(message["status"])
+                captured["headers"] = list(message.get("headers", []))
+                return
+            if message["type"] != "http.response.body":
+                raise _IdempotencyCaptureError("unsupported ASGI response message")
+            if captured["status"] is None:
+                raise _IdempotencyCaptureError("response body preceded response start")
+            chunk = message.get("body", b"")
+            captured["size"] += len(chunk)
+            if captured["size"] > self.max_response_bytes:
+                raise _IdempotencyCaptureError("response body is too large to replay")
+            captured["body"].append(chunk)
+            if not message.get("more_body", False):
+                captured["finished"] = True
+
+        try:
+            await self.app(scope, replay_receive, capture_send)
+            if captured["status"] is None or not captured["finished"]:
+                raise _IdempotencyCaptureError("incomplete ASGI response")
+        except BaseException:
+            await self._mark_indeterminate(
+                key=key,
+                identity=identity,
+                owner_token=owner_token,
+                failure_code="execution_failed",
+            )
+            raise
+
+        status_code = captured["status"]
+        response_body = b"".join(captured["body"])
+        response_headers = captured["headers"]
+
+        if 200 <= status_code < 300:
+            try:
+                serialized_headers = self._serialize_headers(response_headers)
+                content_type = next(
+                    (
+                        value.decode("latin-1")
+                        for name, value in response_headers
+                        if name.lower() == b"content-type"
+                    ),
+                    None,
+                )
+                completion = await asyncio.to_thread(
+                    self._run_db,
+                    self.db_path,
+                    idempotency.complete,
+                    key=key,
+                    identity=identity,
+                    owner_token=owner_token,
+                    status_code=status_code,
+                    content_type=content_type,
+                    response_headers=serialized_headers,
+                    response_body=response_body,
+                    ttl_seconds=self.ttl_seconds,
+                )
+                if completion == "lost":
+                    raise RuntimeError("idempotency ownership was lost before completion")
+                if completion not in {"completed", "authorization_changed"}:
+                    raise RuntimeError("invalid idempotency completion state")
+            except BaseException:
+                await self._mark_indeterminate(
+                    key=key,
+                    identity=identity,
+                    owner_token=owner_token,
+                    failure_code="finalization_failed",
+                )
+                raise
+            await self._send_captured(
+                send,
+                status_code=status_code,
+                headers=response_headers,
+                body=response_body,
+            )
+            return
+
+        if status_code >= 500:
+            await self._mark_indeterminate(
+                key=key,
+                identity=identity,
+                owner_token=owner_token,
+                failure_code="server_error_response",
+            )
+        else:
+            try:
+                await asyncio.to_thread(
+                    self._run_db,
+                    self.db_path,
+                    idempotency.release,
+                    key=key,
+                    identity=identity,
+                    owner_token=owner_token,
+                )
+            except sqlite3.Error:
+                # The response itself is still valid. A stranded claim fails closed
+                # after its lease instead of allowing a duplicate.
+                _logger.exception("could not release failed idempotency claim")
+
+        await self._send_captured(
+            send,
+            status_code=status_code,
+            headers=response_headers,
+            body=response_body,
+        )
+
+    @staticmethod
+    async def _send_captured(
+        send: Callable[[dict], Awaitable[None]],
+        *,
+        status_code: int,
+        headers: list[tuple[bytes, bytes]],
+        body: bytes,
+    ) -> None:
+        fresh_headers = [
+            (name, value)
+            for name, value in headers
+            if name.lower() != b"idempotent-replay"
+        ]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": fresh_headers,
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+    @staticmethod
+    async def _replay(
+        send: Callable[[dict], Awaitable[None]], record: dict
+    ) -> None:
         body = record["response_body"]
-        headers = [(b"content-length", str(len(body)).encode("ascii"))]
-        if record["content_type"]:
-            headers.append((b"content-type", record["content_type"].encode("latin-1")))
-        # Let a caller tell a replay apart from a fresh write.
+        headers = [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in json.loads(record["response_headers"])
+        ]
+        headers = [
+            (name, value)
+            for name, value in headers
+            if name.lower() not in {b"content-length", b"idempotent-replay"}
+        ]
+        if record["status_code"] != 204:
+            headers.append((b"content-length", str(len(body)).encode("ascii")))
         headers.append((b"idempotent-replay", b"true"))
         await send(
             {
@@ -333,7 +842,11 @@ class IdempotencyMiddleware:
 
 
 async def _send_json_response(
-    send: Callable[[dict], Awaitable[None]], body: dict, *, status_code: int
+    send: Callable[[dict], Awaitable[None]],
+    body: dict,
+    *,
+    status_code: int,
+    extra_headers: dict[str, str] | None = None,
 ) -> None:
     payload = json.dumps(body).encode("utf-8")
     headers = [
@@ -344,6 +857,11 @@ async def _send_json_response(
         (name.lower().encode("ascii"), value.encode("ascii"))
         for name, value in SECURITY_HEADERS.items()
     )
+    if extra_headers:
+        headers.extend(
+            (name.lower().encode("ascii"), value.encode("ascii"))
+            for name, value in extra_headers.items()
+        )
     if config.COOKIE_SECURE:
         headers.append(
             (
@@ -373,6 +891,10 @@ def create_app(
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
+    idempotency_wait_seconds: float | None = None,
+    idempotency_lease_seconds: int | None = None,
+    idempotency_ttl_seconds: int | None = None,
+    idempotency_max_response_bytes: int | None = None,
 ) -> FastAPI:
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
     body_limit = (
@@ -389,6 +911,26 @@ def create_app(
         config.ANON_RATE_LIMIT_PER_MINUTE
         if anon_rate_limit_per_minute is None
         else anon_rate_limit_per_minute
+    )
+    idempotency_wait = (
+        config.IDEMPOTENCY_WAIT_SECONDS
+        if idempotency_wait_seconds is None
+        else idempotency_wait_seconds
+    )
+    idempotency_lease = (
+        config.IDEMPOTENCY_LEASE_SECONDS
+        if idempotency_lease_seconds is None
+        else idempotency_lease_seconds
+    )
+    idempotency_ttl = (
+        config.IDEMPOTENCY_TTL_SECONDS
+        if idempotency_ttl_seconds is None
+        else idempotency_ttl_seconds
+    )
+    idempotency_response_limit = (
+        config.IDEMPOTENCY_MAX_RESPONSE_BYTES
+        if idempotency_max_response_bytes is None
+        else idempotency_max_response_bytes
     )
 
     # Cookies without the Secure flag ride over plain HTTP too, so a network attacker
@@ -441,13 +983,19 @@ def create_app(
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
-    # Stamp the ambient run id (X-Athena-Run) for every event recorded this request.
+    # Middleware is registered inside-out. Idempotency wraps the routes, run
+    # context wraps idempotency, and the request-body cap is outermost so keyed
+    # requests are bounded before the fingerprint layer buffers them.
+    app.add_middleware(
+        IdempotencyMiddleware,
+        db_path=resolved_db,
+        wait_seconds=idempotency_wait,
+        lease_seconds=idempotency_lease,
+        ttl_seconds=idempotency_ttl,
+        max_response_bytes=idempotency_response_limit,
+    )
     app.add_middleware(RunContextMiddleware)
-    # Replay the first response to a retried write (opt-in via the Idempotency-Key
-    # header). Added here so it sits INSIDE harden_http (a replay still gets the
-    # security headers) but wraps the routes (it can capture their response).
-    app.add_middleware(IdempotencyMiddleware, db_path=resolved_db)
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):

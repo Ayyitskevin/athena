@@ -43,9 +43,10 @@ The current remaining gaps are narrower:
 - **Agent/team administration is still basic.** Agent users can be delegated issues,
   but there is no dedicated admin surface for agent scope, allowed projects/spaces,
   or delegation policy. **[Fact]**
-- **API ergonomics are partial.** Idempotency exists for POST retries; bulk
-  operations, per-token rate limiting, and ETag/`If-Match` concurrency are still
-  open. **[Fact]**
+- **API ergonomics are partial.** Durable idempotency covers bounded REST
+  `POST`/`PUT`/`PATCH`/`DELETE` retries, per-token rate limiting and issue
+  bulk updates have landed, and event feeds are cursor-based. Broad list-cursor
+  coverage and ETag/`If-Match` concurrency are still open. **[Fact]**
 - **Packaging and retention need hardening.** Athena's single-file posture is a
   differentiator, but the repo does not yet ship a one-command production package
   or backup retention/off-host helper. **[Fact + Recommendation]**
@@ -154,7 +155,7 @@ comments/labels, no SSO/OIDC/SCIM, no granular import/export, no bulk API, no
 per-token rate limiting, and no idempotency keys. Many of those gaps are now closed.
 
 ### 2.7 2026-06-30 implementation delta **[Fact, from current main]**
-- Database migrations have advanced through `0040_activity_forked_from_event.sql`.
+- Database migrations have advanced through `0043_durable_idempotency.sql`.
 - Bodies render through Markdown-it with raw HTML disabled and `nh3` sanitization,
   while preserving cross-links and mentions.
 - Attachments exist for issues and pages with randomized stored names, size caps,
@@ -164,7 +165,7 @@ per-token rate limiting, and no idempotency keys. Many of those gaps are now clo
 - `/events`, webhooks, notifications/watching/mentions, automation rules, and an
   official optional MCP server are present.
 - Aegis has per-project statuses, issue hierarchy, dependencies, sprints, labels,
-  saved filters, activity CSV export, idempotent POST replay, and agent delegation.
+  saved filters, activity CSV export, durable mutation replay, and agent delegation.
 - Mentor has page versions, labels, comments, attachments, backlinks, and visibility.
 - Auth includes local sessions, scoped bearer tokens, and OIDC login/provisioning.
 - Operations include `athena-backup`, `athena-restore`, and `athena-doctor`.
@@ -461,9 +462,10 @@ the June 30 merge wave. **[Interpretation over Fact]**
 3. **Agent administration is basic.** Agent users can act through tokens and be
    delegated issues, but there is no dedicated admin/policy layer for allowed
    projects/spaces, delegation constraints, or agent roster review.
-4. **API safety is partial.** Idempotent POST replay exists. Remaining agent
-   ergonomics are per-token rate limiting, bulk endpoints, cursor coverage on
-   list endpoints that still lack it, and ETag/`If-Match` concurrency.
+4. **API safety is partial.** Durable single-flight retry receipts, per-token
+   limits, and issue bulk updates exist. Remaining agent ergonomics are stable
+   key propagation through every official client, cursor coverage on list
+   endpoints that still lack it, and ETag/`If-Match` concurrency.
 5. **Packaging/retention is still manual.** `athena-doctor` validates deploy
    prerequisites, but a production install path and retained/off-host backup
    helper would strengthen Athena's "simple to self-host" moat.
@@ -481,8 +483,10 @@ the June 30 merge wave. **[Interpretation over Fact]**
   membership now gate reads, but new containers default to public and there is no
   global "all reads require auth" deployment mode. This is acceptable for local/
   tailnet dogfood, but should be a deliberate hosting decision.
-- **No per-token rate limiting** — an agent loop can still hammer the service.
-  `Idempotency-Key` replay exists for POST retry safety, but rate limits remain open.
+- **Agent-loop bounds exist.** Bearer traffic is limited per token and bounded
+  REST mutations can use durable `Idempotency-Key` single-flight/replay.
+  Optimistic update preconditions and complete official-client key propagation
+  remain open.
 - **OIDC exists; SAML/SCIM do not.** Basic OIDC login/provisioning closes the near-
   term SSO gap. SAML and SCIM remain deferred enterprise items.
 - **Secrets & transport** are handled sensibly (env, HttpOnly cookies, CSRF, CSP,
@@ -726,11 +730,12 @@ risk** (1–10). Files reference real modules.
 - **Why:** Agents need safe retries and stable paging; humans need fast lists. Small,
   broad-benefit hardening.
 - **Files:** `aegis/api.py`, `mentor/api.py`, `core/*_api.py`, a small middleware/util.
-- **Data model:** `idempotency_keys(key, actor_id, response_hash, created_at)` (TTL).
-- **API:** honor `Idempotency-Key` on POST; cursor (`?after=`) on list endpoints;
-  `ETag`/`If-Match` for optimistic concurrency on issue/page updates.
-- **Tests:** replayed POST with same key returns the first result (no dup); cursor
-  paging is stable; stale `If-Match` → 412.
+- **Data model:** shipped durable claim/result states, exact request
+  fingerprints, fenced owners, bounded response receipts, and completed TTL.
+- **API:** shipped `Idempotency-Key` on bounded REST mutations and event cursors;
+  still add broad list cursors and `ETag`/`If-Match` for optimistic concurrency.
+- **Tests:** shipped race/restart/failure/revocation/replay coverage; still pin
+  stable paging and stale `If-Match` → 412.
 - **Risk:** Low-Medium · **Size:** M · **Deps:** none · **DoD:** green gate; documented.
 
 ### S13 — Bulk operations API for agents · **Score 5**

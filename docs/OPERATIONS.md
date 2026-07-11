@@ -15,6 +15,10 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies. Set to `1` when Athena is served over HTTPS. Leave off for plain local HTTP. |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
 | `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. Set to `0` only if a trusted reverse proxy enforces the limit. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
+| `ATHENA_IDEMPOTENCY_TTL_SECONDS` | `86400` | Retention for completed API idempotency receipts. Expired completed receipts are removed lazily. |
+| `ATHENA_IDEMPOTENCY_LEASE_SECONDS` | `60` | Freshness window for an executing idempotency owner. Expiry never grants automatic takeover. |
+| `ATHENA_IDEMPOTENCY_WAIT_SECONDS` | `5` | How long an identical concurrent retry waits for the owner to publish a result before receiving `409 idempotency_in_progress`. |
+| `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
 | `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
 | `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous (credential-free) reads. Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever anonymous reads face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
 | `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
@@ -348,6 +352,72 @@ Bearer-token API traffic is rate limited per token by
 `Retry-After` header, and rate-limit headers. Browser sessions and the trusted
 `X-Athena-Actor` bootstrap path are not token-limited; leave actor-header trust
 off anywhere untrusted.
+
+## Durable API Retry Keys
+
+Authenticated REST mutations under Athena's API roots accept an
+`Idempotency-Key` header on `POST`, `PUT`, `PATCH`, and `DELETE`. Use one
+stable, unique key for one exact logical request and reuse it only when retrying
+that request:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/issues \
+  -H "Authorization: Bearer $ATHENA_AGENT_TOKEN" \
+  -H 'Idempotency-Key: run-42-create-issue-7' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Investigate retry safety"}'
+```
+
+The key must be 1–255 visible ASCII characters. Athena fingerprints the method,
+raw path and query, bounded raw request body, `Accept`, content type/encoding,
+conditional headers, and Athena run-lineage headers. Reusing a key for different
+request bytes returns `409`; it never replays the first success over a different
+mutation. Multipart retries must preserve the raw boundary and bytes, not merely
+the same logical fields.
+
+The first worker commits an executing claim before it runs the route. An
+identical concurrent request waits up to `ATHENA_IDEMPOTENCY_WAIT_SECONDS`.
+When the owner succeeds without an intervening authorization change, Athena
+stores the bounded response before sending its first byte. Waiters and later
+retries receive the same status/body and safe response headers plus
+`Idempotent-Replay: true`. Completed receipts survive process restarts and
+expire after `ATHENA_IDEMPOTENCY_TTL_SECONDS`.
+
+Receipts are also fenced by a conservative, global authorization revision.
+Role/token-principal changes, visibility or membership changes, and ownership or
+container-placement changes can revoke access. If that revision differs from the
+one captured by a key, Athena purges the stored status, headers, and body, retains
+a non-expiring safety marker, and returns `409` with
+`code: idempotency_authorization_changed`. The global fence is deliberately
+broad: even an unrelated authorization change can block an older receipt.
+A keyed access-changing mutation may return its fresh success once and then be
+intentionally non-replayable. Reconcile the known mutation before choosing a new
+key; otherwise a new key can apply it again.
+
+There is one deliberate fail-closed boundary. Route mutations and receipt
+finalization currently use separate SQLite transactions. If a worker fails,
+returns a server error, exceeds the replay bounds, or outlives its lease, Athena
+cannot prove whether the mutation committed. It returns
+`409` with `code: idempotency_indeterminate` and never automatically lets a
+new worker take over. Inspect the domain row and activity trail before manually
+reconciling that key; blindly deleting the receipt and retrying can duplicate a
+committed mutation. A fresh executing owner that merely needs longer than the
+lease may still finalize its own fenced result.
+
+One-time-secret creation explicitly rejects keys instead of copying secrets into
+the replay table: `POST /tokens`, `POST /webhooks`, and their browser admin
+forms. Browser/session routes are otherwise outside the idempotency contract;
+never rely on a key to replay cookies, CSRF state, or HTML redirects. Invalid or
+revoked bearer credentials cannot read an existing receipt. Each valid, supported
+keyed bearer mutation—including a replay—consumes one token-rate-limit unit;
+requests rejected earlier for key/route/body/secret policy do not.
+Anonymous first-user creation with a key is rejected rather than silently
+ignoring its retry contract.
+
+The current optional MCP `AthenaClient` does not yet accept or propagate stable
+idempotency keys. Repeating an MCP mutation tool call is therefore a new request,
+not a protected transport retry; use the REST surface directly when retry
+deduplication is required until client/tool key propagation lands.
 
 ## Headless Admin Token Bootstrap
 
