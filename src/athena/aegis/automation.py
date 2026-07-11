@@ -306,7 +306,7 @@ def execute_action(
     desired state) returns False rather than raising — a bad rule fails soft instead of
     stranding the engine. The actions mirror the issue write endpoints' data-layer +
     activity-recorder pair, so an automated change is indistinguishable in the log from a
-    human one except for the actor. Core-field changes go through the same atomic
+    human one except for the actor. Migrated issue changes go through the same atomic
     application command as REST/web, under the explicit Automation system policy."""
     issue = issues.get_issue(conn, event["target_id"])
     if issue is None:
@@ -315,15 +315,19 @@ def execute_action(
 
     if rule["action_type"] == "assign":
         user_id = params.get("user_id")
-        if not isinstance(user_id, int) or users.get_user(conn, user_id) is None:
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
             return False
         if issue["assignee_id"] == user_id:
             return False
-        issues.set_assignee(conn, issue["id"], user_id)
-        issue_activity.record_assignee_change(
-            conn, actor_id=actor_id, issue_id=issue["id"],
-            before=issue["assignee_id"], after=user_id,
-        )
+        try:
+            issue_commands.update_issue_as_automation(
+                conn,
+                actor_id=actor_id,
+                issue_id=issue["id"],
+                assignee_id=user_id,
+            )
+        except issue_commands.IssueCommandError:
+            return False
         return True
 
     if rule["action_type"] == "set_status":

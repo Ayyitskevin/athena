@@ -562,27 +562,17 @@ def set_assignee(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Creator or assignee only (404 if missing, 403 if not permitted). Checked
-    # against the CURRENT assignee — so an unassigned issue can only be assigned
-    # by its creator, and an assignee may reassign or unassign themselves.
-    before = _issue_for_write(conn, issue_id, actor)
-    # Reject an unknown user here (422) rather than letting the FK raise a 500.
-    # None is always valid — it means "unassign".
-    if (
-        payload.assignee_id is not None
-        and users.get_user(conn, payload.assignee_id) is None
-    ):
-        raise HTTPException(status_code=422, detail="no such user")
-    updated = issues.set_assignee(conn, issue_id, payload.assignee_id)
-    # The helper records "assigned"/"unassigned" only when the assignee actually
-    # changed (re-PUTting the same assignee records nothing).
-    issue_activity.record_assignee_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["assignee_id"],
-        after=payload.assignee_id,
-    )
+    # The shared command owns current-assignee authorization, target-user
+    # validation, the nullable row update, auto-watch, notifications, and audit.
+    try:
+        updated = issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            assignee_id=payload.assignee_id,
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -645,14 +635,8 @@ def _apply_bulk_update(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    # Validate every relationship field before the core command applies anything.
-    # Status/priority validation stays in that command, its one policy owner.
-    if (
-        "assignee_id" in provided
-        and provided["assignee_id"] is not None
-        and users.get_user(conn, provided["assignee_id"]) is None
-    ):
-        raise HTTPException(status_code=422, detail="no such user")
+    # Sprint is the one remaining relationship prevalidated here. Assignee plus
+    # status/priority are validated and applied together by the shared command.
     if "sprint_id" in provided and provided["sprint_id"] is not None:
         sprint = sprints.get_sprint(conn, provided["sprint_id"])
         if sprint is None:
@@ -662,27 +646,20 @@ def _apply_bulk_update(
                 status_code=422,
                 detail="sprint belongs to a different project than the issue",
             )
-    # Apply. Core editable fields use the same atomic command as the single REST
-    # and browser writes; the remaining nullable relationships will migrate in
-    # later vertical slices.
-    if "status" in provided or "priority" in provided:
-        core_fields = {
+    # Apply status, priority, and assignee in one per-issue transaction. Sprint
+    # remains a legacy follow-on write until its own command migration.
+    if any(key in provided for key in ("status", "priority", "assignee_id")):
+        command_fields = {
             key: provided[key]
-            for key in ("status", "priority")
+            for key in ("status", "priority", "assignee_id")
             if key in provided
         }
         try:
             issue_commands.update_issue(
-                conn, actor=actor, issue_id=issue_id, **core_fields
+                conn, actor=actor, issue_id=issue_id, **command_fields
             )
         except issue_commands.IssueCommandError as exc:
             raise _issue_command_http_error(exc) from exc
-    if "assignee_id" in provided:
-        issues.set_assignee(conn, issue_id, provided["assignee_id"])
-        issue_activity.record_assignee_change(
-            conn, actor_id=actor["id"], issue_id=issue_id,
-            before=before["assignee_id"], after=provided["assignee_id"],
-        )
     if "sprint_id" in provided:
         issues.set_sprint(conn, issue_id, provided["sprint_id"])
         issue_activity.record_sprint_change(

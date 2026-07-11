@@ -979,7 +979,7 @@ def change_issue_assignee(
             '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
@@ -991,19 +991,13 @@ def change_issue_assignee(
             target = int(assignee_id)
         except ValueError:
             return HTMLResponse('<div class="error">Invalid user.</div>', status_code=400)
-        if users.get_user(conn, target) is None:
-            return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
 
-    issues.set_assignee(conn, issue_id, target)
-    # Record the assignment change (helper no-ops if unchanged), attributed to the
-    # session user — same trail the REST assignee endpoint leaves.
-    issue_activity.record_assignee_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["assignee_id"],
-        after=target,
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, assignee_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
