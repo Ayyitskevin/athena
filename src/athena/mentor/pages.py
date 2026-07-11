@@ -30,9 +30,10 @@ def create_page(
     equal to the creator and creation time — this is what the first edit will
     snapshot as version 1."""
     cur = conn.execute(
-        "INSERT INTO pages (space_id, parent_id, title, body, created_by, "
+        "INSERT INTO pages (id, space_id, parent_id, title, body, created_by, "
         "updated_by, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        "SELECT next_id, ?, ?, ?, ?, ?, ?, datetime('now') "
+        "FROM activity_target_id_sequences WHERE target_kind = 'page'",
         (space_id, parent_id, title, body, created_by, created_by),
     )
     conn.commit()

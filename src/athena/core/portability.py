@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import secrets
 import sqlite3
 from typing import Any, Iterable
 
@@ -631,8 +632,9 @@ def _replay_project_import(
     issue_counter = max(project.get("issue_counter") or 0, max_seq)
     cur = conn.execute(
         "INSERT INTO projects "
-        "(name, key, description, created_by, created_at, issue_counter, visibility) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(name, key, description, created_by, created_at, issue_counter, visibility, "
+        "activity_scope_key) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             project["name"],
             project["key"],
@@ -641,6 +643,7 @@ def _replay_project_import(
             project["created_at"],
             issue_counter,
             project.get("visibility", "public"),
+            secrets.token_hex(16),
         ),
     )
     project_id = cur.lastrowid

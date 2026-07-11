@@ -344,7 +344,7 @@ def mark_inbox_read(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    notifications.mark_read(conn, user["id"], notification_id)
+    notifications.mark_read(conn, user["id"], notification_id, actor=user)
     return RedirectResponse("/inbox", status_code=303)
 
 
@@ -359,7 +359,7 @@ def mark_inbox_all_read(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    notifications.mark_all_read(conn, user["id"])
+    notifications.mark_all_read(conn, user["id"], actor=user)
     return RedirectResponse("/inbox", status_code=303)
 
 
@@ -908,7 +908,7 @@ def _render_issue_detail(
         # This issue's own audit trail (newest first) — the same data-layer read
         # the REST feed serves, scoped to this target.
         "activity": activity.list_activity(
-            conn, target_kind="issue", target_id=issue_id
+            conn, target_kind="issue", target_id=issue_id, actor=user
         ),
     }
     if extra:
@@ -944,12 +944,23 @@ def issue_history_view(
             status_code=404,
         )
     as_of = _int_or_none(request.query_params.get("as_of"))
-    snapshot = issue_history.project_issue_state(
-        conn, issue["id"], as_of_event_id=as_of
-    )
+    try:
+        snapshot = issue_history.project_issue_state(
+            conn, issue["id"], as_of_event_id=as_of, actor=user
+        )
+    except issue_history.IncompleteIssueHistory:
+        return HTMLResponse(
+            '<div class="blocked">Complete issue history is not available.</div>',
+            status_code=403,
+        )
+    except issue_history.IssueHistoryTooLarge:
+        return HTMLResponse(
+            '<div class="error">Issue history exceeds the exact projection limit.</div>',
+            status_code=409,
+        )
     # The issue's timeline (newest-first), each event a checkpoint to time-travel to.
     events = activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
+        conn, target_kind="issue", target_id=issue["id"], actor=user
     )
     return _templates.TemplateResponse(
         request=request,

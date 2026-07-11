@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from athena.core import activity, run_context
+from athena.core import activity, db, run_context
 
 SCHEMA = "athena.run_replay.v1"
 
@@ -78,15 +78,31 @@ def build_run_replay_artifact(
     *,
     actor: dict | None | object = _DEFAULT_ACTOR,
 ) -> dict | None:
+    """Build one replay from a single authorization-consistent read snapshot."""
+    with db.transaction(conn):
+        return _build_run_replay_artifact(conn, run_id, actor=actor)
+
+
+def _build_run_replay_artifact(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    actor: dict | None | object = _DEFAULT_ACTOR,
+) -> dict | None:
     """Return a portable replay artifact for ``run_id``.
 
-    Returns ``None`` when the run has no events visible to ``actor``. The focal run's
-    events are paged from ``activity.list_events`` so the artifact is complete even
-    when the lineage endpoint would cap the focal node's event payload.
+    Returns ``None`` when the run is absent, hidden, or only partly visible to
+    ``actor``. A replay artifact must never present a visibility-filtered subsequence
+    as a complete deterministic run.
     """
     normalized = run_context.normalize(run_id)
     if normalized is None:
         raise ValueError("run id is required")
+
+    if actor is not _DEFAULT_ACTOR and not activity.can_see_complete_run(
+        conn, normalized, actor
+    ):
+        return None
 
     events = _all_run_events(conn, normalized, actor=actor)
     if not events:

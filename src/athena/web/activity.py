@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 
-from athena.core import activity, users
+from athena.core import activity
 from athena.core.deps import get_conn
 from athena.web.router import _int_or_none, get_templates
 
@@ -103,9 +103,9 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         name="aegis/activity.html",
         context={
             "events": events,
-            "all_users": users.list_users(conn),
-            "all_verbs": activity.distinct_verbs(conn),
-            "all_kinds": activity.distinct_target_kinds(conn),
+            "all_users": activity.distinct_actors(conn, actor=user),
+            "all_verbs": activity.distinct_verbs(conn, actor=user),
+            "all_kinds": activity.distinct_target_kinds(conn, actor=user),
             "f_actor": actor_id,
             "f_actor_type": actor_type,
             "f_verb": verb,
@@ -175,8 +175,12 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
-    selected_actor = users.get_user(conn, actor_id) if actor_id is not None else None
     user = getattr(request.state, "user", None)
+    visible_actors = activity.distinct_actors(conn, actor=user)
+    selected_actor = next(
+        (candidate for candidate in visible_actors if candidate["id"] == actor_id),
+        None,
+    )
     runs = (
         activity.reconstruct_runs(conn, actor_id=actor_id, actor=user)
         if selected_actor is not None
@@ -186,7 +190,7 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         request=request,
         name="aegis/activity_runs.html",
         context={
-            "all_users": users.list_users(conn),
+            "all_users": visible_actors,
             "f_actor": actor_id,
             "selected_actor": selected_actor,
             "runs": runs,

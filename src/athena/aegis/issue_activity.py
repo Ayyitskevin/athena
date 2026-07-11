@@ -12,10 +12,30 @@ status, same assignee) writes nothing, on either surface.
 """
 from __future__ import annotations
 
+from collections.abc import Collection
 import sqlite3
 
 from athena.aegis import issues, projects, sprints
 from athena.core import activity, labels, notifications, users
+
+
+def _scope_kwargs(
+    project_ids: Collection[int | None] | None,
+) -> dict[str, object]:
+    return {} if project_ids is None else {"issue_project_ids": project_ids}
+
+
+def _project_ids_for_issues(
+    conn: sqlite3.Connection, *issue_ids: int | None
+) -> set[int | None]:
+    project_ids: set[int | None] = set()
+    for issue_id in issue_ids:
+        if issue_id is None:
+            continue
+        issue = issues.get_issue(conn, issue_id)
+        if issue is not None:
+            project_ids.add(issue["project_id"])
+    return project_ids
 
 
 def record_created(
@@ -107,6 +127,7 @@ def record_status_change(
     before: str,
     after: str,
     commit: bool = True,
+    issue_project_ids: Collection[int | None] | None = None,
 ) -> None:
     """Record a status transition as "before → after". No-op if unchanged — the
     lifecycle moment only matters when the status actually moved."""
@@ -120,6 +141,7 @@ def record_status_change(
         target_id=issue_id,
         detail=f"{before} → {after}",
         commit=commit,
+        **_scope_kwargs(issue_project_ids),
     )
 
 
@@ -210,9 +232,14 @@ def record_project_change(
 ) -> None:
     """Record a project move. No-op if the project didn't change. Clearing records
     "removed_from_project" with the old project's name; setting records
-    "changed_project" with the new project's name as the human specifics."""
+    "changed_project" with the new project's name as the human specifics.
+
+    Both containers scope the transition: after A → B → C, a reader with access
+    only to A and C must not learn B's name from the historical A → B event.
+    """
     if before == after:
         return
+    project_ids = {before, after}
     if after is None:
         old = projects.get_project(conn, before)
         activity.record(
@@ -222,6 +249,7 @@ def record_project_change(
             target_kind="issue",
             target_id=issue_id,
             detail=old["name"] if old else "",
+            issue_project_ids=project_ids,
         )
         return
     new = projects.get_project(conn, after)
@@ -232,6 +260,7 @@ def record_project_change(
         target_kind="issue",
         target_id=issue_id,
         detail=new["name"] if new else "",
+        issue_project_ids=project_ids,
     )
 
 
@@ -242,14 +271,25 @@ def record_sprint_change(
     issue_id: int,
     before: int | None,
     after: int | None,
+    issue_project_ids: Collection[int | None] | None = None,
 ) -> None:
-    """Record a sprint move. No-op if the sprint didn't change. Clearing records
-    "removed_from_sprint" with the old sprint's name; setting records "moved_to_sprint"
-    with the new sprint's name as the human specifics."""
+    """Record a sprint move with every referenced project in its access envelope.
+
+    This remains safe even for a legacy cross-project row: clearing a private source
+    sprint after the issue moved public cannot publish the old sprint's name.
+    """
     if before == after:
         return
+    old = sprints.get_sprint(conn, before) if before is not None else None
+    new = sprints.get_sprint(conn, after) if after is not None else None
+    project_ids = _project_ids_for_issues(conn, issue_id)
+    if issue_project_ids is not None:
+        project_ids.update(issue_project_ids)
+    for sprint in (old, new):
+        if sprint is not None:
+            project_ids.add(sprint["project_id"])
+
     if after is None:
-        old = sprints.get_sprint(conn, before)
         activity.record(
             conn,
             actor_id=actor_id,
@@ -257,9 +297,9 @@ def record_sprint_change(
             target_kind="issue",
             target_id=issue_id,
             detail=old["name"] if old else "",
+            issue_project_ids=project_ids,
         )
         return
-    new = sprints.get_sprint(conn, after)
     activity.record(
         conn,
         actor_id=actor_id,
@@ -267,6 +307,7 @@ def record_sprint_change(
         target_kind="issue",
         target_id=issue_id,
         detail=new["name"] if new else "",
+        issue_project_ids=project_ids,
     )
 
 
@@ -280,9 +321,14 @@ def record_parent_change(
 ) -> None:
     """Record a parent (hierarchy) change. No-op if the parent didn't change.
     Clearing records "removed_parent"; setting records "set_parent" with the new
-    parent's key (or #id) as the human specifics."""
+    parent's key (or #id) as the human specifics.
+
+    Parent relations may cross projects. Scope the event to the child plus both
+    relationship endpoints so a public child cannot publish a private parent's key.
+    """
     if before == after:
         return
+    project_ids = _project_ids_for_issues(conn, issue_id, before, after)
     if after is None:
         activity.record(
             conn,
@@ -290,6 +336,7 @@ def record_parent_change(
             verb="removed_parent",
             target_kind="issue",
             target_id=issue_id,
+            issue_project_ids=project_ids,
         )
         return
     parent = issues.get_issue(conn, after)
@@ -301,6 +348,7 @@ def record_parent_change(
         target_kind="issue",
         target_id=issue_id,
         detail=detail,
+        issue_project_ids=project_ids,
     )
 
 

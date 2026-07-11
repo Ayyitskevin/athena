@@ -490,7 +490,14 @@ def issue_state(
     # event. Gated like other reads — a hidden/missing issue is a 404; within a visible
     # issue its own history reads openly, like the detail page.
     _issue_for_read(conn, issue_id, actor)
-    state = issue_history.project_issue_state(conn, issue_id, as_of_event_id=as_of)
+    try:
+        state = issue_history.project_issue_state(
+            conn, issue_id, as_of_event_id=as_of, actor=actor
+        )
+    except issue_history.IncompleteIssueHistory as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except issue_history.IssueHistoryTooLarge as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if state is None:  # _issue_for_read already 404s; this is belt-and-suspenders
         raise HTTPException(status_code=404, detail="no such issue")
     return state

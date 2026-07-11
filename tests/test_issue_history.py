@@ -160,3 +160,32 @@ def test_state_endpoint_is_visibility_gated(tmp_path):
         # A hidden issue's state never leaks — same 404 as a missing one.
         assert client.get(f"/issues/{iid}/state", headers=H_OUTSIDER).status_code == 404
         assert client.get(f"/issues/{iid}/state", headers=H_CREATOR).status_code == 200
+
+
+def test_state_endpoint_rejects_a_truncated_projection(tmp_path, monkeypatch):
+    with TestClient(create_app(tmp_path / "history-cap.db")) as client:
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        issue_id = client.post(
+            "/issues", json={"title": "Too much history"}, headers=H_ADMIN
+        ).json()["id"]
+        assert client.patch(
+            f"/issues/{issue_id}",
+            json={"priority": "high"},
+            headers=H_ADMIN,
+        ).status_code == 200
+        assert client.patch(
+            f"/issues/{issue_id}",
+            json={"priority": "low"},
+            headers=H_ADMIN,
+        ).status_code == 200
+
+        monkeypatch.setattr(issue_history, "_MAX_EVENTS", 2)
+        response = client.get(f"/issues/{issue_id}/state", headers=H_ADMIN)
+        assert response.status_code == 409
+        assert response.json() == {
+            "detail": "issue history exceeds the exact projection limit"
+        }

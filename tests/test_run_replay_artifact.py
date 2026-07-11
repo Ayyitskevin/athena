@@ -146,6 +146,70 @@ def test_run_replay_endpoint_gates_hidden_runs(tmp_path):
         assert client.get("/activity/runs/p1/replay", headers=H1).status_code == 200
 
 
+def test_run_replay_rejects_a_visibility_filtered_subsequence(tmp_path):
+    h_creator = {"X-Athena-Actor": "2"}
+    h_outsider = {"X-Athena-Actor": "3"}
+    run_headers = {**h_creator, "X-Athena-Run": "mixed-scope"}
+    with TestClient(create_app(tmp_path / "partial-visibility.db")) as client:
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H1,
+        )
+        for email, name in (
+            ("c@e.com", "Creator"),
+            ("o@e.com", "Outsider"),
+        ):
+            client.post(
+                "/users",
+                json={
+                    "email": email,
+                    "name": name,
+                    "password": "pw",
+                    "role": "member",
+                },
+                headers=H1,
+            )
+        project_id = client.post(
+            "/projects",
+            json={"name": "Secret", "key": "SEC"},
+            headers=h_creator,
+        ).json()["id"]
+        issue_id = client.post(
+            "/issues",
+            json={"title": "Mixed run", "project_id": project_id},
+            headers=run_headers,
+        ).json()["id"]
+        assert client.put(
+            f"/projects/{project_id}/visibility",
+            json={"visibility": "private"},
+            headers=h_creator,
+        ).status_code == 200
+        assert client.put(
+            f"/issues/{issue_id}/project",
+            json={"project_id": None},
+            headers=run_headers,
+        ).status_code == 200
+        assert client.patch(
+            f"/issues/{issue_id}",
+            json={"priority": "high"},
+            headers=run_headers,
+        ).status_code == 200
+
+        visible = client.get(
+            "/events?run_id=mixed-scope", headers=h_outsider
+        ).json()["events"]
+        assert [(event["verb"], event["detail"]) for event in visible] == [
+            ("changed_priority", "medium → high")
+        ]
+        assert client.get(
+            "/activity/runs/mixed-scope/replay", headers=h_outsider
+        ).status_code == 404
+        assert client.get(
+            "/activity/runs/mixed-scope/replay", headers=h_creator
+        ).status_code == 200
+
+
 def test_export_run_cli_writes_json_and_refuses_overwrite(tmp_path):
     db_file = tmp_path / "cli.db"
     conn = _conn(db_file)

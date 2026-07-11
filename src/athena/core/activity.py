@@ -10,6 +10,7 @@ aegis/comments.py.
 from __future__ import annotations
 
 import csv
+from collections.abc import Collection
 from datetime import datetime
 from io import StringIO
 import sqlite3
@@ -19,13 +20,21 @@ from athena.core import access, notifications, run_context
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
 _SELECT = (
-    "SELECT a.*, u.name AS actor_name FROM activity a JOIN users u ON u.id = a.actor_id"
+    "SELECT a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
+    "a.created_at, a.run_id, a.parent_run_id, a.forked_from_event_id, "
+    "a.imported_at, u.name AS actor_name FROM activity a "
+    "JOIN users u ON u.id = a.actor_id"
 )
 
 # Sentinel for the read functions' `actor`: "no visibility gating" (internal callers,
 # per-entity sections already gated upstream by their detail route's 404, and tests).
 # Distinct from actor=None, a real anonymous viewer who sees only public targets.
 _UNGATED = object()
+
+# Native issue events snapshot their current project automatically. Transition
+# recorders pass every project whose facts the event contains instead, so a later
+# move cannot re-scope old private history through the issue's new container.
+_AUTO_ISSUE_PROJECTS = object()
 
 
 def _like_pattern(value: str) -> str:
@@ -77,6 +86,7 @@ def record(
     target_id: int,
     detail: str = "",
     commit: bool = True,
+    issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
@@ -86,33 +96,83 @@ def record(
     X-Athena-Run / X-Athena-Parent-Run / X-Athena-Fork-From-Event headers for the
     request in flight, via run_context) so the caller never threads them through —
     each is NULL when not supplied, which is every untagged or top-level action."""
-    cur = conn.execute(
-        "INSERT INTO activity "
-        "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
-        "forked_from_event_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            actor_id,
-            verb,
-            target_kind,
-            target_id,
-            detail,
-            run_context.get_run_id(),
-            run_context.get_parent_run_id(),
-            run_context.get_forked_from_event_id(),
-        ),
-    )
-    # Fan the event out to the inbox of anyone watching this target (not the actor).
-    # notify_watchers doesn't commit, so the event row and its notifications land in
-    # one commit — they appear together or not at all.
-    notifications.notify_watchers(
-        conn,
-        event_id=cur.lastrowid,
-        actor_id=actor_id,
-        target_kind=target_kind,
-        target_id=target_id,
-    )
-    if commit:
-        conn.commit()
+    # Resolve every access-envelope input after acquiring SQLite's writer
+    # reservation. A standalone commit=False call leaves this transaction open for
+    # its command owner; nested command calls already hold the reservation.
+    opened_transaction = not conn.in_transaction
+    if opened_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        scope_is_complete = True
+        if target_kind == "issue" and issue_project_ids is _AUTO_ISSUE_PROJECTS:
+            row = conn.execute(
+                "SELECT project_id FROM issues WHERE id = ?", (target_id,)
+            ).fetchone()
+            if row is None:
+                resolved_project_ids = set()
+                scope_is_complete = False
+            else:
+                resolved_project_ids = {row["project_id"]}
+        elif target_kind == "issue":
+            resolved_project_ids = set(issue_project_ids)
+        elif target_kind == "project":
+            resolved_project_ids = {target_id}
+        else:
+            resolved_project_ids = set()
+        resolved_project_ids.discard(None)
+
+        resolved_scope_keys: set[str] = set()
+        for project_id in sorted(resolved_project_ids):
+            scope = conn.execute(
+                "SELECT activity_scope_key FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+            if scope is None or scope["activity_scope_key"] is None:
+                scope_is_complete = False
+            else:
+                resolved_scope_keys.add(scope["activity_scope_key"])
+
+        cur = conn.execute(
+            "INSERT INTO activity "
+            "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
+            "forked_from_event_id, visibility_restricted) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                actor_id,
+                verb,
+                target_kind,
+                target_id,
+                detail,
+                run_context.get_run_id(),
+                run_context.get_parent_run_id(),
+                run_context.get_forked_from_event_id(),
+                0 if scope_is_complete else 1,
+            ),
+        )
+        conn.executemany(
+            "INSERT INTO activity_visibility_projects "
+            "(event_id, project_scope_key) VALUES (?, ?)",
+            [
+                (cur.lastrowid, project_scope_key)
+                for project_scope_key in sorted(resolved_scope_keys)
+            ],
+        )
+        # Fan the event out to the inbox of anyone watching this target (not the actor).
+        # Scope rows are already present, and notify_watchers doesn't commit, so the
+        # event, its access envelope, and notifications land or roll back together.
+        notifications.notify_watchers(
+            conn,
+            event_id=cur.lastrowid,
+            actor_id=actor_id,
+            target_kind=target_kind,
+            target_id=target_id,
+        )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit or opened_transaction:
+            conn.rollback()
+        raise
     return get_activity(conn, cur.lastrowid)
 
 
@@ -648,18 +708,85 @@ def run_fork_contract(
     }
 
 
-def distinct_verbs(conn: sqlite3.Connection) -> list[str]:
-    """The verbs that actually occur in the trail, alphabetical. Powers the feed's
-    verb filter from real data — never a hardcoded list that could drift from what
-    the recorders emit."""
-    rows = conn.execute("SELECT DISTINCT verb FROM activity ORDER BY verb").fetchall()
+def can_see_complete_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    actor: dict | None,
+) -> bool:
+    """Whether an actor-visible replay would contain every event in the run."""
+    total = conn.execute(
+        "SELECT COUNT(*) FROM activity WHERE run_id = ?", (run_id,)
+    ).fetchone()[0]
+    if total == 0:
+        return False
+    gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+    if not gate:
+        return True
+    visible = conn.execute(
+        "SELECT COUNT(*) FROM activity a WHERE a.run_id = ? "
+        f"AND {gate}",
+        (run_id, *gate_params),
+    ).fetchone()[0]
+    return visible == total
+
+
+def distinct_verbs(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> list[str]:
+    """The visible verbs that actually occur in the trail, alphabetical."""
+    where = ""
+    params: list = []
+    if actor is not _UNGATED:
+        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where = f" WHERE {gate}"
+    rows = conn.execute(
+        f"SELECT DISTINCT a.verb FROM activity a{where} ORDER BY a.verb",
+        params,
+    ).fetchall()
     return [row["verb"] for row in rows]
 
 
-def distinct_target_kinds(conn: sqlite3.Connection) -> list[str]:
-    """The target kinds that actually occur in the trail, alphabetical. Same
-    honesty rule as distinct_verbs — only kinds something has recorded against."""
+def distinct_target_kinds(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> list[str]:
+    """The visible target kinds that actually occur in the trail, alphabetical."""
+    where = ""
+    params: list = []
+    if actor is not _UNGATED:
+        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where = f" WHERE {gate}"
     rows = conn.execute(
-        "SELECT DISTINCT target_kind FROM activity ORDER BY target_kind"
+        f"SELECT DISTINCT a.target_kind FROM activity a{where} "
+        "ORDER BY a.target_kind",
+        params,
     ).fetchall()
     return [row["target_kind"] for row in rows]
+
+
+def distinct_actors(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> list[dict]:
+    """Actors represented in events visible to the viewer, ordered by id."""
+    where = ""
+    params: list = []
+    if actor is not _UNGATED:
+        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where = f" WHERE {gate}"
+    rows = conn.execute(
+        "SELECT DISTINCT u.id, u.name, u.is_agent FROM activity a "
+        f"JOIN users u ON u.id = a.actor_id{where} ORDER BY u.id",
+        params,
+    ).fetchall()
+    return [
+        {"id": row["id"], "name": row["name"], "is_agent": bool(row["is_agent"])}
+        for row in rows
+    ]

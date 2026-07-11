@@ -23,9 +23,14 @@ def _human_and_agent(client):
 def test_runs_page_shows_picker_and_hint(tmp_path):
     with TestClient(create_app(tmp_path / "pick.db")) as client:
         _human_and_agent(client)
+        client.post(
+            "/issues",
+            json={"title": "visible agent work"},
+            headers={"X-Athena-Actor": "2"},
+        )
         page = client.get("/aegis/activity/runs")
         assert page.status_code == 200
-        # The actor picker lists everyone, marking agents.
+        # The picker lists actors represented in visible events, marking agents.
         assert "Choose an actor" in page.text
         assert "Bot (agent)" in page.text
         # With no actor chosen, a hint instead of an empty page.
@@ -61,13 +66,13 @@ def test_runs_page_unknown_actor_is_empty_not_error(tmp_path):
         assert "No such actor" in page.text
 
 
-def test_runs_page_actor_with_no_activity(tmp_path):
+def test_runs_page_actor_with_no_activity_is_not_selectable(tmp_path):
     with TestClient(create_app(tmp_path / "quiet.db")) as client:
         _human_and_agent(client)
         # The agent (id 2) exists but has done nothing.
         page = client.get("/aegis/activity/runs?actor=2")
         assert page.status_code == 200
-        assert "No activity yet for Bot" in page.text
+        assert "No such actor" in page.text
 
 
 def test_activity_feed_links_to_runs_view(tmp_path):

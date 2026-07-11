@@ -23,16 +23,26 @@ import sqlite3
 from collections.abc import Callable
 
 from athena.aegis import issues
-from athena.core import activity
+from athena.core import access, activity, db
 
 # The separator issue_activity.record_status_change / record_priority_change write
 # between the old and new value: detail = f"{before} → {after}". Splitting on it inverts
 # the recorder. (Kept in sync with that module by this single literal.)
 _ARROW = " → "
 
-# An issue's whole timeline, oldest-first. Generous — an issue with more lifecycle events
-# than this is pathological; beyond it the projection would see only the newest window.
+# Bound one exact projection. We query one extra row and reject over-cap histories;
+# silently dropping the oldest events would turn time-travel into a false reconstruction.
 _MAX_EVENTS = 10000
+
+_UNGATED = object()
+
+
+class IncompleteIssueHistory(PermissionError):
+    """The actor can see the issue now, but not its complete event-time history."""
+
+
+class IssueHistoryTooLarge(RuntimeError):
+    """The exact projection cap was exceeded; no partial state was returned."""
 
 
 def _before_after(detail: str) -> tuple[str, str] | None:
@@ -98,28 +108,52 @@ def _project_labels(events: list[dict], cutoff_id: int | None) -> list[str]:
 
 
 def project_issue_state(
-    conn: sqlite3.Connection, issue_id: int, *, as_of_event_id: int | None = None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    *,
+    as_of_event_id: int | None = None,
+    actor: dict | None | object = _UNGATED,
 ) -> dict | None:
-    """The issue's reconstructed lifecycle state as of `as_of_event_id` (None = now/the
-    whole history), folded from its activity log. Returns None if there is no such issue.
-    The caller gates visibility (the API's _issue_for_read 404s a hidden/missing issue);
-    within a visible issue its own timeline reads openly, like the detail page.
+    """Project one exact, access-consistent snapshot of an issue's history."""
+    with db.transaction(conn):
+        return _project_issue_state(
+            conn, issue_id, as_of_event_id=as_of_event_id, actor=actor
+        )
 
-    `assignee`/`sprint`/`parent` are the display name/key the log stored (the log keeps
-    names, not ids); `labels` are names; `archived` is a bool. `as_of_event_id`/`as_of`
-    echo the actual cutoff event used, and `is_current` flags whether the cutoff is the
-    issue's latest event (so a viewer knows they're looking at the present)."""
+
+def _project_issue_state(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    *,
+    as_of_event_id: int | None = None,
+    actor: dict | None | object = _UNGATED,
+) -> dict | None:
+    """Reconstruct exact lifecycle state as of an activity event.
+
+    Internal callers may use the ungated default. Actor-facing callers pass the viewer;
+    if any event is legacy-restricted or scoped to a project the viewer cannot see, the
+    whole projection is rejected instead of folding a partial trail and calling it fact.
+    """
     issue = issues.get_issue(conn, issue_id)
     if issue is None:
         return None
-    # Oldest-first (list_activity returns newest-first), the issue's whole timeline.
-    events = list(
-        reversed(
-            activity.list_activity(
-                conn, target_kind="issue", target_id=issue_id, limit=_MAX_EVENTS
-            )
+    if actor is not _UNGATED and not access.can_see_complete_issue_history(
+        conn, actor, issue_id
+    ):
+        raise IncompleteIssueHistory(
+            "complete issue history is not available to this actor"
         )
+    newest_first = activity.list_activity(
+        conn,
+        target_kind="issue",
+        target_id=issue_id,
+        limit=_MAX_EVENTS + 1,
     )
+    if len(newest_first) > _MAX_EVENTS:
+        raise IssueHistoryTooLarge(
+            "issue history exceeds the exact projection limit"
+        )
+    events = list(reversed(newest_first))
     visible = [e for e in events if as_of_event_id is None or e["id"] <= as_of_event_id]
     last = visible[-1] if visible else None
     return {
