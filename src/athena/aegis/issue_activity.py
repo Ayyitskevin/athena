@@ -229,6 +229,7 @@ def record_project_change(
     issue_id: int,
     before: int | None,
     after: int | None,
+    commit: bool = True,
 ) -> None:
     """Record a project move. No-op if the project didn't change. Clearing records
     "removed_from_project" with the old project's name; setting records
@@ -240,28 +241,37 @@ def record_project_change(
     if before == after:
         return
     project_ids = {before, after}
-    if after is None:
-        old = projects.get_project(conn, before)
-        activity.record(
-            conn,
-            actor_id=actor_id,
-            verb="removed_from_project",
-            target_kind="issue",
-            target_id=issue_id,
-            detail=old["name"] if old else "",
-            issue_project_ids=project_ids,
-        )
-        return
-    new = projects.get_project(conn, after)
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="changed_project",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=new["name"] if new else "",
-        issue_project_ids=project_ids,
-    )
+    try:
+        if after is None:
+            old = projects.get_project(conn, before)
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="removed_from_project",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=old["name"] if old else "",
+                commit=False,
+                issue_project_ids=project_ids,
+            )
+        else:
+            new = projects.get_project(conn, after)
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="changed_project",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=new["name"] if new else "",
+                commit=False,
+                issue_project_ids=project_ids,
+            )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
 
 
 def record_sprint_change(
@@ -272,11 +282,15 @@ def record_sprint_change(
     before: int | None,
     after: int | None,
     issue_project_ids: Collection[int | None] | None = None,
+    include_before_detail: bool = True,
+    commit: bool = True,
 ) -> None:
     """Record a sprint move with every referenced project in its access envelope.
 
-    This remains safe even for a legacy cross-project row: clearing a private source
-    sprint after the issue moved public cannot publish the old sprint's name.
+    A project move passes ``include_before_detail=False`` for its automatic clear:
+    history folding keeps the transition without copying a former private sprint name.
+    The event still carries the old sprint's project scope, so redaction never weakens
+    its access envelope.
     """
     if before == after:
         return
@@ -289,26 +303,35 @@ def record_sprint_change(
         if sprint is not None:
             project_ids.add(sprint["project_id"])
 
-    if after is None:
-        activity.record(
-            conn,
-            actor_id=actor_id,
-            verb="removed_from_sprint",
-            target_kind="issue",
-            target_id=issue_id,
-            detail=old["name"] if old else "",
-            issue_project_ids=project_ids,
-        )
-        return
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="moved_to_sprint",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=new["name"] if new else "",
-        issue_project_ids=project_ids,
-    )
+    try:
+        if after is None:
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="removed_from_sprint",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=old["name"] if old and include_before_detail else "",
+                commit=False,
+                issue_project_ids=project_ids,
+            )
+        else:
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="moved_to_sprint",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=new["name"] if new else "",
+                commit=False,
+                issue_project_ids=project_ids,
+            )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
 
 
 def record_parent_change(
