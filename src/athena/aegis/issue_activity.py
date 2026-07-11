@@ -153,33 +153,51 @@ def record_assignee_change(
     issue_id: int,
     before: int | None,
     after: int | None,
+    commit: bool = True,
 ) -> None:
     """Record an assignment change. No-op if the assignee didn't change. Clearing
     records "unassigned" (no detail); setting records "assigned" with the new
-    assignee's display name as the human specifics."""
+    assignee's display name as the human specifics.
+
+    The new assignee's watch, the activity row, and its notification fan-out use
+    one commit. Commands pass ``commit=False`` so those effects also share the
+    issue row's outer transaction.
+    """
     if before == after:
         return
-    if after is None:
-        activity.record(
-            conn,
-            actor_id=actor_id,
-            verb="unassigned",
-            target_kind="issue",
-            target_id=issue_id,
-        )
-        return
-    assignee = users.get_user(conn, after)
-    # The new assignee starts watching BEFORE we record the event, so the
-    # assignment itself lands in their inbox (they're a watcher when it fans out).
-    notifications.watch(conn, after, "issue", issue_id)
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="assigned",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=assignee["name"] if assignee else "",
-    )
+    try:
+        if after is None:
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="unassigned",
+                target_kind="issue",
+                target_id=issue_id,
+                commit=False,
+            )
+        else:
+            assignee = users.get_user(conn, after)
+            # The new assignee starts watching BEFORE we record the event, so the
+            # assignment itself lands in their inbox (they're a watcher when it
+            # fans out).
+            notifications.watch(
+                conn, after, "issue", issue_id, commit=False
+            )
+            activity.record(
+                conn,
+                actor_id=actor_id,
+                verb="assigned",
+                target_kind="issue",
+                target_id=issue_id,
+                detail=assignee["name"] if assignee else "",
+                commit=False,
+            )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
 
 
 def record_project_change(

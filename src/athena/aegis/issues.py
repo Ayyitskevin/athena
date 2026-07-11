@@ -188,16 +188,30 @@ def update_status(
 
 
 def set_assignee(
-    conn: sqlite3.Connection, issue_id: int, assignee_id: int | None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    assignee_id: int | None,
+    *,
+    commit: bool = True,
 ) -> dict | None:
     """Assign the issue to a user, or clear it (assignee_id=None -> Unassigned).
     Returns the updated issue, or None if no issue has that id. Checking that
-    assignee_id is a real user is the boundary's job; the DB's foreign key is
-    the backstop (raises sqlite3.IntegrityError on an unknown non-NULL id)."""
-    cur = conn.execute(
-        "UPDATE issues SET assignee_id = ? WHERE id = ?", (assignee_id, issue_id)
-    )
-    conn.commit()
+    assignee_id is a real user is the command's job; the DB's foreign key is
+    the backstop (raises sqlite3.IntegrityError on an unknown non-NULL id).
+
+    Commands pass ``commit=False`` so the row and its assignment audit event,
+    watch, and notifications share one transaction.
+    """
+    try:
+        cur = conn.execute(
+            "UPDATE issues SET assignee_id = ? WHERE id = ?", (assignee_id, issue_id)
+        )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
     if cur.rowcount == 0:
         return None
     return get_issue(conn, issue_id)

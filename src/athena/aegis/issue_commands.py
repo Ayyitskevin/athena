@@ -6,9 +6,9 @@ and audit emission have one owner. Each command holds one SQLite transaction:
 the issue row, cross-links, search index, activity event, watches, and mentions
 either all become durable or all roll back.
 
-The migration is intentionally vertical. Create and the editable core fields
-(title/body/status/priority) live here first; the remaining issue mutations can
-move command-by-command without a flag day.
+The migration is intentionally vertical. Create, the editable core fields
+(title/body/status/priority), and assignee live here first; the remaining issue
+mutations can move command-by-command without a flag day.
 """
 from __future__ import annotations
 
@@ -174,6 +174,7 @@ def update_issue(
     body: str | None | _UnsetType = UNSET,
     status: str | None | _UnsetType = UNSET,
     priority: str | None | _UnsetType = UNSET,
+    assignee_id: int | None | _UnsetType = UNSET,
 ) -> dict:
     """Update editable issue fields and all resulting audit facts atomically."""
     actor = _require_issue_writer(actor)
@@ -186,6 +187,7 @@ def update_issue(
         body=body,
         status=status,
         priority=priority,
+        assignee_id=assignee_id,
     )
 
 
@@ -198,6 +200,7 @@ def update_issue_as_automation(
     body: str | None | _UnsetType = UNSET,
     status: str | None | _UnsetType = UNSET,
     priority: str | None | _UnsetType = UNSET,
+    assignee_id: int | None | _UnsetType = UNSET,
 ) -> dict:
     """Apply a rule action through the same command under explicit system policy.
 
@@ -222,6 +225,7 @@ def update_issue_as_automation(
         body=body,
         status=status,
         priority=priority,
+        assignee_id=assignee_id,
     )
 
 
@@ -243,6 +247,7 @@ def _update_issue(
     body: str | None | _UnsetType,
     status: str | None | _UnsetType,
     priority: str | None | _UnsetType,
+    assignee_id: int | None | _UnsetType,
 ) -> dict:
     with db.transaction(conn, immediate=True):
         before = (
@@ -262,11 +267,27 @@ def _update_issue(
                 ("body", body),
                 ("status", status),
                 ("priority", priority),
+                ("assignee_id", assignee_id),
             )
             if value is not UNSET
         }
         if not provided:
             raise IssueCommandError("invalid", "no fields to update")
+
+        assignee_value: int | None = None
+        if assignee_id is not UNSET:
+            if assignee_id is not None and (
+                not isinstance(assignee_id, int) or isinstance(assignee_id, bool)
+            ):
+                raise IssueCommandError(
+                    "invalid", "assignee_id must be an integer or null"
+                )
+            assignee_value = assignee_id
+            if (
+                assignee_value is not None
+                and users.get_user(conn, assignee_value) is None
+            ):
+                raise IssueCommandError("invalid", "no such user")
 
         title_value = _string_value("title", title)
         normalized_title = title_value.strip() if title_value is not None else None
@@ -297,6 +318,15 @@ def _update_issue(
         # request race.
         if updated is None:
             raise IssueCommandError("not_found", "no such issue")
+        if "assignee_id" in provided:
+            updated = issues.set_assignee(
+                conn,
+                issue_id,
+                assignee_value,
+                commit=False,
+            )
+            if updated is None:
+                raise IssueCommandError("not_found", "no such issue")
         if "status" in provided:
             issue_activity.record_status_change(
                 conn,
@@ -313,6 +343,15 @@ def _update_issue(
                 issue_id=issue_id,
                 before=before["priority"],
                 after=updated["priority"],
+                commit=False,
+            )
+        if "assignee_id" in provided:
+            issue_activity.record_assignee_change(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                before=before["assignee_id"],
+                after=updated["assignee_id"],
                 commit=False,
             )
         issue_activity.record_edited(
