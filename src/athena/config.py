@@ -30,6 +30,24 @@ MAX_REQUEST_BODY_BYTES = int(
     os.environ.get("ATHENA_MAX_REQUEST_BODY_BYTES", str(1024 * 1024))
 )
 
+# Completed idempotency receipts are replayable for one day, while an executing
+# owner gets a one-minute freshness lease and a concurrent retry waits briefly for
+# its result. An expired owner is never taken over automatically: the route may
+# have committed just before its worker disappeared, so re-running would risk a
+# duplicate mutation. Response storage is bounded separately from request bodies.
+IDEMPOTENCY_TTL_SECONDS = int(
+    os.environ.get("ATHENA_IDEMPOTENCY_TTL_SECONDS", str(24 * 60 * 60))
+)
+IDEMPOTENCY_LEASE_SECONDS = int(
+    os.environ.get("ATHENA_IDEMPOTENCY_LEASE_SECONDS", "60")
+)
+IDEMPOTENCY_WAIT_SECONDS = float(
+    os.environ.get("ATHENA_IDEMPOTENCY_WAIT_SECONDS", "5")
+)
+IDEMPOTENCY_MAX_RESPONSE_BYTES = int(
+    os.environ.get("ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES", str(1024 * 1024))
+)
+
 # Per-bearer-token request ceiling for agent/API traffic. This is in-process and
 # fixed-window by design: enough to stop a runaway local agent loop without adding
 # a durable coordination table. Set to 0 to disable when a reverse proxy enforces

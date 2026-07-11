@@ -94,6 +94,13 @@ def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
     token_id = actor.get("_token_id")
     if token_id is None:
         return
+    # Idempotency authenticates and charges a keyed request before it can inspect
+    # or replay a receipt. A cache miss still reaches this dependency, so recognize
+    # that exact token's pre-charge rather than counting one HTTP request twice.
+    if getattr(
+        request.state, "_athena_idempotency_rate_limited_token_id", None
+    ) == int(token_id):
+        return
     limiter: rate_limits.TokenRateLimiter | None = getattr(
         request.app.state, "token_rate_limiter", None
     )

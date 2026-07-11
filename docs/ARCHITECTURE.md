@@ -120,6 +120,15 @@ There is no separate `api/` package: each module owns its REST surface
 - Every response gets hardening headers (CSP `default-src 'self'`,
   `X-Frame-Options: DENY`, `nosniff`, ...), and request bodies are capped
   (`ATHENA_MAX_REQUEST_BODY_BYTES`).
+- Authenticated REST mutations support durable, bounded `Idempotency-Key`
+  single-flight claims. Exact retries coalesce across workers and completed
+  receipts survive restarts; mismatched payloads conflict, revoked credentials
+  cannot replay, and one-time-secret creation is excluded. Because domain writes
+  and receipt finalization are not yet one transaction, abandoned/failed owners
+  remain explicitly indeterminate and are never automatically taken over. A
+  global authorization revision purges and permanently fences stored responses
+  after access-affecting role, membership, visibility, authority, or placement
+  changes; this is intentionally broader than per-target invalidation.
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
   user is bootstrapped as admin, and the last admin cannot be demoted.
 - Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`);
