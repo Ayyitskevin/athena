@@ -14,8 +14,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.aegis import issue_activity, issues, statuses
-from athena.core import access, identity
+from athena.aegis import issue_commands, issues, statuses
+from athena.core import access
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import _attach_labels, _statuses_in_use, get_templates
@@ -134,30 +134,16 @@ def board_move_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to move cards.</div>',
             status_code=401,
         )
-    issue = issues.get_issue(conn, issue_id)
-    # Apply only when the move is VISIBLE to the actor, the actor may write, is permitted,
-    # and the target is valid; otherwise fall through to a clean re-render (snap-back).
-    # The visibility + write-role + can_modify terms match the detail-page status write
-    # (_authorize_issue_write) and REST PATCH (issue_write_actor): a viewer (read-only
-    # role) can't move a card even on an issue they created/are assigned, a creator/
-    # assignee who lost access when the project went private can't keep moving it, and a
-    # hidden issue snaps back exactly like a missing one (no oracle).
-    if (
-        issue is not None
-        and access.can_see_project_or_backlog(conn, user, issue["project_id"])
-        and identity.can_write(user)
-        and issues.can_modify(issue, user["id"])
-        and new_status != issue["status"]
-        and statuses.is_valid(conn, issue["project_id"], new_status)
-    ):
-        issues.update_status(conn, issue_id, new_status)
-        issue_activity.record_status_change(
-            conn,
-            actor_id=user["id"],
-            issue_id=issue_id,
-            before=issue["status"],
-            after=new_status,
+    # The board deliberately snaps back on a rejected move. The shared command is
+    # still the one owner of visibility, role/scope, creator-or-assignee policy,
+    # status validation, write, and audit; this adapter only chooses not to render
+    # its domain error inline on a drag surface.
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, status=new_status
         )
+    except issue_commands.IssueCommandError:
+        pass
     search, status = search.strip(), status.strip()
     if request.headers.get("HX-Request"):
         return _render_board(request, conn, search=search, status_filter=status)

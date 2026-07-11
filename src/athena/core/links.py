@@ -90,7 +90,12 @@ def resolve_key_ref(conn: sqlite3.Connection, key: str, seq: int) -> dict:
 
 
 def sync_links(
-    conn: sqlite3.Connection, *, source_kind: str, source_id: int, body: str | None
+    conn: sqlite3.Connection,
+    *,
+    source_kind: str,
+    source_id: int,
+    body: str | None,
+    commit: bool = True,
 ) -> None:
     """Make the `links` rows for one source match its current body exactly.
 
@@ -98,7 +103,8 @@ def sync_links(
     We replace (delete-then-insert) rather than diff: a source owns its outgoing
     links, so the body is the single source of truth and re-deriving is simplest
     and always correct. A self-reference (a thing linking to itself) is dropped as
-    noise. Commits, since the data-access callers commit their own write too."""
+    noise. ``commit=False`` lets an application command include this projection in
+    the same transaction as its source row and audit event."""
     targets = extract_refs(body)  # typed [[issue:N]]/[[page:N]] refs
     # Key refs [[ATH-12]] resolve to a concrete issue id NOW and are stored as
     # ordinary ('issue', id) links. An unresolvable key ref is simply not stored —
@@ -120,7 +126,8 @@ def sync_links(
             "(source_kind, source_id, target_kind, target_id) VALUES (?, ?, ?, ?)",
             (source_kind, source_id, target_kind, target_id),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def _resolve(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:

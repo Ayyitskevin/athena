@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 
 from athena import config
-from athena.aegis import comments, contributors, issue_activity, issues, statuses
+from athena.aegis import comments, contributors, issue_activity, issue_commands, issues
 from athena.core import activity, db, labels, users
 
 # The actions a rule may take (dispatched on in execute_action). The boundary validates
@@ -280,7 +280,7 @@ def process_pending(
 
 # The dedicated actor every rule action is attributed to, so the audit trail reads
 # "Automation assigned …" and the engine can skip its OWN events (the loop guard).
-SYSTEM_ACTOR_EMAIL = "automation@athena.system"
+SYSTEM_ACTOR_EMAIL = issue_commands.AUTOMATION_ACTOR_EMAIL
 
 
 def system_actor_id(conn: sqlite3.Connection) -> int:
@@ -306,7 +306,8 @@ def execute_action(
     desired state) returns False rather than raising — a bad rule fails soft instead of
     stranding the engine. The actions mirror the issue write endpoints' data-layer +
     activity-recorder pair, so an automated change is indistinguishable in the log from a
-    human one except for the actor."""
+    human one except for the actor. Core-field changes go through the same atomic
+    application command as REST/web, under the explicit Automation system policy."""
     issue = issues.get_issue(conn, event["target_id"])
     if issue is None:
         return False
@@ -327,15 +328,19 @@ def execute_action(
 
     if rule["action_type"] == "set_status":
         status = params.get("status")
-        if not status or not statuses.is_valid(conn, issue["project_id"], status):
+        if not isinstance(status, str) or not status:
             return False
         if issue["status"] == status:
             return False
-        issues.update_status(conn, issue["id"], status)
-        issue_activity.record_status_change(
-            conn, actor_id=actor_id, issue_id=issue["id"],
-            before=issue["status"], after=status,
-        )
+        try:
+            issue_commands.update_issue_as_automation(
+                conn,
+                actor_id=actor_id,
+                issue_id=issue["id"],
+                status=status,
+            )
+        except issue_commands.IssueCommandError:
+            return False
         return True
 
     if rule["action_type"] == "add_label":

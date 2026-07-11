@@ -44,15 +44,24 @@ _MENTION_RE = re.compile(r"\[\[user:(\d+)\]\]")
 
 
 def watch(
-    conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
+    conn: sqlite3.Connection,
+    user_id: int,
+    target_kind: str,
+    target_id: int,
+    *,
+    commit: bool = True,
 ) -> None:
-    """Start watching a target (idempotent — watching twice is a no-op)."""
+    """Start watching a target (idempotent — watching twice is a no-op).
+
+    Commands pass ``commit=False`` when the watch is part of an audited write.
+    """
     conn.execute(
         "INSERT OR IGNORE INTO watches (user_id, target_kind, target_id) "
         "VALUES (?, ?, ?)",
         (user_id, target_kind, target_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def unwatch(
@@ -144,7 +153,12 @@ def parse_mentions(text: str | None) -> list[int]:
 
 
 def process_mentions(
-    conn: sqlite3.Connection, *, event_id: int, actor_id: int, text: str | None
+    conn: sqlite3.Connection,
+    *,
+    event_id: int,
+    actor_id: int,
+    text: str | None,
+    commit: bool = True,
 ) -> None:
     """Notify every real user named by [[user:N]] in `text` (except the actor) about
     this event, and start them watching its target so they follow the thread.
@@ -175,7 +189,8 @@ def process_mentions(
             "VALUES (?, ?, ?)",
             (uid, event["target_kind"], event["target_id"]),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # --- inbox reads + state ----------------------------------------------------

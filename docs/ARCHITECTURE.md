@@ -33,7 +33,12 @@ one database. That is the whole value of running notes and tasks in one workspac
 2. **API-first.** Every action is a REST endpoint. The web UI (Jinja + HTMX) is
    just a thin layer over that API — so the AI fleet (Claude, Grok, Codex,
    Hermes) can act through the *same* endpoints, with scoped, audited tokens.
-   "Grok closed AEGIS-88" is first-class history, not a mystery.
+   "Grok closed AEGIS-88" is first-class history, not a mystery. Command-backed
+   writes converge on one framework-neutral application command; that command
+   commits the state change, derived links/search rows, notifications, and audit
+   event atomically, so transports cannot drift or leave unaudited state behind.
+   Issue create/core-edit is the first migrated slice; remaining legacy write
+   pairs should move behind commands incrementally when touched.
 3. **Local-first, no premature hosting.** Built and version-controlled as a
    normal software project. Self-hosting on the `flow` node is a *later*
    decision, not a starting assumption.
@@ -58,7 +63,8 @@ src/athena/
              attachments, activity log, notifications, webhooks, backups,
              portability (export/import), OIDC, the issue<->doc cross-link resolver
   aegis/     issues, projects, statuses, boards, sprints, labels, comments,
-             saved filters, automation rules
+             saved filters, automation rules, and application commands that own
+             audited write transactions shared by REST + web
   mentor/    spaces, pages (tree), versions, page comments
   web/       route handlers for the browser UI (Jinja + HTMX) — a thin client
              over the same data the REST API serves, never a second data owner

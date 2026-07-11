@@ -28,7 +28,7 @@
     {% endfor %}.
     <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="confirm-done">
         {% include "partials/csrf.html" %}
-        <input type="hidden" name="status" value="done">
+        <input type="hidden" name="status" value="{{ pending_status }}">
         <input type="hidden" name="confirm" value="1">
         <button type="submit" class="button small">Mark done anyway</button>
     </form>

@@ -59,6 +59,14 @@ Therefore:
   already serves. Pages get their data by calling the real API (or the
   data-access functions behind it). A page with no data yet renders **empty** —
   it does not invent rows to look populated.
+- **One command owns each write (migration rule).** REST and browser handlers
+  should be transport adapters: they parse HTTP input and translate the same
+  framework-neutral application command's result/error into JSON or HTML. The
+  command owns domain authorization, normalization, validation, persistence,
+  projections, and the activity event in one transaction. Issue create/core-edit
+  is the first migrated slice; legacy mutation+activity pairs remain migration
+  debt, not a pattern to copy. Any new write—or existing split write you change—
+  must move behind a shared command rather than adding another transport copy.
 - If the endpoint you need doesn't exist, that is a **blocker to flag**, not a
   reason to fake it. Stop and say so (see "When scope grows").
 - One concept, one owner. Two code paths that both "create an issue" is a bug,
@@ -129,7 +137,8 @@ cheap; a hidden assumption shipped to `main` is expensive.
 ```
 src/athena/
   core/      db + migrations + (later) auth/users/tokens/search/cross-link
-  aegis/     issues API (issues.py = SQL, api.py = HTTP)
+  aegis/     work module (issues.py = SQL, issue_commands.py = audited writes,
+             api.py = HTTP)
   mentor/    spaces, pages, versions — knowledge module
   web/       templates + HTMX — thin client over the API
   config.py  env-driven settings (ATHENA_DB, ...)
