@@ -4,8 +4,12 @@ This is the contract for working in **this repo**. It is re-read every session
 and travels with the code, so it — not a chat prompt — is the source of truth
 for *how* we build here. Read it before you write.
 
-For project-wide rules of conduct (your machine-level handbook) defer to those;
-this file adds the rules **specific to Athena** and wins on Athena-specific conflicts.
+For project-wide rules of conduct, defer to your machine-level handbook
+(`~/.claude/CLAUDE.md` for Claude Code, `~/.grok/GROK.md` for Grok,
+`~/.codex/AGENTS.md` for Codex) — including its canonical **Permission
+Boundaries** block, which this file narrows for Athena (the PR-gate below is
+that narrowing). This file adds the rules **specific to Athena** and wins on
+Athena-specific conflicts.
 
 ---
 
