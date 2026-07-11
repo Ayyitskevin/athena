@@ -20,7 +20,7 @@ dependencies = [
 dev = ["pytest", "httpx", "ruff>=0.8,<1"]
 # The MCP server is optional — it lets an AI agent drive Athena over MCP. Install
 # with `pip install athena[mcp]`. Kept out of the base install so the core app
-# (and its CI) stay lean; nothing in the core imports these.
+# stays lean; CI opts in explicitly so the MCP wiring test cannot silently skip.
 mcp = ["mcp>=1.2", "httpx"]
 
 [project.scripts]
