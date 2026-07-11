@@ -218,18 +218,32 @@ def set_assignee(
 
 
 def set_sprint(
-    conn: sqlite3.Connection, issue_id: int, sprint_id: int | None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    sprint_id: int | None,
+    *,
+    commit: bool = True,
 ) -> dict | None:
     """Put the issue in a sprint, or move it back to the backlog (sprint_id=None).
     Returns the updated issue, or None if no issue has that id. Like set_assignee:
     a single nullable column, so a dedicated op keeps None ('backlog') distinct from
     PATCH's 'leave unchanged'. Checking that the sprint exists and belongs to the
-    issue's project is the boundary's job; the foreign key is the backstop (raises
-    sqlite3.IntegrityError on an unknown non-NULL id)."""
-    cur = conn.execute(
-        "UPDATE issues SET sprint_id = ? WHERE id = ?", (sprint_id, issue_id)
-    )
-    conn.commit()
+    issue's project is the command's job; the foreign key is the backstop (raises
+    sqlite3.IntegrityError on an unknown non-NULL id).
+
+    Commands pass ``commit=False`` so the row and its sprint audit event share
+    one transaction.
+    """
+    try:
+        cur = conn.execute(
+            "UPDATE issues SET sprint_id = ? WHERE id = ?", (sprint_id, issue_id)
+        )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
     if cur.rowcount == 0:
         return None
     return get_issue(conn, issue_id)
@@ -256,7 +270,11 @@ def set_archived(
 
 
 def set_project(
-    conn: sqlite3.Connection, issue_id: int, project_id: int | None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    project_id: int | None,
+    *,
+    commit: bool = True,
 ) -> dict | None:
     """Move the issue into a project, or remove it from one (project_id=None ->
     no project). Returns the updated issue, or None if no issue has that id.
@@ -270,27 +288,42 @@ def set_project(
     touch project_seq when the project actually changes — re-setting an issue to
     the project it's already in is a no-op that keeps its current number. Removing
     it from a project (project_id=None) clears the number too: a backlog issue has
-    no key."""
-    current = conn.execute(
-        "SELECT project_id, status FROM issues WHERE id = ?", (issue_id,)
-    ).fetchone()
-    if current is None:
-        return None
-    if current["project_id"] == project_id:
-        return get_issue(conn, issue_id)  # same project — keep the existing number
-    project_seq = projects.next_seq(conn, project_id) if project_id is not None else None
-    # The destination may not offer the issue's current status (projects can have
-    # different status sets). If so, remap to the destination's first status — a
-    # defined, predictable rule — rather than leaving the issue in a status its new
-    # project doesn't know. If the status is valid there, keep it.
-    new_status = current["status"]
-    if not statuses.is_valid(conn, project_id, new_status):
-        new_status = statuses.first_status(conn, project_id)
-    conn.execute(
-        "UPDATE issues SET project_id = ?, project_seq = ?, status = ? WHERE id = ?",
-        (project_id, project_seq, new_status, issue_id),
-    )
-    conn.commit()
+    no key. Any ACTUAL project change also clears sprint membership, because a
+    sprint belongs to exactly one project. A command that explicitly supplies a
+    destination sprint sets it afterward in the same outer transaction.
+
+    Commands pass ``commit=False`` so the key allocation, status remap, sprint
+    clear, audit facts, and any explicit destination sprint share one transaction.
+    """
+    try:
+        current = conn.execute(
+            "SELECT project_id, status FROM issues WHERE id = ?", (issue_id,)
+        ).fetchone()
+        if current is None:
+            return None
+        if current["project_id"] == project_id:
+            return get_issue(conn, issue_id)  # same project — keep key and sprint
+        project_seq = (
+            projects.next_seq(conn, project_id) if project_id is not None else None
+        )
+        # The destination may not offer the issue's current status (projects can have
+        # different status sets). If so, remap to the destination's first status — a
+        # defined, predictable rule — rather than leaving the issue in a status its new
+        # project doesn't know. If the status is valid there, keep it.
+        new_status = current["status"]
+        if not statuses.is_valid(conn, project_id, new_status):
+            new_status = statuses.first_status(conn, project_id)
+        conn.execute(
+            "UPDATE issues SET project_id = ?, project_seq = ?, status = ?, "
+            "sprint_id = NULL WHERE id = ?",
+            (project_id, project_seq, new_status, issue_id),
+        )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
     return get_issue(conn, issue_id)
 
 

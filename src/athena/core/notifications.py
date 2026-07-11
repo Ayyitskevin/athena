@@ -83,9 +83,9 @@ def delete_watches_for(
     commit — it is meant to run INSIDE the owning delete's transaction so the watches
     vanish atomically with the target. Called when a page is deleted: a watch keys
     its target polymorphically (no foreign key to lean on), so without this the row
-    dangles, pointing at a target that no longer exists — and because page ids can be
-    REUSED (rowid alias, not AUTOINCREMENT), a stale watch could later re-bind a
-    stranger to an unrelated new page. Notifications are deliberately NOT purged here:
+    dangles, pointing at a target that no longer exists. Activity-target
+    reservations prevent numeric-id reuse as a second defense, but deleting the
+    subscription is still the only honest lifecycle. Notifications stay intact:
     they reference the append-only activity log, which outlives the target, so they
     never dangle — deleting them would erase valid inbox history."""
     cur = conn.execute(
@@ -262,24 +262,52 @@ def unread_count(
     ).fetchone()["n"]
 
 
-def mark_read(conn: sqlite3.Connection, user_id: int, notification_id: int) -> bool:
-    """Mark one notification read. Scoped to the owner, so a user can't touch
-    another's inbox. Returns False if no such unread notification of theirs."""
+def mark_read(
+    conn: sqlite3.Connection,
+    user_id: int,
+    notification_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> bool:
+    """Mark one visible notification read; hidden rows remain untouched."""
+    where = "WHERE id = ? AND user_id = ? AND read_at IS NULL"
+    params: list = [notification_id, user_id]
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where += (
+                " AND event_id IN (SELECT a.id FROM activity a "
+                f"WHERE {gate})"
+            )
+            params.extend(gate_params)
     cur = conn.execute(
-        "UPDATE notifications SET read_at = datetime('now') "
-        "WHERE id = ? AND user_id = ? AND read_at IS NULL",
-        (notification_id, user_id),
+        f"UPDATE notifications SET read_at = datetime('now') {where}",
+        params,
     )
     conn.commit()
     return cur.rowcount > 0
 
 
-def mark_all_read(conn: sqlite3.Connection, user_id: int) -> int:
-    """Mark every unread notification read; returns how many were cleared."""
+def mark_all_read(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> int:
+    """Mark every visible unread notification read and return that exact count."""
+    where = "WHERE user_id = ? AND read_at IS NULL"
+    params: list = [user_id]
+    if actor is not _UNGATED:
+        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        if gate:
+            where += (
+                " AND event_id IN (SELECT a.id FROM activity a "
+                f"WHERE {gate})"
+            )
+            params.extend(gate_params)
     cur = conn.execute(
-        "UPDATE notifications SET read_at = datetime('now') "
-        "WHERE user_id = ? AND read_at IS NULL",
-        (user_id,),
+        f"UPDATE notifications SET read_at = datetime('now') {where}",
+        params,
     )
     conn.commit()
     return cur.rowcount

@@ -86,16 +86,73 @@ def test_set_null_clears_assignee_and_sprint(tmp_path):
         assert _get(client, iid, "assignee_id") is None and _get(client, iid, "sprint_id") is None
 
 
-def test_cross_project_sprint_is_per_item_422(tmp_path):
-    with TestClient(create_app(tmp_path / "cross.db")) as client:
+def test_cross_project_sprint_is_atomic_per_item_and_batch_continues(tmp_path):
+    # WHY: bulk is best-effort between issues but atomic within one issue. The
+    # valid project-B item lands every requested field; the project-A item lands
+    # none of them when its sprint validation fails.
+    db_file = tmp_path / "cross.db"
+    with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pid_a, pid_b = _project(client, "A", "AAA"), _project(client, "B", "BBB")
-        iid = _issue(client, pid_a)
-        sprint_b = client.post(f"/projects/{pid_b}/sprints", json={"name": "S"}, headers=H1).json()["id"]
-        r = client.post("/issues/bulk", json={"ids": [iid], "sprint_id": sprint_b}, headers=H1)
-        res = r.json()["results"][0]
-        assert not res["ok"] and "different project" in res["error"]
-        assert _get(client, iid, "sprint_id") is None  # nothing applied
+        pid_a = _project(client, "A", "AAA")
+        pid_b = _project(client, "B", "BBB")
+        issue_a = _issue(client, pid_a, "invalid item")
+        issue_b = _issue(client, pid_b, "valid item")
+        sprint_b = client.post(
+            f"/projects/{pid_b}/sprints",
+            json={"name": "S"},
+            headers=H1,
+        ).json()["id"]
+
+        response = client.post(
+            "/issues/bulk",
+            json={
+                "ids": [issue_b, issue_a],
+                "status": "done",
+                "priority": "urgent",
+                "assignee_id": 1,
+                "sprint_id": sprint_b,
+            },
+            headers=H1,
+        )
+        body = response.json()
+        assert (body["updated"], body["failed"]) == (1, 1)
+        outcomes = {result["id"]: result for result in body["results"]}
+        assert outcomes[issue_b]["ok"] is True
+        assert outcomes[issue_a] == {
+            "id": issue_a,
+            "ok": False,
+            "error": "sprint belongs to a different project than the issue",
+        }
+        assert (
+            _get(client, issue_b, "status"),
+            _get(client, issue_b, "priority"),
+            _get(client, issue_b, "assignee_id"),
+            _get(client, issue_b, "sprint_id"),
+        ) == ("done", "urgent", 1, sprint_b)
+        assert (
+            _get(client, issue_a, "status"),
+            _get(client, issue_a, "priority"),
+            _get(client, issue_a, "assignee_id"),
+            _get(client, issue_a, "sprint_id"),
+        ) == ("open", "medium", None, None)
+
+    conn = db.connect(db_file)
+    assert [
+        row["verb"]
+        for row in conn.execute(
+            "SELECT verb FROM activity "
+            "WHERE target_kind = 'issue' AND target_id = ? ORDER BY id",
+            (issue_a,),
+        )
+    ] == ["created"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM issues AS i "
+        "LEFT JOIN sprints AS s ON s.id = i.sprint_id "
+        "WHERE i.sprint_id IS NOT NULL "
+        "AND (s.id IS NULL OR i.project_id IS NULL "
+        "OR s.project_id <> i.project_id)"
+    ).fetchone()[0] == 0
+    conn.close()
 
 
 def test_bad_status_is_per_item_not_fatal(tmp_path):

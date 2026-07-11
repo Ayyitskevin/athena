@@ -22,7 +22,9 @@ def create_space(
     this key already exists (key is UNIQUE, case-insensitive) or if created_by
     isn't a real user (the foreign key refuses the orphan)."""
     cur = conn.execute(
-        "INSERT INTO spaces (key, name, description, created_by) VALUES (?, ?, ?, ?)",
+        "INSERT INTO spaces (id, key, name, description, created_by) "
+        "SELECT next_id, ?, ?, ?, ? FROM activity_target_id_sequences "
+        "WHERE target_kind = 'space'",
         (key, name, description, created_by),
     )
     conn.commit()

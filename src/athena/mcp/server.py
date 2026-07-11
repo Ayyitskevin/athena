@@ -141,6 +141,21 @@ def build_server(client: AthenaClient) -> FastMCP:
         )
 
     @mcp.tool()
+    def set_issue_placement(
+        issue_id: int,
+        project_id: int | None,
+        sprint_id: int | None,
+    ) -> dict:
+        """Atomically set an issue's project and sprint. Always provide BOTH
+        project_id and sprint_id: use null project_id to move the issue out of a
+        project, and null sprint_id for no sprint. A non-null sprint must belong to
+        the supplied project. The pair is validated and committed as one transition,
+        so use this tool instead of separate project and sprint moves."""
+        return client.set_issue_placement(
+            issue_id, project_id=project_id, sprint_id=sprint_id
+        )
+
+    @mcp.tool()
     def assign_issue(issue_id: int, assignee_id: int | None = None) -> dict:
         """Assign an issue to a user id, or pass no assignee_id to unassign it."""
         return client.assign_issue(issue_id, assignee_id)

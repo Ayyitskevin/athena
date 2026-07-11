@@ -61,11 +61,16 @@ class IssueCreate(BaseModel):
 class IssueUpdate(BaseModel):
     # A partial edit: send any subset. Unset fields are left unchanged. priority is
     # constrained to its lifecycle when present; status is validated against the
-    # issue's project's set in the handler.
+    # issue's final project's set in the command. project_id and sprint_id may be
+    # sent together to move directly into a destination sprint. Their None defaults
+    # are intentional: model_dump(exclude_unset=True) still distinguishes an omitted
+    # relationship (leave it alone) from explicit null (clear it).
     title: str | None = None
     body: str | None = None
     status: str | None = None
     priority: Priority | None = None
+    project_id: int | None = None
+    sprint_id: int | None = None
 
 
 class AssigneeUpdate(BaseModel):
@@ -87,13 +92,14 @@ class ProjectUpdate(BaseModel):
 class BulkUpdate(BaseModel):
     # Apply the same triage change to many issues at once. Only the fields actually
     # sent are touched (model_dump(exclude_unset=True) in the handler), so a sent
-    # assignee_id/sprint_id of null means "unassign"/"move to backlog" — distinct
+    # assignee_id/project_id/sprint_id null clears that relationship — distinct
     # from omitting it, which leaves it alone. status/priority are set to a value
     # (there is no "clear status"). Each issue is processed independently.
     ids: list[int]
     status: str | None = None
     priority: Priority | None = None
     assignee_id: int | None = None
+    project_id: int | None = None
     sprint_id: int | None = None
 
 
@@ -490,7 +496,14 @@ def issue_state(
     # event. Gated like other reads — a hidden/missing issue is a 404; within a visible
     # issue its own history reads openly, like the detail page.
     _issue_for_read(conn, issue_id, actor)
-    state = issue_history.project_issue_state(conn, issue_id, as_of_event_id=as_of)
+    try:
+        state = issue_history.project_issue_state(
+            conn, issue_id, as_of_event_id=as_of, actor=actor
+        )
+    except issue_history.IncompleteIssueHistory as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except issue_history.IssueHistoryTooLarge as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if state is None:  # _issue_for_read already 404s; this is belt-and-suspenders
         raise HTTPException(status_code=404, detail="no such issue")
     return state
@@ -624,48 +637,28 @@ _BULK_MAX = 500
 def _apply_bulk_update(
     conn: sqlite3.Connection, issue_id: int, provided: dict, actor: dict
 ) -> None:
-    """Apply the requested fields to ONE issue, or raise HTTPException (404/403/422)
-    so the caller records this issue as failed. Reuses the exact per-issue write
-    gate, validation, and activity recorders the single-issue endpoints use, so the
-    bulk path can never diverge from them. ALL requested fields are validated before
-    any are written, so a rejected issue is never left half-updated."""
+    """Apply one best-effort batch item through the shared atomic issue command.
+
+    Validation failures become this item's HTTP-shaped error. Unexpected persistence,
+    audit, or finalization failures still fail loud after the command rolls back.
+    """
+    command_fields = {
+        key: provided[key]
+        for key in (
+            "status",
+            "priority",
+            "assignee_id",
+            "project_id",
+            "sprint_id",
+        )
+        if key in provided
+    }
     try:
-        before = issue_commands.get_writable_issue(
-            conn, actor=actor, issue_id=issue_id
+        issue_commands.update_issue(
+            conn, actor=actor, issue_id=issue_id, **command_fields
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    # Sprint is the one remaining relationship prevalidated here. Assignee plus
-    # status/priority are validated and applied together by the shared command.
-    if "sprint_id" in provided and provided["sprint_id"] is not None:
-        sprint = sprints.get_sprint(conn, provided["sprint_id"])
-        if sprint is None:
-            raise HTTPException(status_code=422, detail="no such sprint")
-        if sprint["project_id"] != before["project_id"]:
-            raise HTTPException(
-                status_code=422,
-                detail="sprint belongs to a different project than the issue",
-            )
-    # Apply status, priority, and assignee in one per-issue transaction. Sprint
-    # remains a legacy follow-on write until its own command migration.
-    if any(key in provided for key in ("status", "priority", "assignee_id")):
-        command_fields = {
-            key: provided[key]
-            for key in ("status", "priority", "assignee_id")
-            if key in provided
-        }
-        try:
-            issue_commands.update_issue(
-                conn, actor=actor, issue_id=issue_id, **command_fields
-            )
-        except issue_commands.IssueCommandError as exc:
-            raise _issue_command_http_error(exc) from exc
-    if "sprint_id" in provided:
-        issues.set_sprint(conn, issue_id, provided["sprint_id"])
-        issue_activity.record_sprint_change(
-            conn, actor_id=actor["id"], issue_id=issue_id,
-            before=before["sprint_id"], after=provided["sprint_id"],
-        )
 
 
 @router.post("/bulk", response_model=BulkUpdateOut)
@@ -714,29 +707,17 @@ def set_sprint(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Putting an issue in a sprint is a write on the issue — creator-or-assignee only
-    # (404 if missing, 403 if not permitted), same gate as assign/project.
-    before = _issue_for_write(conn, issue_id, actor)
-    if payload.sprint_id is not None:
-        sprint = sprints.get_sprint(conn, payload.sprint_id)
-        if sprint is None:
-            raise HTTPException(status_code=422, detail="no such sprint")
-        # A sprint belongs to one project; an issue can only join a sprint in its OWN
-        # project (a backlog issue with no project can't be in any sprint).
-        if sprint["project_id"] != before["project_id"]:
-            raise HTTPException(
-                status_code=422,
-                detail="sprint belongs to a different project than the issue",
-            )
-    updated = issues.set_sprint(conn, issue_id, payload.sprint_id)
-    # Records "moved_to_sprint"/"removed_from_sprint" only on a real change.
-    issue_activity.record_sprint_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["sprint_id"],
-        after=payload.sprint_id,
-    )
+    # The command owns source authorization, final-project validation, persistence,
+    # audit, notifications, and the hidden-sprint existence-oracle boundary.
+    try:
+        updated = issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            sprint_id=payload.sprint_id,
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -747,25 +728,17 @@ def set_project(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Moving an issue between projects is a write — creator-or-assignee only
-    # (404 if missing, 403 if not permitted), same gate as status/assign/labels.
-    before = _issue_for_write(conn, issue_id, actor)
-    # The TARGET project must be one the actor can see (and exist) — you can't move an
-    # issue into a private project you're not in. can_see_project is False for a missing
-    # project too, so unknown and invisible collapse to the same 422. None is always
-    # valid — it means "remove from project" (the backlog).
-    if payload.project_id is not None and not access.can_see_project(
-        conn, actor, payload.project_id
-    ):
-        raise HTTPException(status_code=422, detail="no such project")
-    updated = issues.set_project(conn, issue_id, payload.project_id)
-    issue_activity.record_project_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["project_id"],
-        after=updated["project_id"],
-    )
+    # The command owns destination visibility, key allocation, status remapping,
+    # incompatible-sprint clearing, persistence, and every resulting audit fact.
+    try:
+        updated = issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            project_id=payload.project_id,
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 

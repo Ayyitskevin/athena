@@ -176,6 +176,20 @@ The browser activity feed at `/aegis/activity` includes a CSV download for the
 current audit filters. The export uses the same actor, event, kind, target, and
 search filters as the page and is capped to the newest 1000 matching rows.
 
+Issue activity is authorized against both the issue's current project and every
+project whose facts an event contains. This prevents moving an issue from
+republishing private status, sprint, or project history. Events created before
+the event-scope migration, and issue events replayed from a selective portability
+bundle, do not carry trustworthy historical scope; they fail closed to the admin
+forensic view. New native events capture scope automatically. A non-admin who can
+read the current issue but not its entire scoped trail sees the permitted activity
+subset, while exact time-travel returns 403 instead of reconstructing partial state.
+
+Project, space, and page IDs that have appeared in live rows or activity are
+reserved permanently. Deleting the live target never lets SQLite recycle its ID
+for a new public target, so old private audit rows cannot be rebound by numeric-ID
+reuse. Selective imports allocate from the same monotonic sequences.
+
 ## Run Replay Artifact Export
 
 Use `athena-export-run` when you need to freeze one tagged run for audit, agent

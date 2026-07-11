@@ -23,6 +23,7 @@ the privacy feature is switched on in a later slice.
 """
 from __future__ import annotations
 
+from collections.abc import Collection
 import sqlite3
 
 from athena.core import users
@@ -305,7 +306,7 @@ def visible_space_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int]:
     return visible
 
 
-def _in_or_null(ids: set[int]) -> tuple[str, list]:
+def _in_or_null(ids: Collection[int | str]) -> tuple[str, list]:
     """Comma-joined placeholders + params for an IN list, or the literal token 'NULL'
     (which matches nothing) when the set is empty — SQLite rejects 'IN ()'. Sorted for
     a deterministic query string."""
@@ -313,35 +314,168 @@ def _in_or_null(ids: set[int]) -> tuple[str, list]:
     return (",".join("?" for _ in vals), vals) if vals else ("NULL", [])
 
 
+def _project_scope_keys(
+    conn: sqlite3.Connection, project_ids: set[int]
+) -> set[str]:
+    if not project_ids:
+        return set()
+    placeholders, params = _in_or_null(project_ids)
+    return {
+        row["activity_scope_key"]
+        for row in conn.execute(
+            "SELECT activity_scope_key FROM projects "
+            f"WHERE id IN ({placeholders})",
+            params,
+        )
+        if row["activity_scope_key"] is not None
+    }
+
+
+def _container_access_clause(
+    alias: str,
+    actor: dict | None,
+    *,
+    membership_table: str,
+    container_id_column: str,
+) -> tuple[str, list]:
+    """SQL access predicate for one project/space alias in the caller's statement."""
+    if actor is None:
+        return f"{alias}.visibility = 'public'", []
+    clause = (
+        f"({alias}.visibility = 'public' OR {alias}.created_by = ? OR EXISTS ("
+        f"SELECT 1 FROM {membership_table} membership "
+        f"WHERE membership.{container_id_column} = {alias}.id "
+        "AND membership.user_id = ?))"
+    )
+    return clause, [actor["id"], actor["id"]]
+
+
+def _event_project_scope_clause(
+    event_alias: str, actor: dict | None
+) -> tuple[str, list]:
+    project_access, params = _container_access_clause(
+        "scope_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+    return (
+        "NOT EXISTS (SELECT 1 FROM activity_visibility_projects avp "
+        "LEFT JOIN projects scope_project "
+        "ON scope_project.activity_scope_key = avp.project_scope_key "
+        f"WHERE avp.event_id = {event_alias}.id "
+        f"AND (scope_project.id IS NULL OR NOT ({project_access})))",
+        params,
+    )
+
+
 def event_visibility_clause(
     conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
 ) -> tuple[str, list]:
-    """A SQL predicate (no leading AND) + params that keep only activity rows whose
-    target the actor may see — the gate the activity feed and the notifications inbox
-    share, since both expose (target_kind, target_id). Returns ('', []) for an admin
-    (god view → no gate). The four kinds ever recorded: an 'issue' is kept if it's a
-    backlog issue (no project) OR its project is visible; a 'page' if its space is
-    visible; a 'space' if that space (the target itself) is visible; a 'project' if
-    that project (the target itself) is visible — the container-audit twin of 'space',
-    for the project-privacy/membership events. A hard-deleted target has no surviving
-    container, so its events drop out — the safe default.
+    """Return the shared, single-statement event visibility predicate.
 
-    `alias` is the SQL alias of the activity table/row in the caller's query (both the
-    feed and the inbox alias it 'a'). Built as correlated EXISTS so it can be ANDed
-    straight into an existing WHERE, before LIMIT, keeping cursor paging exact."""
+    Every current-container and event-scope membership check is correlated inside the
+    caller's SELECT/UPDATE. That makes authorization and data access one SQLite
+    snapshot instead of materializing visible ids before a later statement.
+    """
     if _is_admin(actor):
         return "", []
-    proj_ph, proj_params = _in_or_null(visible_project_ids(conn, actor))
-    space_ph, space_params = _in_or_null(visible_space_ids(conn, actor))
-    clause = (
-        f"(({alias}.target_kind = 'issue' AND EXISTS ("
-        f"SELECT 1 FROM issues i WHERE i.id = {alias}.target_id "
-        f"AND (i.project_id IS NULL OR i.project_id IN ({proj_ph})))) "
-        f"OR ({alias}.target_kind = 'page' AND EXISTS ("
-        f"SELECT 1 FROM pages pg WHERE pg.id = {alias}.target_id "
-        f"AND pg.space_id IN ({space_ph}))) "
-        f"OR ({alias}.target_kind = 'space' AND {alias}.target_id IN ({space_ph})) "
-        f"OR ({alias}.target_kind = 'project' AND {alias}.target_id IN ({proj_ph})))"
+
+    current_project_access, current_project_params = _container_access_clause(
+        "current_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
     )
-    params = [*proj_params, *space_params, *space_params, *proj_params]
+    issue_scope_access, issue_scope_params = _event_project_scope_clause(alias, actor)
+    page_space_access, page_space_params = _container_access_clause(
+        "page_space",
+        actor,
+        membership_table="space_members",
+        container_id_column="space_id",
+    )
+    target_space_access, target_space_params = _container_access_clause(
+        "target_space",
+        actor,
+        membership_table="space_members",
+        container_id_column="space_id",
+    )
+    target_project_access, target_project_params = _container_access_clause(
+        "target_project",
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+    project_scope_access, project_scope_params = _event_project_scope_clause(
+        alias, actor
+    )
+
+    clause = (
+        f"(({alias}.target_kind = 'issue' "
+        f"AND {alias}.visibility_restricted = 0 "
+        f"AND EXISTS (SELECT 1 FROM issues i "
+        f"WHERE i.id = {alias}.target_id "
+        f"AND (i.project_id IS NULL OR EXISTS (SELECT 1 FROM projects current_project "
+        f"WHERE current_project.id = i.project_id AND {current_project_access}))) "
+        f"AND {issue_scope_access}) "
+        f"OR ({alias}.target_kind = 'page' AND EXISTS ("
+        f"SELECT 1 FROM pages pg JOIN spaces page_space "
+        f"ON page_space.id = pg.space_id WHERE pg.id = {alias}.target_id "
+        f"AND {page_space_access})) "
+        f"OR ({alias}.target_kind = 'space' AND EXISTS ("
+        f"SELECT 1 FROM spaces target_space "
+        f"WHERE target_space.id = {alias}.target_id AND {target_space_access})) "
+        f"OR ({alias}.target_kind = 'project' "
+        f"AND {alias}.visibility_restricted = 0 "
+        f"AND EXISTS (SELECT 1 FROM projects target_project "
+        f"WHERE target_project.id = {alias}.target_id "
+        f"AND {target_project_access}) "
+        f"AND {project_scope_access}))"
+    )
+    params = [
+        *current_project_params,
+        *issue_scope_params,
+        *page_space_params,
+        *target_space_params,
+        *target_project_params,
+        *project_scope_params,
+    ]
     return clause, params
+
+
+def can_see_complete_issue_history(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    issue_id: int,
+) -> bool:
+    """Whether `actor` may read every event needed for exact issue time-travel.
+
+    The projection may use a later transition's `before` value to recover creation
+    state, so access to an arbitrary cutoff still requires the whole timeline. Folding
+    a filtered subset would silently invent a false history. Legacy/imported events
+    are restricted; multi-project events require visibility to every scope.
+    """
+    if _is_admin(actor):
+        return True
+    row = conn.execute(
+        "SELECT project_id FROM issues WHERE id = ?", (issue_id,)
+    ).fetchone()
+    if row is None or not can_see_project_or_backlog(conn, actor, row["project_id"]):
+        return False
+
+    visible_projects = visible_project_ids(conn, actor)
+    scope_ph, scope_params = _in_or_null(
+        _project_scope_keys(conn, visible_projects)
+    )
+    hidden = conn.execute(
+        "SELECT 1 FROM activity a "
+        "WHERE a.target_kind = 'issue' AND a.target_id = ? "
+        "AND (a.visibility_restricted = 1 OR "
+        "(SELECT COUNT(*) FROM activity_visibility_projects avp "
+        "WHERE avp.event_id = a.id) <> "
+        "(SELECT COUNT(*) FROM activity_visibility_projects avp "
+        "WHERE avp.event_id = a.id "
+        f"AND avp.project_scope_key IN ({scope_ph}))) LIMIT 1",
+        (issue_id, *scope_params),
+    ).fetchone()
+    return hidden is None

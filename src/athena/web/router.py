@@ -344,7 +344,7 @@ def mark_inbox_read(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    notifications.mark_read(conn, user["id"], notification_id)
+    notifications.mark_read(conn, user["id"], notification_id, actor=user)
     return RedirectResponse("/inbox", status_code=303)
 
 
@@ -359,7 +359,7 @@ def mark_inbox_all_read(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    notifications.mark_all_read(conn, user["id"])
+    notifications.mark_all_read(conn, user["id"], actor=user)
     return RedirectResponse("/inbox", status_code=303)
 
 
@@ -851,9 +851,19 @@ def _render_issue_detail(
         comment["body_html"] = render_comment(conn, comment["body"])
     # Gate children by viewer visibility (a child can sit in a private project the
     # viewer isn't in), matching the JSON API — else the detail page leaks it.
+    visible_project_ids = access.visible_project_filter(conn, user)
     children = issues.list_children(
-        conn, issue_id, visible_project_ids=access.visible_project_filter(conn, user)
+        conn, issue_id, visible_project_ids=visible_project_ids
     )
+    visible_projects = projects.list_projects(conn, visible_project_ids)
+    visible_project_names = {
+        project["id"]: project["name"] for project in visible_projects
+    }
+    placement_sprints = [
+        {**sprint, "project_name": visible_project_names[sprint["project_id"]]}
+        for sprint in sprints.list_sprints(conn)
+        if sprint["project_id"] in visible_project_names
+    ]
 
     context = {
         "issue": issue,
@@ -872,14 +882,11 @@ def _render_issue_detail(
         "contributors": contributors.list_contributors(conn, issue_id),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
-        "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
-        # Sprints the issue could join — only its own project's, since a sprint
-        # belongs to one project (and a backlog issue with no project has none).
-        "issue_sprints": (
-            sprints.list_sprints(conn, project_id=issue["project_id"])
-            if issue["project_id"]
-            else []
-        ),
+        "all_projects": visible_projects,
+        # Paired placement can target any sprint in a project the viewer may see.
+        # Project names keep the no-JavaScript selector unambiguous without leaking
+        # private project vocabulary.
+        "placement_sprints": placement_sprints,
         # The sprint the issue is currently in (for the read-view label), or None.
         "issue_sprint": (
             sprints.get_sprint(conn, issue["sprint_id"])
@@ -908,7 +915,7 @@ def _render_issue_detail(
         # This issue's own audit trail (newest first) — the same data-layer read
         # the REST feed serves, scoped to this target.
         "activity": activity.list_activity(
-            conn, target_kind="issue", target_id=issue_id
+            conn, target_kind="issue", target_id=issue_id, actor=user
         ),
     }
     if extra:
@@ -944,12 +951,23 @@ def issue_history_view(
             status_code=404,
         )
     as_of = _int_or_none(request.query_params.get("as_of"))
-    snapshot = issue_history.project_issue_state(
-        conn, issue["id"], as_of_event_id=as_of
-    )
+    try:
+        snapshot = issue_history.project_issue_state(
+            conn, issue["id"], as_of_event_id=as_of, actor=user
+        )
+    except issue_history.IncompleteIssueHistory:
+        return HTMLResponse(
+            '<div class="blocked">Complete issue history is not available.</div>',
+            status_code=403,
+        )
+    except issue_history.IssueHistoryTooLarge:
+        return HTMLResponse(
+            '<div class="error">Issue history exceeds the exact projection limit.</div>',
+            status_code=409,
+        )
     # The issue's timeline (newest-first), each event a checkpoint to time-travel to.
     events = activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
+        conn, target_kind="issue", target_id=issue["id"], actor=user
     )
     return _templates.TemplateResponse(
         request=request,
@@ -1017,29 +1035,83 @@ def change_issue_project(
             '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
     project_id = project_id.strip()
     if project_id == "":
         target: int | None = None
+    elif not project_id.isdigit():
+        return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
     else:
-        if not project_id.isdigit() or not access.can_see_project(conn, user, int(project_id)):
-            # can_see_project is False for a missing project too, so a private project the
-            # actor can't see gives the SAME 400 — no write into (or discovery of) a
-            # hidden project, mirroring the REST API.
-            return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         target = int(project_id)
 
-    updated = issues.set_project(conn, issue_id, target)
-    issue_activity.record_project_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["project_id"],
-        after=updated["project_id"],
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, project_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/placement", dependencies=[Depends(verify_csrf)])
+def change_issue_placement(
+    request: Request,
+    issue_id: int,
+    project_id: str = Form(""),
+    sprint_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Set project and sprint as one placement transition from the detail page.
+
+    Both form controls are submitted together so a user can move directly into a
+    destination project sprint. Empty values explicitly clear their relationship;
+    the command owns destination visibility, pair validation, status remapping,
+    persistence, and audit in one transaction.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> '
+            "to change placement.</div>",
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+
+    project_id = project_id.strip()
+    if project_id == "":
+        project_target: int | None = None
+    elif not project_id.isdigit():
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=400
+        )
+    else:
+        project_target = int(project_id)
+
+    sprint_id = sprint_id.strip()
+    if sprint_id == "":
+        sprint_target: int | None = None
+    elif not sprint_id.isdigit():
+        return HTMLResponse(
+            '<div class="error">No such sprint.</div>', status_code=400
+        )
+    else:
+        sprint_target = int(sprint_id)
+
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            project_id=project_target,
+            sprint_id=sprint_target,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1061,36 +1133,24 @@ def change_issue_sprint(
             '<div class="blocked">Please <a href="/login">sign in</a> to change sprint.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
     sprint_id = sprint_id.strip()
     if sprint_id == "":
         target: int | None = None
+    elif not sprint_id.isdigit():
+        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
     else:
-        if not sprint_id.isdigit():
-            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-        sprint = sprints.get_sprint(conn, int(sprint_id))
-        if sprint is None:
-            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-        # A sprint belongs to one project; an issue can only join a sprint in its
-        # own project (a backlog issue with no project can't be in any sprint).
-        if sprint["project_id"] != issue["project_id"]:
-            return HTMLResponse(
-                '<div class="error">That sprint belongs to a different project.</div>',
-                status_code=400,
-            )
         target = int(sprint_id)
 
-    issues.set_sprint(conn, issue_id, target)
-    issue_activity.record_sprint_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["sprint_id"],
-        after=target,
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, sprint_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

@@ -30,9 +30,10 @@ def create_page(
     equal to the creator and creation time — this is what the first edit will
     snapshot as version 1."""
     cur = conn.execute(
-        "INSERT INTO pages (space_id, parent_id, title, body, created_by, "
+        "INSERT INTO pages (id, space_id, parent_id, title, body, created_by, "
         "updated_by, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+        "SELECT next_id, ?, ?, ?, ?, ?, ?, datetime('now') "
+        "FROM activity_target_id_sequences WHERE target_kind = 'page'",
         (space_id, parent_id, title, body, created_by, created_by),
     )
     conn.commit()
@@ -190,9 +191,9 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     try:
         # attachments and watches key this page POLYMORPHICALLY (target_kind='page',
         # target_id) with NO foreign key, so the DB clears neither. Purge them in THIS
-        # transaction so they die WITH the page — otherwise the rows dangle, and since
-        # page ids are a reused rowid alias (not AUTOINCREMENT), a later page could
-        # inherit a stranger's watch or a ghost attachment. purge_target returns the
+        # transaction so they die WITH the page rather than remaining as ghost
+        # subscriptions/files. Reserved activity-target ids also prevent later
+        # rebinding, but do not make dangling resources legitimate. purge_target returns
         # blob names to unlink post-commit (a filesystem side effect can't be atomic).
         # Notifications are left alone on purpose: they point at the append-only
         # activity log, which outlives the page, so they never dangle (see notifications.py).

@@ -8,6 +8,7 @@ there is no join table — issues.py owns that column and filters on it directly
 from __future__ import annotations
 
 import re
+import secrets
 import sqlite3
 
 from athena.aegis import statuses
@@ -43,9 +44,11 @@ def create_project(
     stored uppercased so it is canonical; the boundary validates its shape
     (letters/digits, leading letter) and turns a duplicate into a clean 409."""
     cur = conn.execute(
-        "INSERT INTO projects (name, key, description, created_by) "
-        "VALUES (?, ?, ?, ?)",
-        (name, key.upper(), description, created_by),
+        "INSERT INTO projects "
+        "(id, name, key, description, created_by, activity_scope_key) "
+        "SELECT next_id, ?, ?, ?, ?, ? FROM activity_target_id_sequences "
+        "WHERE target_kind = 'project'",
+        (name, key.upper(), description, created_by, secrets.token_hex(16)),
     )
     conn.commit()
     # Give the new project the default status set, so it has a working lifecycle
