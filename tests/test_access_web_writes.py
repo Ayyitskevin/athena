@@ -58,6 +58,50 @@ def test_issue_web_writes_require_visibility(tmp_path):
         assert client.post(f"/aegis/issues/{iid}/comments", data={"body": "hi"}, follow_redirects=False).status_code == 303
 
 
+def test_viewer_issue_write_probe_checks_visibility_before_role(tmp_path):
+    db_file = tmp_path / "viewer-oracle.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        public_id = client.post(
+            "/issues", json={"title": "Visible"}, headers=H_CREATOR
+        ).json()["id"]
+        project_id = client.post(
+            "/projects",
+            json={"name": "Secret", "key": "SEC"},
+            headers=H_CREATOR,
+        ).json()["id"]
+        hidden_id = client.post(
+            "/issues",
+            json={"title": "Hidden", "project_id": project_id},
+            headers=H_CREATOR,
+        ).json()["id"]
+
+        conn = db.connect(db_file)
+        conn.execute(
+            "UPDATE projects SET visibility = 'private' WHERE id = ?",
+            (project_id,),
+        )
+        conn.execute("UPDATE users SET role = 'viewer' WHERE email = 'o@e.com'")
+        conn.commit()
+        conn.close()
+
+        _login(client, "o@e.com")
+        for issue_id in (hidden_id, 999999):
+            assert client.get(f"/aegis/issues/{issue_id}/edit").status_code == 404
+            assert (
+                client.post(
+                    f"/aegis/issues/{issue_id}/edit",
+                    data={"title": "probe", "body": ""},
+                    follow_redirects=False,
+                ).status_code
+                == 404
+            )
+
+        visible = client.get(f"/aegis/issues/{public_id}/edit")
+        assert visible.status_code == 403
+        assert "Viewer role is read-only" in visible.text
+
+
 def test_project_edit_form_404s_for_outsider_no_leak(tmp_path):
     db_file = tmp_path / "pe.db"
     with TestClient(create_app(db_file)) as client:
