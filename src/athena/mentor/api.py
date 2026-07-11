@@ -267,14 +267,20 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
     edit pages), because removing a whole container is destructive and wipes a
     documentation tree. Mirrors aegis _project_for_write.
 
-    Visibility first, THEN the creator check: a hidden private space must read as
-    "no such space" (404), never as "exists but not yours" (403) — otherwise DELETE
-    is an existence oracle, and it would disagree with PATCH on the same space,
-    which already 404s. Same order as _space_for_privacy."""
+    The visibility-first + creator-only rule lives in access.container_write_reason,
+    shared with the aegis project gate and both web twins so it can't drift again (a
+    hidden space must read as 404, never leak via a 403 — and would otherwise disagree
+    with PATCH on the same space, which already 404s)."""
     space = spaces.get_space(conn, space_id)
-    if space is None or not access.can_see_space(conn, actor, space_id):
+    if space is None:
         raise HTTPException(status_code=404, detail="no such space")
-    if space["created_by"] != actor["id"]:
+    reason = access.container_write_reason(
+        conn, actor, kind="space", container_id=space_id,
+        created_by=space["created_by"],
+    )
+    if reason == "not_visible":
+        raise HTTPException(status_code=404, detail="no such space")
+    if reason == "not_owner":
         raise HTTPException(
             status_code=403, detail="only the space creator may delete it"
         )

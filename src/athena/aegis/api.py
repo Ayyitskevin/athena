@@ -1155,9 +1155,15 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
     PATCH/DELETE is an existence oracle for names the read path deliberately hides.
     Same order as _project_for_privacy and the web's _authorize_project_write."""
     project = projects.get_project(conn, project_id)
-    if project is None or not access.can_see_project(conn, actor, project_id):
+    if project is None:
         raise HTTPException(status_code=404, detail="no such project")
-    if project["created_by"] != actor["id"]:
+    reason = access.container_write_reason(
+        conn, actor, kind="project", container_id=project_id,
+        created_by=project["created_by"],
+    )
+    if reason == "not_visible":
+        raise HTTPException(status_code=404, detail="no such project")
+    if reason == "not_owner":
         raise HTTPException(
             status_code=403, detail="only the project creator may modify it"
         )

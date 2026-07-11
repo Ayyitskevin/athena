@@ -166,11 +166,16 @@ def delete_space(
         return err
 
     space = spaces.get_space(conn, space_id)
-    # Visibility first, THEN the creator check: a hidden private space must read as
-    # "not found" (404), never "exists but not yours" (403) — no existence leak.
-    if space is None or not access.can_see_space(conn, user, space_id):
+    if space is None:
         return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
-    if space["created_by"] != user["id"]:
+    # Shared visibility-first + creator-only rule (access.container_write_reason) — a
+    # hidden space reads as "not found" (404), never "exists but not yours" (403).
+    reason = access.container_write_reason(
+        conn, user, kind="space", container_id=space_id, created_by=space["created_by"]
+    )
+    if reason == "not_visible":
+        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+    if reason == "not_owner":
         return HTMLResponse(
             '<div class="blocked">Only the space creator may delete it.</div>',
             status_code=403,

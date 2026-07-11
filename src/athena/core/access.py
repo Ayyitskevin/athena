@@ -187,6 +187,44 @@ def can_see_space(
     return is_space_member(conn, space_id, actor["id"])
 
 
+def container_write_reason(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    *,
+    kind: str,
+    container_id: int,
+    created_by: int,
+) -> str | None:
+    """The ONE rule for "may this actor EDIT or DELETE this project|space" — the gate
+    whose four per-boundary copies had drifted until three of them leaked a hidden
+    container's existence through a 403. Centralized here so the visibility-first
+    ordering can't be gotten wrong (or forgotten) on one surface again.
+
+    Returns None when the write is allowed, else a reason the caller maps to its own
+    error shape:
+      'not_visible' → the actor can't see the container → answer 404, so a hidden
+                      container is indistinguishable from a missing one (no leak);
+      'not_owner'   → visible, but the actor isn't its creator → 403.
+
+    Visibility is ALWAYS checked first. Editing or deleting a whole container is
+    CREATOR-ONLY: unlike toggling its visibility or managing its members — which an
+    admin may also do on any container (a governance function) — destroying or
+    renaming someone else's container is not an admin power. `kind` is 'project' or
+    'space'; the caller has already fetched the row (and 404s a MISSING container
+    itself), passing its created_by here."""
+    if kind == "project":
+        visible = can_see_project(conn, actor, container_id)
+    elif kind == "space":
+        visible = can_see_space(conn, actor, container_id)
+    else:
+        raise ValueError(f"unknown container kind: {kind!r}")
+    if not visible:
+        return "not_visible"
+    if actor is not None and actor["id"] == created_by:
+        return None
+    return "not_owner"
+
+
 def visible_project_ids(conn: sqlite3.Connection, actor: dict | None) -> set[int]:
     """The set of project ids this actor may read — the filter every issue/project
     LIST applies. An admin gets every project; anyone else gets the public ones plus
