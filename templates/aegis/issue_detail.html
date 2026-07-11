@@ -348,7 +348,7 @@
                 </select>
                 <button type="submit" class="button small">Assign</button>
             </form>
-            <form method="post" action="/aegis/issues/{{ issue.id }}/project" class="project-form">
+            <form method="post" action="/aegis/issues/{{ issue.id }}/placement" class="placement-form">
                 {% include "partials/csrf.html" %}
                 <label for="project-select">Project</label>
                 <select id="project-select" name="project_id">
@@ -357,21 +357,16 @@
                     <option value="{{ p.id }}" {% if p.id == issue.project_id %}selected{% endif %}>{{ p.name }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="button small">Set Project</button>
-            </form>
-            {% if issue_sprints %}
-            <form method="post" action="/aegis/issues/{{ issue.id }}/sprint" class="sprint-form">
-                {% include "partials/csrf.html" %}
                 <label for="sprint-select">Sprint</label>
                 <select id="sprint-select" name="sprint_id">
                     <option value="" {% if not issue.sprint_id %}selected{% endif %}>Backlog</option>
-                    {% for s in issue_sprints %}
-                    <option value="{{ s.id }}" {% if s.id == issue.sprint_id %}selected{% endif %}>{{ s.name }} ({{ s.state }})</option>
+                    {% for s in placement_sprints %}
+                    <option value="{{ s.id }}" {% if s.id == issue.sprint_id %}selected{% endif %}>{{ s.project_name }} — {{ s.name }} ({{ s.state }})</option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="button small">Set Sprint</button>
+                <span class="note-small">Sprint must belong to the selected project.</span>
+                <button type="submit" class="button small">Set Placement</button>
             </form>
-            {% endif %}
             <form method="post" action="/aegis/issues/{{ issue.id }}/parent" class="parent-form">
                 {% include "partials/csrf.html" %}
                 <label for="parent-ref">Parent</label>

@@ -61,11 +61,16 @@ class IssueCreate(BaseModel):
 class IssueUpdate(BaseModel):
     # A partial edit: send any subset. Unset fields are left unchanged. priority is
     # constrained to its lifecycle when present; status is validated against the
-    # issue's project's set in the handler.
+    # issue's final project's set in the command. project_id and sprint_id may be
+    # sent together to move directly into a destination sprint. Their None defaults
+    # are intentional: model_dump(exclude_unset=True) still distinguishes an omitted
+    # relationship (leave it alone) from explicit null (clear it).
     title: str | None = None
     body: str | None = None
     status: str | None = None
     priority: Priority | None = None
+    project_id: int | None = None
+    sprint_id: int | None = None
 
 
 class AssigneeUpdate(BaseModel):
@@ -87,13 +92,14 @@ class ProjectUpdate(BaseModel):
 class BulkUpdate(BaseModel):
     # Apply the same triage change to many issues at once. Only the fields actually
     # sent are touched (model_dump(exclude_unset=True) in the handler), so a sent
-    # assignee_id/sprint_id of null means "unassign"/"move to backlog" — distinct
+    # assignee_id/project_id/sprint_id null clears that relationship — distinct
     # from omitting it, which leaves it alone. status/priority are set to a value
     # (there is no "clear status"). Each issue is processed independently.
     ids: list[int]
     status: str | None = None
     priority: Priority | None = None
     assignee_id: int | None = None
+    project_id: int | None = None
     sprint_id: int | None = None
 
 
@@ -638,7 +644,13 @@ def _apply_bulk_update(
     """
     command_fields = {
         key: provided[key]
-        for key in ("status", "priority", "assignee_id", "sprint_id")
+        for key in (
+            "status",
+            "priority",
+            "assignee_id",
+            "project_id",
+            "sprint_id",
+        )
         if key in provided
     }
     try:

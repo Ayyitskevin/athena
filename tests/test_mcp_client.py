@@ -231,6 +231,77 @@ def test_bulk_update_through_the_client(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_atomic_issue_placement_through_the_client(tmp_path, monkeypatch):
+    # WHY: an agent moving an issue between projects must send the destination
+    # project and sprint in ONE request. Sequential project/sprint tools expose an
+    # invalid intermediate placement and cannot express an atomic final pair.
+    tc, ath = _client(tmp_path, "placement.db")
+    try:
+        source = tc.post("/projects", json={"name": "Source", "key": "SRC"}).json()
+        target = tc.post("/projects", json={"name": "Target", "key": "TGT"}).json()
+        source_sprint = tc.post(
+            f"/projects/{source['id']}/sprints", json={"name": "Source sprint"}
+        ).json()
+        target_sprint = tc.post(
+            f"/projects/{target['id']}/sprints", json={"name": "Target sprint"}
+        ).json()
+        issue = ath.create_issue(title="move once", project_id=source["id"])
+        ath.set_issue_sprint(issue["id"], source_sprint["id"])
+
+        patch_calls = []
+        real_patch = tc.patch
+
+        def recording_patch(path, **kwargs):
+            patch_calls.append((path, kwargs.get("json")))
+            return real_patch(path, **kwargs)
+
+        monkeypatch.setattr(tc, "patch", recording_patch)
+
+        moved = ath.set_issue_placement(
+            issue["id"], project_id=target["id"], sprint_id=target_sprint["id"]
+        )
+        assert patch_calls == [
+            (
+                f"/issues/{issue['id']}",
+                {"project_id": target["id"], "sprint_id": target_sprint["id"]},
+            )
+        ]
+
+        assert (moved["project_id"], moved["sprint_id"]) == (
+            target["id"],
+            target_sprint["id"],
+        )
+
+        # Null is a value on this dedicated surface, not an omitted optional field.
+        backlog = ath.set_issue_placement(
+            issue["id"], project_id=None, sprint_id=None
+        )
+        assert patch_calls[-1] == (
+            f"/issues/{issue['id']}",
+            {"project_id": None, "sprint_id": None},
+        )
+
+        assert (backlog["project_id"], backlog["sprint_id"]) == (None, None)
+
+        # The server's relationship error is preserved for the agent, and the
+        # rejected pair does not partially move the issue.
+        with pytest.raises(AthenaError) as exc:
+            ath.set_issue_placement(
+                issue["id"],
+                project_id=target["id"],
+                sprint_id=source_sprint["id"],
+            )
+        assert "422" in str(exc.value)
+        assert (
+            "sprint belongs to a different project than the issue"
+            in str(exc.value)
+        )
+        unchanged = ath.get_issue(str(issue["id"]))
+        assert (unchanged["project_id"], unchanged["sprint_id"]) == (None, None)
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
     # WHY: these surfaces (parent/child, dependencies, sprints, labels) all have
     # REST endpoints + data layers, but were unreachable via MCP — an agent could
@@ -293,7 +364,8 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
     tc, ath = _client(tmp_path, "mcp.db")
     try:
         server = build_server(ath)
-        names = {t.name for t in asyncio.run(server.list_tools())}
+        tools = {t.name: t for t in asyncio.run(server.list_tools())}
+        names = set(tools)
         # The agent-facing surface is present.
         assert {
             "search",
@@ -301,6 +373,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_issue",
             "create_issue",
             "update_issue",
+            "set_issue_placement",
             "get_issue_state",
             "assign_issue",
             "delegate_issue",
@@ -332,6 +405,20 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "attach_label",
             "detach_label",
         } <= names
+
+        # Placement's two nullable values are required in the MCP contract. This
+        # keeps omission distinct from an explicit backlog/no-sprint placement.
+        placement_schema = tools["set_issue_placement"].inputSchema
+        assert {"issue_id", "project_id", "sprint_id"} <= set(
+            placement_schema["required"]
+        )
+        for field_name in ("project_id", "sprint_id"):
+            types = {
+                option["type"]
+                for option in placement_schema["properties"][field_name]["anyOf"]
+            }
+            assert types == {"integer", "null"}
+
 
         # A tool call goes all the way through to the API and creates real data.
         asyncio.run(server.call_tool("create_issue", {"title": "via mcp"}))

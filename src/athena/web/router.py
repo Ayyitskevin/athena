@@ -851,9 +851,19 @@ def _render_issue_detail(
         comment["body_html"] = render_comment(conn, comment["body"])
     # Gate children by viewer visibility (a child can sit in a private project the
     # viewer isn't in), matching the JSON API — else the detail page leaks it.
+    visible_project_ids = access.visible_project_filter(conn, user)
     children = issues.list_children(
-        conn, issue_id, visible_project_ids=access.visible_project_filter(conn, user)
+        conn, issue_id, visible_project_ids=visible_project_ids
     )
+    visible_projects = projects.list_projects(conn, visible_project_ids)
+    visible_project_names = {
+        project["id"]: project["name"] for project in visible_projects
+    }
+    placement_sprints = [
+        {**sprint, "project_name": visible_project_names[sprint["project_id"]]}
+        for sprint in sprints.list_sprints(conn)
+        if sprint["project_id"] in visible_project_names
+    ]
 
     context = {
         "issue": issue,
@@ -872,14 +882,11 @@ def _render_issue_detail(
         "contributors": contributors.list_contributors(conn, issue_id),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
-        "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
-        # Sprints the issue could join — only its own project's, since a sprint
-        # belongs to one project (and a backlog issue with no project has none).
-        "issue_sprints": (
-            sprints.list_sprints(conn, project_id=issue["project_id"])
-            if issue["project_id"]
-            else []
-        ),
+        "all_projects": visible_projects,
+        # Paired placement can target any sprint in a project the viewer may see.
+        # Project names keep the no-JavaScript selector unambiguous without leaking
+        # private project vocabulary.
+        "placement_sprints": placement_sprints,
         # The sprint the issue is currently in (for the read-view label), or None.
         "issue_sprint": (
             sprints.get_sprint(conn, issue["sprint_id"])
@@ -1043,6 +1050,65 @@ def change_issue_project(
     try:
         issue_commands.update_issue(
             conn, actor=user, issue_id=issue_id, project_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
+    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/{issue_id}/placement", dependencies=[Depends(verify_csrf)])
+def change_issue_placement(
+    request: Request,
+    issue_id: int,
+    project_id: str = Form(""),
+    sprint_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Set project and sprint as one placement transition from the detail page.
+
+    Both form controls are submitted together so a user can move directly into a
+    destination project sprint. Empty values explicitly clear their relationship;
+    the command owns destination visibility, pair validation, status remapping,
+    persistence, and audit in one transaction.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> '
+            "to change placement.</div>",
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+
+    project_id = project_id.strip()
+    if project_id == "":
+        project_target: int | None = None
+    elif not project_id.isdigit():
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=400
+        )
+    else:
+        project_target = int(project_id)
+
+    sprint_id = sprint_id.strip()
+    if sprint_id == "":
+        sprint_target: int | None = None
+    elif not sprint_id.isdigit():
+        return HTMLResponse(
+            '<div class="error">No such sprint.</div>', status_code=400
+        )
+    else:
+        sprint_target = int(sprint_id)
+
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            project_id=project_target,
+            sprint_id=sprint_target,
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)

@@ -3,8 +3,9 @@ page, and filter the issue list by sprint.
 
 Both ride the existing sprint data layer and the one shared list_issues filtering
 path — so the browser, the REST issue list, and the sprint membership column can
-never disagree. These pin the detail-page form (assign, clear, the cross-project
-400, and the creator-or-assignee gate) and the list/API sprint filter.
+never disagree. These pin the detail-page placement form, the retained sprint-only
+route (assign, clear, cross-project 400, and creator-or-assignee gate), and the
+list/API sprint filter.
 """
 from fastapi.testclient import TestClient
 
@@ -49,9 +50,10 @@ def test_assign_and_clear_sprint_from_detail(tmp_path):
         iid = _issue(client, pid)
         _login(client)
 
-        # The detail page offers the sprint form and shows the issue as Backlog.
+        # The detail page offers the combined placement form and shows Backlog.
         page = client.get(f"/aegis/issues/{iid}")
-        assert page.status_code == 200 and "Set Sprint" in page.text and "Backlog" in page.text
+        assert page.status_code == 200
+        assert "Set Placement" in page.text and "Backlog" in page.text
 
         # Assign it to the sprint.
         moved = client.post(
@@ -107,7 +109,7 @@ def test_sprint_assign_is_author_gated(tmp_path):
         assert _sprint_of(client, iid) is None
 
 
-def test_no_sprint_form_when_project_has_no_sprints(tmp_path):
+def test_placement_form_remains_when_project_has_no_sprints(tmp_path):
     with TestClient(create_app(tmp_path / "empty.db")) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         pid = _project(client)
@@ -115,9 +117,10 @@ def test_no_sprint_form_when_project_has_no_sprints(tmp_path):
         _login(client)
 
         page = client.get(f"/aegis/issues/{iid}")
-        # No sprints to join → no form, but the read-only Sprint row still reads Backlog.
+        # Project placement remains useful with no sprint choices; Backlog is the
+        # only sprint option rather than hiding the combined form.
         assert page.status_code == 200
-        assert "Set Sprint" not in page.text
+        assert "Set Placement" in page.text
         assert "Backlog" in page.text
 
 

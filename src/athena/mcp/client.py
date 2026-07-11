@@ -136,6 +136,26 @@ class AthenaClient:
         )
         return self._result(self._client.patch(f"/issues/{issue_id}", json=payload))
 
+    def set_issue_placement(
+        self,
+        issue_id: int,
+        *,
+        project_id: int | None,
+        sprint_id: int | None,
+    ) -> Any:
+        """Set an issue's project and sprint as one relationship transition.
+
+        Both keys are deliberately sent even when null: ``project_id=None`` moves
+        the issue out of a project, while ``sprint_id=None`` puts it in no sprint.
+        The paired PATCH lets the API validate and commit the final placement once.
+        """
+        return self._result(
+            self._client.patch(
+                f"/issues/{issue_id}",
+                json={"project_id": project_id, "sprint_id": sprint_id},
+            )
+        )
+
     def assign_issue(self, issue_id: int, assignee_id: int | None) -> Any:
         return self._result(
             self._client.put(
