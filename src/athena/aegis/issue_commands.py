@@ -7,15 +7,15 @@ the issue row, cross-links, search index, activity event, watches, and mentions
 either all become durable or all roll back.
 
 The migration is intentionally vertical. Create, the editable core fields
-(title/body/status/priority), and assignee live here first; the remaining issue
-mutations can move command-by-command without a flag day.
+(title/body/status/priority), assignee, project, and sprint now live here; the
+remaining issue mutations can move command-by-command without a flag day.
 """
 from __future__ import annotations
 
 import sqlite3
 from typing import Literal
 
-from athena.aegis import issue_activity, issues, statuses
+from athena.aegis import issue_activity, issues, sprints, statuses
 from athena.core import access, db, identity, tokens, users
 
 ErrorKind = Literal["unauthorized", "forbidden", "not_found", "invalid"]
@@ -175,6 +175,8 @@ def update_issue(
     status: str | None | _UnsetType = UNSET,
     priority: str | None | _UnsetType = UNSET,
     assignee_id: int | None | _UnsetType = UNSET,
+    project_id: int | None | _UnsetType = UNSET,
+    sprint_id: int | None | _UnsetType = UNSET,
 ) -> dict:
     """Update editable issue fields and all resulting audit facts atomically."""
     actor = _require_issue_writer(actor)
@@ -188,6 +190,8 @@ def update_issue(
         status=status,
         priority=priority,
         assignee_id=assignee_id,
+        project_id=project_id,
+        sprint_id=sprint_id,
     )
 
 
@@ -226,6 +230,8 @@ def update_issue_as_automation(
         status=status,
         priority=priority,
         assignee_id=assignee_id,
+        project_id=UNSET,
+        sprint_id=UNSET,
     )
 
 
@@ -234,6 +240,18 @@ def _string_value(name: str, value: str | None | _UnsetType) -> str | None:
         return None
     if not isinstance(value, str):
         raise IssueCommandError("invalid", f"{name} must be a string")
+    return value
+
+
+def _nullable_int_value(
+    name: str, value: int | None | _UnsetType
+) -> int | None:
+    if value is UNSET:
+        return None
+    if value is not None and (
+        not isinstance(value, int) or isinstance(value, bool)
+    ):
+        raise IssueCommandError("invalid", f"{name} must be an integer or null")
     return value
 
 
@@ -248,6 +266,8 @@ def _update_issue(
     status: str | None | _UnsetType,
     priority: str | None | _UnsetType,
     assignee_id: int | None | _UnsetType,
+    project_id: int | None | _UnsetType,
+    sprint_id: int | None | _UnsetType,
 ) -> dict:
     with db.transaction(conn, immediate=True):
         before = (
@@ -259,7 +279,7 @@ def _update_issue(
             raise IssueCommandError("not_found", "no such issue")
 
         # Preserve the historical and security-relevant ordering: resolve the
-        # target/authorization before disclosing whether a submitted body is valid.
+        # target/authorization before disclosing whether submitted fields are valid.
         provided = {
             name
             for name, value in (
@@ -268,26 +288,46 @@ def _update_issue(
                 ("status", status),
                 ("priority", priority),
                 ("assignee_id", assignee_id),
+                ("project_id", project_id),
+                ("sprint_id", sprint_id),
             )
             if value is not UNSET
         }
         if not provided:
             raise IssueCommandError("invalid", "no fields to update")
 
-        assignee_value: int | None = None
-        if assignee_id is not UNSET:
-            if assignee_id is not None and (
-                not isinstance(assignee_id, int) or isinstance(assignee_id, bool)
+        project_value = _nullable_int_value("project_id", project_id)
+        final_project_id = (
+            project_value if project_id is not UNSET else before["project_id"]
+        )
+        project_changed = final_project_id != before["project_id"]
+        if (
+            project_id is not UNSET
+            and project_value is not None
+            and not access.can_see_project(conn, actor, project_value)
+        ):
+            raise IssueCommandError("invalid", "no such project")
+
+        sprint_value = _nullable_int_value("sprint_id", sprint_id)
+        if sprint_id is not UNSET and sprint_value is not None:
+            sprint = sprints.get_sprint(conn, sprint_value)
+            if sprint is None or not access.can_see_project(
+                conn, actor, sprint["project_id"]
             ):
+                raise IssueCommandError("invalid", "no such sprint")
+            if sprint["project_id"] != final_project_id:
                 raise IssueCommandError(
-                    "invalid", "assignee_id must be an integer or null"
+                    "invalid",
+                    "sprint belongs to a different project than the issue",
                 )
-            assignee_value = assignee_id
-            if (
-                assignee_value is not None
-                and users.get_user(conn, assignee_value) is None
-            ):
-                raise IssueCommandError("invalid", "no such user")
+
+        assignee_value = _nullable_int_value("assignee_id", assignee_id)
+        if (
+            assignee_id is not UNSET
+            and assignee_value is not None
+            and users.get_user(conn, assignee_value) is None
+        ):
+            raise IssueCommandError("invalid", "no such user")
 
         title_value = _string_value("title", title)
         normalized_title = title_value.strip() if title_value is not None else None
@@ -299,11 +339,21 @@ def _update_issue(
         if priority_value is not None and priority_value not in issues.PRIORITIES:
             raise IssueCommandError("invalid", "unknown priority")
         if status_value is not None and not statuses.is_valid(
-            conn, before["project_id"], status_value
+            conn, final_project_id, status_value
         ):
             raise IssueCommandError(
                 "invalid", "no such status for this project"
             )
+
+        if "project_id" in provided:
+            updated = issues.set_project(
+                conn,
+                issue_id,
+                project_value,
+                commit=False,
+            )
+            if updated is None:
+                raise IssueCommandError("not_found", "no such issue")
         updated = issues.update_issue(
             conn,
             issue_id,
@@ -327,7 +377,17 @@ def _update_issue(
             )
             if updated is None:
                 raise IssueCommandError("not_found", "no such issue")
-        if "status" in provided:
+        if "sprint_id" in provided:
+            updated = issues.set_sprint(
+                conn,
+                issue_id,
+                sprint_value,
+                commit=False,
+            )
+            if updated is None:
+                raise IssueCommandError("not_found", "no such issue")
+
+        if "status" in provided or project_changed:
             issue_activity.record_status_change(
                 conn,
                 actor_id=actor["id"],
@@ -352,6 +412,30 @@ def _update_issue(
                 issue_id=issue_id,
                 before=before["assignee_id"],
                 after=updated["assignee_id"],
+                commit=False,
+            )
+        if "project_id" in provided:
+            issue_activity.record_project_change(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                before=before["project_id"],
+                after=updated["project_id"],
+                commit=False,
+            )
+        if "sprint_id" in provided or project_changed:
+            project_caused_sprint_clear = (
+                project_changed
+                and before["sprint_id"] is not None
+                and updated["sprint_id"] is None
+            )
+            issue_activity.record_sprint_change(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                before=before["sprint_id"],
+                after=updated["sprint_id"],
+                include_before_detail=not project_caused_sprint_clear,
                 commit=False,
             )
         issue_activity.record_edited(

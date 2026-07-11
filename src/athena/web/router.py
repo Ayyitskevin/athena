@@ -1017,29 +1017,24 @@ def change_issue_project(
             '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
     project_id = project_id.strip()
     if project_id == "":
         target: int | None = None
+    elif not project_id.isdigit():
+        return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
     else:
-        if not project_id.isdigit() or not access.can_see_project(conn, user, int(project_id)):
-            # can_see_project is False for a missing project too, so a private project the
-            # actor can't see gives the SAME 400 — no write into (or discovery of) a
-            # hidden project, mirroring the REST API.
-            return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
         target = int(project_id)
 
-    updated = issues.set_project(conn, issue_id, target)
-    issue_activity.record_project_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["project_id"],
-        after=updated["project_id"],
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, project_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1061,36 +1056,24 @@ def change_issue_sprint(
             '<div class="blocked">Please <a href="/login">sign in</a> to change sprint.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
 
     sprint_id = sprint_id.strip()
     if sprint_id == "":
         target: int | None = None
+    elif not sprint_id.isdigit():
+        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
     else:
-        if not sprint_id.isdigit():
-            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-        sprint = sprints.get_sprint(conn, int(sprint_id))
-        if sprint is None:
-            return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-        # A sprint belongs to one project; an issue can only join a sprint in its
-        # own project (a backlog issue with no project can't be in any sprint).
-        if sprint["project_id"] != issue["project_id"]:
-            return HTMLResponse(
-                '<div class="error">That sprint belongs to a different project.</div>',
-                status_code=400,
-            )
         target = int(sprint_id)
 
-    issues.set_sprint(conn, issue_id, target)
-    issue_activity.record_sprint_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["sprint_id"],
-        after=target,
-    )
+    try:
+        issue_commands.update_issue(
+            conn, actor=user, issue_id=issue_id, sprint_id=target
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
