@@ -58,7 +58,7 @@ def _require_issue_writer(actor: dict | None) -> dict:
     return actor
 
 
-def _writable_issue(
+def _visible_issue(
     conn: sqlite3.Connection, actor: dict, issue_id: int
 ) -> dict:
     issue = issues.get_issue(conn, issue_id)
@@ -66,11 +66,21 @@ def _writable_issue(
         conn, actor, issue["project_id"]
     ):
         raise IssueCommandError("not_found", "no such issue")
+    return issue
+
+
+def _modifiable_issue(issue: dict, actor: dict) -> dict:
     if not issues.can_modify(issue, actor["id"]):
         raise IssueCommandError(
             "forbidden", "only the issue creator or assignee may modify it"
         )
     return issue
+
+
+def _writable_issue(
+    conn: sqlite3.Connection, actor: dict, issue_id: int
+) -> dict:
+    return _modifiable_issue(_visible_issue(conn, actor, issue_id), actor)
 
 
 def get_writable_issue(
@@ -82,7 +92,14 @@ def get_writable_issue(
     commands repeat the check under their write transaction so this convenience
     read is never treated as authorization for a later write.
     """
-    return _writable_issue(conn, _require_issue_writer(actor), issue_id)
+    if actor is None:
+        raise IssueCommandError("unauthorized", "authentication required")
+    # Preserve the browser's visibility-first contract: a hidden or missing
+    # issue returns the same 404 for every signed-in actor. Only a visible issue
+    # proceeds to the role/scope and creator-or-assignee checks.
+    issue = _visible_issue(conn, actor, issue_id)
+    _require_issue_writer(actor)
+    return _modifiable_issue(issue, actor)
 
 
 def create_issue(
