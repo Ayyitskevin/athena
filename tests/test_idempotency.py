@@ -63,7 +63,10 @@ def test_key_reused_on_a_different_path_is_409(tmp_path):
         # Same key, different path — the middleware refuses before the route runs.
         clash = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=key)
         assert clash.status_code == 409
-        assert clash.json()["detail"] == "Idempotency-Key reused for a different request"
+        assert clash.json() == {
+            "detail": "Idempotency-Key reused for a different request",
+            "code": "idempotency_mismatch",
+        }
         # The second write never happened; the first is intact.
         assert client.get("/spaces", headers=H1).json() == []
         assert _ids(client) == [first.json()["id"]]

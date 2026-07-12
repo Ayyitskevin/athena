@@ -19,6 +19,46 @@ class AthenaError(RuntimeError):
     """An Athena API call returned a non-success status. The message carries the
     method, path, status, and server detail so the agent sees a useful error."""
 
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        method: str | None = None,
+        path: str | None = None,
+        status_code: int | None = None,
+        detail: Any = None,
+        code: str | None = None,
+        retry_after: str | None = None,
+    ) -> None:
+        self.method = method
+        self.path = path
+        self.status_code = status_code
+        self.detail = detail
+        self.code = code
+        self.retry_after = retry_after
+        if message is None and None not in (method, path, status_code):
+            message = f"{method} {path} -> {status_code}: {detail}"
+        if message is None:
+            super().__init__()
+        else:
+            super().__init__(message)
+
+    def __reduce__(self) -> tuple[Any, tuple[Any, ...], dict[str, Any]]:
+        """Rebuild through the positional-compatible path, then restore metadata."""
+        return type(self), self.args, self.__dict__.copy()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return stable, serializable error fields for programmatic callers."""
+        return {
+            "message": str(self),
+            "method": self.method,
+            "path": self.path,
+            "status_code": self.status_code,
+            "detail": self.detail,
+            "code": self.code,
+            "retry_after": self.retry_after,
+        }
+
 
 class AthenaClient:
     """Calls Athena's REST API. Construct with a base URL + bearer token for real
@@ -52,16 +92,45 @@ class AthenaClient:
     def _result(self, response: httpx.Response) -> Any:
         if response.status_code >= 400:
             try:
-                detail = response.json().get("detail", response.text)
+                payload = response.json()
             except Exception:  # noqa: BLE001 — body may not be JSON
+                payload = None
+            if isinstance(payload, dict):
+                detail = payload.get("detail", response.text)
+                raw_code = payload.get("code")
+                code = raw_code if isinstance(raw_code, str) else None
+            else:
                 detail = response.text
             raise AthenaError(
-                f"{response.request.method} {response.request.url.path} "
-                f"-> {response.status_code}: {detail}"
+                method=response.request.method,
+                path=response.request.url.path,
+                status_code=response.status_code,
+                detail=detail,
+                code=code if isinstance(payload, dict) else None,
+                retry_after=response.headers.get("Retry-After"),
             )
         if response.status_code == 204 or not response.content:
             return None
         return response.json()
+
+    def _mutate(
+        self,
+        request: Any,
+        path: str,
+        *,
+        idempotency_key: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Send a mutation, adding a caller-supplied retry key when present."""
+        if idempotency_key is not None:
+            existing_headers = kwargs.get("headers")
+            if existing_headers is None:
+                kwargs["headers"] = {"Idempotency-Key": idempotency_key}
+            else:
+                merged_headers = httpx.Headers(existing_headers)
+                merged_headers["Idempotency-Key"] = idempotency_key
+                kwargs["headers"] = merged_headers
+        return self._result(request(path, **kwargs))
 
     # --- search -------------------------------------------------------------
 
@@ -112,6 +181,7 @@ class AthenaClient:
         status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(
             title=title,
@@ -120,7 +190,12 @@ class AthenaClient:
             priority=priority,
             project_id=project_id,
         )
-        return self._result(self._client.post("/issues", json=payload))
+        return self._mutate(
+            self._client.post,
+            "/issues",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
 
     def update_issue(
         self,
@@ -130,11 +205,15 @@ class AthenaClient:
         body: str | None = None,
         status: str | None = None,
         priority: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
-        payload = self._params(
-            title=title, body=body, status=status, priority=priority
+        payload = self._params(title=title, body=body, status=status, priority=priority)
+        return self._mutate(
+            self._client.patch,
+            f"/issues/{issue_id}",
+            json=payload,
+            idempotency_key=idempotency_key,
         )
-        return self._result(self._client.patch(f"/issues/{issue_id}", json=payload))
 
     def set_issue_placement(
         self,
@@ -142,6 +221,7 @@ class AthenaClient:
         *,
         project_id: int | None,
         sprint_id: int | None,
+        idempotency_key: str | None = None,
     ) -> Any:
         """Set an issue's project and sprint as one relationship transition.
 
@@ -149,37 +229,64 @@ class AthenaClient:
         the issue out of a project, while ``sprint_id=None`` puts it in no sprint.
         The paired PATCH lets the API validate and commit the final placement once.
         """
-        return self._result(
-            self._client.patch(
-                f"/issues/{issue_id}",
-                json={"project_id": project_id, "sprint_id": sprint_id},
-            )
+        return self._mutate(
+            self._client.patch,
+            f"/issues/{issue_id}",
+            json={"project_id": project_id, "sprint_id": sprint_id},
+            idempotency_key=idempotency_key,
         )
 
-    def assign_issue(self, issue_id: int, assignee_id: int | None) -> Any:
-        return self._result(
-            self._client.put(
-                f"/issues/{issue_id}/assignee", json={"assignee_id": assignee_id}
-            )
+    def assign_issue(
+        self,
+        issue_id: int,
+        assignee_id: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._mutate(
+            self._client.put,
+            f"/issues/{issue_id}/assignee",
+            json={"assignee_id": assignee_id},
+            idempotency_key=idempotency_key,
         )
 
-    def delegate_issue(self, issue_id: int, agent_user_id: int) -> Any:
-        return self._result(
-            self._client.post(
-                f"/issues/{issue_id}/delegate", json={"user_id": agent_user_id}
-            )
+    def delegate_issue(
+        self, issue_id: int, agent_user_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/delegate",
+            json={"user_id": agent_user_id},
+            idempotency_key=idempotency_key,
         )
 
-    def comment_on_issue(self, issue_id: int, body: str) -> Any:
-        return self._result(
-            self._client.post(f"/issues/{issue_id}/comments", json={"body": body})
+    def comment_on_issue(
+        self, issue_id: int, body: str, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/comments",
+            json={"body": body},
+            idempotency_key=idempotency_key,
         )
 
-    def archive_issue(self, issue_id: int) -> Any:
-        return self._result(self._client.post(f"/issues/{issue_id}/archive"))
+    def archive_issue(
+        self, issue_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/archive",
+            idempotency_key=idempotency_key,
+        )
 
-    def unarchive_issue(self, issue_id: int) -> Any:
-        return self._result(self._client.post(f"/issues/{issue_id}/unarchive"))
+    def unarchive_issue(
+        self, issue_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/unarchive",
+            idempotency_key=idempotency_key,
+        )
 
     def bulk_update_issues(
         self,
@@ -189,6 +296,7 @@ class AthenaClient:
         priority: str | None = None,
         assignee_id: int | None = None,
         sprint_id: int | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         # Only the fields actually given are sent (drop-None), so the bulk tool SETS
         # values; clearing an assignee/sprint stays the per-issue tools' job. The
@@ -202,16 +310,28 @@ class AthenaClient:
                 sprint_id=sprint_id,
             ),
         }
-        return self._result(self._client.post("/issues/bulk", json=payload))
+        return self._mutate(
+            self._client.post,
+            "/issues/bulk",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
 
     # --- hierarchy (parent / children) --------------------------------------
 
-    def set_issue_parent(self, issue_id: int, parent_id: int | None) -> Any:
+    def set_issue_parent(
+        self,
+        issue_id: int,
+        parent_id: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
         # Send parent_id even when None (clear the parent) — _params would drop it.
-        return self._result(
-            self._client.put(
-                f"/issues/{issue_id}/parent", json={"parent_id": parent_id}
-            )
+        return self._mutate(
+            self._client.put,
+            f"/issues/{issue_id}/parent",
+            json={"parent_id": parent_id},
+            idempotency_key=idempotency_key,
         )
 
     def list_subtasks(self, issue_id: int) -> Any:
@@ -222,17 +342,33 @@ class AthenaClient:
     def list_issue_links(self, issue_id: int) -> Any:
         return self._result(self._client.get(f"/issues/{issue_id}/links"))
 
-    def link_issues(self, issue_id: int, target_ref: str, relation: str) -> Any:
-        return self._result(
-            self._client.post(
-                f"/issues/{issue_id}/links",
-                json={"target_ref": target_ref, "relation": relation},
-            )
+    def link_issues(
+        self,
+        issue_id: int,
+        target_ref: str,
+        relation: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/links",
+            json={"target_ref": target_ref, "relation": relation},
+            idempotency_key=idempotency_key,
         )
 
-    def unlink_issues(self, issue_id: int, relation: str, target_id: int) -> Any:
-        return self._result(
-            self._client.delete(f"/issues/{issue_id}/links/{relation}/{target_id}")
+    def unlink_issues(
+        self,
+        issue_id: int,
+        relation: str,
+        target_id: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._mutate(
+            self._client.delete,
+            f"/issues/{issue_id}/links/{relation}/{target_id}",
+            idempotency_key=idempotency_key,
         )
 
     # --- sprints ------------------------------------------------------------
@@ -244,12 +380,19 @@ class AthenaClient:
             )
         )
 
-    def set_issue_sprint(self, issue_id: int, sprint_id: int | None) -> Any:
+    def set_issue_sprint(
+        self,
+        issue_id: int,
+        sprint_id: int | None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
         # Send sprint_id even when None (move to the backlog) — _params would drop it.
-        return self._result(
-            self._client.put(
-                f"/issues/{issue_id}/sprint", json={"sprint_id": sprint_id}
-            )
+        return self._mutate(
+            self._client.put,
+            f"/issues/{issue_id}/sprint",
+            json={"sprint_id": sprint_id},
+            idempotency_key=idempotency_key,
         )
 
     # --- labels -------------------------------------------------------------
@@ -257,21 +400,37 @@ class AthenaClient:
     def list_labels(self) -> Any:
         return self._result(self._client.get("/labels"))
 
-    def create_label(self, name: str, *, color: str = "#6b7280") -> Any:
-        return self._result(
-            self._client.post("/labels", json={"name": name, "color": color})
+    def create_label(
+        self,
+        name: str,
+        *,
+        color: str = "#6b7280",
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            "/labels",
+            json={"name": name, "color": color},
+            idempotency_key=idempotency_key,
         )
 
-    def attach_label(self, issue_id: int, label_id: int) -> Any:
-        return self._result(
-            self._client.post(
-                f"/issues/{issue_id}/labels", json={"label_id": label_id}
-            )
+    def attach_label(
+        self, issue_id: int, label_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/labels",
+            json={"label_id": label_id},
+            idempotency_key=idempotency_key,
         )
 
-    def detach_label(self, issue_id: int, label_id: int) -> Any:
-        return self._result(
-            self._client.delete(f"/issues/{issue_id}/labels/{label_id}")
+    def detach_label(
+        self, issue_id: int, label_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.delete,
+            f"/issues/{issue_id}/labels/{label_id}",
+            idempotency_key=idempotency_key,
         )
 
     # --- projects & users ---------------------------------------------------
@@ -300,10 +459,14 @@ class AthenaClient:
         title: str,
         body: str = "",
         parent_id: int | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(title=title, body=body, parent_id=parent_id)
-        return self._result(
-            self._client.post(f"/spaces/{space_id}/pages", json=payload)
+        return self._mutate(
+            self._client.post,
+            f"/spaces/{space_id}/pages",
+            json=payload,
+            idempotency_key=idempotency_key,
         )
 
     def update_page(
@@ -312,9 +475,15 @@ class AthenaClient:
         *,
         title: str | None = None,
         body: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(title=title, body=body)
-        return self._result(self._client.patch(f"/pages/{page_id}", json=payload))
+        return self._mutate(
+            self._client.patch,
+            f"/pages/{page_id}",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
 
     # --- events -------------------------------------------------------------
 

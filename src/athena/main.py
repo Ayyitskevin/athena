@@ -627,7 +627,10 @@ class IdempotencyMiddleware:
             if claim.kind == "mismatch":
                 await _send_json_response(
                     send,
-                    {"detail": "Idempotency-Key reused for a different request"},
+                    {
+                        "detail": "Idempotency-Key reused for a different request",
+                        "code": "idempotency_mismatch",
+                    },
                     status_code=409,
                 )
                 return
