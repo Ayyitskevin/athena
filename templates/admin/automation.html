@@ -20,6 +20,7 @@
             <th>When</th>
             <th>Do</th>
             <th>Status</th>
+            <th>Health</th>
             <th></th>
         </tr>
     </thead>
@@ -53,6 +54,14 @@
                     <input type="hidden" name="enabled" value="{{ 0 if rule.enabled else 1 }}">
                     <button type="submit" class="button secondary small">{{ "Pause" if rule.enabled else "Enable" }}</button>
                 </form>
+            </td>
+            <td>
+                {% if rule.failure_count %}
+                    <span class="badge" title="{{ rule.last_error }}">⚠ {{ rule.failure_count }} failed</span>
+                    {% if rule.last_error_at %}<div class="muted small">last: {{ rule.last_error_at }} UTC</div>{% endif %}
+                {% else %}
+                    <span class="muted">OK</span>
+                {% endif %}
             </td>
             <td class="muted">
                 <form method="post" action="/admin/automation/{{ rule.id }}/delete" class="inline-form" data-confirm="Delete rule “{{ rule.name }}”?">

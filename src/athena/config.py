@@ -9,6 +9,13 @@ from pathlib import Path
 # The SQLite file Athena stores everything in. Override with the ATHENA_DB env var.
 DB_PATH = Path(os.environ.get("ATHENA_DB", "athena.db"))
 
+# The log level for Athena's own loggers ("athena.*"). create_app configures a stream
+# handler at this level so startup (applied migrations, loop start) and the background
+# loops' swallowed errors are actually visible on stdout — otherwise an unconfigured
+# root logger only surfaces WARNING and above. Set ATHENA_LOG_LEVEL=WARNING for a quieter
+# server, or DEBUG when diagnosing.
+LOG_LEVEL = os.environ.get("ATHENA_LOG_LEVEL", "INFO").strip().upper()
+
 
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.environ.get(name)

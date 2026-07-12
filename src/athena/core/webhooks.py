@@ -26,6 +26,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 from pathlib import Path
 import secrets
 import socket
@@ -36,6 +37,8 @@ from urllib.parse import urlparse
 
 from athena import config
 from athena.core import activity, db
+
+logger = logging.getLogger(__name__)
 
 # Raw secrets carry a short prefix so humans recognize them, like API tokens.
 SECRET_PREFIX = "whsec_"
@@ -364,5 +367,5 @@ async def delivery_loop(db_path: str | Path) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a failed pass must not stop the loop
-            pass
+            logger.warning("webhook delivery pass failed; loop continues", exc_info=True)
         await asyncio.sleep(config.WEBHOOK_DELIVERY_INTERVAL_SECONDS)
