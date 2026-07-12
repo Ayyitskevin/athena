@@ -175,6 +175,12 @@ MUTATION_CASES = [
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
+IF_MATCH_TOOL_NAMES = {
+    "update_issue",
+    "set_issue_placement",
+    "assign_issue",
+    "set_issue_sprint",
+}
 MCP_MUTATION_CASES = [
     ("create_issue", {"title": "x"}),
     ("update_issue", {"issue_id": 7}),
@@ -204,6 +210,9 @@ MCP_MUTATION_CASES = [
     ("create_page", {"space_id": 4, "title": "x"}),
     ("update_page", {"page_id": 4}),
 ]
+MCP_IF_MATCH_CASES = [
+    case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES
+]
 
 
 class _MCPRecordingAthenaClient:
@@ -227,6 +236,7 @@ class _MCPFailingAthenaClient(_MCPRecordingAthenaClient):
             detail="still running",
             code="idempotency_in_progress",
             retry_after="7",
+            current_etag='"current"',
         )
 
 
@@ -263,14 +273,16 @@ def test_mutation_helper_merges_existing_headers_case_insensitively():
         transport.post,
         "/issues",
         idempotency_key="new-key",
-        headers={"If-Match": '"v1"', "idempotency-key": "old-key"},
+        if_match='"v2"',
+        headers={"if-match": '"v1"', "idempotency-key": "old-key"},
         json={"title": "x"},
     )
 
     _, _, kwargs = transport.calls.pop()
     headers = httpx.Headers(kwargs["headers"])
-    assert headers["If-Match"] == '"v1"'
+    assert headers["If-Match"] == '"v2"'
     assert headers["Idempotency-Key"] == "new-key"
+    assert len(headers.get_list("If-Match")) == 1
     assert len(headers.get_list("Idempotency-Key")) == 1
 
 
@@ -285,6 +297,7 @@ def test_athena_error_preserves_legacy_construction_and_pickle_state():
         detail="still running",
         code="idempotency_in_progress",
         retry_after="7",
+        current_etag='"current"',
     )
     restored = pickle.loads(pickle.dumps(structured))
 
@@ -312,6 +325,38 @@ def test_issue_lifecycle_through_the_client(tmp_path):
         # Full-text search spans the issue we just made.
         hits = ath.search("ship")
         assert any(h["source_id"] == issue["id"] and h["kind"] == "issue" for h in hits)
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_client_exposes_etags_and_surfaces_stale_issue_preconditions(tmp_path):
+    tc, ath = _client(tmp_path, "etag-client.db")
+    try:
+        created = ath.create_issue(title="before")
+        assert created["_etag"].startswith('"sha256-')
+
+        fetched = ath.get_issue(str(created["id"]))
+        assert fetched["_etag"] == created["_etag"]
+
+        updated = ath.update_issue(
+            created["id"],
+            title="after",
+            if_match=fetched["_etag"],
+            idempotency_key="guarded-update",
+        )
+        assert updated["title"] == "after"
+        assert updated["_etag"] != fetched["_etag"]
+
+        with pytest.raises(AthenaError) as stale:
+            ath.update_issue(
+                created["id"],
+                title="lost update",
+                if_match=fetched["_etag"],
+            )
+        assert stale.value.status_code == 412
+        assert stale.value.code == "precondition_failed"
+        assert stale.value.current_etag == updated["_etag"]
+        assert ath.get_issue(str(created["id"]))["title"] == "after"
     finally:
         tc.__exit__(None, None, None)
 
@@ -646,7 +691,7 @@ def test_error_preserves_retry_after_and_machine_code():
             "detail": "A request with this Idempotency-Key is still in progress",
             "code": "idempotency_in_progress",
         },
-        headers={"Retry-After": "1"},
+        headers={"Retry-After": "1", "ETag": '"current"'},
         request=httpx.Request("POST", "http://athena.test/issues"),
     )
 
@@ -656,6 +701,7 @@ def test_error_preserves_retry_after_and_machine_code():
     assert exc.value.status_code == 409
     assert exc.value.code == "idempotency_in_progress"
     assert exc.value.retry_after == "1"
+    assert exc.value.current_etag == '"current"'
 
 
 def test_error_surfaces_status_and_detail(tmp_path):
@@ -698,6 +744,27 @@ def test_every_mcp_mutation_forwards_the_optional_key(tool_name, arguments):
         called_name, _, kwargs = client.calls.pop()
         assert called_name == tool_name
         assert kwargs["idempotency_key"] == key
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    MCP_IF_MATCH_CASES,
+    ids=[case[0] for case in MCP_IF_MATCH_CASES],
+)
+def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    asyncio.run(server.call_tool(tool_name, {**arguments, "if_match": '"current"'}))
+
+    called_name, _, kwargs = client.calls.pop()
+    assert called_name == tool_name
+    assert kwargs["if_match"] == '"current"'
 
 
 @pytest.mark.parametrize(
@@ -749,6 +816,7 @@ def test_mcp_error_text_preserves_structured_retry_metadata():
     assert payload["status_code"] == 409
     assert payload["code"] == "idempotency_in_progress"
     assert payload["retry_after"] == "7"
+    assert payload["current_etag"] == '"current"'
     assert payload["message"] == "POST /issues -> 409: still running"
 
 
@@ -836,6 +904,13 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
 
         for tool_name in names - MUTATION_TOOL_NAMES:
             assert "idempotency_key" not in tools[tool_name].inputSchema["properties"]
+
+        for tool_name in IF_MATCH_TOOL_NAMES:
+            schema = tools[tool_name].inputSchema
+            assert "if_match" in schema["properties"]
+            assert "if_match" not in set(schema.get("required", []))
+        for tool_name in names - IF_MATCH_TOOL_NAMES:
+            assert "if_match" not in tools[tool_name].inputSchema["properties"]
 
         # An omitted key remains backward-compatible and creates real data.
         asyncio.run(server.call_tool("create_issue", {"title": "via mcp"}))

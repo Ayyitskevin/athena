@@ -9,7 +9,17 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from athena import config
@@ -18,6 +28,7 @@ from athena.aegis import (
     contributors,
     dependencies,
     issue_activity,
+    issue_etags,
     issue_commands,
     issue_history,
     issue_search,
@@ -276,8 +287,54 @@ def _issue_command_http_error(
         "forbidden": 403,
         "not_found": 404,
         "invalid": 422,
+        "invalid_precondition": 400,
+        "precondition_too_large": 431,
+        "precondition_failed": 412,
     }[exc.kind]
     return HTTPException(status_code=status_code, detail=exc.detail)
+
+
+_PRECONDITION_HTTP = {
+    "invalid_precondition": (400, "invalid_if_match"),
+    "precondition_too_large": (431, "if_match_too_large"),
+    "precondition_failed": (412, "precondition_failed"),
+}
+
+
+def _issue_precondition_response(
+    exc: issue_commands.IssueCommandError,
+) -> JSONResponse | None:
+    """Render conditional-request failures with a stable code and current tag."""
+    spec = _PRECONDITION_HTTP.get(exc.kind)
+    if spec is None:
+        return None
+    status_code, code = spec
+    headers = {"ETag": exc.current_etag} if exc.current_etag is not None else None
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": exc.detail, "code": code},
+        headers=headers,
+    )
+
+
+def _issue_command_error_response(
+    exc: issue_commands.IssueCommandError,
+) -> JSONResponse:
+    """Return a conditional failure or raise the route's ordinary HTTP error."""
+    response = _issue_precondition_response(exc)
+    if response is not None:
+        return response
+    raise _issue_command_http_error(exc) from exc
+
+
+def _if_match_values(request: Request) -> list[str] | None:
+    """Preserve every raw If-Match field line for standards-aware parsing."""
+    values = [
+        value.decode("latin-1")
+        for name, value in request.scope.get("headers", ())
+        if name.lower() == b"if-match"
+    ]
+    return values or None
 
 
 def _validate_key(key: str) -> str:
@@ -301,6 +358,17 @@ def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
     return issue
 
 
+def _tagged_issue(
+    conn: sqlite3.Connection,
+    issue: dict,
+    response: Response,
+) -> dict:
+    """Return the exact public representation and its matching strong ETag."""
+    public, current_etag = issue_etags.resource_and_etag(conn, issue)
+    response.headers["ETag"] = current_etag
+    return public
+
+
 def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
     """Same as _with_labels but for a list, using one bulk query (no N+1)."""
     by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
@@ -312,6 +380,7 @@ def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
 @router.post("", response_model=IssueOut, status_code=201)
 def create(
     payload: IssueCreate,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -329,7 +398,7 @@ def create(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, issue)
+    return _tagged_issue(conn, issue, response)
 
 
 def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
@@ -441,6 +510,7 @@ def search_issues_endpoint(
 @router.get("/{ref}", response_model=IssueOut)
 def show(
     ref: str,
+    response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -453,7 +523,7 @@ def show(
     issue = issues.get_by_ref(conn, ref)
     if issue is None or not access.can_see_project_or_backlog(conn, actor, issue["project_id"]):
         raise HTTPException(status_code=404, detail="no such issue")
-    return _with_labels(conn, issue)
+    return _tagged_issue(conn, issue, response)
 
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
@@ -553,6 +623,8 @@ def _issue_for_read(
 def update(
     issue_id: int,
     payload: IssueUpdate,
+    request: Request,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -561,17 +633,23 @@ def update(
     fields = payload.model_dump(exclude_unset=True)
     try:
         updated = issue_commands.update_issue(
-            conn, actor=actor, issue_id=issue_id, **fields
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            if_match=_if_match_values(request),
+            **fields,
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+        return _issue_command_error_response(exc)
+    return _tagged_issue(conn, updated, response)
 
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
 def set_assignee(
     issue_id: int,
     payload: AssigneeUpdate,
+    request: Request,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -583,10 +661,11 @@ def set_assignee(
             actor=actor,
             issue_id=issue_id,
             assignee_id=payload.assignee_id,
+            if_match=_if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+        return _issue_command_error_response(exc)
+    return _tagged_issue(conn, updated, response)
 
 
 @router.post("/{issue_id}/archive", response_model=IssueOut)
@@ -704,6 +783,8 @@ def bulk_update(
 def set_sprint(
     issue_id: int,
     payload: SprintAssign,
+    request: Request,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -715,16 +796,19 @@ def set_sprint(
             actor=actor,
             issue_id=issue_id,
             sprint_id=payload.sprint_id,
+            if_match=_if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+        return _issue_command_error_response(exc)
+    return _tagged_issue(conn, updated, response)
 
 
 @router.put("/{issue_id}/project", response_model=IssueOut)
 def set_project(
     issue_id: int,
     payload: ProjectUpdate,
+    request: Request,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -736,10 +820,11 @@ def set_project(
             actor=actor,
             issue_id=issue_id,
             project_id=payload.project_id,
+            if_match=_if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+        return _issue_command_error_response(exc)
+    return _tagged_issue(conn, updated, response)
 
 
 @router.put("/{issue_id}/parent", response_model=IssueOut)

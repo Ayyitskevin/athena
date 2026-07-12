@@ -15,10 +15,18 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from athena.aegis import issue_activity, issues, sprints, statuses
-from athena.core import access, db, identity, tokens, users
+from athena.aegis import issue_activity, issue_etags, issues, sprints, statuses
+from athena.core import access, db, etag, identity, tokens, users
 
-ErrorKind = Literal["unauthorized", "forbidden", "not_found", "invalid"]
+ErrorKind = Literal[
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "invalid",
+    "invalid_precondition",
+    "precondition_too_large",
+    "precondition_failed",
+]
 
 
 class IssueCommandError(Exception):
@@ -29,10 +37,17 @@ class IssueCommandError(Exception):
     business rule that produced ``detail``.
     """
 
-    def __init__(self, kind: ErrorKind, detail: str):
+    def __init__(
+        self,
+        kind: ErrorKind,
+        detail: str,
+        *,
+        current_etag: str | None = None,
+    ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        self.current_etag = current_etag
 
 
 class _UnsetType:
@@ -177,6 +192,7 @@ def update_issue(
     assignee_id: int | None | _UnsetType = UNSET,
     project_id: int | None | _UnsetType = UNSET,
     sprint_id: int | None | _UnsetType = UNSET,
+    if_match: list[str] | None = None,
 ) -> dict:
     """Update editable issue fields and all resulting audit facts atomically."""
     actor = _require_issue_writer(actor)
@@ -192,6 +208,7 @@ def update_issue(
         assignee_id=assignee_id,
         project_id=project_id,
         sprint_id=sprint_id,
+        if_match=if_match,
     )
 
 
@@ -232,6 +249,7 @@ def update_issue_as_automation(
         assignee_id=assignee_id,
         project_id=UNSET,
         sprint_id=UNSET,
+        if_match=None,
     )
 
 
@@ -268,6 +286,7 @@ def _update_issue(
     assignee_id: int | None | _UnsetType,
     project_id: int | None | _UnsetType,
     sprint_id: int | None | _UnsetType,
+    if_match: list[str] | None,
 ) -> dict:
     with db.transaction(conn, immediate=True):
         before = (
@@ -344,6 +363,30 @@ def _update_issue(
             raise IssueCommandError(
                 "invalid", "no such status for this project"
             )
+        # Authorization and ordinary payload validation intentionally happen
+        # before the precondition result is disclosed. The current representation
+        # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
+        # writers holding the same tag cannot both pass and mutate.
+        if if_match is not None:
+            current_etag = issue_etags.current_etag(conn, before)
+            try:
+                condition = etag.parse_if_match(if_match)
+            except etag.IfMatchTooLarge as exc:
+                raise IssueCommandError(
+                    "precondition_too_large",
+                    str(exc),
+                ) from exc
+            except etag.InvalidIfMatch as exc:
+                raise IssueCommandError(
+                    "invalid_precondition",
+                    str(exc),
+                ) from exc
+            if not condition.matches(current_etag):
+                raise IssueCommandError(
+                    "precondition_failed",
+                    "If-Match precondition failed",
+                    current_etag=current_etag,
+                )
 
         if "project_id" in provided:
             updated = issues.set_project(

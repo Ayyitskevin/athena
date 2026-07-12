@@ -45,8 +45,9 @@ The current remaining gaps are narrower:
   or delegation policy. **[Fact]**
 - **API ergonomics are partial.** Durable idempotency covers bounded REST
   `POST`/`PUT`/`PATCH`/`DELETE` retries, per-token rate limiting and issue
-  bulk updates have landed, and event feeds are cursor-based. Broad list-cursor
-  coverage and ETag/`If-Match` concurrency are still open. **[Fact]**
+  bulk updates have landed, event feeds are cursor-based, and strong issue
+  ETags guard core edits plus placement changes atomically. Broad list-cursor
+  coverage and conditional page/sub-resource writes remain open. **[Fact]**
 - **Packaging and retention need hardening.** Athena's single-file posture is a
   differentiator, but the repo does not yet ship a one-command production package
   or backup retention/off-host helper. **[Fact + Recommendation]**
@@ -465,7 +466,8 @@ the June 30 merge wave. **[Interpretation over Fact]**
 4. **API safety is partial.** Durable single-flight retry receipts, per-token
    limits, issue bulk updates, and stable key propagation through every official
    mutation client exist. Remaining agent ergonomics are cursor coverage on list
-   endpoints that still lack it and ETag/`If-Match` concurrency.
+   endpoints that still lack it and conditional writes beyond the shipped
+   atomic issue-command slice.
 5. **Packaging/retention is still manual.** `athena-doctor` validates deploy
    prerequisites, but a production install path and retained/off-host backup
    helper would strengthen Athena's "simple to self-host" moat.
@@ -485,8 +487,8 @@ the June 30 merge wave. **[Interpretation over Fact]**
   tailnet dogfood, but should be a deliberate hosting decision.
 - **Agent-loop bounds exist.** Bearer traffic is limited per token and bounded
   REST mutations can use durable `Idempotency-Key` single-flight/replay, and
-  official mutation clients propagate caller-stable keys. Optimistic update
-  preconditions remain open.
+  official mutation clients propagate caller-stable keys. Strong issue ETags
+  and atomic `If-Match` checks now protect core edits and placement changes.
 - **OIDC exists; SAML/SCIM do not.** Basic OIDC login/provisioning closes the near-
   term SSO gap. SAML and SCIM remain deferred enterprise items.
 - **Secrets & transport** are handled sensibly (env, HttpOnly cookies, CSRF, CSP,
@@ -732,10 +734,12 @@ risk** (1–10). Files reference real modules.
 - **Files:** `aegis/api.py`, `mentor/api.py`, `core/*_api.py`, a small middleware/util.
 - **Data model:** shipped durable claim/result states, exact request
   fingerprints, fenced owners, bounded response receipts, and completed TTL.
-- **API:** shipped `Idempotency-Key` on bounded REST mutations and event cursors;
-  still add broad list cursors and `ETag`/`If-Match` for optimistic concurrency.
-- **Tests:** shipped race/restart/failure/revocation/replay coverage; still pin
-  stable paging and stale `If-Match` → 412.
+- **API:** shipped `Idempotency-Key` on bounded REST mutations, event cursors,
+  and strong issue ETags with atomic `If-Match` on core edits and placement;
+  still add broad list cursors and conditional page/sub-resource commands.
+- **Tests:** shipped race/restart/failure/revocation/replay coverage plus stale,
+  concurrent, derived-state, grammar, and official-client `If-Match` coverage;
+  stable paging remains.
 - **Risk:** Low-Medium · **Size:** M · **Deps:** none · **DoD:** green gate; documented.
 
 ### S13 — Bulk operations API for agents · **Score 5**
@@ -777,8 +781,9 @@ Chosen after reconciling the June 26 backlog against current `main` on 2026-06-3
 3. **Agent administration V2.** Add an admin-facing way to review agent users,
    token scopes, project/space access, and delegation policy. Do not build a
    workflow engine.
-4. **API safety follow-up.** Add per-token rate limiting first, then bulk endpoints
-   and ETag/`If-Match` where update races matter.
+4. **API safety follow-up.** Extend the shipped issue ETag/`If-Match` pattern
+   to pages and remaining issue sub-resources only as their writes become atomic
+   commands; continue broad list cursor coverage.
 5. **Backup retention/off-host helper.** Keep the deployment moat simple by making
    retained SQLite backups and restore drills easy for operators.
 

@@ -436,6 +436,28 @@ Across MCP, the failure remains an `isError` tool result whose text contains
 `ATHENA_ERROR_JSON=<object>`; that compact object carries the same fields so an
 MCP caller can branch on the code without parsing human prose.
 
+## Issue Optimistic Concurrency
+
+Issue creation and singleton reads emit a strong, opaque `ETag`. Guard core issue
+edits and placement changes by copying that value exactly into `If-Match` on
+`PATCH /issues/{id}` or `PUT /issues/{id}/assignee`, `/project`, or `/sprint`.
+The header is optional for backward compatibility, but agent read-modify-write
+loops should send it.
+
+A stale strong tag returns `412` with `code: precondition_failed` and the
+current `ETag` response header; refetch, merge deliberately, and retry with that
+fresh tag. Malformed and oversized conditions return `400 invalid_if_match` and
+`431 if_match_too_large`. Authorization and ordinary payload validation run
+before tag comparison, and comparison plus mutation share one SQLite write
+transaction, so two writers cannot both commit from the same tag. Other issue
+sub-resource mutations are not yet conditional.
+
+The official client exposes a successful response tag as `_etag`; its four
+guarded issue methods accept `if_match`, and `AthenaError.current_etag` carries
+the 412 response tag. When combining `If-Match` with `idempotency_key`, changing
+the precondition changes the request fingerprint: use a new idempotency key for
+the merged retry.
+
 ## Headless Admin Token Bootstrap
 
 If you cannot use the browser UI to create the first admin token, temporarily
@@ -498,7 +520,9 @@ Every mutation tool exposes the optional `idempotency_key` field. A caller that
 may retry must create and retain a stable key before its first invocation; use the
 same key only for an exact replay, and never place credentials or user content in
 it. The MCP schema enforces the 1-255 visible-ASCII bound before dispatch. Read
-tools do not accept keys.
+tools do not accept keys. The four guarded issue mutation tools also accept
+`if_match`; call `get_issue`, copy its `_etag` exactly, and follow the 412 merge
+procedure above.
 
 ## Exposure Checklist
 
