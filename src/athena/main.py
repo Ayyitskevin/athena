@@ -80,6 +80,25 @@ SECURITY_HEADERS = {
 
 _logger = logging.getLogger("athena")
 
+
+def _configure_logging() -> None:
+    """Make Athena's own logs visible without depending on the caller's setup.
+
+    Sets the "athena" logger to config.LOG_LEVEL and attaches a stream handler once (the
+    guard keeps the many apps a test suite builds from stacking handlers). An
+    unconfigured root logger otherwise only surfaces WARNING+, hiding the startup and
+    background-loop INFO lines this observability pass adds. Records still propagate, so
+    pytest's caplog and any host logging config keep seeing them; under uvicorn (which
+    adds no root handler) this is the single emitter, so no double lines."""
+    _logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
+    if not _logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        _logger.addHandler(handler)
+
+
 # Emit the "cookies are not Secure" warning at most once per process, no matter how
 # many apps a test suite builds. Flipped true the first time create_app() warns.
 _cookie_secure_warned = False
@@ -899,6 +918,7 @@ def create_app(
     idempotency_ttl_seconds: int | None = None,
     idempotency_max_response_bytes: int | None = None,
 ) -> FastAPI:
+    _configure_logging()
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
     body_limit = (
         config.MAX_REQUEST_BODY_BYTES
@@ -954,8 +974,14 @@ def create_app(
         # Startup: bring the schema up to date before serving any request,
         # so the database is always the right shape. Stash the path for handlers.
         conn = db.connect(resolved_db)
-        db.migrate(conn)
+        applied = db.migrate(conn)
         conn.close()
+        # Log what startup actually did, so an operator watching stdout can see the
+        # schema was brought current (or was already so) instead of guessing.
+        if applied:
+            _logger.info("applied %d migration(s): %s", len(applied), ", ".join(applied))
+        else:
+            _logger.info("schema already current; no migrations to apply")
         app.state.db_path = resolved_db
         # Start the single in-process webhook delivery loop (unless disabled — e.g.
         # in tests, or in extra worker processes that must not double-deliver).
@@ -971,6 +997,11 @@ def create_app(
             asyncio.create_task(aegis_automation.process_loop(resolved_db))
             if config.AUTOMATION_ENABLED
             else None
+        )
+        _logger.info(
+            "background loops: webhook delivery %s, automation %s",
+            "started" if delivery_task else "disabled",
+            "started" if automation_task else "disabled",
         )
         try:
             yield

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 import sqlite3
 from collections.abc import Callable
@@ -26,6 +27,8 @@ from collections.abc import Callable
 from athena import config
 from athena.aegis import comments, contributors, issue_activity, issue_commands, issues
 from athena.core import activity, db, labels, users
+
+logger = logging.getLogger(__name__)
 
 # The actions a rule may take (dispatched on in execute_action). The boundary validates
 # a rule's action_type is one of these; the expected action_params per type are:
@@ -107,7 +110,7 @@ def validate_rule(
 
 _COLS = (
     "id, name, enabled, trigger_verb, target_kind, conditions, action_type, "
-    "action_params, created_by, created_at"
+    "action_params, created_by, created_at, failure_count, last_error, last_error_at"
 )
 
 
@@ -230,6 +233,21 @@ def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
     conn.commit()
 
 
+def record_rule_failure(conn: sqlite3.Connection, rule_id: int, error: str) -> None:
+    """Note that a rule's action raised: bump its failure_count and stamp the error text
+    and time. The engine still advances its cursor past the event (at-most-once, by
+    design — see process_pending), so a bad rule never wedges the loop; this just makes
+    the failure visible on /admin and the API instead of vanishing. Mirrors how
+    core/webhooks records a failed delivery per subscriber row."""
+    conn.execute(
+        "UPDATE automation_rules "
+        "SET failure_count = failure_count + 1, last_error = ?, "
+        "last_error_at = datetime('now') WHERE id = ?",
+        (error, rule_id),
+    )
+    conn.commit()
+
+
 # An Executor performs one rule's action for one event. Injected so process_pending is
 # testable without real writes; the live loop passes the real action executor.
 Executor = Callable[[sqlite3.Connection, dict, dict], None]
@@ -270,8 +288,16 @@ def process_pending(
                 try:
                     executor(conn, rule, event)
                     fired += 1
-                except Exception:  # noqa: BLE001 — a bad action must not strand the cursor
-                    pass
+                except Exception as exc:  # noqa: BLE001 — a bad action must not strand the cursor
+                    # At-most-once by design: the cursor still advances past this event
+                    # (below) so one bad rule never wedges the loop. But no longer
+                    # SILENTLY — log it and stamp the rule so the operator can see a
+                    # misbehaving rule on /admin and via the API.
+                    logger.warning(
+                        "automation rule %s failed on event %s: %s",
+                        rule["id"], event["id"], exc, exc_info=True,
+                    )
+                    record_rule_failure(conn, rule["id"], f"{type(exc).__name__}: {exc}")
     _set_cursor(conn, last_id)
     return fired
 
@@ -426,5 +452,5 @@ async def process_loop(db_path: str | Path) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a failed pass must not stop the loop
-            pass
+            logger.warning("automation pass failed; loop continues", exc_info=True)
         await asyncio.sleep(config.AUTOMATION_INTERVAL_SECONDS)

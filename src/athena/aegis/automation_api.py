@@ -35,6 +35,12 @@ class RuleOut(BaseModel):
     action_params: dict
     created_by: int
     created_at: str
+    # Failure surface (parity with a webhook's health): how many times this rule's
+    # action has raised, the most recent error text, and when. failure_count is 0 and
+    # last_error/last_error_at are null for a rule that has never failed.
+    failure_count: int
+    last_error: str | None
+    last_error_at: str | None
 
 
 class RuleCreate(BaseModel):

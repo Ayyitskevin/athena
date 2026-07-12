@@ -11,6 +11,7 @@ Athena reads configuration from environment variables at process start.
 | Variable | Default | Use |
 |----------|---------|-----|
 | `ATHENA_DB` | `athena.db` | SQLite database path. Use an absolute path for a long-running service. |
+| `ATHENA_LOG_LEVEL` | `INFO` | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
 | `ATHENA_TRUST_ACTOR_HEADER` | `false` | Accept `X-Athena-Actor` as identity fallback. Use only on a trusted local/tailnet box, normally only for headless bootstrap. |
 | `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies. Set to `1` when Athena is served over HTTPS. Leave off for plain local HTTP. |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
@@ -73,6 +74,12 @@ Each loop must run in exactly one process per deployment. If you run multiple
 uvicorn workers, keep the loops enabled in one worker and start the others with
 `ATHENA_WEBHOOK_DELIVERY=0` and `ATHENA_AUTOMATION=0` — otherwise webhooks
 double-deliver and rules fire twice.
+
+A rule's action runs best-effort (at-most-once): a failing action never wedges the
+engine, but it is no longer silent. Each failure is logged at `WARNING` and recorded
+on the rule (`failure_count`, `last_error`, `last_error_at`), shown as a red badge in
+**Admin → Automation** and returned by `GET /automation/rules`, so a misbehaving rule
+is visible rather than quietly dropping events.
 
 ## Single Sign-On (OIDC)
 
