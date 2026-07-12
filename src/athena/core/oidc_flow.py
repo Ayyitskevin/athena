@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import secrets
 import sqlite3
 import urllib.parse
@@ -33,6 +34,8 @@ import urllib.request
 import jwt
 
 from athena.core import oidc, users
+
+logger = logging.getLogger(__name__)
 
 # Asymmetric signatures only. Deliberately excludes "none" and all HMAC (HS*)
 # algorithms: with HS*, the verifier key is the SAME shared secret used to sign, so
@@ -229,8 +232,13 @@ def provision_or_link(
         absent email is refused (so SSO can't seize an account by claiming its
         address);
       * if allowed_domains is set, the email's domain must be in it;
-      * a local account with that email is LINKED to (e.g. a pre-existing user, or a
-        password user adopting SSO); otherwise a new `member` account is provisioned.
+      * a NEW account is provisioned when no local account has that email;
+      * an EXISTING local account is auto-linked ONLY when allowed_domains is
+        configured — i.e. the operator has declared the domains this IdP verifies, so a
+        verified-email match is trustworthy. Without a domain allow-list Athena can't
+        know the IdP actually owns the address, so silently binding SSO to a pre-existing
+        (possibly admin) account would be an account-takeover vector; it is refused, and
+        the user links SSO from their account settings while logged in instead.
     Raises OidcError when the claims don't satisfy the policy."""
     subject = claims.get("sub")
     if not subject:
@@ -248,11 +256,24 @@ def provision_or_link(
 
     user = users.get_user_by_email(conn, email)
     if user is None:
+        # Fresh SSO account — no pre-existing account to seize, so no takeover risk.
         user = users.create_user(
             conn,
             email=email,
             name=(claims.get("name") or "").strip() or email,
             role=users.DEFAULT_ROLE,
         )
+    elif not allowed_domains:
+        # An account with this email already exists and no domain allow-list is
+        # configured, so we can't trust that this IdP owns the address. Refuse rather
+        # than silently binding SSO to a pre-existing (possibly admin) account.
+        raise OidcError(
+            "an account already exists for this email; set OIDC_ALLOWED_DOMAINS to "
+            "enable SSO auto-link, or link SSO from your account settings"
+        )
+    # Audit the identity link (fires once, on first login for this issuer+sub — an
+    # already-linked user returned earlier). For an existing account this only runs on
+    # the trusted, domain-allow-listed path above.
+    logger.info("linking SSO identity (issuer=%s) to user %s", issuer, user["id"])
     oidc.link_identity(conn, issuer=issuer, subject=subject, user_id=user["id"])
     return user

@@ -75,6 +75,17 @@ ANON_RATE_LIMIT_PER_MINUTE = int(
     os.environ.get("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", "0")
 )
 
+# Per-client-IP limit on POST /login attempts. Password login is credential-free at the
+# door (no token, no session yet), so neither the token nor the anonymous limiter guards
+# it — without this a brute-force / credential-stuffing run is bounded only by pbkdf2's
+# cost per guess, which throttles CPU but not the attempt rate. This caps attempts per IP
+# per minute and is checked BEFORE the password hash, so it also protects against
+# pbkdf2-CPU exhaustion. Defaults ON at 10/min (a human never types 10 logins a minute);
+# keyed by the direct peer IP, so front a shared-IP proxy accordingly. Set 0 to disable.
+LOGIN_RATE_LIMIT_PER_MINUTE = int(
+    os.environ.get("ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE", "10")
+)
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.

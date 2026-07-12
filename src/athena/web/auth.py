@@ -35,19 +35,28 @@ _OIDC_STATE_COOKIE = "athena_oidc_state"
 _OIDC_STATE_TTL_SECONDS = 600
 
 
-def _set_session_cookie(response, raw: str) -> None:
+def _cookie_secure(request: Request) -> bool:
+    """Whether to set the Secure flag: the operator's explicit COOKIE_SECURE, OR the
+    request actually arrived over HTTPS. The scheme check auto-secures a direct-HTTPS
+    deploy so a forgotten ATHENA_COOKIE_SECURE can't leak the session cookie in the
+    clear; behind a TLS-terminating proxy (scheme=http) COOKIE_SECURE stays the switch.
+    Only ever ADDS Secure on a real HTTPS request — never drops it on local http."""
+    return config.COOKIE_SECURE or request.url.scheme == "https"
+
+
+def _set_session_cookie(response, raw: str, *, request: Request) -> None:
     response.set_cookie(
         config.SESSION_COOKIE,
         raw,
         max_age=config.SESSION_TTL_DAYS * 24 * 3600,
         httponly=True,
         samesite="lax",
-        secure=config.COOKIE_SECURE,
+        secure=_cookie_secure(request),
         path="/",
     )
 
 
-def _set_csrf_cookie(response, csrf: str) -> None:
+def _set_csrf_cookie(response, csrf: str, *, request: Request) -> None:
     # NOT HttpOnly on purpose: a same-origin script (or HTMX) may read this to
     # echo the token in an X-CSRF-Token header. Same-origin policy still stops a
     # cross-site attacker from reading it, so the double-submit guarantee holds.
@@ -59,7 +68,7 @@ def _set_csrf_cookie(response, csrf: str) -> None:
         max_age=config.SESSION_TTL_DAYS * 24 * 3600,
         httponly=False,
         samesite="lax",
-        secure=config.COOKIE_SECURE,
+        secure=_cookie_secure(request),
         path="/",
     )
 
@@ -113,6 +122,21 @@ def login(
             '<div class="error">Cross-site login blocked.</div>', status_code=403
         )
 
+    # Brute-force / credential-stuffing throttle, checked BEFORE the password hash so a
+    # flood is bounded by the limiter, not by pbkdf2's per-guess CPU cost. Keyed by the
+    # direct peer IP; over the limit returns 429 with Retry-After. Off when the limiter
+    # is unset or its limit is 0.
+    limiter = getattr(request.app.state, "login_rate_limiter", None)
+    if limiter is not None:
+        client_ip = request.client.host if request.client else "unknown"
+        decision = limiter.check(client_ip)
+        if not decision.allowed:
+            return HTMLResponse(
+                '<div class="error">Too many login attempts. Please wait and try again.</div>',
+                status_code=429,
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:
         # One opaque message — never reveal whether the email exists.
@@ -138,8 +162,8 @@ def login(
     raw = sessions.create_session(conn, user["id"])
     # 303 so the browser re-requests /aegis with GET, carrying the new cookie.
     response = RedirectResponse("/aegis", status_code=303)
-    _set_session_cookie(response, raw)
-    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw))
+    _set_session_cookie(response, raw, request=request)
+    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw), request=request)
     return response
 
 
@@ -155,14 +179,14 @@ def logout(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 # --- SSO (OpenID Connect) login -------------------------------------------
 
 
-def _set_oidc_state_cookie(response, state: str) -> None:
+def _set_oidc_state_cookie(response, state: str, *, request: Request) -> None:
     response.set_cookie(
         _OIDC_STATE_COOKIE,
         state,
         max_age=_OIDC_STATE_TTL_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=config.COOKIE_SECURE,
+        secure=_cookie_secure(request),
         path="/",
     )
 
@@ -214,7 +238,7 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         code_challenge=oidc_flow.pkce_challenge(verifier),
     )
     response = RedirectResponse(url, status_code=302)
-    _set_oidc_state_cookie(response, state)
+    _set_oidc_state_cookie(response, state, request=request)
     return response
 
 
@@ -285,7 +309,7 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
     response = RedirectResponse("/aegis", status_code=303)
-    _set_session_cookie(response, raw)
-    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw))
+    _set_session_cookie(response, raw, request=request)
+    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw), request=request)
     response.delete_cookie(_OIDC_STATE_COOKIE, path="/")
     return response
