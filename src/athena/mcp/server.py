@@ -42,7 +42,11 @@ def build_server(client: AthenaClient) -> FastMCP:
     idempotency_guidance = (
         "For retry-critical calls, choose a stable, non-secret idempotency_key "
         "containing 1-255 visible ASCII characters before the first attempt and "
-        "reuse it only for the exact same call."
+        "reuse it only for the exact same call. For tools exposing if_match, first "
+        "call get_issue and copy its _etag exactly. If a write returns 412, refetch "
+        "the issue, merge the intended change with its current state, and retry with "
+        "the refreshed _etag plus a new idempotency_key because the changed "
+        "precondition makes it a different call."
     )
 
     def mutation_tool(function):
@@ -90,7 +94,9 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     @mcp.tool()
     def get_issue(ref: str) -> dict:
-        """Get one issue by numeric id ('12') or project key ('ATH-12')."""
+        """Get one issue by numeric id ('12') or project key ('ATH-12'). The
+        response includes the server's opaque ETag as _etag; copy it exactly into
+        if_match on a guarded update."""
         return client.get_issue(ref)
 
     @mcp.tool()
@@ -167,6 +173,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         body: str | None = None,
         status: str | None = None,
         priority: str | None = None,
+        if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Update an issue. Send only the fields to change. status is one of
@@ -177,6 +184,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             body=body,
             status=status,
             priority=priority,
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
@@ -185,6 +193,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         issue_id: int,
         project_id: int | None,
         sprint_id: int | None,
+        if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Atomically set an issue's project and sprint. Always provide BOTH
@@ -196,6 +205,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             issue_id,
             project_id=project_id,
             sprint_id=sprint_id,
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
@@ -203,11 +213,15 @@ def build_server(client: AthenaClient) -> FastMCP:
     def assign_issue(
         issue_id: int,
         assignee_id: int | None = None,
+        if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Assign an issue to a user id, or pass no assignee_id to unassign it."""
         return client.assign_issue(
-            issue_id, assignee_id, idempotency_key=idempotency_key
+            issue_id,
+            assignee_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
         )
 
     @mutation_tool
@@ -336,13 +350,17 @@ def build_server(client: AthenaClient) -> FastMCP:
     def set_issue_sprint(
         issue_id: int,
         sprint_id: int | None = None,
+        if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Put an issue into a sprint (which must belong to the issue's own
         project), or pass no sprint_id to move it back to the backlog. Returns the
         updated issue."""
         return client.set_issue_sprint(
-            issue_id, sprint_id, idempotency_key=idempotency_key
+            issue_id,
+            sprint_id,
+            if_match=if_match,
+            idempotency_key=idempotency_key,
         )
 
     # --- labels -------------------------------------------------------------

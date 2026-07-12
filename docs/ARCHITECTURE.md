@@ -129,6 +129,10 @@ There is no separate `api/` package: each module owns its REST surface
   global authorization revision purges and permanently fences stored responses
   after access-affecting role, membership, visibility, authority, or placement
   changes; this is intentionally broader than per-target invalidation.
+- Strong, content-derived issue `ETag` validators cover the exact public singleton
+  representation. Core issue edits plus assignee/project/sprint placement accept
+  optional `If-Match`; authorization and validation precede an atomic comparison
+  and write, preventing two read-modify-write loops from committing the same tag.
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
   user is bootstrapped as admin, and the last admin cannot be demoted.
 - Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`);

@@ -29,6 +29,7 @@ class AthenaError(RuntimeError):
         detail: Any = None,
         code: str | None = None,
         retry_after: str | None = None,
+        current_etag: str | None = None,
     ) -> None:
         self.method = method
         self.path = path
@@ -36,6 +37,7 @@ class AthenaError(RuntimeError):
         self.detail = detail
         self.code = code
         self.retry_after = retry_after
+        self.current_etag = current_etag
         if message is None and None not in (method, path, status_code):
             message = f"{method} {path} -> {status_code}: {detail}"
         if message is None:
@@ -57,6 +59,7 @@ class AthenaError(RuntimeError):
             "detail": self.detail,
             "code": self.code,
             "retry_after": self.retry_after,
+            "current_etag": self.current_etag,
         }
 
 
@@ -108,10 +111,15 @@ class AthenaClient:
                 detail=detail,
                 code=code if isinstance(payload, dict) else None,
                 retry_after=response.headers.get("Retry-After"),
+                current_etag=response.headers.get("ETag"),
             )
         if response.status_code == 204 or not response.content:
             return None
-        return response.json()
+        result = response.json()
+        etag = response.headers.get("ETag")
+        if isinstance(result, dict) and etag is not None:
+            result["_etag"] = etag
+        return result
 
     def _mutate(
         self,
@@ -119,17 +127,21 @@ class AthenaClient:
         path: str,
         *,
         idempotency_key: str | None = None,
+        if_match: str | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Send a mutation, adding a caller-supplied retry key when present."""
-        if idempotency_key is not None:
+        """Send a mutation with optional retry and optimistic-lock headers."""
+        if idempotency_key is not None or if_match is not None:
             existing_headers = kwargs.get("headers")
             if existing_headers is None:
-                kwargs["headers"] = {"Idempotency-Key": idempotency_key}
+                merged_headers: dict[str, str] | httpx.Headers = {}
             else:
                 merged_headers = httpx.Headers(existing_headers)
+            if idempotency_key is not None:
                 merged_headers["Idempotency-Key"] = idempotency_key
-                kwargs["headers"] = merged_headers
+            if if_match is not None:
+                merged_headers["If-Match"] = if_match
+            kwargs["headers"] = merged_headers
         return self._result(request(path, **kwargs))
 
     # --- search -------------------------------------------------------------
@@ -205,6 +217,7 @@ class AthenaClient:
         body: str | None = None,
         status: str | None = None,
         priority: str | None = None,
+        if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(title=title, body=body, status=status, priority=priority)
@@ -212,6 +225,7 @@ class AthenaClient:
             self._client.patch,
             f"/issues/{issue_id}",
             json=payload,
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
@@ -221,6 +235,7 @@ class AthenaClient:
         *,
         project_id: int | None,
         sprint_id: int | None,
+        if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         """Set an issue's project and sprint as one relationship transition.
@@ -233,6 +248,7 @@ class AthenaClient:
             self._client.patch,
             f"/issues/{issue_id}",
             json={"project_id": project_id, "sprint_id": sprint_id},
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
@@ -241,12 +257,14 @@ class AthenaClient:
         issue_id: int,
         assignee_id: int | None,
         *,
+        if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         return self._mutate(
             self._client.put,
             f"/issues/{issue_id}/assignee",
             json={"assignee_id": assignee_id},
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
@@ -385,6 +403,7 @@ class AthenaClient:
         issue_id: int,
         sprint_id: int | None,
         *,
+        if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         # Send sprint_id even when None (move to the backlog) — _params would drop it.
@@ -392,6 +411,7 @@ class AthenaClient:
             self._client.put,
             f"/issues/{issue_id}/sprint",
             json={"sprint_id": sprint_id},
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
