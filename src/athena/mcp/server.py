@@ -17,17 +17,49 @@ HTTP work lives in client.py (SDK-free, unit-tested).
 
 from __future__ import annotations
 
+from functools import wraps
+import json
 import os
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
-from athena.mcp.client import AthenaClient
+from athena.mcp.client import AthenaClient, AthenaError
+
+
+IdempotencyKey = Annotated[
+    str,
+    Field(min_length=1, max_length=255, pattern=r"^[\x21-\x7E]+$"),
+]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
     """Build the MCP server, binding every tool to a pre-built Athena client.
     Separated from main() so tests can inject a TestClient-backed AthenaClient."""
     mcp = FastMCP("athena")
+
+    idempotency_guidance = (
+        "For retry-critical calls, choose a stable, non-secret idempotency_key "
+        "containing 1-255 visible ASCII characters before the first attempt and "
+        "reuse it only for the exact same call."
+    )
+
+    def mutation_tool(function):
+        """Register a write tool with the shared retry-key contract."""
+
+        @wraps(function)
+        def guarded(*args, **kwargs):
+            try:
+                return function(*args, **kwargs)
+            except AthenaError as exc:
+                error_json = json.dumps(
+                    exc.as_dict(), separators=(",", ":"), ensure_ascii=False
+                )
+                raise RuntimeError(f"{exc}\nATHENA_ERROR_JSON={error_json}") from exc
+
+        guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{idempotency_guidance}"
+        return mcp.tool()(guarded)
 
     # --- search & read ------------------------------------------------------
 
@@ -106,13 +138,14 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     # --- issue writes -------------------------------------------------------
 
-    @mcp.tool()
+    @mutation_tool
     def create_issue(
         title: str,
         body: str = "",
         status: str | None = None,
         priority: str = "medium",
         project_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Create an Aegis issue. Omit status to use the target project's default;
         otherwise status must belong to that project. priority is one of
@@ -124,27 +157,35 @@ def build_server(client: AthenaClient) -> FastMCP:
             status=status,
             priority=priority,
             project_id=project_id,
+            idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @mutation_tool
     def update_issue(
         issue_id: int,
         title: str | None = None,
         body: str | None = None,
         status: str | None = None,
         priority: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Update an issue. Send only the fields to change. status is one of
         open/in_progress/done; priority is low/medium/high/urgent."""
         return client.update_issue(
-            issue_id, title=title, body=body, status=status, priority=priority
+            issue_id,
+            title=title,
+            body=body,
+            status=status,
+            priority=priority,
+            idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @mutation_tool
     def set_issue_placement(
         issue_id: int,
         project_id: int | None,
         sprint_id: int | None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Atomically set an issue's project and sprint. Always provide BOTH
         project_id and sprint_id: use null project_id to move the issue out of a
@@ -152,44 +193,66 @@ def build_server(client: AthenaClient) -> FastMCP:
         the supplied project. The pair is validated and committed as one transition,
         so use this tool instead of separate project and sprint moves."""
         return client.set_issue_placement(
-            issue_id, project_id=project_id, sprint_id=sprint_id
+            issue_id,
+            project_id=project_id,
+            sprint_id=sprint_id,
+            idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
-    def assign_issue(issue_id: int, assignee_id: int | None = None) -> dict:
+    @mutation_tool
+    def assign_issue(
+        issue_id: int,
+        assignee_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Assign an issue to a user id, or pass no assignee_id to unassign it."""
-        return client.assign_issue(issue_id, assignee_id)
+        return client.assign_issue(
+            issue_id, assignee_id, idempotency_key=idempotency_key
+        )
 
-    @mcp.tool()
-    def delegate_issue(issue_id: int, agent_user_id: int) -> list:
+    @mutation_tool
+    def delegate_issue(
+        issue_id: int,
+        agent_user_id: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> list:
         """Delegate an issue to an agent user. The human assignee remains accountable;
         the agent is added as a contributor and a delegated audit event is recorded.
         Use list_users to resolve agent user ids."""
-        return client.delegate_issue(issue_id, agent_user_id)
+        return client.delegate_issue(
+            issue_id, agent_user_id, idempotency_key=idempotency_key
+        )
 
-    @mcp.tool()
-    def comment_on_issue(issue_id: int, body: str) -> dict:
+    @mutation_tool
+    def comment_on_issue(
+        issue_id: int, body: str, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
         """Add a comment to an issue, authored by the token's user."""
-        return client.comment_on_issue(issue_id, body)
+        return client.comment_on_issue(issue_id, body, idempotency_key=idempotency_key)
 
-    @mcp.tool()
-    def archive_issue(issue_id: int) -> dict:
+    @mutation_tool
+    def archive_issue(
+        issue_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
         """Archive (soft-delete) an issue: it's hidden from the default lists but the
         row and its history are kept, and it can be restored. Returns the issue."""
-        return client.archive_issue(issue_id)
+        return client.archive_issue(issue_id, idempotency_key=idempotency_key)
 
-    @mcp.tool()
-    def unarchive_issue(issue_id: int) -> dict:
+    @mutation_tool
+    def unarchive_issue(
+        issue_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
         """Restore a previously archived issue to the active lists. Returns the issue."""
-        return client.unarchive_issue(issue_id)
+        return client.unarchive_issue(issue_id, idempotency_key=idempotency_key)
 
-    @mcp.tool()
+    @mutation_tool
     def bulk_update_issues(
         ids: list[int],
         status: str | None = None,
         priority: str | None = None,
         assignee_id: int | None = None,
         sprint_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Apply the same change to MANY issues at once (one call instead of N).
         Set any of status (open/in_progress/done), priority (low/medium/high/urgent),
@@ -203,16 +266,23 @@ def build_server(client: AthenaClient) -> FastMCP:
             priority=priority,
             assignee_id=assignee_id,
             sprint_id=sprint_id,
+            idempotency_key=idempotency_key,
         )
 
     # --- hierarchy (epics & sub-tasks) --------------------------------------
 
-    @mcp.tool()
-    def set_issue_parent(issue_id: int, parent_id: int | None = None) -> dict:
+    @mutation_tool
+    def set_issue_parent(
+        issue_id: int,
+        parent_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Nest an issue under a parent issue (making it a sub-task), or pass no
         parent_id to move it back to the top level. The parent must not create a
         cycle. Returns the updated issue."""
-        return client.set_issue_parent(issue_id, parent_id)
+        return client.set_issue_parent(
+            issue_id, parent_id, idempotency_key=idempotency_key
+        )
 
     @mcp.tool()
     def list_subtasks(issue_id: int) -> list:
@@ -227,18 +297,32 @@ def build_server(client: AthenaClient) -> FastMCP:
         what it relates to. Returns {blocks, blocked_by, relates}."""
         return client.list_issue_links(issue_id)
 
-    @mcp.tool()
-    def link_issues(issue_id: int, target_ref: str, relation: str) -> dict:
+    @mutation_tool
+    def link_issues(
+        issue_id: int,
+        target_ref: str,
+        relation: str,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Declare a dependency FROM this issue to another (by id or key, e.g.
         'ATH-15'). relation is one of: 'blocks', 'blocked_by', 'relates'. Returns
         the issue's updated link summary."""
-        return client.link_issues(issue_id, target_ref, relation)
+        return client.link_issues(
+            issue_id, target_ref, relation, idempotency_key=idempotency_key
+        )
 
-    @mcp.tool()
-    def unlink_issues(issue_id: int, relation: str, target_id: int) -> dict:
+    @mutation_tool
+    def unlink_issues(
+        issue_id: int,
+        relation: str,
+        target_id: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Remove a dependency from this issue: the same relation used to add it
         ('blocks'/'blocked_by'/'relates') and the other issue's numeric id."""
-        return client.unlink_issues(issue_id, relation, target_id)
+        return client.unlink_issues(
+            issue_id, relation, target_id, idempotency_key=idempotency_key
+        )
 
     # --- sprints ------------------------------------------------------------
 
@@ -248,12 +332,18 @@ def build_server(client: AthenaClient) -> FastMCP:
         (planned/active/completed)."""
         return client.list_sprints(project_id, state=state)
 
-    @mcp.tool()
-    def set_issue_sprint(issue_id: int, sprint_id: int | None = None) -> dict:
+    @mutation_tool
+    def set_issue_sprint(
+        issue_id: int,
+        sprint_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Put an issue into a sprint (which must belong to the issue's own
         project), or pass no sprint_id to move it back to the backlog. Returns the
         updated issue."""
-        return client.set_issue_sprint(issue_id, sprint_id)
+        return client.set_issue_sprint(
+            issue_id, sprint_id, idempotency_key=idempotency_key
+        )
 
     # --- labels -------------------------------------------------------------
 
@@ -262,22 +352,30 @@ def build_server(client: AthenaClient) -> FastMCP:
         """List the shared label vocabulary (id, name, color)."""
         return client.list_labels()
 
-    @mcp.tool()
-    def create_label(name: str, color: str = "#6b7280") -> dict:
+    @mutation_tool
+    def create_label(
+        name: str,
+        color: str = "#6b7280",
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
         """Create a label in the shared vocabulary. color is a #RRGGBB hex string.
         Fails if a label with that name already exists (names are case-insensitive)."""
-        return client.create_label(name, color=color)
+        return client.create_label(name, color=color, idempotency_key=idempotency_key)
 
-    @mcp.tool()
-    def attach_label(issue_id: int, label_id: int) -> dict:
+    @mutation_tool
+    def attach_label(
+        issue_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
         """Attach an existing label (by id — see list_labels) to an issue.
         Idempotent. Returns the updated issue."""
-        return client.attach_label(issue_id, label_id)
+        return client.attach_label(issue_id, label_id, idempotency_key=idempotency_key)
 
-    @mcp.tool()
-    def detach_label(issue_id: int, label_id: int) -> dict:
+    @mutation_tool
+    def detach_label(
+        issue_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
         """Remove a label from an issue. Returns the updated issue."""
-        return client.detach_label(issue_id, label_id)
+        return client.detach_label(issue_id, label_id, idempotency_key=idempotency_key)
 
     # --- projects & users ---------------------------------------------------
 
@@ -308,23 +406,39 @@ def build_server(client: AthenaClient) -> FastMCP:
         """Get one Mentor page (title + Markdown body)."""
         return client.get_page(page_id)
 
-    @mcp.tool()
+    @mutation_tool
     def create_page(
-        space_id: int, title: str, body: str = "", parent_id: int | None = None
+        space_id: int,
+        title: str,
+        body: str = "",
+        parent_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Create a Mentor page in a space. Optionally nest it under parent_id (a
         page in the same space). Bodies support Markdown and cross-links."""
         return client.create_page(
-            space_id=space_id, title=title, body=body, parent_id=parent_id
+            space_id=space_id,
+            title=title,
+            body=body,
+            parent_id=parent_id,
+            idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @mutation_tool
     def update_page(
-        page_id: int, title: str | None = None, body: str | None = None
+        page_id: int,
+        title: str | None = None,
+        body: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Update a page's title and/or body. Each edit is snapshotted into the
         page's version history automatically."""
-        return client.update_page(page_id, title=title, body=body)
+        return client.update_page(
+            page_id,
+            title=title,
+            body=body,
+            idempotency_key=idempotency_key,
+        )
 
     return mcp
 

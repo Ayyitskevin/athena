@@ -414,10 +414,27 @@ requests rejected earlier for key/route/body/secret policy do not.
 Anonymous first-user creation with a key is rejected rather than silently
 ignoring its retry contract.
 
-The current optional MCP `AthenaClient` does not yet accept or propagate stable
-idempotency keys. Repeating an MCP mutation tool call is therefore a new request,
-not a protected transport retry; use the REST surface directly when retry
-deduplication is required until client/tool key propagation lands.
+The optional MCP `AthenaClient` and all 18 mutation tools accept an optional
+`idempotency_key`. For a retry-critical operation, choose 1-255 visible ASCII
+characters as an opaque, non-secret key before the first attempt and reuse it
+only with the exact same tool arguments, credential, and run lineage. Omitting
+the field preserves ordinary keyless semantics: Athena deliberately does not
+generate a key inside the tool call,
+because a caller cannot recover that key if the MCP response itself is lost.
+Token rotation also changes the receipt identity, so reconcile an uncertain call
+before retrying it under a new credential.
+
+`AthenaError` retains the HTTP status, method, path, server detail, machine code,
+and raw `Retry-After` value for programmatic callers while preserving its existing
+human-readable message. `idempotency_in_progress` may be retried after the stated
+delay with the same key and exact request. `idempotency_indeterminate` and
+`idempotency_authorization_changed` require reconciliation; `idempotency_mismatch`
+means the key was reused with a different request. The client never automatically
+retries or silently substitutes a new key.
+
+Across MCP, the failure remains an `isError` tool result whose text contains
+`ATHENA_ERROR_JSON=<object>`; that compact object carries the same fields so an
+MCP caller can branch on the code without parsing human prose.
 
 ## Headless Admin Token Bootstrap
 
@@ -476,6 +493,12 @@ It exposes tools for searching, reading and writing issues (create/update/assign
 comment), reading and writing Mentor pages, listing projects/users/spaces, and
 reading the event feed. The `mcp` extra is kept out of the base install, so the
 core app and its tests do not depend on it.
+
+Every mutation tool exposes the optional `idempotency_key` field. A caller that
+may retry must create and retain a stable key before its first invocation; use the
+same key only for an exact replay, and never place credentials or user content in
+it. The MCP schema enforces the 1-255 visible-ASCII bound before dispatch. Read
+tools do not accept keys.
 
 ## Exposure Checklist
 

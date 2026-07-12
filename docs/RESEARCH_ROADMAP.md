@@ -463,9 +463,9 @@ the June 30 merge wave. **[Interpretation over Fact]**
    delegated issues, but there is no dedicated admin/policy layer for allowed
    projects/spaces, delegation constraints, or agent roster review.
 4. **API safety is partial.** Durable single-flight retry receipts, per-token
-   limits, and issue bulk updates exist. Remaining agent ergonomics are stable
-   key propagation through every official client, cursor coverage on list
-   endpoints that still lack it, and ETag/`If-Match` concurrency.
+   limits, issue bulk updates, and stable key propagation through every official
+   mutation client exist. Remaining agent ergonomics are cursor coverage on list
+   endpoints that still lack it and ETag/`If-Match` concurrency.
 5. **Packaging/retention is still manual.** `athena-doctor` validates deploy
    prerequisites, but a production install path and retained/off-host backup
    helper would strengthen Athena's "simple to self-host" moat.
@@ -484,9 +484,9 @@ the June 30 merge wave. **[Interpretation over Fact]**
   global "all reads require auth" deployment mode. This is acceptable for local/
   tailnet dogfood, but should be a deliberate hosting decision.
 - **Agent-loop bounds exist.** Bearer traffic is limited per token and bounded
-  REST mutations can use durable `Idempotency-Key` single-flight/replay.
-  Optimistic update preconditions and complete official-client key propagation
-  remain open.
+  REST mutations can use durable `Idempotency-Key` single-flight/replay, and
+  official mutation clients propagate caller-stable keys. Optimistic update
+  preconditions remain open.
 - **OIDC exists; SAML/SCIM do not.** Basic OIDC login/provisioning closes the near-
   term SSO gap. SAML and SCIM remain deferred enterprise items.
 - **Secrets & transport** are handled sensibly (env, HttpOnly cookies, CSRF, CSP,

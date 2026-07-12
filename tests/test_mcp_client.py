@@ -8,6 +8,9 @@ client -> HTTP -> API -> DB is covered, including auth.
 The MCP-SDK wiring itself is tested separately and SKIPPED when the optional `mcp`
 extra isn't installed (e.g. in core CI), so the suite stays green without it.
 """
+
+import httpx
+import pickle
 import pytest
 from fastapi.testclient import TestClient
 
@@ -31,10 +34,270 @@ def _client(tmp_path, name) -> tuple[TestClient, AthenaClient]:
     return tc, AthenaClient(client=tc)
 
 
+class _RecordingClient:
+    """Small injected transport that records the exact per-call HTTP kwargs."""
+
+    def __init__(self):
+        self.calls = []
+
+    def _response(self, method, path, **kwargs):
+        self.calls.append((method, path, kwargs))
+        return httpx.Response(
+            200,
+            json={"ok": True},
+            request=httpx.Request(method, f"http://athena.test{path}"),
+        )
+
+    def post(self, path, **kwargs):
+        return self._response("POST", path, **kwargs)
+
+    def patch(self, path, **kwargs):
+        return self._response("PATCH", path, **kwargs)
+
+    def put(self, path, **kwargs):
+        return self._response("PUT", path, **kwargs)
+
+    def delete(self, path, **kwargs):
+        return self._response("DELETE", path, **kwargs)
+
+
+MUTATION_CASES = [
+    (
+        "create_issue",
+        "POST",
+        "/issues",
+        lambda c, k: c.create_issue(title="x", idempotency_key=k),
+    ),
+    (
+        "update_issue",
+        "PATCH",
+        "/issues/7",
+        lambda c, k: c.update_issue(7, title="x", idempotency_key=k),
+    ),
+    (
+        "set_issue_placement",
+        "PATCH",
+        "/issues/7",
+        lambda c, k: c.set_issue_placement(
+            7, project_id=None, sprint_id=None, idempotency_key=k
+        ),
+    ),
+    (
+        "assign_issue",
+        "PUT",
+        "/issues/7/assignee",
+        lambda c, k: c.assign_issue(7, None, idempotency_key=k),
+    ),
+    (
+        "delegate_issue",
+        "POST",
+        "/issues/7/delegate",
+        lambda c, k: c.delegate_issue(7, 9, idempotency_key=k),
+    ),
+    (
+        "comment_on_issue",
+        "POST",
+        "/issues/7/comments",
+        lambda c, k: c.comment_on_issue(7, "x", idempotency_key=k),
+    ),
+    (
+        "archive_issue",
+        "POST",
+        "/issues/7/archive",
+        lambda c, k: c.archive_issue(7, idempotency_key=k),
+    ),
+    (
+        "unarchive_issue",
+        "POST",
+        "/issues/7/unarchive",
+        lambda c, k: c.unarchive_issue(7, idempotency_key=k),
+    ),
+    (
+        "bulk_update_issues",
+        "POST",
+        "/issues/bulk",
+        lambda c, k: c.bulk_update_issues([7], status="done", idempotency_key=k),
+    ),
+    (
+        "set_issue_parent",
+        "PUT",
+        "/issues/7/parent",
+        lambda c, k: c.set_issue_parent(7, None, idempotency_key=k),
+    ),
+    (
+        "link_issues",
+        "POST",
+        "/issues/7/links",
+        lambda c, k: c.link_issues(7, "9", "blocks", idempotency_key=k),
+    ),
+    (
+        "unlink_issues",
+        "DELETE",
+        "/issues/7/links/blocks/9",
+        lambda c, k: c.unlink_issues(7, "blocks", 9, idempotency_key=k),
+    ),
+    (
+        "set_issue_sprint",
+        "PUT",
+        "/issues/7/sprint",
+        lambda c, k: c.set_issue_sprint(7, None, idempotency_key=k),
+    ),
+    (
+        "create_label",
+        "POST",
+        "/labels",
+        lambda c, k: c.create_label("bug", idempotency_key=k),
+    ),
+    (
+        "attach_label",
+        "POST",
+        "/issues/7/labels",
+        lambda c, k: c.attach_label(7, 9, idempotency_key=k),
+    ),
+    (
+        "detach_label",
+        "DELETE",
+        "/issues/7/labels/9",
+        lambda c, k: c.detach_label(7, 9, idempotency_key=k),
+    ),
+    (
+        "create_page",
+        "POST",
+        "/spaces/4/pages",
+        lambda c, k: c.create_page(space_id=4, title="x", idempotency_key=k),
+    ),
+    (
+        "update_page",
+        "PATCH",
+        "/pages/4",
+        lambda c, k: c.update_page(4, title="x", idempotency_key=k),
+    ),
+]
+
+MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
+MCP_MUTATION_CASES = [
+    ("create_issue", {"title": "x"}),
+    ("update_issue", {"issue_id": 7}),
+    (
+        "set_issue_placement",
+        {"issue_id": 7, "project_id": None, "sprint_id": None},
+    ),
+    ("assign_issue", {"issue_id": 7}),
+    ("delegate_issue", {"issue_id": 7, "agent_user_id": 9}),
+    ("comment_on_issue", {"issue_id": 7, "body": "x"}),
+    ("archive_issue", {"issue_id": 7}),
+    ("unarchive_issue", {"issue_id": 7}),
+    ("bulk_update_issues", {"ids": [7]}),
+    ("set_issue_parent", {"issue_id": 7}),
+    (
+        "link_issues",
+        {"issue_id": 7, "target_ref": "9", "relation": "blocks"},
+    ),
+    (
+        "unlink_issues",
+        {"issue_id": 7, "relation": "blocks", "target_id": 9},
+    ),
+    ("set_issue_sprint", {"issue_id": 7}),
+    ("create_label", {"name": "bug"}),
+    ("attach_label", {"issue_id": 7, "label_id": 9}),
+    ("detach_label", {"issue_id": 7, "label_id": 9}),
+    ("create_page", {"space_id": 4, "title": "x"}),
+    ("update_page", {"page_id": 4}),
+]
+
+
+class _MCPRecordingAthenaClient:
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        def record(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return [] if name == "delegate_issue" else {}
+
+        return record
+
+
+class _MCPFailingAthenaClient(_MCPRecordingAthenaClient):
+    def create_issue(self, **kwargs):
+        raise AthenaError(
+            method="POST",
+            path="/issues",
+            status_code=409,
+            detail="still running",
+            code="idempotency_in_progress",
+            retry_after="7",
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "method", "path", "invoke"),
+    MUTATION_CASES,
+    ids=[case[0] for case in MUTATION_CASES],
+)
+def test_every_client_mutation_forwards_only_explicit_idempotency_keys(
+    name, method, path, invoke
+):
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    for key, expected_headers in (
+        ("stable-key", {"Idempotency-Key": "stable-key"}),
+        (None, None),
+        ("", {"Idempotency-Key": ""}),
+    ):
+        assert invoke(client, key) == {"ok": True}
+        recorded_method, recorded_path, kwargs = transport.calls.pop()
+        assert (recorded_method, recorded_path) == (method, path), name
+        if expected_headers is None:
+            assert "headers" not in kwargs, name
+        else:
+            assert kwargs["headers"] == expected_headers, name
+
+
+def test_mutation_helper_merges_existing_headers_case_insensitively():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client._mutate(
+        transport.post,
+        "/issues",
+        idempotency_key="new-key",
+        headers={"If-Match": '"v1"', "idempotency-key": "old-key"},
+        json={"title": "x"},
+    )
+
+    _, _, kwargs = transport.calls.pop()
+    headers = httpx.Headers(kwargs["headers"])
+    assert headers["If-Match"] == '"v1"'
+    assert headers["Idempotency-Key"] == "new-key"
+    assert len(headers.get_list("Idempotency-Key")) == 1
+
+
+def test_athena_error_preserves_legacy_construction_and_pickle_state():
+    legacy = AthenaError("legacy failure")
+    assert str(legacy) == "legacy failure"
+
+    structured = AthenaError(
+        method="POST",
+        path="/issues",
+        status_code=409,
+        detail="still running",
+        code="idempotency_in_progress",
+        retry_after="7",
+    )
+    restored = pickle.loads(pickle.dumps(structured))
+
+    assert str(restored) == str(structured)
+    assert restored.as_dict() == structured.as_dict()
+
+
 def test_issue_lifecycle_through_the_client(tmp_path):
     tc, ath = _client(tmp_path, "iss.db")
     try:
-        issue = ath.create_issue(title="ship it", body="see [[page:1]]", priority="high")
+        issue = ath.create_issue(
+            title="ship it", body="see [[page:1]]", priority="high"
+        )
         assert issue["title"] == "ship it" and issue["priority"] == "high"
 
         # Addressable by id and (once in a project) by key; here by id.
@@ -273,9 +536,7 @@ def test_atomic_issue_placement_through_the_client(tmp_path, monkeypatch):
         )
 
         # Null is a value on this dedicated surface, not an omitted optional field.
-        backlog = ath.set_issue_placement(
-            issue["id"], project_id=None, sprint_id=None
-        )
+        backlog = ath.set_issue_placement(issue["id"], project_id=None, sprint_id=None)
         assert patch_calls[-1] == (
             f"/issues/{issue['id']}",
             {"project_id": None, "sprint_id": None},
@@ -292,10 +553,7 @@ def test_atomic_issue_placement_through_the_client(tmp_path, monkeypatch):
                 sprint_id=source_sprint["id"],
             )
         assert "422" in str(exc.value)
-        assert (
-            "sprint belongs to a different project than the issue"
-            in str(exc.value)
-        )
+        assert "sprint belongs to a different project than the issue" in str(exc.value)
         unchanged = ath.get_issue(str(issue["id"]))
         assert (unchanged["project_id"], unchanged["sprint_id"]) == (None, None)
     finally:
@@ -320,7 +578,9 @@ def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
         # Dependencies: the epic blocks the task; read it back, then remove it.
         linked = ath.link_issues(epic["id"], str(task["id"]), "blocks")
         assert [b["id"] for b in linked["blocks"]] == [task["id"]]
-        assert [b["id"] for b in ath.list_issue_links(epic["id"])["blocks"]] == [task["id"]]
+        assert [b["id"] for b in ath.list_issue_links(epic["id"])["blocks"]] == [
+            task["id"]
+        ]
         ath.unlink_issues(epic["id"], "blocks", task["id"])
         assert ath.list_issue_links(epic["id"])["blocks"] == []
 
@@ -335,11 +595,67 @@ def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
 
         # Sprints: create one in the project, put the task in it, list it, clear it.
         sprint = tc.post(f"/projects/{proj['id']}/sprints", json={"name": "S1"}).json()
-        assert ath.set_issue_sprint(task["id"], sprint["id"])["sprint_id"] == sprint["id"]
+        assert (
+            ath.set_issue_sprint(task["id"], sprint["id"])["sprint_id"] == sprint["id"]
+        )
         assert [s["id"] for s in ath.list_sprints(proj["id"])] == [sprint["id"]]
         assert ath.set_issue_sprint(task["id"], None)["sprint_id"] is None
     finally:
         tc.__exit__(None, None, None)
+
+
+def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
+    tc, ath = _client(tmp_path, "idempotent-client.db")
+    try:
+        key = "mcp-create-once"
+        first = ath.create_issue(title="one logical write", idempotency_key=key)
+        replay = ath.create_issue(title="one logical write", idempotency_key=key)
+
+        assert replay == first
+        assert [issue["id"] for issue in ath.list_issues()] == [first["id"]]
+        assert [
+            event["verb"] for event in ath.recent_events(kind="issue")["events"]
+        ] == ["created"]
+
+        with pytest.raises(AthenaError) as mismatch:
+            ath.create_issue(title="different write", idempotency_key=key)
+        error = mismatch.value
+        assert error.status_code == 409
+        assert error.method == "POST"
+        assert error.path == "/issues"
+        assert error.code == "idempotency_mismatch"
+        assert error.retry_after is None
+        assert error.detail == "Idempotency-Key reused for a different request"
+        assert str(error) == (
+            "POST /issues -> 409: Idempotency-Key reused for a different request"
+        )
+
+        with pytest.raises(AthenaError) as invalid:
+            ath.create_issue(title="invalid key", idempotency_key="")
+        assert invalid.value.status_code == 400
+        assert invalid.value.code is None
+        assert "1-255 visible ASCII" in invalid.value.detail
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_error_preserves_retry_after_and_machine_code():
+    response = httpx.Response(
+        409,
+        json={
+            "detail": "A request with this Idempotency-Key is still in progress",
+            "code": "idempotency_in_progress",
+        },
+        headers={"Retry-After": "1"},
+        request=httpx.Request("POST", "http://athena.test/issues"),
+    )
+
+    with pytest.raises(AthenaError) as exc:
+        AthenaClient(client=object())._result(response)
+
+    assert exc.value.status_code == 409
+    assert exc.value.code == "idempotency_in_progress"
+    assert exc.value.retry_after == "1"
 
 
 def test_error_surfaces_status_and_detail(tmp_path):
@@ -347,12 +663,93 @@ def test_error_surfaces_status_and_detail(tmp_path):
     try:
         with pytest.raises(AthenaError) as exc:
             ath.get_issue("99999")
-        assert "404" in str(exc.value)
+        error = exc.value
+        assert "404" in str(error)
+        assert error.status_code == 404
+        assert error.method == "GET"
+        assert error.path == "/issues/99999"
+        assert error.code is None
+        assert error.retry_after is None
     finally:
         tc.__exit__(None, None, None)
 
 
 # --- MCP wiring (skipped without the optional `mcp` extra) ------------------
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    MCP_MUTATION_CASES,
+    ids=[case[0] for case in MCP_MUTATION_CASES],
+)
+def test_every_mcp_mutation_forwards_the_optional_key(tool_name, arguments):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    for key in ("stable-key", None):
+        tool_arguments = dict(arguments)
+        if key is not None:
+            tool_arguments["idempotency_key"] = key
+        asyncio.run(server.call_tool(tool_name, tool_arguments))
+
+        called_name, _, kwargs = client.calls.pop()
+        assert called_name == tool_name
+        assert kwargs["idempotency_key"] == key
+
+
+@pytest.mark.parametrize(
+    "invalid_key",
+    ["", "contains space", "é", "x" * 256],
+)
+def test_mcp_schema_rejects_invalid_idempotency_keys_before_dispatch(invalid_key):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    with pytest.raises(ToolError):
+        asyncio.run(
+            server.call_tool(
+                "create_issue",
+                {"title": "never runs", "idempotency_key": invalid_key},
+            )
+        )
+    assert client.calls == []
+
+
+def test_mcp_error_text_preserves_structured_retry_metadata():
+    pytest.importorskip("mcp")
+    import asyncio
+    import json
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    server = build_server(_MCPFailingAthenaClient())
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(
+            server.call_tool(
+                "create_issue",
+                {"title": "x", "idempotency_key": "stable-key"},
+            )
+        )
+
+    marker = "ATHENA_ERROR_JSON="
+    assert marker in str(exc.value)
+    payload = json.loads(str(exc.value).split(marker, 1)[1])
+    assert payload["status_code"] == 409
+    assert payload["code"] == "idempotency_in_progress"
+    assert payload["retry_after"] == "7"
+    assert payload["message"] == "POST /issues -> 409: still running"
 
 
 def test_mcp_server_registers_tools_and_calls_through(tmp_path):
@@ -418,10 +815,61 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
                 for option in placement_schema["properties"][field_name]["anyOf"]
             }
             assert types == {"integer", "null"}
+        assert MUTATION_TOOL_NAMES <= names
+        for tool_name in MUTATION_TOOL_NAMES:
+            schema = tools[tool_name].inputSchema
+            assert "idempotency_key" in schema["properties"]
+            assert "idempotency_key" not in set(schema.get("required", []))
+            key_types = {
+                option["type"]
+                for option in schema["properties"]["idempotency_key"]["anyOf"]
+            }
+            assert key_types == {"string", "null"}
+            string_schema = next(
+                option
+                for option in schema["properties"]["idempotency_key"]["anyOf"]
+                if option["type"] == "string"
+            )
+            assert string_schema["minLength"] == 1
+            assert string_schema["maxLength"] == 255
+            assert string_schema["pattern"] == r"^[\x21-\x7E]+$"
 
+        for tool_name in names - MUTATION_TOOL_NAMES:
+            assert "idempotency_key" not in tools[tool_name].inputSchema["properties"]
 
-        # A tool call goes all the way through to the API and creates real data.
+        # An omitted key remains backward-compatible and creates real data.
         asyncio.run(server.call_tool("create_issue", {"title": "via mcp"}))
         assert any(i["title"] == "via mcp" for i in ath.list_issues())
+
+        # A caller-supplied key survives separate MCP invocations and coalesces
+        # them into one logical REST mutation.
+        keyed_args = {
+            "title": "via mcp once",
+            "idempotency_key": "mcp-create-once",
+        }
+        first = asyncio.run(server.call_tool("create_issue", keyed_args))
+        replay = asyncio.run(server.call_tool("create_issue", keyed_args))
+        assert replay == first
+        assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
+        import json
+
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        created_events = len(ath.recent_events(kind="issue")["events"])
+        with pytest.raises(ToolError) as mismatch:
+            asyncio.run(
+                server.call_tool(
+                    "create_issue",
+                    {
+                        "title": "different via mcp",
+                        "idempotency_key": "mcp-create-once",
+                    },
+                )
+            )
+        marker = "ATHENA_ERROR_JSON="
+        payload = json.loads(str(mismatch.value).split(marker, 1)[1])
+        assert payload["code"] == "idempotency_mismatch"
+        assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
+        assert len(ath.recent_events(kind="issue")["events"]) == created_events
     finally:
         tc.__exit__(None, None, None)
