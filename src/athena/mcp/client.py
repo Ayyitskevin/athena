@@ -516,6 +516,24 @@ class AthenaClient:
             )
         )
 
+
+    def get_agent_run_health(self, *, agent_id: int | None = None) -> Any:
+        """Read the bounded fleet run-health rollup (admin only)."""
+        return self._result(
+            self._client.get(
+                "/activity/agent-runs",
+                params=self._params(agent_id=agent_id),
+            )
+        )
+
+    def list_automation_failures(self) -> Any:
+        """List only automation rules with recorded action failures (admin only)."""
+        return self._result(
+            self._client.get(
+                "/automation/rules", params={"failing_only": True}
+            )
+        )
+
     def list_activity_runs(
         self, *, actor_id: int, gap_seconds: int = 1800, limit: int = 200
     ) -> Any:

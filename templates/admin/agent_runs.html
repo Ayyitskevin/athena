@@ -1,19 +1,38 @@
 {% extends "base.html" %}
 
-{% block title %}Agent Run Health - Admin - Athena{% endblock %}
+{% block title %}Agent Mission Control - Admin - Athena{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <a href="/admin/agents" class="muted">Back to agents</a>
-        <h1>Agent Run Health</h1>
-        <p class="subtitle">Recent agent runs, replay readiness, and lineage signals.</p>
+        <h1>Agent Mission Control</h1>
+        <p class="subtitle">Bounded recent activity, replay readiness, lineage, and failures.</p>
     </div>
     <div class="page-header-actions">
+        <a href="/admin/automation" class="button secondary">Automation</a>
         <a href="/aegis/activity?actor_type=agent" class="button secondary">Agent activity</a>
         <a href="/aegis/activity/runs" class="button secondary">Run explorer</a>
     </div>
 </div>
+
+{% if automation_failures %}
+<section class="dashboard-card">
+    <h2>Automation failures</h2>
+    <p class="subtitle">Cumulative action failures that need operator inspection.</p>
+    <ul class="compact-list">
+        {% for rule in automation_failures %}
+        <li>
+            <strong>{{ rule.name }}</strong>
+            <span class="badge">⚠ {{ rule.failure_count }} failed</span>
+            {% if rule.last_error_at %}<span class="muted">{{ rule.last_error_at }} UTC</span>{% endif %}
+            {% if rule.last_error %}<div class="muted">{{ rule.last_error }}</div>{% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="note-small"><a href="/admin/automation">Inspect automation rules →</a></p>
+</section>
+{% endif %}
 
 {% if agent_options %}
 <form method="get" action="/admin/agents/runs" class="agent-run-filter">
@@ -36,8 +55,8 @@
 {% if agents %}
 <div class="agent-health-summary">
     <div class="agent-health-stat">
-        <strong>{{ totals.active_agent_count }}</strong>
-        <span>active agents</span>
+        <strong>{{ totals.agents_with_activity_count }}</strong>
+        <span>agents with activity</span>
     </div>
     <div class="agent-health-stat">
         <strong>{{ totals.replay_ready_count }}</strong>

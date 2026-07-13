@@ -87,16 +87,36 @@ def test_rule_failure_is_exposed_via_api(tmp_path):
             headers=H1,
         ).json()
         # A fresh rule reports clean health over the API.
+        clean = client.post(
+            "/automation/rules",
+            json={
+                "name": "quiet",
+                "trigger_verb": "commented",
+                "action_type": "comment",
+                "action_params": {"body": "x"},
+            },
+            headers=H1,
+        ).json()
+
         assert created["failure_count"] == 0
         assert created["last_error"] is None and created["last_error_at"] is None
+        assert client.get(
+            "/automation/rules?failing_only=true", headers=H1
+        ).json() == []
 
         conn = db.connect(db_file)
         automation.process_pending(conn, executor=_boom)
 
         listed = client.get("/automation/rules", headers=H1).json()
+        failing = client.get(
+            "/automation/rules?failing_only=true", headers=H1
+        ).json()
+        assert [rule["id"] for rule in failing] == [created["id"]]
         row = next(r for r in listed if r["id"] == created["id"])
         assert row["failure_count"] == 1
         assert "ValueError: kaboom" in row["last_error"] and row["last_error_at"]
+
+        assert next(r for r in listed if r["id"] == clean["id"])["failure_count"] == 0
 
 
 def test_admin_page_shows_rule_failure_badge(tmp_path):
@@ -113,8 +133,19 @@ def test_admin_page_shows_rule_failure_badge(tmp_path):
             action_params={"body": "x"}, created_by=1,
         )
         # Clean rule: the page shows no failure badge.
+        automation.create_rule(
+            conn, name="quiet", trigger_verb="commented", action_type="comment",
+            action_params={"body": "x"}, created_by=1,
+        )
+
         assert "⚠" not in client.get("/admin/automation").text
+        assert "Automation failures" not in client.get("/admin/agents/runs").text
 
         automation.process_pending(conn, executor=_boom)
         page = client.get("/admin/automation").text
         assert "⚠" in page and "1 failed" in page
+
+        mission_control = client.get("/admin/agents/runs").text
+        assert "Automation failures" in mission_control
+        assert "boom" in mission_control and "ValueError: kaboom" in mission_control
+        assert "quiet" not in mission_control

@@ -51,7 +51,12 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
         "selected_agent": selected_agent,
         "totals": {
             "agent_count": len(rows),
-            "active_agent_count": sum(1 for row in rows if row["run_count"] > 0),
+            # Activity rows prove that an agent acted in this bounded window. They do
+            # not prove that its external process is still running, so keep the field
+            # (and every transport/UI label) honest about what the log can establish.
+            "agents_with_activity_count": sum(
+                1 for row in rows if row["run_count"] > 0
+            ),
             "replay_ready_count": sum(
                 1 for row in rows if row["tagged_run_count"] > 0
             ),

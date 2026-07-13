@@ -15,9 +15,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from athena.core import activity, run_replay
+from athena.core import activity, agents, run_replay
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import admin_actor, current_actor
 
 router = APIRouter(prefix="/activity", tags=["core"])
 
@@ -134,6 +134,61 @@ class RunReplayArtifactOut(BaseModel):
     events: list[ActivityOut]
 
 
+class AgentIdentityOut(BaseModel):
+    id: int
+    email: str
+    name: str
+    role: Literal["admin", "member", "viewer"]
+    is_agent: bool
+    created_at: str
+
+
+class AgentRunSummaryOut(BaseModel):
+    run_id: str | None
+    parent_run_id: str | None
+    forked_from_event_id: int | None
+    started_at: str
+    ended_at: str
+    first_id: int
+    last_id: int
+    event_count: int
+    partial: bool
+    child_run_count: int
+
+
+class AgentRunHealthRowOut(BaseModel):
+    user: AgentIdentityOut
+    runs: list[AgentRunSummaryOut]
+    latest_run: AgentRunSummaryOut | None
+    run_count: int
+    tagged_run_count: int
+    heuristic_run_count: int
+    partial_run_count: int
+    recent_event_count: int
+    child_run_count: int
+    health_state: str
+    health_label: str
+
+
+class AgentRunHealthTotalsOut(BaseModel):
+    agent_count: int
+    agents_with_activity_count: int
+    replay_ready_count: int
+    untagged_only_count: int
+    partial_window_count: int
+    total_recent_runs: int
+    tagged_recent_runs: int
+
+
+class AgentRunHealthOut(BaseModel):
+    # The bounded fleet read model already used by the browser cockpit. Pydantic's
+    # explicit identity shape prevents internal user fields from leaking over REST.
+    agents: list[AgentRunHealthRowOut]
+    agent_options: list[AgentIdentityOut]
+    selected_agent_id: int | None
+    selected_agent: AgentIdentityOut | None
+    totals: AgentRunHealthTotalsOut
+
 @router.get("", response_model=list[ActivityOut])
 def feed(
     target_kind: str | None = Query(
@@ -232,6 +287,20 @@ def export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="athena-activity.csv"'},
     )
+
+
+@router.get("/agent-runs", response_model=AgentRunHealthOut)
+def agent_run_health(
+    agent_id: int | None = Query(
+        None, description="filter the fleet rollup to one agent user id"
+    ),
+    _actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # This cross-agent view includes identities and complete run summaries, so it is
+    # deliberately admin-only. It is the REST twin of /admin/agents/runs and uses
+    # the same bounded core read model rather than reconstructing a second view here.
+    return agents.agent_run_health(conn, agent_id=agent_id)
 
 
 @router.get("/runs", response_model=list[RunOut])

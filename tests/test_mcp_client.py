@@ -15,6 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
+from athena.aegis import automation
+from athena.core import db
 from athena.mcp.client import AthenaClient, AthenaError
 
 
@@ -448,6 +450,61 @@ def test_recent_events_envelope(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_mission_control_observation_through_client(tmp_path):
+    # WHY: fleet supervision must traverse the same MCP-client -> REST -> DB path as
+    # every other agent capability; a web-only cockpit cannot be automated or audited.
+    db_file = tmp_path / "mission-control.db"
+    tc, ath = _client(tmp_path, db_file.name)
+    try:
+        agent = tc.post(
+            "/users",
+            json={"email": "bot@e.com", "name": "Bot", "is_agent": True},
+        ).json()
+        acted = tc.post(
+            "/issues",
+            json={"title": "Observed work"},
+            headers={
+                "Authorization": "not-bearer",
+                "X-Athena-Actor": str(agent["id"]),
+                "X-Athena-Run": "bot-run",
+            },
+        )
+        assert acted.status_code == 201
+
+        rule = tc.post(
+            "/automation/rules",
+            json={
+                "name": "broken rule",
+                "trigger_verb": "created",
+                "action_type": "comment",
+                "action_params": {"body": "x"},
+            },
+        ).json()
+        conn = db.connect(db_file)
+        try:
+            automation.record_rule_failure(
+                conn, rule["id"], "RuntimeError: operator-visible"
+            )
+        finally:
+            conn.close()
+
+        health = ath.get_agent_run_health()
+        assert health["totals"]["agents_with_activity_count"] == 1
+        assert [row["user"]["id"] for row in health["agents"]] == [agent["id"]]
+        assert health["agents"][0]["latest_run"]["run_id"] == "bot-run"
+        assert "replay_export_command" not in health["agents"][0]["latest_run"]
+        assert "has_password" not in health["agents"][0]["user"]
+
+        filtered = ath.get_agent_run_health(agent_id=agent["id"])
+        assert [row["user"]["id"] for row in filtered["agents"]] == [agent["id"]]
+
+        failures = ath.list_automation_failures()
+        assert [item["id"] for item in failures] == [rule["id"]]
+        assert failures[0]["last_error"] == "RuntimeError: operator-visible"
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_run_lineage_and_issue_time_travel_through_the_client(tmp_path):
     # WHY: the newest log-as-truth features must be reachable by agents over MCP,
     # not only by browser/REST users: reconstruct runs, walk run lineage, and
@@ -851,6 +908,8 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_run_lineage",
             "get_run_fork_contract",
             "list_projects",
+            "get_agent_run_health",
+            "list_automation_failures",
             "list_users",
             "list_spaces",
             "list_pages",
@@ -911,6 +970,10 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             assert "if_match" not in set(schema.get("required", []))
         for tool_name in names - IF_MATCH_TOOL_NAMES:
             assert "if_match" not in tools[tool_name].inputSchema["properties"]
+
+        # Read-only operator tools are wired through FastMCP, not merely client helpers.
+        asyncio.run(server.call_tool("get_agent_run_health", {}))
+        asyncio.run(server.call_tool("list_automation_failures", {}))
 
         # An omitted key remains backward-compatible and creates real data.
         asyncio.run(server.call_tool("create_issue", {"title": "via mcp"}))
