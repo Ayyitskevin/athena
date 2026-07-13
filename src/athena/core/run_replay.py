@@ -8,11 +8,11 @@ operator or agent can hand off for audit without re-executing side effects.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import sqlite3
 
 from athena.core import activity, db, run_context
+from athena.core._util import atomic_write_json
 
 SCHEMA = "athena.run_replay.v1"
 
@@ -68,7 +68,7 @@ def export_run_replay_database(
     if artifact is None:
         raise ValueError(f"no such run: {run_id}")
 
-    _write_json_file(destination, artifact)
+    atomic_write_json(destination, artifact)
     return destination
 
 
@@ -235,20 +235,6 @@ def _light_node(node: dict) -> dict:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def _write_json_file(destination: Path, data: dict) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(destination)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
