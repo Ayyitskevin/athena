@@ -13,6 +13,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from athena import config
+from athena.core._util import utc_now
 
 # SQLite stores our timestamps as "YYYY-MM-DD HH:MM:SS" UTC (datetime('now')).
 _TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -20,10 +21,6 @@ _TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 def _hash(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def create_session(conn: sqlite3.Connection, user_id: int) -> str:
@@ -36,7 +33,7 @@ def create_session(conn: sqlite3.Connection, user_id: int) -> str:
     leak grants access on its own."""
     raw = secrets.token_urlsafe(32)
     csrf = secrets.token_urlsafe(32)
-    expires = (_now() + timedelta(days=config.SESSION_TTL_DAYS)).strftime(_TS_FMT)
+    expires = (utc_now() + timedelta(days=config.SESSION_TTL_DAYS)).strftime(_TS_FMT)
     conn.execute(
         "INSERT INTO sessions (user_id, session_hash, expires_at, csrf_token)"
         " VALUES (?, ?, ?, ?)",
@@ -58,7 +55,7 @@ def resolve_session(conn: sqlite3.Connection, raw: str | None) -> dict | None:
     ).fetchone()
     if row is None:
         return None
-    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= _now():
+    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= utc_now():
         return None
     user = dict(row)
     user.pop("expires_at", None)
@@ -79,7 +76,7 @@ def csrf_token_for(conn: sqlite3.Connection, raw: str | None) -> str | None:
     ).fetchone()
     if row is None:
         return None
-    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= _now():
+    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= utc_now():
         return None
     return row["csrf_token"] or None
 

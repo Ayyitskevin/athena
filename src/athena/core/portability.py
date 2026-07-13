@@ -8,7 +8,7 @@ webhook configuration, or attachment blob paths.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import json
 from pathlib import Path
 import secrets
@@ -16,6 +16,7 @@ import sqlite3
 from typing import Any, Iterable
 
 from athena.core import links
+from athena.core._util import atomic_write_json, utc_now_iso
 
 SCHEMA = "athena.portability.v1"
 MANIFEST_SCHEMA = "athena.import_manifest.v1"
@@ -82,7 +83,7 @@ def export_database(
     finally:
         conn.close()
 
-    _write_json_file(destination, bundle)
+    atomic_write_json(destination, bundle)
     return destination
 
 
@@ -141,7 +142,7 @@ def write_import_manifest_database(
     finally:
         conn.close()
 
-    _write_json_file(destination, manifest)
+    atomic_write_json(destination, manifest)
     return manifest
 
 
@@ -217,7 +218,7 @@ def build_import_manifest(
         "bundle_schema_version": bundle["schema_version"],
         "kind": bundle["kind"],
         "root_id": bundle["root_id"],
-        "generated_at": _utc_now(),
+        "generated_at": utc_now_iso(),
         "ok": not conflicts,
         "status": "ready" if not conflicts else "blocked",
         "attachment_policy": policy,
@@ -301,20 +302,6 @@ def _load_manifest(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ValueError("manifest must be a JSON object")
     return data
-
-
-def _write_json_file(destination: Path, data: dict) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(destination)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
@@ -968,7 +955,7 @@ def _base_import_result(bundle: dict, manifest: dict) -> dict:
         "schema_version": 1,
         "kind": bundle["kind"],
         "root_id": bundle["root_id"],
-        "imported_at": _utc_now(),
+        "imported_at": utc_now_iso(),
         "ok": True,
         "status": "imported",
         "created": {},
@@ -1431,14 +1418,8 @@ def _base_bundle(kind: str, target_id: int) -> dict:
         "schema_version": 1,
         "kind": kind,
         "root_id": target_id,
-        "exported_at": _utc_now(),
+        "exported_at": utc_now_iso(),
     }
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
 
 
 def _validate_bundle(bundle: dict) -> dict:

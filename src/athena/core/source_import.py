@@ -7,7 +7,6 @@ manifest, and athena-import already understand.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 import json
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from athena.core import links, portability
+from athena.core._util import atomic_write_json, utc_now_iso
 
 SOURCE_KINDS = ("jira-project", "confluence-space")
 SOURCE_MAPPING_REPORT_SCHEMA = "athena.source_mapping_report.v1"
@@ -109,9 +109,9 @@ def write_source_bundle(
     else:
         raise ValueError("source must be one of: " + ", ".join(SOURCE_KINDS))
 
-    _write_json_file(destination, bundle)
+    atomic_write_json(destination, bundle)
     if report_destination is not None:
-        _write_json_file(report_destination, source_mapping_report(bundle))
+        atomic_write_json(report_destination, source_mapping_report(bundle))
     return destination
 
 
@@ -135,7 +135,7 @@ def map_jira_project(
     if not issues_in:
         raise ValueError("jira-project payload contains no issues")
 
-    now = _utc_now()
+    now = utc_now_iso()
     report = _MappingReport("jira-project", now)
     users = _UserTable(now)
     project = _jira_project_info(issues_in[0], project_key, project_name)
@@ -351,7 +351,7 @@ def map_confluence_space(
     if not pages_in:
         raise ValueError("confluence-space payload contains no pages")
 
-    now = _utc_now()
+    now = utc_now_iso()
     report = _MappingReport("confluence-space", now)
     users = _UserTable(now)
     # Derive space + owner from the first PAGE OBJECT, not pages_in[0] blindly — a leading
@@ -573,20 +573,6 @@ def _load_json(path: Path) -> Any:
         raise ValueError(f"source is not valid JSON: {exc.msg}") from exc
 
 
-def _write_json_file(destination: Path, data: dict) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(destination)
-    except Exception:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
 def _extract_rows(payload: Any, *keys: str) -> list:
     if isinstance(payload, list):
         return payload
@@ -615,7 +601,7 @@ def _jira_project_info(
         "key": key,
         "description": str(project.get("description") or "Imported from Jira"),
         "created_by": 1,
-        "created_at": _utc_now(),
+        "created_at": utc_now_iso(),
         "issue_counter": 0,
         "visibility": "public",
     }
@@ -788,7 +774,7 @@ def _confluence_space_info(
         "name": str(space_name or space.get("name") or key),
         "description": str(space.get("description") or "Imported from Confluence"),
         "created_by": 1,
-        "created_at": _utc_now(),
+        "created_at": utc_now_iso(),
         "visibility": "public",
     }
 
@@ -1221,12 +1207,6 @@ def _slug(value: str) -> str:
 
 def _string_or_now(value: Any, now: str) -> str:
     return str(value) if isinstance(value, str) and value else now
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
 
 
 def _dedupe_dicts(rows: list[dict], keys: tuple[str, ...]) -> list[dict]:

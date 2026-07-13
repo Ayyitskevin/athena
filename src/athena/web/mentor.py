@@ -25,7 +25,7 @@ from athena.core.deps import get_conn
 from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_comment
-from athena.web.router import get_templates
+from athena.web.router import _readonly_response, get_templates
 
 router = APIRouter()
 
@@ -37,12 +37,6 @@ def _signin_required(verb: str) -> HTMLResponse:
         status_code=401,
     )
 
-
-def _readonly_response() -> HTMLResponse:
-    return HTMLResponse(
-        '<div class="blocked">Viewer role is read-only.</div>',
-        status_code=403,
-    )
 
 
 def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:

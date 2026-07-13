@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import hashlib
 import hmac
 import ipaddress
@@ -36,6 +36,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from athena import config
+from athena.core._util import utc_now
 from athena.core import activity, db
 
 logger = logging.getLogger(__name__)
@@ -196,10 +197,6 @@ def delete_webhook(conn: sqlite3.Connection, webhook_id: int) -> bool:
 # --- delivery ---------------------------------------------------------------
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def _stamp(moment: datetime) -> str:
     """Format a moment as the 'YYYY-MM-DD HH:MM:SS' text the schema uses, so stored
     timestamps compare lexicographically in chronological order."""
@@ -278,7 +275,7 @@ def deliver_pending(
     failure state; the first failure records the error, arms backoff, and stops THIS
     webhook's batch (so its events stay ordered and are retried), then moves on to
     the next webhook. Other webhooks are unaffected by one bad endpoint."""
-    now = now or _now()
+    now = now or utc_now()
     gate = _stamp(now)
     due = conn.execute(
         f"SELECT {_PUBLIC_COLS}, secret FROM webhooks "
