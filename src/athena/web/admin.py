@@ -100,8 +100,6 @@ def _password_context(*, error: str | None = None, success: str | None = None) -
 @router.get("/settings/password", response_class=HTMLResponse)
 def password_settings(request: Request, updated: str | None = None):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("change your password")
@@ -127,8 +125,6 @@ def update_own_password(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("change your password")
@@ -198,8 +194,6 @@ def _identities_context(
 @router.get("/settings/identities", response_class=HTMLResponse)
 def identities_settings(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("manage your linked sign-ins")
@@ -222,8 +216,6 @@ def unlink_identity(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("manage your linked sign-ins")
@@ -262,8 +254,6 @@ def unlink_identity(
 @router.get("/settings/tokens", response_class=HTMLResponse)
 def token_settings(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("manage tokens")
@@ -287,8 +277,6 @@ def create_token(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _write_required(user, "create tokens")
     if err is not None:
@@ -355,8 +343,6 @@ def _admin_context(
 @router.get("/admin/users", response_class=HTMLResponse)
 def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
@@ -369,8 +355,6 @@ def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 @router.get("/admin/agents", response_class=HTMLResponse)
 def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
@@ -389,8 +373,6 @@ def agent_runs_admin(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
@@ -434,8 +416,6 @@ def create_user(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:
@@ -487,8 +467,6 @@ def update_user_password(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:
@@ -520,8 +498,6 @@ def update_user_role(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:
@@ -560,9 +536,6 @@ def update_user_agent(
     is_agent: str = Form("0"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:
@@ -596,8 +569,6 @@ def _webhooks_context(
 @router.get("/admin/webhooks", response_class=HTMLResponse)
 def webhooks_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
@@ -617,8 +588,6 @@ def create_webhook(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:
@@ -748,8 +717,6 @@ def _action_params_from_form(
 @router.get("/admin/automation", response_class=HTMLResponse)
 def automation_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
@@ -777,8 +744,6 @@ def create_rule(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     actor = getattr(request.state, "user", None)
     err = _admin_required(actor)
     if err is not None:

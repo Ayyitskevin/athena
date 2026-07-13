@@ -155,9 +155,6 @@ def _statuses_in_use(conn, visible_project_ids: set[int] | None = None) -> list[
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
     """Simple landing page. No dynamic data yet — just the foundation."""
-    if _templates is None:
-        # Should never happen in normal operation (wired in lifespan).
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     return _templates.TemplateResponse(
         request=request,
         name="home.html",
@@ -171,8 +168,6 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     the signed-in user's open plate, and the latest activity. Read-only — every
     number comes from aegis.dashboard (the one home for the counting SQL), so this
     route only lays them out. Open to read, like the issue list."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     # Every number is counted only over the projects this viewer may see (admins all;
     # the backlog is always in). recent_activity is gated the same way: actor=user
@@ -212,8 +207,6 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     satisfy the filters, and pages drop out. With no filter set it is the plain
     cross-kind search, honouring the scope tab. Reading is open, like every other web
     read; a blank box just shows the form."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     q = (request.query_params.get("q") or "").strip()
     # Scope to one kind, or all. An unrecognised value (e.g. a hand-edited URL) falls
     # back to "all" rather than erroring — the same forgiving rule the issue list uses
@@ -313,8 +306,6 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 @router.get("/inbox", response_class=HTMLResponse)
 def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """The signed-in user's notification inbox — what changed on things they watch."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -366,8 +357,6 @@ def mark_inbox_all_read(
 @router.get("/aegis", response_class=HTMLResponse)
 def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Aegis dashboard using real data from list_issues."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     user = getattr(request.state, "user", None)
     # Only count/show issues in projects this viewer may see (public + their own
@@ -398,8 +387,6 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 @router.get("/aegis/issues", response_class=HTMLResponse)
 def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Issues list view (Aegis) wired to real DB via data-access layer (list_issues)."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     status_filter = request.query_params.get("status")
     # Priority is passed straight through (an unknown value matches nothing), exactly
@@ -583,8 +570,6 @@ def _int_or_none(raw: str | None) -> int | None:
 @router.get("/aegis/issues/new", response_class=HTMLResponse)
 def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Render the new issue creation form."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is not None and not identity.can_write(user):
         return _readonly_response()
@@ -609,8 +594,6 @@ def create_issue(
     Logged-out callers get a prompt to sign in instead of a write. A new issue
     starts at its project's first status (statuses are per-project now, and the
     project is chosen on this same form), so the form doesn't pick a status."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     user = getattr(request.state, "user", None)
     if user is None:
@@ -682,8 +665,6 @@ def edit_issue_form(
     """Render the edit form for an issue, prefilled with its current title/body.
     Gated on the session user — editing is a write, so logged-out callers get a
     sign-in prompt rather than a form they can't submit."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -808,8 +789,6 @@ def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(
     """Show a single issue, addressable by numeric id ("12") or project key
     ("ATH-12"). get_by_ref resolves either form; everything past it keys off the
     issue's real numeric id (backlinks/comments/labels stay numeric)."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     issue = issues.get_by_ref(conn, ref)
     user = getattr(request.state, "user", None)
@@ -937,8 +916,6 @@ def issue_history_view(
     default now), beside the timeline of its events, each a clickable cutoff. A thin
     client over issue_history.project_issue_state; gated exactly like the detail page (a
     hidden/missing issue is the same 404, so existence never leaks)."""
-    if _templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     issue = issues.get_by_ref(conn, ref)
     user = getattr(request.state, "user", None)
     if not issue or not access.can_see_project_or_backlog(

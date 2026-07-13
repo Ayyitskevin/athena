@@ -100,8 +100,6 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """List every space with a New Space form (the form is gated; reading is open).
     Each space links to its page tree. Mirrors /aegis/projects."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     # Only the spaces this viewer may see (public + their own private ones; admins
     # all). A private space never appears here to someone outside it.
@@ -203,8 +201,6 @@ def edit_space_form(
     Editing is a write open to any signed-in actor (only delete is creator-locked),
     so a logged-out caller gets a sign-in prompt rather than a dead form."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _write_required(user, "edit spaces")
     if err is not None:
@@ -295,8 +291,6 @@ def space_access(
     """The access page for a space: its visibility with a public/private toggle, and —
     when private — the member roster with add/remove. Creator-or-admin (401/403/404)."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required("manage access")
@@ -406,8 +400,6 @@ def space_detail(
     """A space's page tree plus a New Page form (gated). 404-ish empty render if the
     space doesn't exist (consistent with the Aegis not-found handling)."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     user = getattr(request.state, "user", None)
     space = spaces.get_space(conn, space_id)
@@ -515,8 +507,6 @@ def page_detail(
     """Show one page: its current title/body, the space it belongs to, an Edit link
     (logged-in only), and its version history (superseded revisions, newest first)."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     user = getattr(request.state, "user", None)
     page = pages.get_page(conn, page_id)
@@ -590,8 +580,6 @@ def edit_page_form(
     """Render the edit form prefilled with the page's current title/body. Editing is
     a write, so logged-out callers get a sign-in prompt rather than a dead form."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     err = _write_required(user, "edit pages")
     if err is not None:

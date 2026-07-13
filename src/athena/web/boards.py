@@ -95,8 +95,6 @@ def _render_board(
 @router.get("/aegis/boards", response_class=HTMLResponse)
 def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Boards view (Aegis) using real list_issues with search/filter."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     search = (request.query_params.get("search") or "").strip()
     status_filter = (request.query_params.get("status") or "").strip()
     return _render_board(request, conn, search=search, status_filter=status_filter)

@@ -69,8 +69,6 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     view requires a session. The create form can be pre-filled from query params
     (the "Save current view" link on the issues list passes the active filters),
     so building a saved filter from an ad-hoc search is one click."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -171,8 +169,6 @@ def filter_detail(
     runs, but anchored to a saved filter's exact criteria. Without a query it's the
     plain run (run_filter), the same path the REST /filters/{id}/issues uses, so the
     browser and the API can't disagree on what a saved filter returns."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
