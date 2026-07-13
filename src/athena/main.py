@@ -897,10 +897,14 @@ async def _send_json_response(
     await send({"type": "http.response.body", "body": payload})
 
 
-def _attach_security_headers(response):
+def _attach_security_headers(response, *, is_https: bool = False):
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
-    if config.COOKIE_SECURE:
+    # Emit HSTS when the operator declared HTTPS (COOKIE_SECURE) OR the request actually
+    # arrived over TLS. The scheme check auto-covers a direct-HTTPS deploy; behind a
+    # TLS-terminating proxy the scheme is http, so COOKIE_SECURE remains the switch there.
+    # This only ever ADDS HSTS on a real HTTPS request — it never sends it over plain http.
+    if config.COOKIE_SECURE or is_https:
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
         )
@@ -913,6 +917,7 @@ def create_app(
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
+    login_rate_limit_per_minute: int | None = None,
     idempotency_wait_seconds: float | None = None,
     idempotency_lease_seconds: int | None = None,
     idempotency_ttl_seconds: int | None = None,
@@ -934,6 +939,11 @@ def create_app(
         config.ANON_RATE_LIMIT_PER_MINUTE
         if anon_rate_limit_per_minute is None
         else anon_rate_limit_per_minute
+    )
+    login_limit = (
+        config.LOGIN_RATE_LIMIT_PER_MINUTE
+        if login_rate_limit_per_minute is None
+        else login_rate_limit_per_minute
     )
     idempotency_wait = (
         config.IDEMPOTENCY_WAIT_SECONDS
@@ -1017,6 +1027,8 @@ def create_app(
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
+    # Throttles POST /login by client IP, before the password hash; see web/auth.py.
+    app.state.login_rate_limiter = rate_limits.FixedWindowRateLimiter(login_limit)
     # Middleware is registered inside-out. Idempotency wraps the routes, run
     # context wraps idempotency, and the request-body cap is outermost so keyed
     # requests are bounded before the fingerprint layer buffers them.
@@ -1065,7 +1077,9 @@ def create_app(
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
         response = await call_next(request)
-        return _attach_security_headers(response)
+        return _attach_security_headers(
+            response, is_https=request.url.scheme == "https"
+        )
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.

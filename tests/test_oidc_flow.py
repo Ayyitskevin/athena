@@ -17,7 +17,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from athena.core import db, oidc_flow, users
+from athena.core import db, oidc, oidc_flow, users
 
 ISS = "https://idp.example.com"
 CLIENT = "athena-client"
@@ -216,17 +216,32 @@ def test_first_login_provisions_a_member(tmp_path):
     conn.close()
 
 
-def test_links_existing_local_account_by_verified_email(tmp_path):
+def test_existing_account_auto_link_requires_a_domain_allow_list(tmp_path):
+    # Auto-linking SSO to a PRE-EXISTING local account by verified email is an
+    # account-takeover vector if the IdP's email verification can't be trusted. Without
+    # an OIDC_ALLOWED_DOMAINS allow-list, Athena can't make that trust judgement, so the
+    # silent link is REFUSED — the pre-existing admin is not seized.
     conn = _conn(tmp_path)
     boss = users.create_user(
         conn, email="boss@acme.com", name="Boss", password="pw", role=users.ADMIN_ROLE
     )
-    user = oidc_flow.provision_or_link(
+    with pytest.raises(oidc_flow.OidcError):
+        oidc_flow.provision_or_link(
+            conn, issuer=ISS,
+            claims={"sub": "s2", "email": "boss@acme.com", "email_verified": True},
+        )
+    # No identity was linked, no account created — the admin is untouched.
+    assert oidc.find_user_by_identity(conn, issuer=ISS, subject="s2") is None
+    assert users.count_users(conn) == 1
+
+    # WITH a domain allow-list the operator has declared this IdP verifies the domain,
+    # so the link to the existing admin is trusted and goes through.
+    linked = oidc_flow.provision_or_link(
         conn, issuer=ISS,
         claims={"sub": "s2", "email": "boss@acme.com", "email_verified": True},
+        allowed_domains=("acme.com",),
     )
-    # Linked to the existing admin — NOT a fresh member, no second account.
-    assert user["id"] == boss["id"] and user["role"] == users.ADMIN_ROLE
+    assert linked["id"] == boss["id"] and linked["role"] == users.ADMIN_ROLE
     assert users.count_users(conn) == 1
     conn.close()
 
