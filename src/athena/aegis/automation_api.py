@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from athena.aegis import automation
@@ -64,10 +64,13 @@ class RuleUpdate(BaseModel):
 
 @router.get("/rules", response_model=list[RuleOut])
 def list_all(
+    failing_only: bool = Query(
+        False, description="return only rules whose action has failed"
+    ),
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    return automation.list_rules(conn)
+    return automation.list_rules(conn, failing_only=failing_only)
 
 
 @router.post("/rules", response_model=RuleOut, status_code=201)

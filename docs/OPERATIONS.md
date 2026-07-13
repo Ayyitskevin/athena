@@ -361,6 +361,31 @@ Bearer-token API traffic is rate limited per token by
 `X-Athena-Actor` bootstrap path are not token-limited; leave actor-header trust
 off anywhere untrusted.
 
+
+## Agent Mission Control
+
+Browser admins can supervise the fleet at `/admin/agents/runs`. The cockpit uses a
+bounded projection of the append-only activity log to show each agent's recent runs,
+tagged-versus-heuristic replay posture, clipped windows, and lineage counts. It also
+surfaces automation rules with recorded action failures so exceptions are visible in
+the same place as agent work.
+
+The same fleet rollup is available to an admin-scoped REST or MCP client:
+
+```bash
+curl -fsS http://127.0.0.1:8000/activity/agent-runs \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+curl -fsS 'http://127.0.0.1:8000/activity/agent-runs?agent_id=2' \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+```
+
+Use the MCP tools `get_agent_run_health` and `list_automation_failures` for the
+same read-only supervision flow. Both require an admin-role user acting through an
+`admin`-scoped token. Failure counts are cumulative, not acknowledged incidents.
+Run summaries are bounded recent history: an event proves that an agent acted, not
+that its external process is still running. Athena does not yet have run heartbeats
+or start/finish lifecycle events, so the cockpit deliberately makes no live-process
+claim.
 ## Durable API Retry Keys
 
 Authenticated REST mutations under Athena's API roots accept an
@@ -521,8 +546,9 @@ bot gets `read`, `issue:write`); the MCP server never widens what the token allo
 
 It exposes tools for searching, reading and writing issues (create/update/assign/
 comment), reading and writing Mentor pages, listing projects/users/spaces, and
-reading the event feed. The `mcp` extra is kept out of the base install, so the
-core app and its tests do not depend on it.
+reading the event feed. Admin-scoped tools also expose fleet run health and recorded
+automation failures. The `mcp` extra is kept out of the base install, so the core app
+and its tests do not depend on it.
 
 Every mutation tool exposes the optional `idempotency_key` field. A caller that
 may retry must create and retain a stable key before its first invocation; use the

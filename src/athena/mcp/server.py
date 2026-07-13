@@ -113,6 +113,20 @@ def build_server(client: AthenaClient) -> FastMCP:
         Returns {events, next_after, has_more}."""
         return client.recent_events(after=after, kind=kind)
 
+
+    @mcp.tool()
+    def get_agent_run_health(agent_id: int | None = None) -> dict:
+        """Read the admin-only fleet cockpit rollup: each agent's bounded recent
+        runs, tagged/heuristic replay posture, lineage counts, and fleet totals.
+        Activity proves recent actions, not that an external agent is running now."""
+        return client.get_agent_run_health(agent_id=agent_id)
+
+    @mcp.tool()
+    def list_automation_failures() -> list:
+        """Read the admin-only exception list of automation rules whose actions have
+        failed. Failure counts are cumulative; inspect the rule before intervening."""
+        return client.list_automation_failures()
+
     @mcp.tool()
     def list_activity_runs(
         actor_id: int, gap_seconds: int = 1800, limit: int = 200

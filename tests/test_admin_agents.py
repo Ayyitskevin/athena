@@ -271,9 +271,13 @@ def test_agent_run_health_requires_admin(tmp_path):
     app = create_app(db_path)
     with TestClient(app) as client:
         _bootstrap_admin(client)
-        _create_user(client, "member@e.com", "Member")
+        member = _create_user(client, "member@e.com", "Member")
 
         assert client.get("/admin/agents/runs").status_code == 401
+        assert client.get("/activity/agent-runs").status_code == 401
+        assert client.get(
+            "/activity/agent-runs", headers={"X-Athena-Actor": str(member["id"])}
+        ).status_code == 403
 
         _login(client, "member@e.com")
         denied = client.get("/admin/agents/runs")
@@ -324,12 +328,38 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
         finally:
             conn.close()
 
+        api = client.get(
+            "/activity/agent-runs", headers={"X-Athena-Actor": str(admin["id"])}
+        )
+        assert api.status_code == 200
+        payload = api.json()
+        assert [row["user"]["id"] for row in payload["agents"]] == [
+            bot["id"],
+            bot["id"] + 1,
+        ]
+        assert all(row["user"]["is_agent"] for row in payload["agents"])
+        assert all("has_password" not in row["user"] for row in payload["agents"])
+        assert all(
+            "replay_export_command" not in run
+            for row in payload["agents"]
+            for run in row["runs"]
+        )
+        assert payload["totals"]["agents_with_activity_count"] == 1
+        assert "active_agent_count" not in payload["totals"]
+
+        filtered_api = client.get(
+            f"/activity/agent-runs?agent_id={bot['id']}",
+            headers={"X-Athena-Actor": str(admin["id"])},
+        ).json()
+        assert [row["user"]["id"] for row in filtered_api["agents"]] == [bot["id"]]
+
         _login(client)
         page = client.get("/admin/agents/runs")
         assert page.status_code == 200
         body = page.text
 
-        assert "Agent Run Health" in body
+        assert "Agent Mission Control" in body
+        assert "agents with activity" in body
         assert "Bot" in body
         assert "Quiet Bot" in body
         assert "Human" not in body

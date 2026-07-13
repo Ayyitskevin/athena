@@ -377,10 +377,12 @@ def agent_runs_admin(
     err = _admin_required(user)
     if err is not None:
         return err
+    context = agents.agent_run_health(conn, agent_id=agent_id)
+    context["automation_failures"] = automation.list_rules(conn, failing_only=True)
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
-        context=agents.agent_run_health(conn, agent_id=agent_id),
+        context=context,
     )
 
 

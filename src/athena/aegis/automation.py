@@ -167,12 +167,20 @@ def get_rule(conn: sqlite3.Connection, rule_id: int) -> dict | None:
 
 
 def list_rules(
-    conn: sqlite3.Connection, *, enabled_only: bool = False
+    conn: sqlite3.Connection,
+    *,
+    enabled_only: bool = False,
+    failing_only: bool = False,
 ) -> list[dict]:
     """Every rule (or just the enabled ones), in id order — the order they fire."""
     sql = f"SELECT {_COLS} FROM automation_rules"
+    clauses: list[str] = []
     if enabled_only:
-        sql += " WHERE enabled = 1"
+        clauses.append("enabled = 1")
+    if failing_only:
+        clauses.append("failure_count > 0")
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id"
     return [_row(r) for r in conn.execute(sql).fetchall()]
 
