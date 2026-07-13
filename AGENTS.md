@@ -28,6 +28,12 @@ AI agents alongside them.
 server, webhooks, idempotent writes, append-only activity log, run replay/lineage,
 delegation/contributors. The audit log is load-bearing, not decorative.
 
+**North star:** [`docs/VISION.md`](docs/VISION.md) — *mission control for a one-person
+agent fleet*. It sharpens the mission into the operator's loop (direct → delegate →
+observe → intervene → trust) and five steering rules every change is measured against.
+Read it before proposing a feature; if a change doesn't help a solo operator conduct
+their agents, it doesn't belong here.
+
 **Modules:**
 
 | Module | Path | Role |
