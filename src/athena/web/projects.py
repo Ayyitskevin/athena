@@ -28,8 +28,6 @@ router = APIRouter()
 def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """List all projects, each with a count of its issues and a link to the issue
     list filtered to it. Reading is open; the create form below is gated."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     # Only the projects this viewer may see (public + their own private ones; admins
     # all). A private project never appears here to someone outside it.
@@ -130,8 +128,6 @@ def project_edit_form(
     a logged-out user gets 401, a non-creator 403, a missing project 404. The
     Delete control lives here too, disabled with an explanation while the project
     still owns issues (the API would refuse that delete with a 409)."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -273,8 +269,6 @@ def project_access(
 ):
     """The access page for a project: its visibility with a public/private toggle, and
     — when private — the member roster with add/remove. Creator-or-admin (401/403/404)."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -423,8 +417,6 @@ def project_sprints(
 ):
     """A project's sprints — open read, like the issue list. The create form and the
     start/complete/delete controls render only for the project creator."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     project = projects.get_project(conn, project_id)
     # A private project the viewer can't see is a 404, like a missing one.

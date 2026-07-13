@@ -30,8 +30,6 @@ def labels_index(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     """Every label with how many issues and pages carry it, each linking to its hub
     view. Reading is open, like the issue list."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     # The per-label counts reflect only what this viewer may see, so a label's count
     # never reveals how many hidden issues/pages carry it.
     user = getattr(request.state, "user", None)
@@ -55,8 +53,6 @@ def label_detail(
     names are case-insensitive (the column is COLLATE NOCASE), so the URL matches
     however it's cased. 404 (rendered) if no label has that name."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     label = labels.get_label_by_name(conn, name)
     if label is None:
         return templates.TemplateResponse(

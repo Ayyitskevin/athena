@@ -64,8 +64,6 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
 
     Supports the same filters (actor / verb / target kind) and a cursor (?before=)
     for paging back through history one page at a time."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
     actor_type = _actor_type_or_none(request.query_params.get("actor_type"))
@@ -171,8 +169,6 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     Requires picking an actor (?actor=N) — a "runs" view mixing actors is meaningless,
     since a run is by definition one actor's uninterrupted stretch. With no actor it
     renders the picker and a hint; an unknown actor renders empty."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     actor_id = _int_or_none(request.query_params.get("actor"))
     user = getattr(request.state, "user", None)
@@ -208,8 +204,6 @@ def activity_run_lineage(
     with its events, and the runs it spawned (descendants). Reads are gated by the
     viewer's visibility (an event on a target they can't see is dropped); a run with no
     visible events — or no such run — is a 404, so its existence never leaks."""
-    if get_templates() is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     user = getattr(request.state, "user", None)
     lineage = activity.run_lineage(conn, run_id, actor=user)
     if lineage is None:

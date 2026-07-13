@@ -90,8 +90,6 @@ def _is_cross_site_post(request: Request) -> bool:
 @router.get("/login", response_class=HTMLResponse)
 def login_form(request: Request):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     # Already signed in? Skip the form.
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse("/aegis", status_code=303)
@@ -110,8 +108,6 @@ def login(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
 
     # Login CSRF defense: /login has no session yet, so it can't use the session-bound
     # double-submit token every other mutating route does. Reject a cross-site POST so an
@@ -210,8 +206,6 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     the browser to the IdP. 404 when SSO isn't configured, so an unconfigured deploy
     exposes nothing."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     if not config.oidc_enabled():
         return HTMLResponse("Not found", status_code=404)
     if getattr(request.state, "user", None) is not None:
@@ -248,8 +242,6 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     code, validate the ID token, map it to a user, and mint a session — the same
     session a password login produces."""
     templates = get_templates()
-    if templates is None:
-        return HTMLResponse("<h1>Configuration error</h1>", status_code=500)
     if not config.oidc_enabled():
         return HTMLResponse("Not found", status_code=404)
 
