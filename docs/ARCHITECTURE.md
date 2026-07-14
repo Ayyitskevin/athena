@@ -60,8 +60,9 @@ one database. That is the whole value of running notes and tasks in one workspac
 ```
 src/athena/
   core/      auth, users, agent tokens, db + migrations, search (FTS5),
-             attachments, activity log, notifications, webhooks, backups,
-             portability (export/import), OIDC, the issue<->doc cross-link resolver
+             attachments, activity log, cooperative run check-ins, notifications,
+             webhooks, backups, portability (export/import), OIDC, the issue<->doc
+             cross-link resolver
   aegis/     issues, projects, statuses, boards, sprints, labels, comments,
              saved filters, automation rules, and application commands that own
              audited write transactions shared by REST + web
@@ -100,8 +101,8 @@ There is no separate `api/` package: each module owns its REST surface
 - **Phase 4 — Fleet wiring & polish** *(largely done, landed alongside 2-3)*:
   MCP server, outbound webhooks, automation rules, cross-module search,
   backups/restore/doctor, run replay & lineage export, idempotent writes,
-  per-token and anonymous rate limits, OIDC SSO, agent admin dashboards.
-  Remaining: (optional) self-host on `flow`.
+  per-token and anonymous rate limits, OIDC SSO, cooperative run check-ins,
+  and agent admin dashboards. Remaining: (optional) self-host on `flow`.
 
 ## Security
 

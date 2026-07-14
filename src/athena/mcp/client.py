@@ -516,6 +516,18 @@ class AthenaClient:
             )
         )
 
+    def heartbeat_agent_run(self, run_id: str) -> Any:
+        """Refresh this authenticated agent's server-timed run check-in.
+
+        A heartbeat is intentionally not a durable-idempotency mutation: every PUT
+        must reach the server so repeated calls advance the liveness observation.
+        """
+        return self._result(
+            self._client.put(
+                "/agent-runs/heartbeat",
+                json={"run_id": run_id},
+            )
+        )
 
     def get_agent_run_health(self, *, agent_id: int | None = None) -> Any:
         """Read the bounded fleet run-health rollup (admin only)."""

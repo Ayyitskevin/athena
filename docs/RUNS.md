@@ -1,7 +1,9 @@
 # Athena Run Contract
 
-Athena treats runs as a projection of the append-only `activity` log. There is no
-mutable `runs` table: a run exists when events share the same run metadata.
+Athena treats replayable runs as a projection of the append-only `activity` log.
+There is no mutable authoritative `runs` table: a run exists when events share the
+same run metadata. Cooperative check-ins are a separate sidecar signal and never
+change replay history.
 
 ## Headers
 
@@ -13,6 +15,50 @@ Clients that want deterministic replay stamp writes with:
   this run diverged.
 
 Browser actions normally omit all three headers and remain ordinary activity rows.
+
+## Cooperative Check-ins
+
+An agent may report that it is still working under a client-chosen run identifier
+without creating an activity event:
+
+```text
+PUT /agent-runs/heartbeat
+Authorization: Bearer <agent token with a write scope>
+Content-Type: application/json
+
+{"run_id":"goal-123"}
+```
+
+The bearer identity must be a user marked as an agent. Its token must have at least
+one write scope (`issue:write`, `docs:write`, or `admin`). The request body contains
+exactly one nonblank, printable, 1–200 character `run_id`; the server derives the
+agent and timestamps. Control, bidi-formatting, zero-width, line-separator, and
+invalid Unicode characters are rejected; visible Unicode is NFC-normalized. MCP
+callers use `heartbeat_agent_run(run_id)` under the same rules.
+
+The first accepted PUT records `first_seen_at`. Every accepted repeat for that same
+agent and run refreshes the server-owned `last_seen_at`, so callers should send PUTs
+periodically while work continues. This refresh is intentionally not a durable
+idempotency replay: omit `Idempotency-Key`, and never send a client timestamp.
+
+The response reports `age_seconds` and a `reporting_state` of exactly
+`reporting_recently` or `stale`. Athena calculates both from server time and
+`ATHENA_AGENT_RUN_STALE_SECONDS` (90 seconds by default); client clock skew cannot
+keep a report fresh. Mission Control exposes these check-ins separately from
+activity-derived run health, including agents that have only checked in. The panel
+and its counts summarize a bounded recent window.
+
+Athena also caps durable check-in cardinality per agent with
+`ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` (1,000 by default). Once full, a new run
+id receives `409`, while existing run ids remain refreshable. A client should keep
+one stable id for one logical run, never mint a new id for each heartbeat.
+
+A check-in is a cooperative observation, not a process supervisor or work lease. It
+does not prove the agent's OS process is alive, append heartbeat events to the
+activity log, auto-finish a run, revoke credentials, assign or take over work, or
+authorize another actor to mutate the run. Stale state is an operator signal only.
+A heartbeat-only identifier does not create a replayable activity run; that happens
+only when activity events are written with the same run id.
 
 ## Replay And Lineage
 

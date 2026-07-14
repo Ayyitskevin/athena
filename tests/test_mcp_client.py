@@ -288,6 +288,17 @@ def test_mutation_helper_merges_existing_headers_case_insensitively():
     assert len(headers.get_list("Idempotency-Key")) == 1
 
 
+def test_heartbeat_client_puts_only_run_id_without_idempotency_header():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    assert client.heartbeat_agent_run("run-7") == {"ok": True}
+
+    method, path, kwargs = transport.calls.pop()
+    assert (method, path) == ("PUT", "/agent-runs/heartbeat")
+    assert kwargs == {"json": {"run_id": "run-7"}}
+
+
 def test_athena_error_preserves_legacy_construction_and_pickle_state():
     legacy = AthenaError("legacy failure")
     assert str(legacy) == "legacy failure"
@@ -849,6 +860,43 @@ def test_mcp_schema_rejects_invalid_idempotency_keys_before_dispatch(invalid_key
     assert client.calls == []
 
 
+@pytest.mark.parametrize(
+    "invalid_run_id",
+    [
+        "",
+        "   ",
+        "line\nbreak",
+        "trailing\n",
+        "delete\x7fme",
+        "lone-\ud800-surrogate",
+        "bidi-\u202espoof",
+        "zero-\u200bwidth",
+        "x" * 201,
+    ],
+)
+def test_mcp_schema_rejects_invalid_heartbeat_run_ids_before_dispatch(
+    invalid_run_id,
+):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    with pytest.raises(ToolError):
+        asyncio.run(
+            server.call_tool(
+                "heartbeat_agent_run",
+                {"run_id": invalid_run_id},
+            )
+        )
+    assert client.calls == []
+
+
 def test_mcp_error_text_preserves_structured_retry_metadata():
     pytest.importorskip("mcp")
     import asyncio
@@ -904,6 +952,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "unarchive_issue",
             "bulk_update_issues",
             "recent_events",
+            "heartbeat_agent_run",
             "list_activity_runs",
             "get_run_lineage",
             "get_run_fork_contract",
@@ -943,6 +992,18 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             }
             assert types == {"integer", "null"}
         assert MUTATION_TOOL_NAMES <= names
+
+        heartbeat_schema = tools["heartbeat_agent_run"].inputSchema
+        assert heartbeat_schema["required"] == ["run_id"]
+        assert set(heartbeat_schema["properties"]) == {"run_id"}
+        run_id_schema = heartbeat_schema["properties"]["run_id"]
+        assert run_id_schema["minLength"] == 1
+        assert run_id_schema["maxLength"] == 200
+        assert run_id_schema["pattern"] == (
+            r"^[^\x00-\x1F\x7F]*"
+            r"[^\s\x00-\x1F\x7F]"
+            r"[^\x00-\x1F\x7F]*$"
+        )
         for tool_name in MUTATION_TOOL_NAMES:
             schema = tools[tool_name].inputSchema
             assert "idempotency_key" in schema["properties"]
@@ -1009,5 +1070,33 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         assert payload["code"] == "idempotency_mismatch"
         assert [i["title"] for i in ath.list_issues()].count("via mcp once") == 1
         assert len(ath.recent_events(kind="issue")["events"]) == created_events
+
+        # The real tool traverses FastMCP -> AthenaClient -> REST -> command -> DB.
+        # Mint the agent's token through the trusted bootstrap header, then replace
+        # only this TestClient's default Authorization while the heartbeat runs.
+        agent = tc.post(
+            "/users",
+            json={"email": "heartbeat@e.com", "name": "Heartbeat", "is_agent": True},
+        ).json()
+        agent_token = tc.post(
+            "/tokens",
+            json={"name": "heartbeat", "scopes": ["issue:write"]},
+            headers={
+                "Authorization": "not-bearer",
+                "X-Athena-Actor": str(agent["id"]),
+            },
+        ).json()["token"]
+        admin_authorization = tc.headers["Authorization"]
+        tc.headers["Authorization"] = f"Bearer {agent_token}"
+        try:
+            heartbeat = asyncio.run(
+                server.call_tool("heartbeat_agent_run", {"run_id": "mcp-run"})
+            )
+        finally:
+            tc.headers["Authorization"] = admin_authorization
+        assert heartbeat[0].text
+        health = ath.get_agent_run_health(agent_id=agent["id"])
+        assert health["checkins"][0]["run_id"] == "mcp-run"
+        assert health["checkins"][0]["agent_id"] == agent["id"]
     finally:
         tc.__exit__(None, None, None)

@@ -11,12 +11,13 @@ import re
 import shlex
 import sqlite3
 
-from athena.core import activity, tokens, users
+from athena.core import activity, agent_run_checkins, tokens, users
 
 _RECENT_ACTIVITY_LIMIT = 6
 _ASSIGNMENT_LIMIT = 20
 _RUN_HEALTH_EVENT_LIMIT = 200
 _RUN_HEALTH_VISIBLE_RUNS = 5
+_RUN_CHECKIN_LIMIT = 100
 _STALE_TOKEN_DAYS = 30
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 _REPLAY_DB_PATH = "/var/lib/athena/athena.db"
@@ -44,8 +45,15 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
         selected_agent = selected_agents[0] if selected_agents else None
 
     rows = [_agent_run_health(conn, agent) for agent in selected_agents]
+    checkins = agent_run_checkins.list_recent_checkins(
+        conn, agent_id=agent_id, limit=_RUN_CHECKIN_LIMIT
+    )
     return {
         "agents": rows,
+        # Cooperative check-ins are a distinct bounded signal. Do not merge them
+        # into activity-derived run health: a report says nothing about replay
+        # readiness and cannot prove that the reporting process is still alive.
+        "checkins": checkins,
         "agent_options": agent_options,
         "selected_agent_id": agent_id,
         "selected_agent": selected_agent,
@@ -68,6 +76,17 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
             ),
             "total_recent_runs": sum(row["run_count"] for row in rows),
             "tagged_recent_runs": sum(row["tagged_run_count"] for row in rows),
+            "reporting_recently_count": sum(
+                1
+                for checkin in checkins
+                if checkin["reporting_state"] == "reporting_recently"
+            ),
+            "stale_checkin_count": sum(
+                1
+                for checkin in checkins
+                if checkin["reporting_state"] == "stale"
+            ),
+            "total_checkin_count": len(checkins),
         },
     }
 

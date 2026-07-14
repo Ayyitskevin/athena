@@ -665,6 +665,45 @@ footer {
     color: #475569;
 }
 
+.agent-checkins {
+    margin: 1rem 0;
+}
+
+.agent-checkin-table {
+    margin: 0.75rem 0;
+}
+
+.agent-checkin-table-region {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.checkin-run-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.agent-checkin-state {
+    display: inline-block;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.agent-checkin-state.reporting_recently {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.agent-checkin-state.stale {
+    background: #fef3c7;
+    color: #92400e;
+}
+
 .agent-health-run-row td {
     padding-top: 0;
     background: #fafafa;

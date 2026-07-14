@@ -21,6 +21,8 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_IDEMPOTENCY_WAIT_SECONDS` | `5` | How long an identical concurrent retry waits for the owner to publish a result before receiving `409 idempotency_in_progress`. |
 | `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
 | `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
+| `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
+| `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
 | `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous (credential-free) reads. Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever anonymous reads face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
 | `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the direct peer IP; behind a shared-IP proxy, raise it or enforce at the proxy. Set `0` to disable. |
 | `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
@@ -231,8 +233,8 @@ The V1 bundle includes the selected container, its child issues or pages, page
 versions where applicable, labels, links, membership rows, comments, activity
 rows, and an attachment manifest. It does not include raw attachment blobs,
 password hashes, API tokens, sessions, OIDC transient state, idempotency records,
-or webhook secrets. Existing export files are not replaced unless `--overwrite`
-is passed.
+cooperative agent-run check-ins, or webhook secrets. Existing export files are not
+replaced unless `--overwrite` is passed.
 
 Use `athena-map-source` when you have a small source-system JSON export and want
 to turn it into Athena's portability bundle format before any database write:
@@ -368,7 +370,9 @@ Browser admins can supervise the fleet at `/admin/agents/runs`. The cockpit uses
 bounded projection of the append-only activity log to show each agent's recent runs,
 tagged-versus-heuristic replay posture, clipped windows, and lineage counts. It also
 surfaces automation rules with recorded action failures so exceptions are visible in
-the same place as agent work.
+the same place as agent work. A separate, bounded **Agent check-ins** section shows
+cooperative heartbeat reports, including agents that have checked in without writing
+any activity events.
 
 The same fleet rollup is available to an admin-scoped REST or MCP client:
 
@@ -383,15 +387,56 @@ Use the MCP tools `get_agent_run_health` and `list_automation_failures` for the
 same read-only supervision flow. Both require an admin-role user acting through an
 `admin`-scoped token. Failure counts are cumulative, not acknowledged incidents.
 Run summaries are bounded recent history: an event proves that an agent acted, not
-that its external process is still running. Athena does not yet have run heartbeats
-or start/finish lifecycle events, so the cockpit deliberately makes no live-process
-claim.
+that its external process is still running.
+
+An agent can cooperatively report that it is still working under a client-chosen
+run identifier:
+
+```bash
+curl -fsS -X PUT http://127.0.0.1:8000/agent-runs/heartbeat \
+  -H "Authorization: Bearer $ATHENA_AGENT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"run_id":"goal-123"}'
+```
+
+The caller must use bearer-token authentication, its user must be marked as an
+agent, and the token must carry at least one write scope (`issue:write`,
+`docs:write`, or `admin`). The body is intentionally strict: clients send only the
+run id, never an actor id or timestamp. MCP clients use
+`heartbeat_agent_run(run_id)` under the same authentication and authorization
+rules.
+
+Athena records `first_seen_at` once and refreshes the server-owned `last_seen_at`
+on every accepted PUT. Repeated PUTs are therefore intentional refreshes, not
+durable-idempotency replays; do not attach an `Idempotency-Key`. A heartbeat is
+`reporting_recently` until its age crosses the server-time threshold configured by
+`ATHENA_AGENT_RUN_STALE_SECONDS` (90 seconds by default), then it is `stale`.
+Client clock values cannot extend that window.
+
+To bound durable operational state, each agent may create at most
+`ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` distinct check-in rows (1,000 by
+default). Reaching the ceiling returns `409` for a new run id; refreshes of an
+existing id continue to work. Use stable run identifiers rather than minting a
+new id for every heartbeat.
+
+Check-ins are cooperative status only. They do not prove an OS process is alive,
+do not add activity-log events (avoiding heartbeat log spam), and do not
+automatically finish a run, revoke a token, transfer or take over work, or trigger
+any other lifecycle action. Operators must reconcile stale reports with the agent
+and the underlying work before acting.
+
+The check-in panel and its counts summarize a bounded recent window. A
+heartbeat-only identifier remains an operational sidecar; it does not become a
+replayable activity run unless activity events are later written with that run id.
+
 ## Durable API Retry Keys
 
-Authenticated REST mutations under Athena's API roots accept an
-`Idempotency-Key` header on `POST`, `PUT`, `PATCH`, and `DELETE`. Use one
-stable, unique key for one exact logical request and reuse it only when retrying
-that request:
+Authenticated REST mutations under Athena's durable-idempotency API roots accept an
+`Idempotency-Key` header on `POST`, `PUT`, `PATCH`, and `DELETE`. Cooperative
+`PUT /agent-runs/heartbeat` is the explicit exception described above: a key is
+rejected because every call must refresh server-owned time. For supported writes,
+use one stable, unique key for one exact logical request and reuse it only when
+retrying that request:
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/issues \
