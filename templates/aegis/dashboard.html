@@ -42,6 +42,48 @@
         <p class="note-small">Nothing assigned to you is open. Clear desk.</p>
         {% endif %}
     </section>
+
+    <section class="dashboard-card">
+        <h3>Delegated to me</h3>
+        {% if my_delegation_inbox["items"] %}
+        <ul class="dashboard-list">
+            {% for item in my_delegation_inbox["items"] %}
+            {% set issue = item.issue %}
+            <li>
+                <div>
+                    <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} — {{ issue.title }}</a>
+                    <div class="note-small">
+                        Accountable: {{ issue.assignee_name or "not assigned" }}
+                        &middot; delegated by {{ item.delegated_by.name }}
+                        <time datetime="{{ item.delegated_at }}">{{ item.delegated_at }}</time>
+                    </div>
+                    {% if "empty_description" in item.warnings %}
+                    <span class="agent-token-warning warning">No description</span>
+                    {% endif %}
+                    {% if "no_accountable_assignee" in item.warnings %}
+                    <span class="agent-token-warning warning">No accountable assignee</span>
+                    {% endif %}
+                    {% if "visible_open_blockers" in item.warnings %}
+                    <span class="agent-token-warning danger">
+                        {{ item.visible_open_blocker_count }} visible open blocker{{ "s" if item.visible_open_blocker_count != 1 }}
+                    </span>
+                    {% endif %}
+                </div>
+                <div>
+                    <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
+                    <span class="status {{ issue.status }}">{{ issue.status }}</span>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if my_delegation_inbox.has_more %}
+        <p class="note-small">Showing the first 8 assignments. Use REST or MCP to page through the inbox.</p>
+        {% endif %}
+        {% else %}
+        <p class="note-small">No open contributor assignments.</p>
+        {% endif %}
+        <p class="note-small">Pickup context only; this does not claim work or report agent liveness.</p>
+    </section>
     {% endif %}
 
     <section class="dashboard-card">

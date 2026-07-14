@@ -364,6 +364,37 @@ Bearer-token API traffic is rate limited per token by
 off anywhere untrusted.
 
 
+## Delegation Pickup
+
+An authenticated actor with a `read`-scoped token can pull the issues where it is
+currently a contributor:
+
+```bash
+curl -fsS 'http://127.0.0.1:8000/delegations/me?limit=50&offset=0' \
+  -H "Authorization: Bearer $ATHENA_AGENT_TOKEN"
+```
+
+MCP clients use `list_my_delegated_work`, which is a thin client over the same
+REST route. The response includes the full issue description, accountable assignee,
+labels, delegation actor and time, and a bounded preview of open blockers visible to
+that same actor. It never reveals another contributor's inbox or a hidden blocker.
+
+By default, the inbox excludes archived issues and every status in the owning
+project's `done` category. Set `include_closed=true` to include done-category
+work; archived issues remain excluded. `limit` defaults to 50 and is capped at
+100; `offset` is bounded to SQLite's signed 64-bit range. Use `has_more` and
+`next_offset` for paging. Results are deterministic:
+urgent before high, medium, and low; within a priority, the oldest delegation appears
+first.
+
+This is pickup context, not a claim, lease, progress report, or liveness signal. The
+response names its blocker scope as `visible_to_subject`; an empty blocker list
+does not prove that no hidden blocker exists. The browser dashboard shows the same
+self-service projection. Admins see a bounded open-delegation projection for every
+agent at `/admin/agents`, including an explicit warning when an agent was added to
+an issue in a private project it cannot access.
+
+
 ## Agent Mission Control
 
 Browser admins can supervise the fleet at `/admin/agents/runs`. The cockpit uses a

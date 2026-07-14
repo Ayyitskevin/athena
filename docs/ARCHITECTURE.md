@@ -102,7 +102,8 @@ There is no separate `api/` package: each module owns its REST surface
   MCP server, outbound webhooks, automation rules, cross-module search,
   backups/restore/doctor, run replay & lineage export, idempotent writes,
   per-token and anonymous rate limits, OIDC SSO, cooperative run check-ins,
-  and agent admin dashboards. Remaining: (optional) self-host on `flow`.
+  self-service delegation pickup, and agent admin dashboards. Remaining:
+  (optional) self-host on `flow`.
 
 ## Security
 

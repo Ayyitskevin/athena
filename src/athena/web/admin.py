@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena import config
-from athena.aegis import automation, projects, statuses
+from athena.aegis import automation, delegations, projects, statuses
 from athena.core import (
     activity,
     agents,
@@ -359,10 +359,15 @@ def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn))
     err = _admin_required(user)
     if err is not None:
         return err
+    agent_rows = agents.agent_admin_summaries(conn)
+    for agent in agent_rows:
+        agent["delegation_inbox"] = delegations.list_delegations(
+            conn, agent["user"], viewer=user, limit=20
+        )
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
-        context={"agents": agents.agent_admin_summaries(conn)},
+        context={"agents": agent_rows},
     )
 
 

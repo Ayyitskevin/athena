@@ -18,6 +18,7 @@ from athena.aegis import (
     comments,
     contributors,
     dashboard,
+    delegations,
     dependencies,
     issue_activity,
     issue_commands,
@@ -165,14 +166,18 @@ def home(request: Request):
 def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """A live overview of the work: headline totals, the issue distribution by status
     and priority, per-project and backlog counts, what's in flight (active sprints),
-    the signed-in user's open plate, and the latest activity. Read-only — every
-    number comes from aegis.dashboard (the one home for the counting SQL), so this
-    route only lays them out. Open to read, like the issue list."""
+    the signed-in user's assignee plate and delegation inbox, and the latest activity.
+    Read-only — aggregate numbers come from aegis.dashboard and delegated work comes
+    from aegis.delegations, so this route only lays them out. Open to read, like the
+    issue list."""
     user = getattr(request.state, "user", None)
     # Every number is counted only over the projects this viewer may see (admins all;
     # the backlog is always in). recent_activity is gated the same way: actor=user
     # makes list_activity drop events whose target the viewer can't see.
     vis = access.visible_project_filter(conn, user)
+    delegation_inbox = (
+        delegations.list_delegations(conn, user, limit=8) if user else None
+    )
     return _templates.TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
@@ -185,6 +190,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             "active_sprints": dashboard.active_sprints(conn, vis),
             # The user's own plate only makes sense when we know who they are.
             "my_issues": dashboard.my_open_issues(conn, user["id"], visible_project_ids=vis) if user else [],
+            "my_delegation_inbox": delegation_inbox,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )

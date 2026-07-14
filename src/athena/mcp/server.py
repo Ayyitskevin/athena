@@ -25,6 +25,7 @@ from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
+from athena.aegis import delegations
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -47,6 +48,9 @@ RunId = Annotated[
     ),
     AfterValidator(run_context.strict_run_id),
 ]
+
+DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
+DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
@@ -105,6 +109,24 @@ def build_server(client: AthenaClient) -> FastMCP:
             label=label,
             search=search,
             include_archived=include_archived,
+        )
+
+    @mcp.tool()
+    def list_my_delegated_work(
+        include_closed: bool = False,
+        limit: DelegationLimit = 50,
+        offset: DelegationOffset = 0,
+    ) -> dict:
+        """List issues delegated to the authenticated contributor. By default this
+        excludes archived and done-category work. Results include instructions,
+        accountable assignee, delegation attribution, and visible open blockers.
+        Use has_more and next_offset to page through bounded results.
+        This is pickup context only: it does not claim work or report liveness, and
+        the absence of a visible blocker is not an "unblocked" guarantee."""
+        return client.list_my_delegated_work(
+            include_closed=include_closed,
+            limit=limit,
+            offset=offset,
         )
 
     @mcp.tool()
