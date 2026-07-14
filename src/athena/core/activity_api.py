@@ -173,11 +173,25 @@ class AgentRunHealthRowOut(BaseModel):
 class AgentRunHealthTotalsOut(BaseModel):
     agent_count: int
     agents_with_activity_count: int
+    reporting_recently_count: int
+    stale_checkin_count: int
+    total_checkin_count: int
     replay_ready_count: int
     untagged_only_count: int
     partial_window_count: int
     total_recent_runs: int
     tagged_recent_runs: int
+
+
+class AgentRunCheckinOut(BaseModel):
+    agent_id: int
+    agent_name: str
+    agent_email: str
+    run_id: str
+    first_seen_at: str
+    last_seen_at: str
+    age_seconds: int
+    reporting_state: Literal["reporting_recently", "stale"]
 
 
 class AgentRunHealthOut(BaseModel):
@@ -187,7 +201,9 @@ class AgentRunHealthOut(BaseModel):
     agent_options: list[AgentIdentityOut]
     selected_agent_id: int | None
     selected_agent: AgentIdentityOut | None
+    checkins: list[AgentRunCheckinOut]
     totals: AgentRunHealthTotalsOut
+
 
 @router.get("", response_model=list[ActivityOut])
 def feed(

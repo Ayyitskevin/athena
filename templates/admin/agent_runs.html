@@ -7,7 +7,7 @@
     <div>
         <a href="/admin/agents" class="muted">Back to agents</a>
         <h1>Agent Mission Control</h1>
-        <p class="subtitle">Bounded recent activity, replay readiness, lineage, and failures.</p>
+        <p class="subtitle">Cooperative check-ins, bounded recent activity, replay readiness, lineage, and failures.</p>
     </div>
     <div class="page-header-actions">
         <a href="/admin/automation" class="button secondary">Automation</a>
@@ -52,6 +52,75 @@
 </form>
 {% endif %}
 
+<section class="dashboard-card agent-checkins">
+    <h2>Agent check-ins</h2>
+    <p class="subtitle">
+        Cooperative self-reports show when Athena last accepted a check-in.
+        They do not prove that an agent's OS process is alive. Counts summarize
+        the bounded rows shown below. A reported id may not have replayable activity.
+    </p>
+    <div class="agent-health-summary">
+        <div class="agent-health-stat">
+            <strong>{{ totals.reporting_recently_count }}</strong>
+            <span>shown reporting recently</span>
+        </div>
+        <div class="agent-health-stat">
+            <strong>{{ totals.stale_checkin_count }}</strong>
+            <span>shown stale</span>
+        </div>
+        <div class="agent-health-stat">
+            <strong>{{ totals.total_checkin_count }}</strong>
+            <span>shown check-ins</span>
+        </div>
+    </div>
+    {% if checkins %}
+    <div class="agent-checkin-table-region"
+         role="region"
+         aria-label="Agent check-ins table"
+         tabindex="0">
+        <table class="issues-table agent-checkin-table">
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>Reported run ID</th>
+                <th>Status</th>
+                <th>Last check-in</th>
+                <th>Age</th>
+                <th>First check-in</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for checkin in checkins %}
+            <tr>
+                <td>
+                    <strong>{{ checkin.agent_name }}</strong>
+                    <span class="agent-badge">agent</span>
+                    <div class="muted">{{ checkin.agent_email }}</div>
+                </td>
+                <td><code class="checkin-run-id">{{ checkin.run_id }}</code></td>
+                <td>
+                    <span class="agent-checkin-state {{ checkin.reporting_state }}">
+                        {% if checkin.reporting_state == "reporting_recently" %}reporting recently{% else %}stale{% endif %}
+                    </span>
+                </td>
+                <td>{{ checkin.last_seen_at }} UTC</td>
+                <td>{{ checkin.age_seconds }}s</td>
+                <td>{{ checkin.first_seen_at }} UTC</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No cooperative agent check-ins yet.</p>
+    {% endif %}
+    <p class="note-small">
+        Check-ins do not finish runs, revoke credentials, or transfer work. Stale is an operator signal only.
+    </p>
+</section>
+
+<section class="agent-activity-health" aria-labelledby="activity-replay-heading">
+    <h2 id="activity-replay-heading">Activity and replay</h2>
 {% if agents %}
 <div class="agent-health-summary">
     <div class="agent-health-stat">
@@ -71,6 +140,8 @@
         <span>recent runs</span>
     </div>
 </div>
+
+<p class="subtitle">Activity-derived run health is independent of cooperative check-ins.</p>
 
 <table class="issues-table agent-health-table">
     <thead>
@@ -163,6 +234,7 @@
 </p>
 {% endif %}
 {% endif %}
+</section>
 {% endblock %}
 
 {% block scripts %}

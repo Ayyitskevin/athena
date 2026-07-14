@@ -23,14 +23,29 @@ import os
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
+from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
 
 IdempotencyKey = Annotated[
     str,
     Field(min_length=1, max_length=255, pattern=r"^[\x21-\x7E]+$"),
+]
+
+RunId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=200,
+        pattern=(
+            r"^[^\x00-\x1F\x7F]*"
+            r"[^\s\x00-\x1F\x7F]"
+            r"[^\x00-\x1F\x7F]*$"
+        ),
+    ),
+    AfterValidator(run_context.strict_run_id),
 ]
 
 
@@ -113,12 +128,18 @@ def build_server(client: AthenaClient) -> FastMCP:
         Returns {events, next_after, has_more}."""
         return client.recent_events(after=after, kind=kind)
 
+    @mcp.tool()
+    def heartbeat_agent_run(run_id: RunId) -> dict:
+        """Report that this authenticated agent is still working on `run_id`.
+        Athena binds the heartbeat to the token's actor and its own server clock;
+        call repeatedly because every PUT intentionally refreshes last-seen state."""
+        return client.heartbeat_agent_run(run_id)
 
     @mcp.tool()
     def get_agent_run_health(agent_id: int | None = None) -> dict:
         """Read the admin-only fleet cockpit rollup: each agent's bounded recent
-        runs, tagged/heuristic replay posture, lineage counts, and fleet totals.
-        Activity proves recent actions, not that an external agent is running now."""
+        runs, cooperative check-ins, replay posture, lineage counts, and totals.
+        Check-ins are self-reports; they do not prove an OS process is alive."""
         return client.get_agent_run_health(agent_id=agent_id)
 
     @mcp.tool()

@@ -63,6 +63,24 @@ TOKEN_RATE_LIMIT_PER_MINUTE = int(
     os.environ.get("ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE", "120")
 )
 
+# A run check-in newer than this threshold is reported as ``reporting_recently``;
+# older rows are ``stale``. This is cooperative presence, not OS-process liveness:
+# expiry never completes, revokes, kills, or transfers a run.
+AGENT_RUN_STALE_SECONDS = int(
+    os.environ.get("ATHENA_AGENT_RUN_STALE_SECONDS", "90")
+)
+if AGENT_RUN_STALE_SECONDS < 1:
+    raise ValueError("ATHENA_AGENT_RUN_STALE_SECONDS must be positive")
+
+# Cooperative check-ins are operational state, not an unbounded run archive. A
+# compromised or looping token may refresh existing ids indefinitely, but cannot
+# create more durable rows for one agent after this ceiling is reached.
+AGENT_RUN_MAX_CHECKINS_PER_AGENT = int(
+    os.environ.get("ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT", "1000")
+)
+if AGENT_RUN_MAX_CHECKINS_PER_AGENT < 1:
+    raise ValueError("ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT must be positive")
+
 # Per-client-IP limit on ANONYMOUS reads (optional_actor endpoints reached with no
 # valid credential). The per-token limiter never runs for these, so without this a
 # credential-free caller can hammer public reads unbounded. Defaults to 0 (OFF): a

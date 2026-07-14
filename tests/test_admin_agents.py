@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from athena.aegis import contributors, issues, projects
-from athena.core import access, activity, db, run_context, tokens, users
+from athena.core import access, activity, agents, db, run_context, tokens, users
 from athena.main import create_app
 from athena.mentor import spaces
 
@@ -397,3 +397,155 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
 
         human_replay = client.get("/admin/agents/runs/human-goal/replay.json")
         assert human_replay.status_code == 404
+
+
+def test_agent_run_health_surfaces_bounded_checkins_separately(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "agent_run_checkins.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        admin = _bootstrap_admin(client)
+        active_bot = _create_user(
+            client, "active@e.com", "Active Bot", is_agent=True
+        )
+        heartbeat_only_bot = _create_user(
+            client, "heartbeat@e.com", "Heartbeat Only Bot", is_agent=True
+        )
+
+        conn = db.connect(db_path)
+        try:
+            issue = issues.create_issue(
+                conn, title="Observed work", body="", created_by=admin["id"]
+            )
+            _record_with_run(
+                conn,
+                actor_id=active_bot["id"],
+                run_id="activity-run",
+                target_id=issue["id"],
+            )
+        finally:
+            conn.close()
+
+        checkins = [
+            {
+                "agent_id": heartbeat_only_bot["id"],
+                "agent_name": heartbeat_only_bot["name"],
+                "agent_email": heartbeat_only_bot["email"],
+                "run_id": "heartbeat-only-run",
+                "first_seen_at": "2026-07-13 12:00:00",
+                "last_seen_at": "2026-07-13 12:01:00",
+                "age_seconds": 12,
+                "reporting_state": "reporting_recently",
+            },
+            {
+                "agent_id": active_bot["id"],
+                "agent_name": active_bot["name"],
+                "agent_email": active_bot["email"],
+                "run_id": "activity-run",
+                "first_seen_at": "2026-07-13 11:00:00",
+                "last_seen_at": "2026-07-13 11:01:00",
+                "age_seconds": 3600,
+                "reporting_state": "stale",
+            },
+        ]
+        observed_limits = []
+
+        def _list_recent_checkins(
+            _conn,
+            *,
+            agent_id=None,
+            limit=100,
+            stale_seconds=None,
+            now=None,
+        ):
+            observed_limits.append(limit)
+            rows = checkins
+            if agent_id is not None:
+                rows = [row for row in rows if row["agent_id"] == agent_id]
+            return rows[:limit]
+
+        monkeypatch.setattr(
+            agents.agent_run_checkins,
+            "list_recent_checkins",
+            _list_recent_checkins,
+        )
+
+        api = client.get(
+            "/activity/agent-runs",
+            headers={"X-Athena-Actor": str(admin["id"])},
+        )
+        assert api.status_code == 200
+        payload = api.json()
+
+        # WHY: heartbeat reporting is independent of activity-derived run health.
+        # Adding a heartbeat-only agent must not manufacture activity, replay
+        # readiness, or runs in the existing projection.
+        assert {
+            key: payload["totals"][key]
+            for key in (
+                "agent_count",
+                "agents_with_activity_count",
+                "replay_ready_count",
+                "untagged_only_count",
+                "partial_window_count",
+                "total_recent_runs",
+                "tagged_recent_runs",
+            )
+        } == {
+            "agent_count": 2,
+            "agents_with_activity_count": 1,
+            "replay_ready_count": 1,
+            "untagged_only_count": 0,
+            "partial_window_count": 0,
+            "total_recent_runs": 1,
+            "tagged_recent_runs": 1,
+        }
+        heartbeat_health = next(
+            row
+            for row in payload["agents"]
+            if row["user"]["id"] == heartbeat_only_bot["id"]
+        )
+        assert heartbeat_health["health_state"] == "quiet"
+        assert heartbeat_health["run_count"] == 0
+        assert all("checkins" not in row for row in payload["agents"])
+
+        assert payload["checkins"] == checkins
+        assert payload["totals"]["reporting_recently_count"] == 1
+        assert payload["totals"]["stale_checkin_count"] == 1
+        assert payload["totals"]["total_checkin_count"] == 2
+        assert observed_limits == [100]
+
+        filtered = client.get(
+            f"/activity/agent-runs?agent_id={heartbeat_only_bot['id']}",
+            headers={"X-Athena-Actor": str(admin["id"])},
+        )
+        assert filtered.status_code == 200
+        filtered_payload = filtered.json()
+        assert [row["run_id"] for row in filtered_payload["checkins"]] == [
+            "heartbeat-only-run"
+        ]
+        assert filtered_payload["totals"]["reporting_recently_count"] == 1
+        assert filtered_payload["totals"]["stale_checkin_count"] == 0
+        assert filtered_payload["totals"]["total_checkin_count"] == 1
+        assert observed_limits == [100, 100]
+
+        _login(client)
+        page = client.get("/admin/agents/runs")
+        assert page.status_code == 200
+        body = page.text
+        assert "Agent check-ins" in body
+        assert "Heartbeat Only Bot" in body
+        assert "heartbeat-only-run" in body
+        assert "reporting recently" in body
+        assert "stale" in body
+        assert "Reported run ID" in body
+        assert "Activity and replay" in body
+        assert "checkin-run-id" in body
+        assert "They do not prove that an agent's OS process is alive." in body
+        assert "Activity-derived run health is independent" in body
+        assert (
+            "Check-ins do not finish runs, revoke credentials, or transfer work"
+            in body
+        )
+        assert observed_limits == [100, 100, 100]

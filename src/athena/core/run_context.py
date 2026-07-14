@@ -14,6 +14,7 @@ one request's run id can never leak into another's events.
 from __future__ import annotations
 
 import contextvars
+import unicodedata
 
 # The run id in force for the current request, or None when none was supplied.
 _run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -36,6 +37,29 @@ _forked_from_event_id: contextvars.ContextVar[int | None] = contextvars.ContextV
 # An opaque client string; bound its length so a hostile/huge header can't bloat
 # every activity row. Long enough for any UUID/ULID/job id a caller would use.
 _MAX_RUN_ID_LEN = 200
+
+
+def strict_run_id(raw: object) -> str:
+    """Return a canonical persisted run id, or reject invalid input.
+
+    Ordinary correlation headers remain forgiving through :func:`normalize`: an
+    overlong header is merely truncated. A persistent check-in is an addressable row,
+    so truncation could alias two caller ids; that boundary uses this strict form.
+    """
+    if not isinstance(raw, str):
+        raise ValueError("run_id must be a string")
+    # Validate before trimming so a trailing newline/tab cannot be normalized into
+    # an apparently safe identifier. ``isprintable`` also rejects lone surrogates,
+    # bidi controls, zero-width format characters, and line/paragraph separators
+    # while preserving ordinary spaces, visible CJK, emoji, and combining marks.
+    if not all(char.isprintable() for char in raw):
+        raise ValueError("run_id must contain only printable characters")
+    value = unicodedata.normalize("NFC", raw.strip())
+    if not value:
+        raise ValueError("run_id is required")
+    if len(value) > _MAX_RUN_ID_LEN:
+        raise ValueError(f"run_id must be at most {_MAX_RUN_ID_LEN} characters")
+    return value
 
 
 def normalize(raw: str | None) -> str | None:
