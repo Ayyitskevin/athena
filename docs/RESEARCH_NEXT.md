@@ -1,5 +1,14 @@
 # Athena — What to Build Next & How to Differentiate
 
+> **Execution status (2026-07-14).** The research and differentiation thesis
+> remain useful, but this is not Athena's live backlog. The original ranking was
+> reconciled against `main` on 2026-06-30, and selected statuses and next-slice
+> notes were amended through 2026-07-12. Mission Control, cooperative check-ins,
+> self-service delegation pickup, and actor-visible work context have advanced
+> since those amendments. Use
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) for shipped roadmap state and
+> [`VISION.md`](VISION.md) for product direction.
+>
 > **Provenance & integrity.** This report is the output of Athena's `deep-research`
 > harness — fan-out web search → source fetch/extract → **3-vote adversarial
 > verification** (a claim needs 2 of 3 refutations to be killed) → synthesis. Run
@@ -98,9 +107,10 @@ Teams leaving the incumbent need a small, specific set of capabilities to feel s
 
 ## What to build next (ranked)
 
-Ranked by impact-vs-effort. This table is reconciled against current `main` as of
-2026-06-30, so capabilities that have landed are marked as shipped V1 instead of
-being treated as open backlog. All items are **Recommendations**.
+Ranked by impact-vs-effort. This table was first reconciled against `main` on
+2026-06-30, with selected statuses and next-slice notes amended through
+2026-07-12. It is historical decision context, not an open backlog. All items are
+**Recommendations**.
 
 | # | Capability | Status | Why it matters | Next slice |
 |---|---|---|---|---|
@@ -117,10 +127,11 @@ being treated as open backlog. All items are **Recommendations**.
 | 11 | **Coarse permissions parity** | Shipped V1 | Project/space visibility and membership gate read surfaces. | Decide on optional global read-auth mode before public exposure |
 | 12 | **Basic dashboards/reporting** | Open | Movers expect at-a-glance status; cheap as SQL over data Athena already owns. | Counts/rollups only after portability/replay work |
 
-**Sequencing rationale.** The differentiation core has V1 coverage now: scoped
+**Historical sequencing rationale (last amended 2026-07-12).** At that point, the
+differentiation core had V1 coverage across scoped
 tokens, MCP, event feed, webhooks, delegation, lineage, forking, manifest-gated
 Athena-to-Athena portability, run replay artifacts, and basic Jira/Confluence JSON
-bundle mappers. The next best work is to harden migration against real-world
+bundle mappers. The recommendation was to harden migration against real-world
 exports and make agent operation safer: real Atlassian sample fixtures, then
 agent-admin/API-safety/packaging follow-ups.
 

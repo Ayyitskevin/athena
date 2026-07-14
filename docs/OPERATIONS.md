@@ -463,9 +463,12 @@ automatically finish a run, revoke a token, transfer or take over work, or trigg
 any other lifecycle action. Operators must reconcile stale reports with the agent
 and the underlying work before acting.
 
-The check-in panel and its counts summarize a bounded recent window. A
-heartbeat-only identifier remains an operational sidecar; it does not become a
-replayable activity run unless activity events are later written with that run id.
+The check-in panel separates latest-per-agent headlines from bounded recent
+history. The explicit `latest_*` totals use full retained history, while
+`checkins` and the unsuffixed compatibility totals describe only the bounded
+history rows. A heartbeat-only identifier remains an operational sidecar; it does
+not become a replayable activity run unless activity events are later written with
+that run id.
 
 ## Durable API Retry Keys
 

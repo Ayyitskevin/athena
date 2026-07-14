@@ -25,7 +25,10 @@ people.
 
 ## The operator's loop (the spine of the roadmap)
 
-Each phase names the capability we invest in.
+Each phase names the target capability we invest in. This is the destination, not
+a shipped-feature inventory; [`ARCHITECTURE.md`](ARCHITECTURE.md) records current
+delivery. In particular, budgets, approval gates, agent pause/kill controls, and
+general undo are roadmap goals rather than guarantees Athena makes today.
 
 1. **Direct** — capture intent as work agents can pick up (issues with clear acceptance
    criteria, docs as playbooks).
@@ -46,10 +49,11 @@ Each phase names the capability we invest in.
    an MCP tool + REST endpoint. The web page exists to *supervise* the capability, never
    to be the only way in. (Extends the cardinal rule: web is a thin client; the API is
    agent-first.)
-2. **Every agent action is attributable, reversible, and bounded.** Attribution (actor +
-   run_id + lineage) and bounding (scope, rate, budget, idempotency) already exist;
-   reversibility and approval are first-class too. Trust comes from *undo + inspect*, not
-   from watching.
+2. **Every agent action is attributable, reversible, and bounded.** Actor
+   attribution exists today; optional run IDs and lineage enrich it. Scope, rate,
+   and idempotency provide some bounding. Budgets, general reversibility, and
+   approval are explicit roadmap requirements. Trust comes from *undo + inspect*,
+   not from watching.
 3. **The human steers by exception.** Default to letting agents run; surface *decisions*
    — failures, approvals, budget breaches — not noise.
 4. **One operator, zero ops.** No feature may require a second human, a DBA, or a
