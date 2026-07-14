@@ -19,3 +19,5 @@ jobs:
         run: python -m ruff check .
       - name: Run tests
         run: python -m pytest -q
+      - name: Boot the real app
+        run: python scripts/smoke_app.py
