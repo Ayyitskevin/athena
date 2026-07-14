@@ -1,10 +1,18 @@
 # Athena — Research Report & Implementation Roadmap
 
-> **Status:** Historical research deliverable plus current-state reconciliation.
+> **Status:** Historical research deliverable with a broad 2026-06-30
+> reconciliation and selected amendments through 2026-07-12; not a live backlog.
 > **Date:** 2026-06-26 · **Branch:** `claude/athena-research-roadmap`
 > **Reconciled:** 2026-06-30 against `main` through `8bd9a1c`.
 > **Scope:** What it would take to make Athena a serious, self-hosted, agent-native
 > alternative to Jira + Confluence — learning from them without cloning them.
+>
+> **Execution note (2026-07-14):** Later commits amended selected statuses and
+> next-slice notes without comprehensively re-ranking the report. Do not treat its
+> immediate-task list as the live queue. Mission Control, cooperative check-ins,
+> delegation pickup, and actor-visible work context have advanced since the last
+> targeted amendment. Use [`ARCHITECTURE.md`](ARCHITECTURE.md) for shipped roadmap
+> state and [`VISION.md`](VISION.md) for product direction.
 
 **How to read this doc.** Claims are tagged **[Fact]** (sourced, verifiable),
 **[Interpretation]** (my reading of the facts), or **[Recommendation]** (what
@@ -539,10 +547,10 @@ risk** (1–10). Files reference real modules.
 > **Conventions:** *Size* S≈<150 LOC, M≈150–400, L≈400+. *Risk* = blast radius +
 > reversibility.
 
-> **2026-06-30 status note:** This ranked backlog is preserved because it explains
-> the original build sequence. The following items have V1 implementations on
-> `main`: S1, S2, S3, S4, S5, S6, S7, S8, S9, S12, and S15's OIDC subset. Treat S10
-> plus the new replay/agent-admin/API-safety follow-ups in §12 as the live queue.
+> **Historical status note:** The initial reconciliation occurred on 2026-06-30,
+> with selected status and follow-up amendments through 2026-07-12. This ranked
+> backlog is preserved because it explains the build sequence; it is not a live
+> queue. Use `ARCHITECTURE.md` before acting on any slice below.
 
 ### S1 — Markdown rendering + server-side sanitization · **Score 9**
 - **Why:** Plain-text bodies are the single biggest credibility gap for Mentor and
@@ -769,9 +777,11 @@ risk** (1–10). Files reference real modules.
 
 ---
 
-## 12. Top 5 Immediate Next Tasks
+## 12. Historical Top 5 Immediate Next Tasks
 
-Chosen after reconciling the June 26 backlog against current `main` on 2026-06-30.
+Initially chosen after reconciling the June 26 backlog against `main` on
+2026-06-30, then selectively amended through 2026-07-12. This list is preserved as
+dated decision context, not a current execution queue.
 
 1. **Run replay manifest.** Add an endpoint/CLI that emits one run's ordered
    replay-safe events, parent/fork coordinates, and determinism metadata as a
@@ -794,7 +804,8 @@ and `/find` pagination/field search.
 
 ## 13. Open Questions (need a product decision)
 
-These change *what* gets built; they're for Kevin, not for an agent to assume.
+These changed *what* got built and are retained as historical product context;
+they are not current instructions for an agent to assume.
 
 1. **Audience:** Is Athena strictly *solo operator + AI fleet on a tailnet*, or must
    it serve *multiple humans/teams* soon? This sets how much of the permission model
@@ -808,8 +819,10 @@ These change *what* gets built; they're for Kevin, not for an agent to assume.
    transitions/guards/workflow schemes.
 5. **Attachment storage:** Filesystem storage exists. Decide whether import/export
    bundles include blobs, an attachment manifest only, or both modes.
-6. **Agent surface priority:** MCP, event feed, webhooks, delegation, lineage, and
-   forking exist. Next choice is replay bundle first vs. agent-admin policy first.
+6. **Agent surface priority (historical):** Replay versus agent-admin policy was
+   the open choice at the last targeted amendment. Replay and later Mission
+   Control capabilities have since landed; reassess against `ARCHITECTURE.md`
+   before choosing another slice.
 7. **Migration sources:** What must Athena import first — ORACLE Markdown → Mentor,
    Notion tasks → Aegis, or Jira/Confluence exports? This orders S10's importers.
 8. **Notifications channel:** In-app inbox only (recommended first), or email too?

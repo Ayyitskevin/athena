@@ -45,8 +45,9 @@ The response reports `age_seconds` and a `reporting_state` of exactly
 `reporting_recently` or `stale`. Athena calculates both from server time and
 `ATHENA_AGENT_RUN_STALE_SECONDS` (90 seconds by default); client clock skew cannot
 keep a report fresh. Mission Control exposes these check-ins separately from
-activity-derived run health, including agents that have only checked in. The panel
-and its counts summarize a bounded recent window.
+activity-derived run health, including agents that have only checked in. Headline
+counts use one latest report per agent across full retained history; the separate
+recent-history rows and compatibility totals remain bounded.
 
 Athena also caps durable check-in cardinality per agent with
 `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` (1,000 by default). Once full, a new run
