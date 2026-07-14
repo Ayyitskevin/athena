@@ -171,6 +171,19 @@ class AthenaClient:
             params["include_archived"] = True
         return self._result(self._client.get("/issues", params=params))
 
+    def list_my_delegated_work(
+        self,
+        *,
+        include_closed: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Any:
+        """Read contributor assignments for the token's own actor."""
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if include_closed:
+            params["include_closed"] = True
+        return self._result(self._client.get("/delegations/me", params=params))
+
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 

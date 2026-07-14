@@ -30,7 +30,8 @@ Each phase names the capability we invest in.
 1. **Direct** — capture intent as work agents can pick up (issues with clear acceptance
    criteria, docs as playbooks).
 2. **Delegate** — hand a task to a specific agent with a scoped token, a budget, and a
-   rate limit; the automation engine routes work to agents on events.
+   rate limit; the automation engine routes work to agents on events, and each agent
+   can pull a bounded, self-only inbox of its current assignments.
 3. **Observe** — a live cockpit: what is each agent doing *right now*, run timelines,
    failures, token/rate/budget usage. The operator watches the fleet, not each task.
 4. **Intervene** — steer by exception: approve/reject risky actions (human-in-the-loop),
