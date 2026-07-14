@@ -103,16 +103,24 @@ def _authorize_project_write(conn, project_id: int, user: dict):
     is creator-only, the same rule the REST API enforces. The 401 (logged-out)
     check stays at each call site, before this."""
     project = projects.get_project(conn, project_id)
-    # Visibility first: a private project the user can't see is "no such project" (404),
-    # so a non-member never learns it exists via the 403. A visible-but-not-creator user
-    # still gets the honest 403.
-    if project is None or not access.can_see_project(conn, user, project_id):
+    if project is None:
+        return None, HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    # The visibility-first + creator-only rule is shared with the REST gate (and the
+    # Mentor space twins) via access.container_write_reason, so a private project the
+    # user can't see reads as 404 — a non-member never learns it exists via a 403.
+    reason = access.container_write_reason(
+        conn, user, kind="project", container_id=project_id,
+        created_by=project["created_by"],
+    )
+    if reason == "not_visible":
         return None, HTMLResponse(
             '<div class="error">No such project.</div>', status_code=404
         )
     if not identity.can_write(user):
         return None, _readonly_response()
-    if project["created_by"] != user["id"]:
+    if reason == "not_owner":
         return None, HTMLResponse(
             '<div class="blocked">Only the project creator may edit it.</div>',
             status_code=403,

@@ -178,3 +178,44 @@ def test_deleting_project_cascades_membership(people):
         "SELECT COUNT(*) AS n FROM project_members WHERE project_id = ?", (p["id"],)
     ).fetchone()["n"]
     assert leftover == 0
+
+
+# --- container_write_reason: the one owner of the edit/delete gate ----------
+
+def test_container_write_reason_is_visibility_first_and_creator_only(people):
+    # WHY: this predicate is the SINGLE home of "may this actor edit/delete this
+    # project|space", after three of its four hand-copied boundaries once leaked a
+    # hidden container's existence through a 403. It must (a) check visibility FIRST —
+    # an actor who can't see it gets 'not_visible' (→404), never 'not_owner' (→403);
+    # (b) allow ONLY the creator — NOT an admin, unlike the visibility/member-management
+    # gates (destroying someone's container isn't a governance power).
+    conn, admin, creator, outsider = people
+    p = projects.create_project(conn, name="Secret", key="SEC", created_by=creator["id"])
+    s = spaces.create_space(conn, key="ENG", name="Eng", created_by=creator["id"])
+
+    def reason(kind, actor, cid, created_by):
+        return access.container_write_reason(
+            conn, actor, kind=kind, container_id=cid, created_by=created_by
+        )
+
+    # Public: creator may write; everyone else is visible-but-not-owner (403), incl. admin.
+    assert reason("project", creator, p["id"], creator["id"]) is None
+    assert reason("project", admin, p["id"], creator["id"]) == "not_owner"
+    assert reason("project", outsider, p["id"], creator["id"]) == "not_owner"
+    assert reason("space", creator, s["id"], creator["id"]) is None
+    assert reason("space", admin, s["id"], creator["id"]) == "not_owner"
+
+    # Private: the outsider can't even see it → 'not_visible' (404), no existence leak.
+    _make_private(conn, "projects", p["id"])
+    _make_private(conn, "spaces", s["id"])
+    assert reason("project", outsider, p["id"], creator["id"]) == "not_visible"
+    assert reason("space", outsider, s["id"], creator["id"]) == "not_visible"
+    # A member CAN see it, but still isn't the creator → 'not_owner' (403), not a pass.
+    access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+    assert reason("project", outsider, p["id"], creator["id"]) == "not_owner"
+    # Creator and admin still see it; only the creator may write it.
+    assert reason("project", creator, p["id"], creator["id"]) is None
+    assert reason("project", admin, p["id"], creator["id"]) == "not_owner"
+
+    with pytest.raises(ValueError):
+        reason("widget", creator, p["id"], creator["id"])
