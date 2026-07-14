@@ -31,7 +31,7 @@ def _read_json(url: str) -> dict:
 def _stop(process: subprocess.Popen[str]) -> str | None:
     if process.poll() is not None:
         return f"server exited before teardown with status {process.returncode}"
-    # WHY: the CLI interrupt path returns zero after Uvicorn's graceful shutdown,
+    # WHY: the CLI interrupt path returns zero after a bounded Uvicorn stop,
     # letting a timeout or forced kill remain an unambiguous smoke failure.
     process.send_signal(signal.SIGINT)
     try:
@@ -39,7 +39,7 @@ def _stop(process: subprocess.Popen[str]) -> str | None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
-        return "server ignored graceful shutdown and required a forced kill"
+        return "server did not stop within 5 seconds and required a forced kill"
     if process.returncode != 0:
         return f"server exited during teardown with status {process.returncode}"
     return None
@@ -128,7 +128,7 @@ def main() -> int:
             raise RuntimeError(f"Athena process smoke failed: {details}")
 
         print(
-            "Athena process smoke passed: fresh database ready and clean shutdown"
+            "Athena process smoke passed: fresh database ready and bounded stop"
         )
         return 0
 
