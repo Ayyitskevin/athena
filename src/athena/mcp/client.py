@@ -187,6 +187,10 @@ class AthenaClient:
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 
+    def get_issue_work_context(self, ref: str) -> Any:
+        """Get the bounded work-context packet for one visible issue."""
+        return self._result(self._client.get(f"/issues/{ref}/work-context"))
+
     def get_issue_state(
         self, issue_id: int, *, as_of_event_id: int | None = None
     ) -> Any:

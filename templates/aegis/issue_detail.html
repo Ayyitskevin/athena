@@ -9,6 +9,7 @@
         <h1>{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</h1>
     </div>
     <div class="header-actions">
+        <a href="/aegis/issues/{{ issue.id }}/work-context" class="button secondary small">Agent work context</a>
         <span class="status {{ issue.status }} large">{{ issue.status }}</span>
         {% if request.state.user %}
         <form method="post" action="/aegis/issues/{{ issue.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
