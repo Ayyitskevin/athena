@@ -69,13 +69,17 @@ work and knowledge, and replay any agent run from the log.
 ## Local development
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,mcp]"
 ruff check .
 pytest -q
+python scripts/smoke_app.py
 uvicorn athena.main:app --reload
 ```
 
-Optional MCP server for agent tooling: `pip install -e ".[mcp]"` then `athena-mcp`.
+The smoke helper uses an inherited POSIX socket, matching Ubuntu CI and Athena's
+supported deployment shape. The full contributor install above includes MCP test
+coverage; for a runtime-only MCP install, use `pip install -e ".[mcp]"` then
+`athena-mcp`.
 
 ## Operations
 
