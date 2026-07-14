@@ -422,6 +422,12 @@ def test_recent_projection_has_exact_90_second_boundary_and_safe_identity(
         age_90 = agent_run_checkins.get_checkin(
             conn, agent_id=agent["id"], run_id="age-90", now=now
         )
+        age_90_fractional = agent_run_checkins.get_checkin(
+            conn,
+            agent_id=agent["id"],
+            run_id="age-90",
+            now=now.replace(microsecond=999_999),
+        )
         age_91 = agent_run_checkins.get_checkin(
             conn, agent_id=agent["id"], run_id="age-91", now=now
         )
@@ -430,6 +436,8 @@ def test_recent_projection_has_exact_90_second_boundary_and_safe_identity(
         )
         assert age_90["age_seconds"] == 90
         assert age_90["reporting_state"] == "reporting_recently"
+        assert age_90_fractional["age_seconds"] == 90
+        assert age_90_fractional["reporting_state"] == "stale"
         assert age_91["age_seconds"] == 91
         assert age_91["reporting_state"] == "stale"
         assert future["age_seconds"] == 0

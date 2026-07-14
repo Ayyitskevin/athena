@@ -159,10 +159,11 @@ def _with_reporting_state(
     now: datetime | None,
 ) -> dict:
     last_seen = datetime.strptime(row["last_seen_at"], _TS_FORMAT).replace(tzinfo=UTC)
-    age_seconds = max(0, int((_utc_now(now) - last_seen).total_seconds()))
+    elapsed_seconds = max(0.0, (_utc_now(now) - last_seen).total_seconds())
+    age_seconds = int(elapsed_seconds)
     state = (
         REPORTING_RECENTLY
-        if age_seconds <= _stale_after_seconds(stale_seconds)
+        if elapsed_seconds <= _stale_after_seconds(stale_seconds)
         else STALE
     )
     return {**row, "age_seconds": age_seconds, "reporting_state": state}
