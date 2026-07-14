@@ -76,6 +76,14 @@ python scripts/smoke_app.py
 uvicorn athena.main:app --reload
 ```
 
+From a fresh virtual environment, reproduce the dependency versions used by
+Linux/Python 3.12 CI by installing the same extras through
+[`constraints/ci-py312.txt`](constraints/ci-py312.txt):
+
+```bash
+pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
+```
+
 The smoke helper uses an inherited POSIX socket, matching Ubuntu CI and Athena's
 supported deployment shape. The full contributor install above includes MCP test
 coverage; for a runtime-only MCP install, use `pip install -e ".[mcp]"` then
