@@ -5,41 +5,50 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
 import tempfile
 import time
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 
 
 EXPECTED_HEALTH = {"status": "ok"}
 EXPECTED_READY = {"status": "ok", "database": "ok"}
 STARTUP_TIMEOUT_SECONDS = 15
+_LOOPBACK_OPENER = build_opener(ProxyHandler({}))
 
 
 def _read_json(url: str) -> dict:
-    with urlopen(url, timeout=1) as response:  # noqa: S310 - loopback smoke only
+    with _LOOPBACK_OPENER.open(url, timeout=1) as response:  # noqa: S310
         if response.status != 200:
             raise RuntimeError(f"{url} returned HTTP {response.status}")
         return json.loads(response.read().decode("utf-8"))
 
 
-def _stop(process: subprocess.Popen[str]) -> None:
+def _stop(process: subprocess.Popen[str]) -> str | None:
     if process.poll() is not None:
-        return
-    process.terminate()
+        return f"server exited before teardown with status {process.returncode}"
+    # WHY: the CLI interrupt path returns zero after Uvicorn's graceful shutdown,
+    # letting a timeout or forced kill remain an unambiguous smoke failure.
+    process.send_signal(signal.SIGINT)
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+        return "server ignored graceful shutdown and required a forced kill"
+    if process.returncode != 0:
+        return f"server exited during teardown with status {process.returncode}"
+    return None
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="athena-process-smoke-") as temp_dir:
         root = Path(temp_dir)
+        db_path = root / "athena.db"
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -50,29 +59,36 @@ def main() -> int:
             {
                 "ATHENA_ATTACH_DIR": str(root / "attachments"),
                 "ATHENA_AUTOMATION": "0",
-                "ATHENA_DB": str(root / "athena.db"),
+                "ATHENA_DB": str(db_path),
                 "ATHENA_LOG_LEVEL": "WARNING",
                 "ATHENA_WEBHOOK_DELIVERY": "0",
                 "PYTHONUNBUFFERED": "1",
             }
         )
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "athena.main:app",
-                "--fd",
-                str(listener.fileno()),
-                "--log-level",
-                "warning",
-            ],
-            env=env,
-            pass_fds=(listener.fileno(),),
-            stderr=subprocess.STDOUT,
-            stdout=subprocess.PIPE,
-            text=True,
-        )
+        output_path = root / "uvicorn.log"
+        output_stream = output_path.open("w", encoding="utf-8")
+        try:
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "athena.main:app",
+                    "--fd",
+                    str(listener.fileno()),
+                    "--log-level",
+                    "warning",
+                ],
+                env=env,
+                pass_fds=(listener.fileno(),),
+                stderr=subprocess.STDOUT,
+                stdout=output_stream,
+                text=True,
+            )
+        except BaseException:
+            output_stream.close()
+            listener.close()
+            raise
         listener.close()
 
         deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
@@ -93,18 +109,27 @@ def main() -> int:
                 if health != EXPECTED_HEALTH or ready != EXPECTED_READY:
                     last_error = f"unexpected health payloads: {health!r}, {ready!r}"
                     break
+                if not db_path.is_file():
+                    last_error = "ready app did not create the configured fresh database"
+                    break
                 success = True
                 break
         finally:
-            _stop(process)
+            try:
+                shutdown_error = _stop(process)
+            finally:
+                output_stream.close()
 
-        output = process.stdout.read() if process.stdout is not None else ""
-        if not success:
+        output = output_path.read_text(encoding="utf-8")
+        if not success or shutdown_error is not None:
             if output:
                 print(output, file=sys.stderr)
-            raise RuntimeError(f"Athena process smoke failed: {last_error}")
+            details = shutdown_error if success else last_error
+            raise RuntimeError(f"Athena process smoke failed: {details}")
 
-        print("Athena process smoke passed: /healthz and /readyz are ready")
+        print(
+            "Athena process smoke passed: fresh database ready and clean shutdown"
+        )
         return 0
 
 
