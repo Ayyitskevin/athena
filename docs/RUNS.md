@@ -60,6 +60,11 @@ authorize another actor to mutate the run. Stale state is an operator signal onl
 A heartbeat-only identifier does not create a replayable activity run; that happens
 only when activity events are written with the same run id.
 
+Mission Control derives headline state from one newest check-in per agent across the
+agent's full retained history. Older and parallel run ids stay in the bounded recent
+history but do not each add another stale headline signal. Timestamp ties resolve by
+run id, so REST, MCP, and web select the same deterministic latest report.
+
 ## Replay And Lineage
 
 - `GET /activity?run_id=...` returns one run's activity newest-first.

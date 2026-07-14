@@ -12,7 +12,7 @@ import re
 import shlex
 import sqlite3
 
-from athena.core import activity, agent_run_checkins, tokens, users
+from athena.core import activity, agent_run_checkins, db, tokens, users
 
 _RECENT_ACTIVITY_LIMIT = 6
 _RUN_HEALTH_EVENT_LIMIT = 200
@@ -34,26 +34,40 @@ def agent_admin_summaries(conn: sqlite3.Connection) -> list[dict]:
 
 def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -> dict:
     """Return a fleet-level run-health read model for every agent account."""
-    agent_options = _agent_users(conn)
-    selected_agent = None
-    if agent_id is None:
-        selected_agents = agent_options
-    else:
-        selected_agents = [
-            agent for agent in agent_options if int(agent["id"]) == int(agent_id)
-        ]
-        selected_agent = selected_agents[0] if selected_agents else None
+    # The cockpit joins several derived lenses. Hold one read snapshot so a heartbeat
+    # cannot move between the latest-per-agent and bounded-history queries while this
+    # response is being assembled.
+    with db.transaction(conn):
+        observed_at = datetime.now(UTC)
+        agent_options = _agent_users(conn)
+        selected_agent = None
+        if agent_id is None:
+            selected_agents = agent_options
+        else:
+            selected_agents = [
+                agent for agent in agent_options if int(agent["id"]) == int(agent_id)
+            ]
+            selected_agent = selected_agents[0] if selected_agents else None
 
-    rows = [_agent_run_health(conn, agent) for agent in selected_agents]
-    checkins = agent_run_checkins.list_recent_checkins(
-        conn, agent_id=agent_id, limit=_RUN_CHECKIN_LIMIT
-    )
+        rows = [_agent_run_health(conn, agent) for agent in selected_agents]
+        checkins = agent_run_checkins.list_recent_checkins(
+            conn,
+            agent_id=agent_id,
+            limit=_RUN_CHECKIN_LIMIT,
+            now=observed_at,
+        )
+        latest_checkins = agent_run_checkins.list_latest_checkins(
+            conn, agent_id=agent_id, now=observed_at
+        )
     return {
         "agents": rows,
         # Cooperative check-ins are a distinct bounded signal. Do not merge them
         # into activity-derived run health: a report says nothing about replay
         # readiness and cannot prove that the reporting process is still alive.
         "checkins": checkins,
+        # One newest report per agent, selected from full retained history. This is
+        # the signal headline counts use; old run rows remain available in checkins.
+        "latest_checkins": latest_checkins,
         "agent_options": agent_options,
         "selected_agent_id": agent_id,
         "selected_agent": selected_agent,
@@ -76,6 +90,19 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
             ),
             "total_recent_runs": sum(row["run_count"] for row in rows),
             "tagged_recent_runs": sum(row["tagged_run_count"] for row in rows),
+            "latest_reporting_recently_count": sum(
+                1
+                for checkin in latest_checkins
+                if checkin["reporting_state"] == "reporting_recently"
+            ),
+            "latest_stale_checkin_count": sum(
+                1
+                for checkin in latest_checkins
+                if checkin["reporting_state"] == "stale"
+            ),
+            "latest_checkin_count": len(latest_checkins),
+            # Compatibility totals describe the bounded history rows returned in
+            # checkins. New mission-control headlines use the explicit latest_* keys.
             "reporting_recently_count": sum(
                 1
                 for checkin in checkins

@@ -448,6 +448,60 @@ def test_recent_projection_has_exact_90_second_boundary_and_safe_identity(
         conn.close()
 
 
+def test_latest_projection_uses_full_history_and_deterministic_ties(tmp_path):
+    conn = _open(tmp_path / "latest.db")
+    try:
+        first_agent, _, first_actor = _actor(
+            conn,
+            email="first@example.com",
+            name="First Agent",
+        )
+        second_agent, _, second_actor = _actor(
+            conn,
+            email="second@example.com",
+            name="Second Agent",
+        )
+        for run_id in ("old-stale", "z-latest", "a-latest"):
+            agent_run_commands.heartbeat(conn, actor=first_actor, run_id=run_id)
+        agent_run_commands.heartbeat(
+            conn, actor=second_actor, run_id="second-latest"
+        )
+        timestamps = {
+            (first_agent["id"], "old-stale"): "2025-12-31 23:00:00",
+            # Equal newest timestamps deliberately prove the run-id tie-break.
+            (first_agent["id"], "z-latest"): "2026-01-01 00:02:00",
+            (first_agent["id"], "a-latest"): "2026-01-01 00:02:00",
+            (second_agent["id"], "second-latest"): "2026-01-01 00:01:00",
+        }
+        for (agent_id, run_id), seen_at in timestamps.items():
+            conn.execute(
+                "UPDATE agent_run_checkins SET first_seen_at = ?, last_seen_at = ? "
+                "WHERE agent_id = ? AND run_id = ?",
+                (seen_at, seen_at, agent_id, run_id),
+            )
+        conn.commit()
+        now = datetime(2026, 1, 1, 0, 2, 30, tzinfo=UTC)
+
+        # The bounded history can contain only one agent; latest selection still
+        # considers every retained row and returns one deterministic row per agent.
+        history = agent_run_checkins.list_recent_checkins(conn, limit=1, now=now)
+        assert [row["run_id"] for row in history] == ["a-latest"]
+        latest = agent_run_checkins.list_latest_checkins(conn, now=now)
+        assert [row["run_id"] for row in latest] == [
+            "a-latest",
+            "second-latest",
+        ]
+        assert all(row["reporting_state"] == "reporting_recently" for row in latest)
+        assert all("last_token_id" not in row for row in latest)
+
+        filtered = agent_run_checkins.list_latest_checkins(
+            conn, agent_id=first_agent["id"], now=now
+        )
+        assert [row["run_id"] for row in filtered] == ["a-latest"]
+    finally:
+        conn.close()
+
+
 def test_concurrent_first_heartbeats_converge_without_activity(tmp_path):
     db_path = tmp_path / "concurrent.db"
     setup = _open(db_path)

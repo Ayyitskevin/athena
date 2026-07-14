@@ -420,6 +420,13 @@ same read-only supervision flow. Both require an admin-role user acting through 
 Run summaries are bounded recent history: an event proves that an agent acted, not
 that its external process is still running.
 
+Heartbeat headline state is agent-based: `latest_checkins` contains exactly one
+newest report per agent, selected from that agent's full retained check-in history.
+The `latest_*` totals summarize those rows. `checkins` remains a bounded recent
+history window, and the unsuffixed check-in totals continue to summarize that window
+for compatibility. A stale historical run therefore does not make a currently
+reporting agent look stale; parallel and older run ids remain inspectable in history.
+
 An agent can cooperatively report that it is still working under a client-chosen
 run identifier:
 

@@ -1,9 +1,20 @@
 """Admin agent overview regressions."""
 
+from datetime import UTC, datetime
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import contributors, issues, projects
-from athena.core import access, activity, agents, db, run_context, tokens, users
+from athena.core import (
+    access,
+    activity,
+    agent_run_commands,
+    agents,
+    db,
+    run_context,
+    tokens,
+    users,
+)
 from athena.main import create_app
 from athena.mentor import spaces
 
@@ -443,13 +454,25 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
                 "agent_name": active_bot["name"],
                 "agent_email": active_bot["email"],
                 "run_id": "activity-run",
+                "first_seen_at": "2026-07-13 11:30:00",
+                "last_seen_at": "2026-07-13 12:00:00",
+                "age_seconds": 72,
+                "reporting_state": "reporting_recently",
+            },
+            {
+                "agent_id": active_bot["id"],
+                "agent_name": active_bot["name"],
+                "agent_email": active_bot["email"],
+                "run_id": "old-activity-run",
                 "first_seen_at": "2026-07-13 11:00:00",
                 "last_seen_at": "2026-07-13 11:01:00",
                 "age_seconds": 3600,
                 "reporting_state": "stale",
             },
         ]
+        latest_checkins = checkins[:2]
         observed_limits = []
+        observed_latest_filters = []
 
         def _list_recent_checkins(
             _conn,
@@ -469,6 +492,25 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
             agents.agent_run_checkins,
             "list_recent_checkins",
             _list_recent_checkins,
+        )
+
+        def _list_latest_checkins(
+            _conn,
+            *,
+            agent_id=None,
+            stale_seconds=None,
+            now=None,
+        ):
+            observed_latest_filters.append(agent_id)
+            rows = latest_checkins
+            if agent_id is not None:
+                rows = [row for row in rows if row["agent_id"] == agent_id]
+            return rows
+
+        monkeypatch.setattr(
+            agents.agent_run_checkins,
+            "list_latest_checkins",
+            _list_latest_checkins,
         )
 
         api = client.get(
@@ -511,10 +553,15 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
         assert all("checkins" not in row for row in payload["agents"])
 
         assert payload["checkins"] == checkins
-        assert payload["totals"]["reporting_recently_count"] == 1
+        assert payload["latest_checkins"] == latest_checkins
+        assert payload["totals"]["reporting_recently_count"] == 2
         assert payload["totals"]["stale_checkin_count"] == 1
-        assert payload["totals"]["total_checkin_count"] == 2
+        assert payload["totals"]["total_checkin_count"] == 3
+        assert payload["totals"]["latest_reporting_recently_count"] == 2
+        assert payload["totals"]["latest_stale_checkin_count"] == 0
+        assert payload["totals"]["latest_checkin_count"] == 2
         assert observed_limits == [100]
+        assert observed_latest_filters == [None]
 
         filtered = client.get(
             f"/activity/agent-runs?agent_id={heartbeat_only_bot['id']}",
@@ -528,7 +575,14 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
         assert filtered_payload["totals"]["reporting_recently_count"] == 1
         assert filtered_payload["totals"]["stale_checkin_count"] == 0
         assert filtered_payload["totals"]["total_checkin_count"] == 1
+        assert [row["run_id"] for row in filtered_payload["latest_checkins"]] == [
+            "heartbeat-only-run"
+        ]
+        assert filtered_payload["totals"]["latest_reporting_recently_count"] == 1
+        assert filtered_payload["totals"]["latest_stale_checkin_count"] == 0
+        assert filtered_payload["totals"]["latest_checkin_count"] == 1
         assert observed_limits == [100, 100]
+        assert observed_latest_filters == [None, heartbeat_only_bot["id"]]
 
         _login(client)
         page = client.get("/admin/agents/runs")
@@ -544,8 +598,112 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
         assert "checkin-run-id" in body
         assert "They do not prove that an agent's OS process is alive." in body
         assert "Activity-derived run health is independent" in body
+        assert "agents whose latest report is stale" in body
+        assert "Recent check-in history (3 shown)" in body
+        assert "old-activity-run" in body
+        assert "2026-07-13 11:00:00 UTC" in body
         assert (
             "Check-ins do not finish runs, revoke credentials, or transfer work"
             in body
         )
         assert observed_limits == [100, 100, 100]
+        assert observed_latest_filters == [None, heartbeat_only_bot["id"], None]
+
+
+def test_agent_run_health_shares_one_clock_and_wal_snapshot(tmp_path, monkeypatch):
+    db_path = tmp_path / "agent_run_snapshot.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        agent = _create_user(
+            client, "snapshot@e.com", "Snapshot Bot", is_agent=True
+        )
+
+        setup = db.connect(db_path)
+        try:
+            token = tokens.create_token(
+                setup,
+                user_id=agent["id"],
+                name="snapshot writer",
+                scopes=(tokens.ISSUE_WRITE_SCOPE,),
+            )
+            actor = tokens.resolve_token(setup, token["token"])
+            assert actor is not None
+            agent_run_commands.heartbeat(setup, actor=actor, run_id="z-before")
+            setup.execute(
+                "UPDATE agent_run_checkins "
+                "SET first_seen_at = ?, last_seen_at = ? "
+                "WHERE agent_id = ? AND run_id = ?",
+                (
+                    "2026-01-01 00:00:00",
+                    "2026-01-01 00:00:00",
+                    agent["id"],
+                    "z-before",
+                ),
+            )
+            setup.commit()
+        finally:
+            setup.close()
+
+        observed_at = datetime(2026, 1, 1, 0, 1, 30, tzinfo=UTC)
+
+        class _FrozenDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                assert tz is UTC
+                return observed_at
+
+        monkeypatch.setattr(agents, "datetime", _FrozenDateTime)
+        original_recent = agents.agent_run_checkins.list_recent_checkins
+        original_latest = agents.agent_run_checkins.list_latest_checkins
+        clocks = []
+
+        def recent_then_write(conn, **kwargs):
+            clocks.append(kwargs.get("now"))
+            rows = original_recent(conn, **kwargs)
+            writer = db.connect(db_path)
+            try:
+                # WAL permits this write while the cockpit keeps its read snapshot.
+                agent_run_commands.heartbeat(
+                    writer, actor=actor, run_id="a-after"
+                )
+            finally:
+                writer.close()
+            return rows
+
+        def latest_with_clock(conn, **kwargs):
+            clocks.append(kwargs.get("now"))
+            return original_latest(conn, **kwargs)
+
+        monkeypatch.setattr(
+            agents.agent_run_checkins, "list_recent_checkins", recent_then_write
+        )
+        monkeypatch.setattr(
+            agents.agent_run_checkins, "list_latest_checkins", latest_with_clock
+        )
+
+        reader = db.connect(db_path)
+        try:
+            health = agents.agent_run_health(reader, agent_id=agent["id"])
+        finally:
+            reader.close()
+
+        assert clocks == [observed_at, observed_at]
+        assert [row["run_id"] for row in health["checkins"]] == ["z-before"]
+        assert [row["run_id"] for row in health["latest_checkins"]] == [
+            "z-before"
+        ]
+        assert health["checkins"][0]["reporting_state"] == "reporting_recently"
+        assert health["latest_checkins"][0]["reporting_state"] == (
+            "reporting_recently"
+        )
+        assert health["totals"]["latest_reporting_recently_count"] == 1
+
+        after = db.connect(db_path)
+        try:
+            assert [
+                row["run_id"]
+                for row in agents.agent_run_checkins.list_latest_checkins(after)
+            ] == ["a-after"]
+        finally:
+            after.close()

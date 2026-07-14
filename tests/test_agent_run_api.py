@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from athena import config
-from athena.core import agent_run_commands
+from athena.core import agent_run_commands, db
 from athena.main import create_app
 
 _ADMIN_HEADER = {"X-Athena-Actor": "1"}
@@ -326,6 +326,25 @@ def test_admin_agent_run_health_includes_safe_checkins_and_totals(tmp_path):
             scopes=["issue:write"],
             name="writer",
         )
+        old_heartbeat = client.put(
+            "/agent-runs/heartbeat",
+            json={"run_id": "old-run"},
+            headers=_bearer(token),
+        )
+        assert old_heartbeat.status_code == 200, old_heartbeat.text
+        conn = db.connect(app.state.db_path)
+        try:
+            conn.execute(
+                "UPDATE agent_run_checkins "
+                "SET first_seen_at = '2000-01-01 00:00:00', "
+                "last_seen_at = '2000-01-01 00:00:00' "
+                "WHERE agent_id = ? AND run_id = 'old-run'",
+                (agent["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
         heartbeat = client.put(
             "/agent-runs/heartbeat",
             json={"run_id": "health-run"},
@@ -336,8 +355,8 @@ def test_admin_agent_run_health_includes_safe_checkins_and_totals(tmp_path):
         response = client.get("/activity/agent-runs", headers=_ADMIN_HEADER)
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert len(payload["checkins"]) == 1
-        checkin = payload["checkins"][0]
+        assert len(payload["checkins"]) == 2
+        checkin = payload["latest_checkins"][0]
         assert set(checkin) == _SAFE_CHECKIN_KEYS
         assert checkin["agent_id"] == agent["id"]
         assert checkin["agent_name"] == "Bot"
@@ -345,5 +364,8 @@ def test_admin_agent_run_health_includes_safe_checkins_and_totals(tmp_path):
         assert checkin["run_id"] == "health-run"
         assert checkin["reporting_state"] == "reporting_recently"
         assert payload["totals"]["reporting_recently_count"] == 1
-        assert payload["totals"]["stale_checkin_count"] == 0
-        assert payload["totals"]["total_checkin_count"] == 1
+        assert payload["totals"]["stale_checkin_count"] == 1
+        assert payload["totals"]["total_checkin_count"] == 2
+        assert payload["totals"]["latest_reporting_recently_count"] == 1
+        assert payload["totals"]["latest_stale_checkin_count"] == 0
+        assert payload["totals"]["latest_checkin_count"] == 1
