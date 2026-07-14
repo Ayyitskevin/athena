@@ -1148,8 +1148,16 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         finally:
             tc.headers["Authorization"] = admin_authorization
         assert heartbeat[0].text
+        mcp_health_result = asyncio.run(
+            server.call_tool("get_agent_run_health", {"agent_id": agent["id"]})
+        )
+        mcp_health = json.loads(mcp_health_result[0].text)
+        assert mcp_health["latest_checkins"][0]["run_id"] == "mcp-run"
+        assert mcp_health["totals"]["latest_reporting_recently_count"] == 1
         health = ath.get_agent_run_health(agent_id=agent["id"])
         assert health["checkins"][0]["run_id"] == "mcp-run"
         assert health["checkins"][0]["agent_id"] == agent["id"]
+        assert health["latest_checkins"][0]["run_id"] == "mcp-run"
+        assert health["totals"]["latest_reporting_recently_count"] == 1
     finally:
         tc.__exit__(None, None, None)

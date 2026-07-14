@@ -173,6 +173,9 @@ class AgentRunHealthRowOut(BaseModel):
 class AgentRunHealthTotalsOut(BaseModel):
     agent_count: int
     agents_with_activity_count: int
+    latest_reporting_recently_count: int
+    latest_stale_checkin_count: int
+    latest_checkin_count: int
     reporting_recently_count: int
     stale_checkin_count: int
     total_checkin_count: int
@@ -201,6 +204,7 @@ class AgentRunHealthOut(BaseModel):
     agent_options: list[AgentIdentityOut]
     selected_agent_id: int | None
     selected_agent: AgentIdentityOut | None
+    latest_checkins: list[AgentRunCheckinOut]
     checkins: list[AgentRunCheckinOut]
     totals: AgentRunHealthTotalsOut
 

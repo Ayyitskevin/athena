@@ -90,6 +90,44 @@ def list_recent_checkins(
     ]
 
 
+def list_latest_checkins(
+    conn: sqlite3.Connection,
+    *,
+    agent_id: int | None = None,
+    stale_seconds: int | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Return exactly one newest safe check-in projection per reporting agent.
+
+    Mission-control headline state belongs to an agent's latest report, not every
+    retained historical run row. The correlated lookup considers the agent's full
+    check-in history (not the bounded recent-history window) and breaks timestamp
+    ties by run id so the projection is deterministic.
+    """
+    clauses = ["u.is_agent = 1"]
+    params: list[int] = []
+    if agent_id is not None:
+        clauses.append("u.id = ?")
+        params.append(int(agent_id))
+    rows = conn.execute(
+        "SELECT c.agent_id, u.name AS agent_name, u.email AS agent_email, "
+        "c.run_id, c.first_seen_at, c.last_seen_at "
+        "FROM users u JOIN agent_run_checkins c ON c.agent_id = u.id "
+        "AND c.run_id = ("
+        "SELECT newest.run_id FROM agent_run_checkins newest "
+        "WHERE newest.agent_id = u.id "
+        "ORDER BY newest.last_seen_at DESC, newest.run_id ASC LIMIT 1"
+        ") "
+        f"WHERE {' AND '.join(clauses)} "
+        "ORDER BY c.last_seen_at DESC, c.agent_id, c.run_id",
+        params,
+    ).fetchall()
+    return [
+        _with_reporting_state(dict(row), stale_seconds=stale_seconds, now=now)
+        for row in rows
+    ]
+
+
 def _bounded_limit(limit: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int):
         raise ValueError("limit must be an integer")
