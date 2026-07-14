@@ -94,3 +94,4 @@ users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — design of record and phased roadmap
 - [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — deployment, bootstrap, roles, token scopes
 - [`docs/RUNS.md`](docs/RUNS.md) — deterministic run replay, lineage, and forking
+- [`docs/WORK_CONTEXT.md`](docs/WORK_CONTEXT.md) — bounded actor-visible issue context for agents

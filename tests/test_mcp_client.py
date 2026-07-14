@@ -53,6 +53,15 @@ class _RecordingClient:
     def post(self, path, **kwargs):
         return self._response("POST", path, **kwargs)
 
+    def get(self, path, **kwargs):
+        self.calls.append(("GET", path, kwargs))
+        return httpx.Response(
+            200,
+            json={"issue": {"id": 7}},
+            headers={"ETag": '"context-v1"'},
+            request=httpx.Request("GET", f"http://athena.test{path}"),
+        )
+
     def patch(self, path, **kwargs):
         return self._response("PATCH", path, **kwargs)
 
@@ -297,6 +306,17 @@ def test_heartbeat_client_puts_only_run_id_without_idempotency_header():
     method, path, kwargs = transport.calls.pop()
     assert (method, path) == ("PUT", "/agent-runs/heartbeat")
     assert kwargs == {"json": {"run_id": "run-7"}}
+
+
+def test_work_context_client_gets_packet_through_result_and_exposes_etag():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    assert client.get_issue_work_context("ATH-7") == {
+        "issue": {"id": 7},
+        "_etag": '"context-v1"',
+    }
+    assert transport.calls == [("GET", "/issues/ATH-7/work-context", {})]
 
 
 def test_athena_error_preserves_legacy_construction_and_pickle_state():
@@ -925,6 +945,20 @@ def test_mcp_error_text_preserves_structured_retry_metadata():
     assert payload["message"] == "POST /issues -> 409: still running"
 
 
+def test_work_context_mcp_tool_forwards_only_the_issue_ref():
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    asyncio.run(server.call_tool("get_issue_work_context", {"ref": "ATH-7"}))
+
+    assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
+
+
 def test_mcp_server_registers_tools_and_calls_through(tmp_path):
     pytest.importorskip("mcp")
     import asyncio
@@ -941,6 +975,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "search",
             "list_issues",
             "get_issue",
+            "get_issue_work_context",
             "create_issue",
             "update_issue",
             "set_issue_placement",
@@ -992,6 +1027,24 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             }
             assert types == {"integer", "null"}
         assert MUTATION_TOOL_NAMES <= names
+
+        work_context_tool = tools["get_issue_work_context"]
+        assert work_context_tool.inputSchema["required"] == ["ref"]
+        assert set(work_context_tool.inputSchema["properties"]) == {"ref"}
+        work_context_description = work_context_tool.description.lower()
+        for contract_term in (
+            "bounded",
+            "current",
+            "visible issue",
+            "visible supporting docs",
+            "claim",
+            "lease",
+            "readiness",
+            "unblocked",
+            "liveness",
+            "replayability",
+        ):
+            assert contract_term in work_context_description
 
         heartbeat_schema = tools["heartbeat_agent_run"].inputSchema
         assert heartbeat_schema["required"] == ["run_id"]

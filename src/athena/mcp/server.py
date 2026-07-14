@@ -115,6 +115,14 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.get_issue(ref)
 
     @mcp.tool()
+    def get_issue_work_context(ref: str) -> dict:
+        """Get a bounded, current packet containing one visible issue and its
+        visible supporting docs. This is context only: it is not a claim or lease,
+        and does not guarantee readiness, unblocked status, agent liveness, or
+        replayability."""
+        return client.get_issue_work_context(ref)
+
+    @mcp.tool()
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
         """Reconstruct an issue's lifecycle state from the activity log. Pass
         as_of_event_id to time-travel to the state at that activity checkpoint; omit

@@ -27,6 +27,7 @@ from athena.aegis import automation as aegis_automation
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import sprints_api as aegis_sprints_api
+from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
     agent_runs_api,
     activity_api,
@@ -56,6 +57,7 @@ from athena.web import filters as web_filters
 from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
 from athena.web import projects as web_projects
+from athena.web import work_context as web_work_context
 from athena.web import init_templates, router as web_router
 
 
@@ -1104,6 +1106,7 @@ def create_app(
     app.include_router(web_mentor.router)
     app.include_router(web_labels.router)
     app.include_router(web_admin.router)
+    app.include_router(web_work_context.router)
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
@@ -1123,6 +1126,7 @@ def create_app(
     app.include_router(aegis_filters_api.router)
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
+    app.include_router(aegis_work_context_api.router)
 
     # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)

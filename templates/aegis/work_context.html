@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+
+{% block title %}Agent work context — {{ issue.key or "#" ~ issue.id }} — Aegis{% endblock %}
+
+{% macro excerpt(value, empty_message="No text in this field.") %}
+    {% if value.text %}
+    <pre class="body-text">{{ value.text }}</pre>
+    {% else %}
+    <p class="muted">{{ empty_message }}</p>
+    {% endif %}
+    <p class="note-small">
+        {{ value.total_chars }} total character{{ "s" if value.total_chars != 1 }}.
+        {% if value.truncated %}
+        <strong>Truncated:</strong> this preview contains only an excerpt.
+        {% else %}
+        The complete field is present in this projection.
+        {% endif %}
+    </p>
+{% endmacro %}
+
+{% macro group_summary(group) %}
+<p class="muted">
+    Showing {{ group["items"] | length }} of {{ group.visible_total }} visible
+    item{{ "s" if group.visible_total != 1 }}.
+    {% if group.clipped %}
+    <strong>Clipped:</strong> additional visible items are outside this bounded preview.
+    {% endif %}
+</p>
+{% endmacro %}
+
+{% macro related_issue(item) %}
+<a href="/aegis/issues/{{ item.id }}" class="xref">
+    {{ item.key or "#" ~ item.id }} {{ item.title }}
+</a>
+<span class="status {{ item.status }}">{{ item.status }}</span>
+<span class="priority {{ item.priority }}">{{ item.priority }}</span>
+<span class="muted">
+    {{ item.status_category }} ·
+    {% if item.project_id %}{{ item.project_name }} (project #{{ item.project_id }}){% else %}backlog{% endif %}
+    {% if item.archived_at %} · archived {{ item.archived_at }}{% endif %}
+</span>
+{% endmacro %}
+
+{% macro related_group(title, group, empty_message) %}
+<section class="card">
+    <h3>{{ title }}</h3>
+    {{ group_summary(group) }}
+    {% if group["items"] %}
+    <ul class="rel-list">
+        {% for item in group["items"] %}
+        <li>{{ related_issue(item) }}</li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">{{ empty_message }}</p>
+    {% endif %}
+</section>
+{% endmacro %}
+
+{% macro reference_link(item) %}
+    {% if item.kind == "issue" %}
+    <a href="/aegis/issues/{{ item.id }}" class="xref">{{ item.issue_key or "#" ~ item.id }} {{ item.title }}</a>
+    {% else %}
+    <a href="/mentor/pages/{{ item.id }}" class="xref">{{ item.space_key ~ ":" if item.space_key else "" }}{{ item.title }}</a>
+    {% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/issues/{{ issue.id }}" class="muted">← Back to {{ issue.key or "issue #" ~ issue.id }}</a>
+        <h1>Agent work context</h1>
+        <p class="subtitle">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</p>
+    </div>
+</div>
+
+<div class="warning" role="note">
+    <strong>Observation boundary:</strong>
+    This is the current visible context only. It does not prove the issue is
+    claimed, ready, unblocked, running, live, or replay-safe.
+</div>
+
+<p class="muted">
+    Counts include only records visible to this viewer. Hidden records are neither
+    counted nor disclosed. “Clipped” means additional visible records exist outside
+    this bounded preview; “truncated” means only part of a text field is shown.
+</p>
+
+<section class="card">
+    <h2>Projection contract</h2>
+    <dl class="tt-fields">
+        <dt>Schema</dt><dd><code>{{ schema }}</code></dd>
+        <dt>Scope</dt><dd><code>{{ scope }}</code></dd>
+        <dt>Snapshot</dt><dd><code>{{ semantics.snapshot }}</code></dd>
+        <dt>Does not assert</dt>
+        <dd>
+            {% for assertion in semantics.does_not_assert %}
+            <code>{{ assertion }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </dd>
+        <dt>Issue ETag</dt><dd><code>{{ issue_etag }}</code></dd>
+    </dl>
+</section>
+
+<section class="{{ 'warning' if warnings else 'card' }}" aria-labelledby="context-warnings">
+    <h2 id="context-warnings">Projection warnings</h2>
+    {% if warnings %}
+    <ul>
+        {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">
+        No projection warnings were emitted. This is not an execution-readiness signal.
+    </p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2>Issue</h2>
+    <dl class="tt-fields">
+        <dt>Reference</dt><dd>{{ issue.key or "#" ~ issue.id }} (id {{ issue.id }})</dd>
+        <dt>Title</dt><dd>{{ issue.title }}</dd>
+        <dt>Status</dt>
+        <dd>
+            <span class="status {{ issue.status }}">{{ issue.status }}</span>
+            <span class="muted">category {{ issue.status_category }}</span>
+        </dd>
+        <dt>Priority</dt><dd><span class="priority {{ issue.priority }}">{{ issue.priority }}</span></dd>
+        <dt>Project</dt>
+        <dd>
+            {% if issue.project_id %}
+            {{ issue.project_name }} (id {{ issue.project_id }})
+            {% else %}
+            <span class="muted">Backlog</span>
+            {% endif %}
+        </dd>
+        <dt>Assignee</dt>
+        <dd>
+            {% if issue.assignee_id %}
+            {{ issue.assignee_name }} (user {{ issue.assignee_id }})
+            {% else %}
+            <span class="muted">Unassigned</span>
+            {% endif %}
+        </dd>
+        <dt>Created</dt><dd>{{ issue.created_at }} by user {{ issue.created_by }}</dd>
+        <dt>Archive</dt>
+        <dd>{% if issue.archived_at %}Archived {{ issue.archived_at }}{% else %}<span class="muted">Active</span>{% endif %}</dd>
+        <dt>Labels</dt>
+        <dd>
+            {% if issue.labels %}
+            <span class="label-list">
+                {% for label in issue.labels %}
+                <span class="label" style="background: {{ label.color }}1a; color: {{ label.color }};">{{ label.name }}</span>
+                {% endfor %}
+            </span>
+            {% else %}
+            <span class="muted">No labels.</span>
+            {% endif %}
+        </dd>
+    </dl>
+    <h3>Description</h3>
+    {{ excerpt(issue.description, "No description.") }}
+</section>
+
+<h2>Hierarchy</h2>
+<div class="aegis-grid">
+    <section class="card">
+        <h3>Parent</h3>
+        {% if hierarchy.parent %}
+        <p>{{ related_issue(hierarchy.parent) }}</p>
+        {% else %}
+        <p class="muted">No visible parent is included.</p>
+        {% endif %}
+    </section>
+    {{ related_group("Children", hierarchy.children, "No visible children are included.") }}
+</div>
+
+<h2>Dependencies</h2>
+<p class="muted">
+    An empty visible dependency group is not proof that no hidden relationship exists
+    or that this issue is safe to start.
+</p>
+<div class="aegis-grid">
+    {{ related_group("Open blockers", dependencies.open_blockers, "No visible open blockers are included.") }}
+    {{ related_group("Blocked by", dependencies.blocked_by, "No visible blockers are included.") }}
+    {{ related_group("Blocks", dependencies.blocks, "No visible blocked issues are included.") }}
+    {{ related_group("Relates to", dependencies.relates, "No visible related issues are included.") }}
+</div>
+
+<h2>People and artifacts</h2>
+<div class="aegis-grid">
+    <section class="card">
+        <h3>Contributors</h3>
+        {{ group_summary(contributors) }}
+        {% if contributors["items"] %}
+        <ul>
+            {% for contributor in contributors["items"] %}
+            <li>
+                <strong>{{ contributor.name }}</strong>
+                {% if contributor.is_agent %}<span class="agent-badge">agent</span>{% endif %}
+                <span class="muted">
+                    user {{ contributor.user_id }}
+                    {% if contributor.added_by %} · added by user {{ contributor.added_by }}{% endif %}
+                    · {{ contributor.added_at }}
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No visible contributors are included.</p>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h3>Attachments</h3>
+        {{ group_summary(attachments) }}
+        {% if attachments["items"] %}
+        <ul class="attachment-list">
+            {% for attachment in attachments["items"] %}
+            <li>
+                <a href="/attachments/{{ attachment.id }}">{{ attachment.filename }}</a>
+                <span class="muted">
+                    {{ attachment.content_type or "unknown media type" }} ·
+                    {{ attachment.byte_size }} bytes · uploaded by user
+                    {{ attachment.uploaded_by }} · {{ attachment.created_at }}
+                </span>
+                <br>
+                <span class="note-small">SHA-256 <code>{{ attachment.sha256 }}</code></span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No visible attachments are included.</p>
+        {% endif %}
+    </section>
+</div>
+
+<section class="card">
+    <h2>Comments</h2>
+    {{ group_summary(comments) }}
+    {% if comments["items"] %}
+    <ol class="comment-list">
+        {% for comment in comments["items"] %}
+        <li class="comment">
+            <div class="comment-meta">
+                <strong>{{ comment.author_name }}</strong>
+                <span class="muted">user {{ comment.author_id }} · {{ comment.created_at }} · comment #{{ comment.id }}</span>
+            </div>
+            {{ excerpt(comment.body, "Empty comment.") }}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">No visible comments are included.</p>
+    {% endif %}
+</section>
+
+<h2>References</h2>
+<div class="aegis-grid">
+    <section class="card">
+        <h3>Outgoing</h3>
+        {{ group_summary(references.outgoing) }}
+        {% if references.outgoing["items"] %}
+        <ul class="backlink-list">
+            {% for reference in references.outgoing["items"] %}
+            <li>
+                {{ reference_link(reference) }}
+                <span class="muted">
+                    {{ reference.kind }} #{{ reference.id }}
+                    {% if reference.kind == "issue" %}
+                    · {{ reference.status }} / {{ reference.status_category }} · {{ reference.priority }}
+                    {% elif reference.space_id %}
+                    · {{ reference.space_name }} (space {{ reference.space_key or "#" ~ reference.space_id }})
+                    {% endif %}
+                </span>
+                {% if reference.body %}
+                {{ excerpt(reference.body, "The referenced page has no body.") }}
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No visible outgoing references are included.</p>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h3>Backlinks</h3>
+        {{ group_summary(references.backlinks) }}
+        {% if references.backlinks["items"] %}
+        <ul class="backlink-list">
+            {% for backlink in references.backlinks["items"] %}
+            <li>
+                {{ reference_link(backlink) }}
+                <span class="muted">{{ backlink.kind }} #{{ backlink.id }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No visible backlinks are included.</p>
+        {% endif %}
+    </section>
+</div>
+
+<section class="card activity">
+    <h2>Recent activity</h2>
+    {{ group_summary(recent_activity) }}
+    {% if recent_activity["items"] %}
+    <ol class="activity-list">
+        {% for event in recent_activity["items"] %}
+        <li class="activity-item">
+            <span class="activity-actor">{{ event.actor_name }}</span>
+            <span class="activity-detail">{{ event.verb }}</span>
+            <span class="muted">
+                event #{{ event.id }} · actor {{ event.actor_id }} ·
+                {{ event.target_kind }} #{{ event.target_id }} · {{ event.created_at }}
+            </span>
+            {% if event.run_id %}
+            <span class="run-id">run {{ event.run_id }}</span>
+            {% endif %}
+            {% if event.parent_run_id %}
+            <span class="muted">parent run {{ event.parent_run_id }}</span>
+            {% endif %}
+            {% if event.forked_from_event_id %}
+            <span class="muted">forked from event #{{ event.forked_from_event_id }}</span>
+            {% endif %}
+            {% if event.imported_at %}
+            <span class="muted">imported {{ event.imported_at }}</span>
+            {% endif %}
+            {{ excerpt(event.detail, "No event detail.") }}
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">No visible recent activity is included.</p>
+    {% endif %}
+</section>
+
+<p class="note">Agent work context from the shared Aegis projection.</p>
+{% endblock %}
