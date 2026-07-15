@@ -107,11 +107,16 @@ def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
     return _row_to_user(row) if row else None
 
 
-def set_role(conn: sqlite3.Connection, user_id: int, role: str) -> dict | None:
-    """Change a user's role and return the updated row, or None if missing."""
+def set_role(
+    conn: sqlite3.Connection, user_id: int, role: str, *, commit: bool = True
+) -> dict | None:
+    """Change a user's role and return the updated row, or None if missing.
+    `commit=False` lets a compound command (e.g. offboarding) fold the role change
+    into one transaction with the session/token revocations and the audit event."""
     role = normalize_role(role)
     cur = conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_user(conn, user_id)

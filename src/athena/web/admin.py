@@ -11,6 +11,7 @@ from athena import config
 from athena.aegis import automation, delegations, projects, statuses
 from athena.core import (
     activity,
+    agent_commands,
     agents,
     identity,
     oidc,
@@ -353,7 +354,13 @@ def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
 
 @router.get("/admin/agents", response_class=HTMLResponse)
-def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
+def agents_admin(
+    request: Request,
+    revoked: int | None = Query(None),
+    offboarded: str | None = Query(None),
+    error: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
     templates = get_templates()
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
@@ -364,11 +371,60 @@ def agents_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn))
         agent["delegation_inbox"] = delegations.list_delegations(
             conn, agent["user"], viewer=user, limit=20
         )
+    # Post/redirect/get carries the outcome back as a query param so a refresh
+    # doesn't re-post the destructive action.
+    notice = None
+    if revoked is not None:
+        notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
+    elif offboarded:
+        notice = "Offboarded: demoted to viewer, sessions and tokens revoked."
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
-        context={"agents": agent_rows},
+        context={"agents": agent_rows, "notice": notice, "error": error},
     )
+
+
+@router.post(
+    "/admin/agents/{user_id}/revoke-tokens",
+    dependencies=[Depends(verify_csrf)],
+)
+def revoke_agent_tokens(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    try:
+        result = agent_commands.revoke_agent_tokens(
+            conn, actor_id=user["id"], target_user_id=user_id
+        )
+    except agent_commands.AgentCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse(
+        f"/admin/agents?revoked={result['revoked_token_count']}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/agents/{user_id}/offboard",
+    dependencies=[Depends(verify_csrf)],
+)
+def offboard_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.offboard_user(
+            conn, actor_id=user["id"], target_user_id=user_id
+        )
+    except agent_commands.AgentCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)
@@ -490,6 +546,12 @@ def update_user_password(
             status_code=400,
         )
     users.set_password(conn, user_id, password)
+    # An admin resetting a compromised or departing user's password must actually
+    # end that user's access — revoke every live session so an existing cookie can't
+    # keep authenticating for up to SESSION_TTL_DAYS. (The self-service change path
+    # does the same for other devices; this is the admin-initiated equivalent, and
+    # here we keep none of the target's sessions.)
+    sessions.revoke_all_sessions(conn, user_id)
     return RedirectResponse("/admin/users", status_code=303)
 
 

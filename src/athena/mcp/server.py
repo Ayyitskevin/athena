@@ -207,6 +207,22 @@ def build_server(client: AthenaClient) -> FastMCP:
             fork_run_id=fork_run_id,
         )
 
+    # --- agent control (admin) ---------------------------------------------
+
+    @mutation_tool
+    def revoke_agent_tokens(user_id: int) -> dict:
+        """Admin kill switch: revoke EVERY live API token held by user_id — the
+        lever to immediately stop a compromised or runaway agent. Idempotent and
+        audited; returns {user_id, revoked_token_count}. Requires an admin token."""
+        return client.revoke_agent_tokens(user_id)
+
+    @mutation_tool
+    def offboard_agent(user_id: int) -> dict:
+        """Admin one-click offboard: demote user_id to viewer, revoke every session,
+        and revoke every token — one audited lockout. Refuses to strip the last
+        admin. Returns the counts revoked. Requires an admin token."""
+        return client.offboard_user(user_id)
+
     # --- issue writes -------------------------------------------------------
 
     @mutation_tool

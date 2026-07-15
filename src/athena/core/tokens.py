@@ -140,3 +140,23 @@ def revoke_token(conn: sqlite3.Connection, *, user_id: int, token_id: int) -> bo
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def revoke_all_tokens_for_user(
+    conn: sqlite3.Connection, *, user_id: int, commit: bool = True
+) -> int:
+    """Revoke EVERY live token a user holds; return how many were revoked.
+
+    Unlike revoke_token this is NOT owner-scoped — it is the operator's fleet-level
+    kill switch for a compromised or runaway agent, so the CALLER must gate it on
+    admin. Idempotent: a second call revokes nothing and returns 0. `commit=False`
+    lets an offboard command bundle this with the session/role changes and the audit
+    event in one transaction, so the credential and its lockout record land together."""
+    cur = conn.execute(
+        "UPDATE api_tokens SET revoked_at = datetime('now')"
+        " WHERE user_id = ? AND revoked_at IS NULL",
+        (user_id,),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount
