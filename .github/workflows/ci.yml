@@ -30,15 +30,36 @@ jobs:
         run: .venv/bin/python -m ruff check .
       - name: Run tests
         run: .venv/bin/python -m pytest -q
-      - name: Build and install the wheel
+      - name: Build and install through the source distribution
         run: |
-          .venv/bin/python -m pip wheel --no-deps --wheel-dir wheelhouse .
-          .venv/bin/python scripts/verify_wheel.py wheelhouse/athena-*.whl
+          set -euo pipefail
+          dist_root="$(mktemp -d "$RUNNER_TEMP/athena-dist.XXXXXX")"
+          .venv/bin/python -m build \
+            --outdir "$dist_root/artifacts" \
+            --sdist-extract-dir "$dist_root/source" \
+            .
+          shopt -s nullglob
+          sdists=("$dist_root"/artifacts/*.tar.gz)
+          wheels=("$dist_root"/artifacts/*.whl)
+          source_trees=("$dist_root"/source/athena-*)
+          if (( ${#sdists[@]} != 1 || ${#wheels[@]} != 1 || ${#source_trees[@]} != 1 )); then
+            echo "expected exactly one sdist, wheel, and extracted source tree" >&2
+            exit 1
+          fi
+          if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" || ! -f "${source_trees[0]}/scripts/smoke_app.py" ]]; then
+            echo "source distribution is missing its verification helpers" >&2
+            exit 1
+          fi
+          .venv/bin/python scripts/verify_wheel.py "${wheels[0]}"
+          .venv/bin/python \
+            "${source_trees[0]}/scripts/verify_wheel.py" \
+            "${wheels[0]}"
+          echo "ATHENA_SDIST_SOURCE=${source_trees[0]}" >> "$GITHUB_ENV"
           .venv/bin/python -m pip uninstall --yes athena
-          .venv/bin/python -m pip install --no-deps wheelhouse/athena-*.whl
+          .venv/bin/python -m pip install --no-deps "${wheels[0]}"
           .venv/bin/python -m pip check
-      - name: Boot the installed wheel outside the checkout
+      - name: Boot the sdist-derived wheel outside the checkout
         working-directory: /tmp
         run: |
           "$GITHUB_WORKSPACE/.venv/bin/python" -c 'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
-          "$GITHUB_WORKSPACE/.venv/bin/python" "$GITHUB_WORKSPACE/scripts/smoke_app.py"
+          "$GITHUB_WORKSPACE/.venv/bin/python" "$ATHENA_SDIST_SOURCE/scripts/smoke_app.py"

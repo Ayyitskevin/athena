@@ -81,7 +81,9 @@ docs/        this file, OPERATIONS.md (the runbook), design notes
 
 Templates, static assets, and `core/migrations/*.sql` are runtime package data.
 Keeping them below `src/athena/` makes editable checkouts and installed wheels use
-the same files from the same owner.
+the same files from the same owner. CI builds the installable wheel through an
+extracted source distribution and runs the verification helpers retained in that
+archive, so both distribution formats must preserve those runtime owners.
 
 There is no separate `api/` package: each module owns its REST surface
 (`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves

@@ -19,7 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 # Starlette's TestClient prefers httpx2. Keep httpx too: Athena's MCP client
 # imports it directly and the MCP SDK requires it.
-dev = ["pytest", "httpx", "httpx2>=2,<3", "ruff>=0.8,<1"]
+dev = ["build>=1.5,<2", "pytest", "httpx", "httpx2>=2,<3", "ruff>=0.8,<1"]
 # The MCP server is optional — it lets an AI agent drive Athena over MCP. Install
 # with `pip install athena[mcp]`. Kept out of the base install so the core app
 # stays lean; CI opts in explicitly so the MCP wiring test cannot silently skip.

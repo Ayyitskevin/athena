@@ -1,9 +1,10 @@
 # CI dependency constraints
 
 `ci-py312.txt` pins the external runtime, development, and MCP dependency set
-used by Athena's Linux/Python 3.12 CI job. `pyproject.toml` remains the source of
-package requirements; the constraints file limits which versions pip may choose
-without causing every listed package to be installed.
+used by Athena's Linux/Python 3.12 CI job, including the PyPA build frontend.
+`pyproject.toml` remains the source of package requirements; the constraints file
+limits which versions pip may choose without causing every listed package to be
+installed.
 
 These are version pins, not a hash-verified or cross-platform lockfile. They do
 not pin the Python patch release, pip itself, or the isolated setuptools build
@@ -22,4 +23,6 @@ Replace `ci-py312.txt` with the final command's output, then repeat CI's
 constrained install in a second clean environment and run Ruff, the full test
 suite, and `scripts/smoke_app.py`. CI also compares its installed external
 package set to this file so a newly declared or transitive runtime, development,
-or MCP dependency cannot silently bypass the pins.
+or MCP dependency cannot silently bypass the pins. The pinned build frontend
+drives CI's source-distribution-to-wheel gate; its isolated setuptools backend
+remains outside this constraint set.
