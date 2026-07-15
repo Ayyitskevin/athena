@@ -15,6 +15,7 @@ These tests encode the contract that matters, not just that the FTS query runs:
   * the REST endpoint requires an authenticated actor (a cross-cutting read over
     every issue and page) and can be narrowed to one kind.
 """
+import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues, projects
@@ -254,6 +255,24 @@ def test_offset_pages_the_ranked_set(tmp_path):
     assert set(first_two + next_two) <= set(made)
 
 
+def test_offset_stays_inside_sqlite_integer_range(tmp_path):
+    # WHY: sqlite3 binds LIMIT/OFFSET as signed 64-bit integers. Validate direct
+    # callers before binding so an oversized page cannot become an OverflowError.
+    conn = _migrated_conn(tmp_path / "offset-bound.db")
+    _seed_user(conn)
+    issues.create_issue(conn, title="lantern", body="", created_by=1)
+
+    assert search.search(
+        conn,
+        "lantern",
+        limit=1,
+        offset=search.MAX_OFFSET,
+    ) == []
+    for offset in (-1, search.MAX_OFFSET + 1):
+        with pytest.raises(ValueError, match="offset must be between"):
+            search.search(conn, "lantern", limit=1, offset=offset)
+
+
 # --- API: the REST endpoint -------------------------------------------------
 
 
@@ -311,6 +330,31 @@ def test_search_endpoint_missing_q_is_422(tmp_path):
         _seed_api_user(tmp_path / "apiq.db")
         h = {"X-Athena-Actor": "1"}
         assert client.get("/search", headers=h).status_code == 422
+
+
+def test_search_endpoint_bounds_offset_to_sqlite_integer_range(tmp_path):
+    # WHY: FastAPI must reject the first unbindable integer as a 422 instead of
+    # allowing sqlite3's OverflowError to escape as a request-scoped 500.
+    app = create_app(tmp_path / "apioffset.db")
+    with TestClient(app) as client:
+        _seed_api_user(tmp_path / "apioffset.db")
+        h = {"X-Athena-Actor": "1"}
+        assert (
+            client.get(
+                "/search",
+                params={"q": "x", "offset": search.MAX_OFFSET},
+                headers=h,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                "/search",
+                params={"q": "x", "offset": search.MAX_OFFSET + 1},
+                headers=h,
+            ).status_code
+            == 422
+        )
 
 
 def test_search_endpoint_carries_context_and_pages(tmp_path):

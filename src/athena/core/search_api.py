@@ -40,7 +40,12 @@ def query(
     q: str = Query(..., description="free text; prefix-matched, terms AND together"),
     kind: str | None = Query(None, description="narrow to 'issue' or 'page'"),
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0, description="skip this many ranked hits (paging)"),
+    offset: int = Query(
+        0,
+        ge=0,
+        le=search.MAX_OFFSET,
+        description="skip this many ranked hits (paging)",
+    ),
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:

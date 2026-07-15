@@ -26,6 +26,11 @@ import sqlite3
 
 from athena.core import access
 
+# SQLite binds integer query parameters as signed 64-bit values. Keep the
+# pagination contract inside that range so an oversized request is rejected at
+# the boundary instead of surfacing as an sqlite3 OverflowError.
+MAX_OFFSET = 2**63 - 1
+
 # The searchable kinds and the table each lives in. Both tables expose `title`
 # and `body`. Values are fixed literals, never caller input, so building a query
 # string from them is safe.
@@ -199,6 +204,8 @@ def search(
     list, so search excludes them too — the derived FTS index doesn't carry the archived
     flag, so the exclusion is applied here by source. Pages have no archival, so this
     only ever removes archived issue hits. Pass True to search the archive as well."""
+    if offset < 0 or offset > MAX_OFFSET:
+        raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
     if not query or not query.strip():
         return []
     if ids is not None and not ids:

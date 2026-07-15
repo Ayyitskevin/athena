@@ -197,6 +197,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
 
 
 _SEARCH_PAGE = 20
+_MAX_SEARCH_PAGE = search.MAX_OFFSET // _SEARCH_PAGE + 1
 
 
 @router.get("/find", response_class=HTMLResponse)
@@ -227,7 +228,10 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
     filtered_mode = bool(status_filter or label_filter or project_filter)
     try:
-        page = max(1, int(request.query_params.get("page", 1)))
+        page = min(
+            _MAX_SEARCH_PAGE,
+            max(1, int(request.query_params.get("page", 1))),
+        )
     except (TypeError, ValueError):
         page = 1
 

@@ -22,6 +22,10 @@ STATUSES = ("open", "in_progress", "done")
 # the one canonical set the REST API and the web forms both validate against.
 PRIORITIES = ("low", "medium", "high", "urgent")
 
+# SQLite binds LIMIT/OFFSET parameters as signed 64-bit values. The REST list
+# exposes this ceiling explicitly; keep the data layer safe for direct callers too.
+MAX_OFFSET = 2**63 - 1
+
 
 def _like_contains(value: str) -> str:
     """A LIKE pattern matching rows that CONTAIN `value` literally: %, _ and \\ are
@@ -530,6 +534,8 @@ def list_issues(
       paging is well-defined.
 
     Column names below are hardcoded literals; all values stay parameterized."""
+    if offset < 0 or offset > MAX_OFFSET:
+        raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
     if ids is not None and not ids:
         return []  # an empty id set can't match — and "IN ()" isn't valid SQL
     clauses: list[str] = []
