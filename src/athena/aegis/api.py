@@ -422,7 +422,7 @@ def index(
     sprint: int | None = None,
     include_archived: bool = False,
     limit: int = Query(50, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -480,7 +480,7 @@ def search_issues_endpoint(
     label: str | None = None,
     project: str | None = None,
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:

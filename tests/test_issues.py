@@ -4,8 +4,10 @@ Issues are created *by* someone. The creator is the actor on the request
 (the `X-Athena-Actor` header), not a value the caller puts in the body — so
 these tests drive creation through that header.
 """
+import pytest
 from fastapi.testclient import TestClient
 
+from athena.aegis import issues
 from athena.core import db
 from athena.main import create_app
 
@@ -264,6 +266,23 @@ def test_list_is_paginated_and_bounded(tmp_path):
         assert client.get("/issues?limit=-1").status_code == 422
         assert client.get("/issues?limit=101").status_code == 422
         assert client.get("/issues?offset=-1").status_code == 422
+        assert client.get(f"/issues?offset={issues.MAX_OFFSET}").status_code == 200
+        assert (
+            client.get(f"/issues?offset={issues.MAX_OFFSET + 1}").status_code
+            == 422
+        )
+
+
+def test_list_data_layer_rejects_unbindable_offset(tmp_path):
+    # WHY: list_issues is shared beyond HTTP. Its direct callers should get a
+    # deterministic validation error before sqlite3 tries to bind an oversized int.
+    conn = db.connect(tmp_path / "data-offset.db")
+    db.migrate(conn)
+    try:
+        with pytest.raises(ValueError, match="offset must be between"):
+            issues.list_issues(conn, limit=1, offset=issues.MAX_OFFSET + 1)
+    finally:
+        conn.close()
 
 
 def test_list_default_page_size_is_bounded(tmp_path):

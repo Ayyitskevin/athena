@@ -145,6 +145,20 @@ def test_endpoint_bounds_limit_and_offset(tmp_path):
         assert client.get("/issues/search", params={"q": "x", "limit": 0}).status_code == 422
         assert client.get("/issues/search", params={"q": "x", "limit": 1000}).status_code == 422
         assert client.get("/issues/search", params={"q": "x", "offset": -1}).status_code == 422
+        assert (
+            client.get(
+                "/issues/search",
+                params={"q": "x", "offset": issues.MAX_OFFSET},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(
+                "/issues/search",
+                params={"q": "x", "offset": issues.MAX_OFFSET + 1},
+            ).status_code
+            == 422
+        )
         assert client.get("/issues/search", params={"q": "x", "limit": 50}).status_code == 200
 
 

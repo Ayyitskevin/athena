@@ -13,6 +13,7 @@ These tests encode what matters for the human page, not just a 200:
 """
 from fastapi.testclient import TestClient
 
+from athena.core import search
 from athena.main import create_app
 
 
@@ -153,3 +154,25 @@ def test_find_paginates_when_results_overflow_a_page(tmp_path):
         page2 = client.get("/find", params={"q": "falcon", "page": 2}).text
         assert "← Prev" in page2
         assert "Next →" not in page2  # only 21 hits, so page 2 is the last
+
+
+def test_find_clamps_pages_before_sqlite_offset_overflow(tmp_path):
+    # WHY: /find intentionally forgives hand-edited page values. Preserve that
+    # browser contract while keeping both plain and filtered search inside SQLite's
+    # signed integer range instead of returning a 500 for a huge numeric page.
+    app = create_app(tmp_path / "page-bound.db")
+    with TestClient(app) as client:
+        _seed_user(tmp_path / "page-bound.db")
+        client.post(
+            "/issues",
+            json={"title": "falcon"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        oversized_page = search.MAX_OFFSET // 20 + 2
+        for extra in ({}, {"status": "open"}):
+            response = client.get(
+                "/find",
+                params={"q": "falcon", "page": oversized_page, **extra},
+            )
+            assert response.status_code == 200
+            assert "No matches" in response.text
