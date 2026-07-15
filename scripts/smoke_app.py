@@ -28,6 +28,13 @@ def _read_json(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _read_asset(url: str) -> tuple[str, bytes]:
+    with _LOOPBACK_OPENER.open(url, timeout=1) as response:  # noqa: S310
+        if response.status != 200:
+            raise RuntimeError(f"{url} returned HTTP {response.status}")
+        return response.headers.get_content_type(), response.read()
+
+
 def _stop(process: subprocess.Popen[str]) -> str | None:
     if process.poll() is not None:
         return f"server exited before teardown with status {process.returncode}"
@@ -102,6 +109,10 @@ def main() -> int:
                 try:
                     health = _read_json(f"http://127.0.0.1:{port}/healthz")
                     ready = _read_json(f"http://127.0.0.1:{port}/readyz")
+                    home_type, home = _read_asset(f"http://127.0.0.1:{port}/")
+                    css_type, css = _read_asset(
+                        f"http://127.0.0.1:{port}/static/styles.css"
+                    )
                 except (OSError, URLError, json.JSONDecodeError) as exc:
                     last_error = str(exc)
                     time.sleep(0.1)
@@ -111,6 +122,12 @@ def main() -> int:
                     break
                 if not db_path.is_file():
                     last_error = "ready app did not create the configured fresh database"
+                    break
+                if home_type != "text/html" or b"<title>Athena</title>" not in home:
+                    last_error = "home page did not render the packaged Athena template"
+                    break
+                if css_type != "text/css" or not css.strip():
+                    last_error = "packaged stylesheet was missing or empty"
                     break
                 success = True
                 break
@@ -128,7 +145,8 @@ def main() -> int:
             raise RuntimeError(f"Athena process smoke failed: {details}")
 
         print(
-            "Athena process smoke passed: fresh database ready and bounded stop"
+            "Athena process smoke passed: fresh database ready, web assets served, "
+            "and bounded stop"
         )
         return 0
 

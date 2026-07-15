@@ -1,7 +1,7 @@
 """Tests for the web (HTML) layer.
 
 Covers the foundation: GET / renders and the templates are wired.
-Uses the real templates/ and static/ at project root.
+Uses the real package-owned templates/ and static/ assets.
 """
 
 from html.parser import HTMLParser

@@ -85,8 +85,11 @@ pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
 ```
 
 The smoke helper uses an inherited POSIX socket, matching Ubuntu CI and Athena's
-supported deployment shape. The full contributor install above includes MCP test
-coverage; for a runtime-only MCP install, use `pip install -e ".[mcp]"` then
+supported deployment shape, and verifies the fresh database, rendered home page,
+and packaged stylesheet. CI runs it against a built wheel from outside the checkout.
+It also requires the wheel's templates, static assets, and migrations to match the
+source runtime manifest exactly. The full contributor install above includes MCP
+test coverage; for a runtime-only MCP install, use `pip install -e ".[mcp]"` then
 `athena-mcp`.
 
 ## Operations

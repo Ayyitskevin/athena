@@ -1087,16 +1087,16 @@ def create_app(
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.
-    # Resolve from the package location, not the process cwd, so the app boots the
-    # same whether launched from the repo root or anywhere else (static/ and
-    # templates/ live at the repo root, two levels above this src/athena/ package).
-    repo_root = Path(__file__).resolve().parents[2]
+    # Resolve package-owned assets from the installed module, not the process cwd.
+    # Keeping them inside athena/ makes editable checkouts and built wheels obey the
+    # same runtime contract instead of making a wheel reach back into a repo layout.
+    package_root = Path(__file__).resolve().parent
     app.mount(
         "/static",
-        StaticFiles(directory=repo_root / "static"),
+        StaticFiles(directory=package_root / "static"),
         name="static",
     )
-    templates = Jinja2Templates(directory=repo_root / "templates")
+    templates = Jinja2Templates(directory=package_root / "templates")
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)

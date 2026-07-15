@@ -73,11 +73,15 @@ src/athena/
   config.py  env-driven settings (ATHENA_DB, ...)
   main.py    app factory: create_app(), middleware, router wiring, /healthz
   ops.py     operator CLIs (athena-backup, athena-doctor, athena-export, ...)
-templates/   Jinja templates (repo root, mounted by main.py)
-static/      CSS + HTMX + small JS helpers — no build step
+  templates/ Jinja templates packaged and mounted by main.py
+  static/    packaged CSS + HTMX + small JS helpers — no build step
 tests/       pytest
 docs/        this file, OPERATIONS.md (the runbook), design notes
 ```
+
+Templates, static assets, and `core/migrations/*.sql` are runtime package data.
+Keeping them below `src/athena/` makes editable checkouts and installed wheels use
+the same files from the same owner.
 
 There is no separate `api/` package: each module owns its REST surface
 (`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves
