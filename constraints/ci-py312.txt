@@ -2,6 +2,7 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.2
 attrs==26.1.0
+build==1.5.1
 certifi==2026.6.17
 cffi==2.1.0
 click==8.4.2
@@ -32,6 +33,7 @@ pydantic-settings==2.14.2
 pydantic_core==2.46.4
 Pygments==2.20.0
 PyJWT==2.13.0
+pyproject_hooks==1.2.0
 pytest==9.1.1
 python-dotenv==1.2.2
 python-multipart==0.0.32
