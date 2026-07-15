@@ -30,5 +30,15 @@ jobs:
         run: .venv/bin/python -m ruff check .
       - name: Run tests
         run: .venv/bin/python -m pytest -q
-      - name: Boot the real app
-        run: .venv/bin/python scripts/smoke_app.py
+      - name: Build and install the wheel
+        run: |
+          .venv/bin/python -m pip wheel --no-deps --wheel-dir wheelhouse .
+          .venv/bin/python scripts/verify_wheel.py wheelhouse/athena-*.whl
+          .venv/bin/python -m pip uninstall --yes athena
+          .venv/bin/python -m pip install --no-deps wheelhouse/athena-*.whl
+          .venv/bin/python -m pip check
+      - name: Boot the installed wheel outside the checkout
+        working-directory: /tmp
+        run: |
+          "$GITHUB_WORKSPACE/.venv/bin/python" -c 'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
+          "$GITHUB_WORKSPACE/.venv/bin/python" "$GITHUB_WORKSPACE/scripts/smoke_app.py"

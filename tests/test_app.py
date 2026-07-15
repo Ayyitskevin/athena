@@ -159,10 +159,9 @@ def test_startup_migrates_the_database(tmp_path):
 
 
 def test_app_serves_assets_from_any_cwd(tmp_path, monkeypatch):
-    # WHY: static/ and templates/ are resolved from the package location, not the
-    # process cwd. Launch the app from an unrelated directory and both a rendered
-    # template and a static asset must still serve — otherwise the app only works
-    # when started from the repo root.
+    # WHY: packaged static/ and templates/ are resolved from the module location,
+    # not the process cwd. Launch the app from an unrelated directory and both a
+    # rendered template and a static asset must still serve.
     monkeypatch.chdir(tmp_path)  # a cwd with no static/ or templates/ in sight
     assert not os.path.exists("static") and not os.path.exists("templates")
 
