@@ -1,0 +1,13 @@
+-- 0047_activity_actor_index: index the actor-filtered activity feeds.
+-- FORWARD-ONLY: once applied anywhere, never edit this file -- add 0048_*.sql.
+--
+-- activity is the one unbounded, append-only table. Every actor-scoped read --
+-- list_activity / list_events (WHERE actor_id = ? ORDER BY id), the per-agent run
+-- rollups in core/agents.py, and the activity CSV export -- filters on actor_id with
+-- no supporting index, so each full-scans the whole table and then sorts. 0017 indexed
+-- (target_kind, target_id, id) for target-scoped reads but left actor-scoped reads
+-- uncovered. This composite lets the planner seek by actor and walk id in order (no
+-- scan, no separate sort), in both the newest-first (list_activity) and oldest-first
+-- (list_events) directions -- mirroring the hot-filter indexing rationale of 0045.
+-- Negligible write cost at target scale (one small b-tree entry per appended row).
+CREATE INDEX idx_activity_actor ON activity (actor_id, id);
