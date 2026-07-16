@@ -24,6 +24,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 import hashlib
 import hmac
+import http.client
 import ipaddress
 import json
 import logging
@@ -31,8 +32,7 @@ from pathlib import Path
 import secrets
 import socket
 import sqlite3
-import urllib.error
-import urllib.request
+import ssl
 from urllib.parse import urlparse
 
 from athena import config
@@ -60,15 +60,50 @@ _PUBLIC_COLS = (
 # --- SSRF guard -------------------------------------------------------------
 
 
+class _UnsafeAddress(Exception):
+    """A URL resolved to an address Athena must not connect to (SSRF guard)."""
+
+
+def _address_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether an IP is one we refuse to POST to: private, loopback, link-local
+    (which includes the 169.254.169.254 cloud-metadata endpoint), reserved,
+    multicast, or unspecified. The single owner of the address policy — both the
+    registration-time is_safe_url and the delivery-time connect consult it, so the
+    two can never disagree about what "internal" means.
+
+    IPv6 forms that EMBED an IPv4 address (IPv4-mapped ::ffff:a.b.c.d, 6to4, teredo)
+    are decoded to that IPv4 before classifying: the kernel routes them to the v4
+    target, so an attacker could otherwise smuggle an internal v4 (e.g.
+    ::ffff:169.254.169.254) past the policy. Decoding here also makes the decision
+    independent of the interpreter — CPython only began delegating mapped-address
+    classification to the embedded v4 in 3.12.4, and never does so for 6to4."""
+    if ip.version == 6:
+        embedded = ip.ipv4_mapped or ip.sixtofour
+        if embedded is None and ip.teredo is not None:
+            embedded = ip.teredo[1]  # the (attacker-chosen) client IPv4
+        if embedded is not None:
+            ip = embedded
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
 def is_safe_url(url: str) -> tuple[bool, str]:
     """Whether Athena may POST to this URL. Returns (ok, reason).
 
     The app makes the request, so an attacker who can register a URL could probe
     the internal network or the cloud metadata endpoint (classic SSRF). We require
     http/https and reject any host that resolves to a private, loopback, link-local,
-    reserved, multicast, or unspecified address. We resolve here and re-check at
-    delivery time, so a DNS record flipped to an internal IP after registration is
-    still refused."""
+    reserved, multicast, or unspecified address. This is the first-line check, run at
+    registration and before every delivery pass. It is necessary but not sufficient on
+    its own: the delivery poster re-validates and PINS the connection to the vetted IP
+    (see _safe_connect_target) so a record flipped to an internal IP after this check —
+    or a redirect to one — still cannot be reached."""
     try:
         parsed = urlparse(url)
     except ValueError:
@@ -78,23 +113,40 @@ def is_safe_url(url: str) -> tuple[bool, str]:
     host = parsed.hostname
     if not host:
         return False, "url has no host"
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        # .port parses lazily and raises on an out-of-range / non-numeric port.
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False, "invalid port"
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
+    except (socket.gaierror, UnicodeError):
+        # gaierror: no such host. UnicodeError: a pathological IDNA hostname. Both
+        # are "can't safely resolve" — fail closed rather than let the exception
+        # escape and abort the whole delivery pass.
         return False, "host does not resolve"
     for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+        if _address_blocked(ipaddress.ip_address(info[4][0])):
             return False, "url resolves to a disallowed (internal) address"
     return True, ""
+
+
+def _safe_connect_target(host: str, port: int) -> tuple[int, tuple]:
+    """Resolve host and return one validated ``(family, sockaddr)`` to connect to.
+
+    Fails closed: EVERY resolved address must be public, so a split public/internal
+    DNS answer can't let the connect pick the internal one. The caller then connects
+    to exactly this address with no further hostname lookup — so DNS rebinding (a
+    record that flips to an internal IP between is_safe_url and delivery) is defeated:
+    the address we vetted is the address we talk to. Raises _UnsafeAddress otherwise."""
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError) as exc:
+        raise _UnsafeAddress("host does not resolve") from exc
+    for info in infos:
+        if _address_blocked(ipaddress.ip_address(info[4][0])):
+            raise _UnsafeAddress("url resolves to a disallowed (internal) address")
+    return infos[0][0], infos[0][4]
 
 
 # --- signing ----------------------------------------------------------------
@@ -306,7 +358,11 @@ def deliver_pending(
                 "X-Athena-Delivery": f"{wh['id']}-{event['id']}",
                 "X-Athena-Signature": sign(wh["secret"], body),
             }
-            ok, error = poster(wh["url"], body, headers)
+            try:
+                ok, error = poster(wh["url"], body, headers)
+            except Exception as exc:  # noqa: BLE001 — a poster that raises is one bad
+                # delivery, not a reason to abort the pass for every other webhook.
+                ok, error = False, str(exc)[:200]
             if ok:
                 _record_success(conn, wh["id"], event["id"], now)
                 failure_count = 0
@@ -317,23 +373,106 @@ def deliver_pending(
     return delivered
 
 
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """An HTTPConnection that dials a pre-validated IP instead of re-resolving
+    ``self.host``. ``self.host`` stays the hostname so the Host header is still
+    correct; only the socket target is pinned."""
+
+    def __init__(self, host: str, port: int, *, pinned_ip: str, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        # Match http.client.HTTPConnection.connect, which disables Nagle for latency.
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS twin: dial the pinned IP, but validate the certificate against the
+    ORIGINAL hostname (``server_hostname=self.host``) so pinning never weakens TLS —
+    the cert must still match the name the operator registered, not the raw IP."""
+
+    def __init__(
+        self, host: str, port: int, *, pinned_ip: str, timeout: float, context: ssl.SSLContext
+    ):
+        super().__init__(host, port, timeout=timeout, context=context)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
 def urllib_poster(timeout: float) -> Poster:
-    """A real Poster backed by stdlib urllib (no extra dependency). Returns a
-    callable bound to a per-request timeout so one slow receiver can't stall the
-    delivery loop. Any non-2xx or transport error is a failure with a short reason."""
+    """A real Poster backed by the stdlib http.client. Bound to a per-request timeout
+    so one slow receiver can't stall the delivery loop.
+
+    Hardened against SSRF at DELIVERY time, not just registration — is_safe_url alone
+    leaves two holes that this closes:
+      * It resolves + validates the host and connects to that EXACT IP, so a DNS
+        record that rebinds to an internal address after is_safe_url can't be reached.
+      * It does NOT follow redirects — a 3xx (e.g. 302 -> http://169.254.169.254/) is a
+        delivery failure, never an internal fetch. (http.client, unlike urllib's opener,
+        never auto-follows, so refusing is simply the default here.)
+    Any non-2xx or transport error is a failure with a short reason. Egress is DIRECT:
+    unlike urllib's opener this ignores HTTP(S)_PROXY, on purpose — a forward proxy
+    would re-resolve the host and break the IP pin that defeats rebinding."""
 
     def _post(url: str, body: bytes, headers: dict) -> tuple[bool, str | None]:
-        request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False, "url must be http or https"
+        host = parsed.hostname
+        if not host:
+            return False, "url has no host"
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                code = response.status
-                if 200 <= code < 300:
-                    return True, None
-                return False, f"http {code}"
-        except urllib.error.HTTPError as exc:
-            return False, f"http {exc.code}"
+            # .port raises on an out-of-range / non-numeric port; a bad row must be a
+            # clean per-delivery failure, never an exception that aborts the pass.
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError:
+            return False, "invalid port"
+        try:
+            _family, sockaddr = _safe_connect_target(host, port)
+        except _UnsafeAddress as exc:
+            return False, str(exc)
+        pinned_ip = sockaddr[0]
+        target = parsed.path or "/"
+        if parsed.query:
+            target += "?" + parsed.query
+        # Build the connection INSIDE the try so a TLS-context or construction error
+        # also degrades to a normal (False, reason) delivery failure.
+        conn: http.client.HTTPConnection | None = None
+        try:
+            if parsed.scheme == "https":
+                conn = _PinnedHTTPSConnection(
+                    host,
+                    port,
+                    pinned_ip=pinned_ip,
+                    timeout=timeout,
+                    context=ssl.create_default_context(),
+                )
+            else:
+                conn = _PinnedHTTPConnection(
+                    host, port, pinned_ip=pinned_ip, timeout=timeout
+                )
+            conn.request("POST", target, body=body, headers=headers)
+            response = conn.getresponse()
+            code = response.status
+            response.read()  # drain the body so the connection closes cleanly
+            if 200 <= code < 300:
+                return True, None
+            if 300 <= code < 400:
+                # A redirect is refused, never followed: the Location could point at an
+                # internal address the registration check never saw.
+                return False, f"refused redirect (http {code})"
+            return False, f"http {code}"
         except Exception as exc:  # noqa: BLE001 — any transport error is just a failed delivery
             return False, str(exc)[:200]
+        finally:
+            if conn is not None:
+                conn.close()
 
     return _post
 
