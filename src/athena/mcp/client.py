@@ -563,6 +563,14 @@ class AthenaClient:
             )
         )
 
+    def revoke_agent_tokens(self, user_id: int) -> Any:
+        """Admin kill switch: revoke every live token another user holds (admin only)."""
+        return self._mutate(self._client.delete, f"/users/{user_id}/tokens")
+
+    def offboard_user(self, user_id: int) -> Any:
+        """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
+        return self._mutate(self._client.post, f"/users/{user_id}/offboard")
+
     def list_activity_runs(
         self, *, actor_id: int, gap_seconds: int = 1800, limit: int = 200
     ) -> Any:

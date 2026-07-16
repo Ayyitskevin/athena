@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.core import users
+from athena.core import agent_commands, users
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -53,6 +53,18 @@ class UserOut(BaseModel):
     role: Role
     is_agent: bool
     created_at: str
+
+
+class TokenRevocationOut(BaseModel):
+    user_id: int
+    revoked_token_count: int
+
+
+class OffboardOut(BaseModel):
+    user_id: int
+    role: Role
+    revoked_session_count: int
+    revoked_token_count: int
 
 
 class UserMeOut(UserOut):
@@ -175,3 +187,37 @@ def update_agent(
     if updated is None:
         raise HTTPException(status_code=404, detail="no such user")
     return updated
+
+
+@router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)
+def revoke_user_tokens(
+    user_id: int,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Admin kill switch: revoke EVERY live token a user holds. Unlike the
+    self-service DELETE /tokens/{id} (owner-scoped), this reaches another user's
+    credentials, so it is admin-only — the lever to lock out a compromised or
+    runaway agent. Idempotent and audited."""
+    try:
+        return agent_commands.revoke_agent_tokens(
+            conn, actor_id=actor["id"], target_user_id=user_id
+        )
+    except agent_commands.AgentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{user_id}/offboard", response_model=OffboardOut)
+def offboard(
+    user_id: int,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Admin one-click offboard: demote the user to viewer, revoke every session,
+    and revoke every token — one audited action. Refuses to strip the last admin."""
+    try:
+        return agent_commands.offboard_user(
+            conn, actor_id=actor["id"], target_user_id=user_id
+        )
+    except agent_commands.AgentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

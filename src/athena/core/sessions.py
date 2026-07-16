@@ -104,3 +104,17 @@ def revoke_other_sessions(
     )
     conn.commit()
     return cur.rowcount
+
+
+def revoke_all_sessions(
+    conn: sqlite3.Connection, user_id: int, *, commit: bool = True
+) -> int:
+    """Delete every session of a user, forcing a fresh login everywhere. The hard
+    lockout half of offboarding: unlike revoke_other_sessions it keeps NO cookie
+    alive, so the target's browser access ends now rather than after SESSION_TTL_DAYS.
+    Returns how many were revoked. `commit=False` composes inside an offboard
+    transaction so the session deletes land atomically with the token/role changes."""
+    cur = conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    if commit:
+        conn.commit()
+    return cur.rowcount

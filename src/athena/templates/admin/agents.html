@@ -15,6 +15,9 @@
     </div>
 </div>
 
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
 {% if agents %}
 <div class="agent-admin-list">
     {% for agent in agents %}
@@ -30,6 +33,18 @@
             <div class="agent-admin-counts">
                 <span class="pill">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
                 <span class="pill">{{ agent.revoked_token_count }} revoked</span>
+            </div>
+            <div class="agent-admin-controls">
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/revoke-tokens"
+                      data-confirm="Revoke ALL live tokens for {{ agent.user.name }}? Any agent using them stops immediately. New tokens can be minted later.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button danger"{{ " disabled" if agent.live_token_count == 0 }}>Revoke all tokens</button>
+                </form>
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/offboard"
+                      data-confirm="Offboard {{ agent.user.name }}? This demotes the account to viewer and revokes every session and token in one step.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button danger">Offboard</button>
+                </form>
             </div>
         </header>
 
