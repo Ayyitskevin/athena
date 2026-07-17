@@ -17,6 +17,7 @@ from athena.core import (
     oidc,
     run_replay,
     sessions,
+    token_commands,
     tokens,
     user_commands,
     users,
@@ -295,10 +296,10 @@ def create_token(
         scope_read, scope_issue_write, scope_docs_write, scope_admin
     )
     try:
-        created = tokens.create_token(
-            conn, user_id=user["id"], name=name, scopes=scopes
+        created = token_commands.mint_token(
+            conn, actor_id=user["id"], name=name, scopes=scopes
         )
-    except ValueError as exc:
+    except token_commands.TokenCommandError as exc:
         return templates.TemplateResponse(
             request=request,
             name="settings/tokens.html",
@@ -321,7 +322,7 @@ def revoke_token(
     err = _write_required(user, "revoke tokens")
     if err is not None:
         return err
-    if not tokens.revoke_token(conn, user_id=user["id"], token_id=token_id):
+    if not token_commands.revoke_token(conn, actor_id=user["id"], token_id=token_id):
         return HTMLResponse(
             '<div class="error">No such live token.</div>', status_code=404
         )
