@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.core import agent_commands, users
+from athena.core import agent_commands, user_commands, users
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -159,19 +159,14 @@ def update_role(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    target = users.get_user(conn, user_id)
-    if target is None:
-        raise HTTPException(status_code=404, detail="no such user")
-    if target["role"] == users.ADMIN_ROLE and payload.role != users.ADMIN_ROLE:
-        if users.count_admins(conn) <= 1:
-            raise HTTPException(status_code=409, detail="cannot remove the last admin")
+    # The command owns the last-admin guard, the role normalization, and — new — the
+    # atomic 'changed_role' audit event, so a privilege change is never a silent write.
     try:
-        updated = users.set_role(conn, user_id, payload.role)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such user")
-    return updated
+        return user_commands.set_user_role(
+            conn, actor_id=actor["id"], target_user_id=user_id, role=payload.role
+        )
+    except user_commands.UserCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.put("/{user_id}/agent", response_model=UserOut)
@@ -183,10 +178,15 @@ def update_agent(
 ) -> dict:
     # Marking accounts as agents is an admin concern: it shapes how the rest of the
     # team reads activity and the delegation list, so it shouldn't be self-serve.
-    updated = users.set_agent(conn, user_id, payload.is_agent)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such user")
-    return updated
+    try:
+        return user_commands.set_user_agent(
+            conn,
+            actor_id=actor["id"],
+            target_user_id=user_id,
+            is_agent=payload.is_agent,
+        )
+    except user_commands.UserCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)

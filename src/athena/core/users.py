@@ -123,16 +123,18 @@ def set_role(
 
 
 def set_agent(
-    conn: sqlite3.Connection, user_id: int, is_agent: bool
+    conn: sqlite3.Connection, user_id: int, is_agent: bool, *, commit: bool = True
 ) -> dict | None:
     """Mark (or unmark) a user as an agent and return the updated row, or None if
     the user doesn't exist. A display/audit distinction only — it changes nothing
-    about what the user is allowed to do."""
+    about what the user is allowed to do. ``commit=False`` lets an audited command
+    fold the flip and its activity event into one transaction."""
     cur = conn.execute(
         "UPDATE users SET is_agent = ? WHERE id = ?",
         (1 if is_agent else 0, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_user(conn, user_id)
