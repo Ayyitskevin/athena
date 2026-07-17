@@ -18,6 +18,7 @@ from athena.core import (
     run_replay,
     sessions,
     tokens,
+    user_commands,
     users,
     webhooks,
 )
@@ -571,25 +572,26 @@ def update_user_role(
     err = _admin_required(actor)
     if err is not None:
         return err
-    target = users.get_user(conn, user_id)
-    if target is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
-    if target["role"] == users.ADMIN_ROLE and role != users.ADMIN_ROLE:
-        if users.count_admins(conn) <= 1:
-            return templates.TemplateResponse(
-                request=request,
-                name="admin/users.html",
-                context=_admin_context(conn, error="Cannot remove the last admin."),
-                status_code=409,
-            )
     try:
-        users.set_role(conn, user_id, role)
-    except ValueError as exc:
+        user_commands.set_user_role(
+            conn, actor_id=actor["id"], target_user_id=user_id, role=role
+        )
+    except user_commands.UserCommandError as exc:
+        if exc.status_code == 404:
+            return HTMLResponse(
+                '<div class="error">No such user.</div>', status_code=404
+            )
+        # last-admin (409) keeps its fixed message; an invalid role re-renders at 400
+        # with the validator's own text — matching the pre-command handler.
+        if exc.status_code == 409:
+            message, status = "Cannot remove the last admin.", 409
+        else:
+            message, status = str(exc), 400
         return templates.TemplateResponse(
             request=request,
             name="admin/users.html",
-            context=_admin_context(conn, error=str(exc)),
-            status_code=400,
+            context=_admin_context(conn, error=message),
+            status_code=status,
         )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -609,12 +611,17 @@ def update_user_agent(
     err = _admin_required(actor)
     if err is not None:
         return err
-    target = users.get_user(conn, user_id)
-    if target is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
     # The form posts the DESIRED next state ("1" to mark as agent, anything else to
     # mark as human), so the button is a deterministic toggle, not a read-then-flip.
-    users.set_agent(conn, user_id, is_agent == "1")
+    try:
+        user_commands.set_user_agent(
+            conn,
+            actor_id=actor["id"],
+            target_user_id=user_id,
+            is_agent=is_agent == "1",
+        )
+    except user_commands.UserCommandError:
+        return HTMLResponse('<div class="error">No such user.</div>', status_code=404)
     return RedirectResponse("/admin/users", status_code=303)
 
 
