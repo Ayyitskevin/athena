@@ -15,7 +15,14 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from athena.aegis import issue_activity, issue_etags, issues, sprints, statuses
+from athena.aegis import (
+    dependencies,
+    issue_activity,
+    issue_etags,
+    issues,
+    sprints,
+    statuses,
+)
 from athena.core import access, db, etag, identity, tokens, users
 
 ErrorKind = Literal[
@@ -23,6 +30,7 @@ ErrorKind = Literal[
     "forbidden",
     "not_found",
     "invalid",
+    "conflict",
     "invalid_precondition",
     "precondition_too_large",
     "precondition_failed",
@@ -497,3 +505,90 @@ def _update_issue(
             commit=False,
         )
     return updated
+
+
+def link_issues(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    target_ref: str,
+    relation: str,
+) -> dict:
+    """Create a typed dependency (blocks / blocked_by / relates) FROM issue_id to the
+    issue named by ``target_ref``, recording the edge AND its audit event in one
+    transaction. Before this, dependency writes emitted no activity at all, so an edge
+    an agent created over MCP left no attributable trace.
+
+    Same authorization as any issue write: the actor must be a writer (role + scope)
+    and the creator or assignee of issue_id, and the TARGET must be an issue the actor
+    can see — a hidden or missing target collapses to the same "no such target issue",
+    so a write can't probe a private issue's existence. Idempotent: re-adding an
+    identical edge records no second event. Returns issue_id's relationship summary.
+    """
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        _writable_issue(conn, actor, issue_id)
+        target = issues.get_by_ref(conn, target_ref)
+        if target is None or not access.can_see_issue(conn, actor, target["id"]):
+            raise IssueCommandError("invalid", "no such target issue")
+        reason, inserted = dependencies.add_link(
+            conn,
+            from_id=issue_id,
+            to_id=target["id"],
+            relation=relation,
+            created_by=actor["id"],
+            commit=False,
+        )
+        if reason is not None:
+            # The direct contradiction (A blocks B while B blocks A) conflicts with
+            # existing state; everything else is bad input. Adapters map "conflict"
+            # to 409 on REST and 400 on the HTML form, preserving prior behavior.
+            kind: ErrorKind = "conflict" if "block each other" in reason else "invalid"
+            raise IssueCommandError(kind, reason)
+        if inserted:
+            issue_activity.record_link_added(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                other_id=target["id"],
+                relation=relation,
+                commit=False,
+            )
+        return dependencies.list_links(conn, issue_id, actor=actor)
+
+
+def unlink_issues(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    target_id: int,
+    relation: str,
+) -> dict:
+    """Remove the typed dependency FROM issue_id toward target_id (addressed by id,
+    the form the delete routes use), recording the removal atomically. Same write gate
+    as link_issues. Raises not_found with detail "no such relationship" when no such
+    edge exists — REST turns that into a 404; the HTML form treats it as an idempotent
+    redirect (its buttons only appear for edges that exist). Returns the summary."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        _writable_issue(conn, actor, issue_id)
+        removed = dependencies.remove_link(
+            conn,
+            from_id=issue_id,
+            to_id=target_id,
+            relation=relation,
+            commit=False,
+        )
+        if not removed:
+            raise IssueCommandError("not_found", "no such relationship")
+        issue_activity.record_link_removed(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            other_id=target_id,
+            relation=relation,
+            commit=False,
+        )
+        return dependencies.list_links(conn, issue_id, actor=actor)

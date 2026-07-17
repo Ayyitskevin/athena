@@ -375,6 +375,64 @@ def record_parent_change(
     )
 
 
+def _link_detail(conn: sqlite3.Connection, relation: str, other_id: int) -> str:
+    other = issues.get_issue(conn, other_id)
+    other_key = (other.get("key") or f"#{other_id}") if other else f"#{other_id}"
+    return f"{relation} {other_key}"
+
+
+def record_link_added(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    other_id: int,
+    relation: str,
+    commit: bool = True,
+) -> None:
+    """Record that a typed dependency (blocks / blocked_by / relates) was declared
+    FROM issue_id toward other_id, phrased as "<relation> <other key>".
+
+    Dependencies may cross projects, so scope the event to both endpoints so a
+    public issue cannot publish a private linked issue's key. Commands pass
+    ``commit=False`` so the edge row and this event share one transaction — before
+    this, dependency writes emitted no audit at all, breaking attribution for an
+    edge any agent can create over MCP."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="linked",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=_link_detail(conn, relation, other_id),
+        commit=commit,
+        issue_project_ids=_project_ids_for_issues(conn, issue_id, other_id),
+    )
+
+
+def record_link_removed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    other_id: int,
+    relation: str,
+    commit: bool = True,
+) -> None:
+    """Record that a typed dependency FROM issue_id toward other_id was removed —
+    the mirror of record_link_added (verb "unlinked"), same cross-endpoint scoping."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="unlinked",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=_link_detail(conn, relation, other_id),
+        commit=commit,
+        issue_project_ids=_project_ids_for_issues(conn, issue_id, other_id),
+    )
+
+
 def record_contributor_added(
     conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
 ) -> None:

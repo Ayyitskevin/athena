@@ -1316,24 +1316,26 @@ def add_issue_link(
             '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
             status_code=401,
         )
+    # Visibility-first gate on THIS issue (hidden -> 404 even for a viewer) before the
+    # command owns the target check, the edge, and — new — the atomic audit event.
     _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    target = issues.get_by_ref(conn, target_ref.strip())
-    # A target the actor can't see collapses to the same 400 as a missing one (the
-    # REST twin does this too), closing both the link-into-hidden write and the
-    # existence oracle.
-    if target is None or not access.can_see_issue(conn, user, target["id"]):
-        return HTMLResponse('<div class="error">No such target issue.</div>', status_code=400)
-    reason = dependencies.add_link(
-        conn,
-        from_id=issue_id,
-        to_id=target["id"],
-        relation=relation,
-        created_by=user["id"],
-    )
-    if reason is not None:
-        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+    try:
+        issue_commands.link_issues(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            target_ref=target_ref.strip(),
+            relation=relation,
+        )
+    except issue_commands.IssueCommandError as exc:
+        # Only the target/relation validation and the block-each-other contradiction
+        # reach here (the issue gate ran above); render the raw reason at 400, exactly
+        # as the pre-command handler did.
+        return HTMLResponse(
+            f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
+        )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1359,7 +1361,14 @@ def remove_issue_link(
     _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    dependencies.remove_link(conn, from_id=issue_id, to_id=target_id, relation=relation)
+    try:
+        issue_commands.unlink_issues(
+            conn, actor=user, issue_id=issue_id, target_id=target_id, relation=relation
+        )
+    except issue_commands.IssueCommandError:
+        # Removing a link that isn't there is not an error on the form path (its
+        # buttons only render for edges that exist); redirect either way, as before.
+        pass
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

@@ -761,7 +761,7 @@ def test_custom_done_status_survives_web_blocker_confirmation(tmp_path):
             to_id=target["id"],
             relation="blocks",
             created_by=1,
-        ) is None
+        ) == (None, True)
         conn.close()
 
         warning = client.post(
