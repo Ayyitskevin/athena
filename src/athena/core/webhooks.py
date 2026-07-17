@@ -182,18 +182,21 @@ def create_webhook(
     created_by: int,
     event_kind: str | None = None,
     start_cursor: int = 0,
+    commit: bool = True,
 ) -> dict:
     """Register a webhook. Generates and returns a one-time `secret` (stored so we
     can sign, never shown again by the read paths). start_cursor is normally the
     current activity tip so only future events are delivered. URL safety is the
-    boundary's job (is_safe_url); this layer only persists."""
+    boundary's job (is_safe_url); this layer only persists. ``commit=False`` lets an
+    audited command fold the registration and its activity event into one transaction."""
     secret = SECRET_PREFIX + secrets.token_urlsafe(32)
     cur = conn.execute(
         "INSERT INTO webhooks (url, secret, event_kind, cursor, created_by) "
         "VALUES (?, ?, ?, ?, ?)",
         (url, secret, event_kind, start_cursor, created_by),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     row = conn.execute(
         f"SELECT {_PUBLIC_COLS} FROM webhooks WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
@@ -215,7 +218,7 @@ def get_webhook(conn: sqlite3.Connection, webhook_id: int) -> dict | None:
 
 
 def set_webhook_active(
-    conn: sqlite3.Connection, webhook_id: int, active: bool
+    conn: sqlite3.Connection, webhook_id: int, active: bool, *, commit: bool = True
 ) -> dict | None:
     """Pause (active=False) or resume (active=True) a webhook WITHOUT losing its
     cursor — so a paused endpoint resumes exactly where it left off rather than
@@ -223,7 +226,8 @@ def set_webhook_active(
     (failure_count / last_error / next_attempt_at) so a re-enabled endpoint is
     retried promptly: an operator flips this back on after fixing the receiver, and
     shouldn't have to wait out a stale backoff. Returns the updated row, or None if
-    there is no such webhook."""
+    there is no such webhook. ``commit=False`` lets an audited command fold the flip
+    and its activity event into one transaction."""
     if active:
         cur = conn.execute(
             "UPDATE webhooks SET active = 1, failure_count = 0, last_error = NULL, "
@@ -234,15 +238,37 @@ def set_webhook_active(
         cur = conn.execute(
             "UPDATE webhooks SET active = 0 WHERE id = ?", (webhook_id,)
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_webhook(conn, webhook_id)
 
 
-def delete_webhook(conn: sqlite3.Connection, webhook_id: int) -> bool:
+def reset_cursor(
+    conn: sqlite3.Connection, webhook_id: int, cursor: int, *, commit: bool = True
+) -> dict | None:
+    """Point a webhook's delivery cursor at `cursor` and return the updated row.
+
+    Used by the registration command to start a fresh endpoint at the tip AFTER its
+    own registration event, so it replays no history and is never notified of its own
+    creation. Internal bootstrap only — not wired to any transport (rewinding a cursor
+    would replay history at an endpoint). ``commit=False`` composes inside a command."""
+    conn.execute("UPDATE webhooks SET cursor = ? WHERE id = ?", (cursor, webhook_id))
+    if commit:
+        conn.commit()
+    return get_webhook(conn, webhook_id)
+
+
+def delete_webhook(
+    conn: sqlite3.Connection, webhook_id: int, *, commit: bool = True
+) -> bool:
+    """Delete a webhook. Returns True if one was removed, False if there was no such
+    row. ``commit=False`` lets an audited command fold the delete and its activity
+    event into one transaction."""
     cur = conn.execute("DELETE FROM webhooks WHERE id = ?", (webhook_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

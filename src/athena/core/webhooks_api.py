@@ -14,7 +14,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from athena.core import webhooks
+from athena.core import webhook_commands, webhooks
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
@@ -73,14 +73,11 @@ def create(
     if not ok:
         raise HTTPException(status_code=422, detail=reason)
     event_kind = (payload.event_kind or "").strip() or None
-    # Start at the current tip so the endpoint receives only events from now on,
-    # not the entire backlog.
-    return webhooks.create_webhook(
-        conn,
-        url=url,
-        event_kind=event_kind,
-        created_by=actor["id"],
-        start_cursor=webhooks.current_tip(conn),
+    # The command owns the registration, its atomic 'registered_webhook' audit event,
+    # AND the "start at tip" cursor (only future events, never the backlog), so a new
+    # outbound endpoint is never silent.
+    return webhook_commands.register_webhook(
+        conn, actor_id=actor["id"], url=url, event_kind=event_kind
     )
 
 
@@ -105,10 +102,13 @@ def update(
 ) -> dict:
     # Pause/resume is the one supported edit: it keeps the cursor (no replay/skip) and
     # lets an operator stop a misbehaving endpoint without losing where it was up to.
-    updated = webhooks.set_webhook_active(conn, webhook_id, payload.active)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such webhook")
-    return updated
+    # The command records the flip atomically.
+    try:
+        return webhook_commands.set_webhook_active(
+            conn, actor_id=actor["id"], webhook_id=webhook_id, active=payload.active
+        )
+    except webhook_commands.WebhookCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.delete("/{webhook_id}", status_code=204)
@@ -117,5 +117,8 @@ def remove(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    if not webhooks.delete_webhook(conn, webhook_id):
+    # The command records the deletion atomically (naming the URL that is going away).
+    if not webhook_commands.delete_webhook(
+        conn, actor_id=actor["id"], webhook_id=webhook_id
+    ):
         raise HTTPException(status_code=404, detail="no such webhook")
