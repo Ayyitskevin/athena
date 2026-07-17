@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from athena.core import tokens
+from athena.core import token_commands, tokens
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, token_management_actor
 
@@ -54,12 +54,14 @@ def create(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # The token belongs to the authenticated actor — not a user id from the body.
+    # The command owns the mint AND its atomic 'minted_token' audit event, so a fresh
+    # credential is never a silent write.
     try:
-        return tokens.create_token(
-            conn, user_id=actor["id"], name=payload.name, scopes=payload.scopes
+        return token_commands.mint_token(
+            conn, actor_id=actor["id"], name=payload.name, scopes=payload.scopes
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except token_commands.TokenCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[TokenOut])
@@ -77,6 +79,7 @@ def revoke(
     actor: dict = Depends(token_management_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> Response:
-    if not tokens.revoke_token(conn, user_id=actor["id"], token_id=token_id):
+    # The command owns the revoke AND its atomic 'revoked_token' audit event.
+    if not token_commands.revoke_token(conn, actor_id=actor["id"], token_id=token_id):
         raise HTTPException(status_code=404, detail="no such live token")
     return Response(status_code=204)

@@ -79,15 +79,19 @@ def create_token(
     user_id: int,
     name: str,
     scopes: Iterable[str] | None = None,
+    commit: bool = True,
 ) -> dict:
     """Mint a token for a user. Returns the row plus a one-time `token` field
-    holding the raw secret — it is never retrievable again after this call."""
+    holding the raw secret — it is never retrievable again after this call.
+    ``commit=False`` lets an audited command fold the mint and its activity event
+    into one transaction, so a credential and its provenance land together."""
     raw = TOKEN_PREFIX + secrets.token_urlsafe(32)
     cur = conn.execute(
         "INSERT INTO api_tokens (user_id, name, token_hash, scopes) VALUES (?, ?, ?, ?)",
         (user_id, name, _hash(raw), _pack_scopes(scopes)),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     row = conn.execute(
         f"SELECT {_PUBLIC_COLS} FROM api_tokens WHERE id = ?", (cur.lastrowid,)
     ).fetchone()
@@ -130,15 +134,20 @@ def list_tokens(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     return [_public_row(r) for r in rows]
 
 
-def revoke_token(conn: sqlite3.Connection, *, user_id: int, token_id: int) -> bool:
+def revoke_token(
+    conn: sqlite3.Connection, *, user_id: int, token_id: int, commit: bool = True
+) -> bool:
     """Disable a token the user owns. Returns False if no such live token exists
-    (wrong owner, unknown id, or already revoked) so the API can 404 honestly."""
+    (wrong owner, unknown id, or already revoked) so the API can 404 honestly.
+    ``commit=False`` lets an audited command fold the revoke and its activity event
+    into one transaction, so a credential's lockout and its record land together."""
     cur = conn.execute(
         "UPDATE api_tokens SET revoked_at = datetime('now')"
         " WHERE id = ? AND user_id = ? AND revoked_at IS NULL",
         (token_id, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

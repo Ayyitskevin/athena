@@ -470,9 +470,12 @@ def test_pages_through_the_client(tmp_path):
 def test_recent_events_envelope(tmp_path):
     tc, ath = _client(tmp_path, "ev.db")
     try:
+        # Client bootstrap mints a token, which is now itself an audited event, so
+        # start the cursor past that setup noise to assert only this test's actions.
+        baseline = ath.recent_events()["next_after"]
         ath.create_issue(title="one")
         ath.create_issue(title="two")
-        feed = ath.recent_events()
+        feed = ath.recent_events(after=baseline)
         assert set(feed) == {"events", "next_after", "has_more"}
         assert [e["verb"] for e in feed["events"]] == ["created", "created"]
         # Resume from the cursor: no new events yet.
