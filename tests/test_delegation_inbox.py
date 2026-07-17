@@ -458,7 +458,7 @@ def test_payload_batches_labels_and_caps_only_subject_visible_open_blockers(
                         to_id=target["id"],
                         relation="blocks",
                         created_by=admin["id"],
-                    )
+                    )[0]
                     is None
                 )
         finally:

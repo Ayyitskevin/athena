@@ -52,21 +52,25 @@ def add_link(
     to_id: int,
     relation: str,
     created_by: int,
-) -> str | None:
-    """Create a relationship declared FROM from_id. Returns None on success, else a
-    human-readable reason the boundary turns into an error (the same predicate
-    shape as pages.validate_move). Idempotent: re-adding an identical edge is a
-    silent no-op, so a double-submit doesn't error.
+    commit: bool = True,
+) -> tuple[str | None, bool]:
+    """Create a relationship declared FROM from_id. Returns ``(reason, inserted)``:
+    ``reason`` is None on success, else a human-readable string the boundary turns
+    into an error; ``inserted`` is True only when a NEW edge row was written, so a
+    caller can record an audit event only for a real change and stay silent on an
+    idempotent re-add (INSERT OR IGNORE makes re-adding an identical edge a no-op).
 
     from_id is the issue whose page the user is acting on; to_id is the other
     issue (already resolved from a ref by the boundary). Permission is the
-    boundary's job — this layer only enforces shape and integrity."""
+    boundary's job — this layer only enforces shape and integrity. ``commit=False``
+    lets an audited command bundle the edge and its activity event in one
+    transaction."""
     if relation not in RELATIONS:
-        return "Unknown relationship type."
+        return "Unknown relationship type.", False
     if from_id == to_id:
-        return "An issue can't depend on itself."
+        return "An issue can't depend on itself.", False
     if issues.get_issue(conn, from_id) is None or issues.get_issue(conn, to_id) is None:
-        return "No such issue."
+        return "No such issue.", False
 
     if relation == "blocks":
         a, b, kind = from_id, to_id, "blocks"
@@ -85,19 +89,25 @@ def add_link(
             (b, a),
         ).fetchone()
         if contradiction is not None:
-            return "Those two issues already block each other the other way."
+            return "Those two issues already block each other the other way.", False
 
-    conn.execute(
+    cur = conn.execute(
         "INSERT OR IGNORE INTO issue_links (from_id, to_id, kind, created_by) "
         "VALUES (?, ?, ?, ?)",
         (a, b, kind, created_by),
     )
-    conn.commit()
-    return None
+    if commit:
+        conn.commit()
+    return None, cur.rowcount > 0
 
 
 def remove_link(
-    conn: sqlite3.Connection, *, from_id: int, to_id: int, relation: str
+    conn: sqlite3.Connection,
+    *,
+    from_id: int,
+    to_id: int,
+    relation: str,
+    commit: bool = True,
 ) -> bool:
     """Remove a relationship, addressed by the same user-facing relation used to
     create it. Returns True if a row was deleted, False if there was nothing to

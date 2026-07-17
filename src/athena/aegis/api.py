@@ -287,6 +287,7 @@ def _issue_command_http_error(
         "forbidden": 403,
         "not_found": 404,
         "invalid": 422,
+        "conflict": 409,
         "invalid_precondition": 400,
         "precondition_too_large": 431,
         "precondition_failed": 412,
@@ -1045,31 +1046,20 @@ def add_link(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Declaring a relationship FROM this issue is a write on it — creator-or-
-    # assignee only (404 if missing, 403 if not permitted), same gate as
-    # status/assign/labels. The gate is on THIS issue (the one being edited),
-    # regardless of which end the edge is stored on.
-    _issue_for_write(conn, issue_id, actor)
-    # The TARGET must be an issue the actor can see: a hidden target collapses to the
-    # same 422 as a missing one, so you can't link to (or probe the existence of) an
-    # issue in a private project you're not in. can_see_issue is False for a missing
-    # issue too, so the two cases are indistinguishable.
-    target = issues.get_by_ref(conn, payload.target_ref)
-    if target is None or not access.can_see_issue(conn, actor, target["id"]):
-        raise HTTPException(status_code=422, detail="no such target issue")
-    reason = dependencies.add_link(
-        conn,
-        from_id=issue_id,
-        to_id=target["id"],
-        relation=payload.relation,
-        created_by=actor["id"],
-    )
-    if reason is not None:
-        # The direct contradiction (A blocks B while B blocks A) conflicts with
-        # existing state -> 409; everything else is bad input -> 422.
-        status = 409 if "block each other" in reason else 422
-        raise HTTPException(status_code=status, detail=reason)
-    return dependencies.list_links(conn, issue_id, actor=actor)
+    # Declaring a relationship FROM this issue is a write on it — the command owns the
+    # creator-or-assignee gate, the target visibility check, and now the audit event,
+    # so the same edge created here or over MCP records one attributable "linked" event
+    # atomically. (A hidden target collapses to the same 422 as a missing one.)
+    try:
+        return issue_commands.link_issues(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            target_ref=payload.target_ref,
+            relation=payload.relation,
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
 
 
 @router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
@@ -1080,14 +1070,18 @@ def remove_link(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Removing a relationship is a write on this issue too. relation is the same
-    # user-facing form used to add it; an unknown relation simply matches no row.
-    _issue_for_write(conn, issue_id, actor)
-    if not dependencies.remove_link(
-        conn, from_id=issue_id, to_id=target_id, relation=relation
-    ):
-        raise HTTPException(status_code=404, detail="no such relationship")
-    return dependencies.list_links(conn, issue_id, actor=actor)
+    # Removing a relationship is a write on this issue too; the command records the
+    # audit event and 404s (not_found) when there's nothing to remove.
+    try:
+        return issue_commands.unlink_issues(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            target_id=target_id,
+            relation=relation,
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
 
 
 # --- Projects: a top-level grouping of issues -----------------------------

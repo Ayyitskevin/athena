@@ -52,7 +52,7 @@ def test_blocked_by_is_the_inverse_blocks_row(tmp_path):
         conn = db.connect(db_file)
         assert dependencies.add_link(
             conn, from_id=a, to_id=b, relation="blocked_by", created_by=1
-        ) is None
+        ) == (None, True)
 
         a_links = dependencies.list_links(conn, a)
         b_links = dependencies.list_links(conn, b)
@@ -81,7 +81,7 @@ def test_relates_is_symmetric_and_stored_once(tmp_path):
         # Declare from the HIGHER id to prove normalization (smaller id first).
         assert dependencies.add_link(
             conn, from_id=b, to_id=a, relation="relates", created_by=1
-        ) is None
+        ) == (None, True)
         assert [x["id"] for x in dependencies.list_links(conn, a)["relates"]] == [b]
         assert [x["id"] for x in dependencies.list_links(conn, b)["relates"]] == [a]
         count = conn.execute(
@@ -102,9 +102,11 @@ def test_adding_same_edge_twice_is_a_noop(tmp_path):
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
         for relation, frm, to in [("blocks", a, b), ("relates", a, b), ("relates", b, a)]:
+            # reason is None for every add; only the first of each identical edge
+            # reports inserted=True (the relates re-add from the other side is a no-op).
             assert dependencies.add_link(
                 conn, from_id=frm, to_id=to, relation=relation, created_by=1
-            ) is None
+            )[0] is None
         assert conn.execute("SELECT COUNT(*) FROM issue_links").fetchone()[0] == 2
         conn.close()
 
@@ -116,7 +118,7 @@ def test_self_link_rejected(tmp_path):
         _seed_user(db_file)
         a = _make_issue(client, "A")["id"]
         conn = db.connect(db_file)
-        reason = dependencies.add_link(
+        reason, _inserted = dependencies.add_link(
             conn, from_id=a, to_id=a, relation="blocks", created_by=1
         )
         assert reason is not None
@@ -136,8 +138,8 @@ def test_direct_block_contradiction_rejected(tmp_path):
         conn = db.connect(db_file)
         assert dependencies.add_link(
             conn, from_id=a, to_id=b, relation="blocks", created_by=1
-        ) is None
-        reason = dependencies.add_link(
+        ) == (None, True)
+        reason, _inserted = dependencies.add_link(
             conn, from_id=b, to_id=a, relation="blocks", created_by=1
         )
         assert reason is not None and "block each other" in reason
@@ -154,7 +156,7 @@ def test_unknown_relation_rejected(tmp_path):
         conn = db.connect(db_file)
         assert dependencies.add_link(
             conn, from_id=a, to_id=b, relation="nonsense", created_by=1
-        ) is not None
+        )[0] is not None
         conn.close()
 
 
