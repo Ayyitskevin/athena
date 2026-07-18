@@ -15,6 +15,7 @@ from athena.core import (
     agents,
     identity,
     oidc,
+    oidc_commands,
     run_replay,
     sessions,
     token_commands,
@@ -251,7 +252,12 @@ def unlink_identity(
             status_code=409,
         )
 
-    oidc.unlink_identity(conn, issuer=issuer, subject=subject)
+    # The command removes the link AND records the atomic 'unlinked_identity' event,
+    # attributed to the acting user (this only reaches their own identities), so
+    # dropping a sign-in method is never a silent write.
+    oidc_commands.unlink_identity(
+        conn, actor_id=user["id"], issuer=issuer, subject=subject
+    )
     return RedirectResponse("/settings/identities", status_code=303)
 
 
