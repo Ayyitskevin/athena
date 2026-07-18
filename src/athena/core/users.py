@@ -37,12 +37,14 @@ def create_user(
     password: str | None = None,
     role: str | None = None,
     is_agent: bool = False,
+    commit: bool = True,
 ) -> dict:
     """Insert a user and return it. An optional password enables browser login;
     without one the user exists as an actor but can only act via API tokens.
     is_agent marks the user as an agent rather than a person — a display/audit
     distinction only (roles, not this flag, govern what a user may do).
-    Raises sqlite3.IntegrityError if the email is already taken."""
+    Raises sqlite3.IntegrityError if the email is already taken. ``commit=False`` lets
+    an audited command fold the insert and its activity event into one transaction."""
     role = normalize_role(role)
     cur = conn.execute(
         "INSERT INTO users (email, name, password_hash, role, is_agent) "
@@ -55,7 +57,8 @@ def create_user(
             1 if is_agent else 0,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_user(conn, cur.lastrowid)
 
 

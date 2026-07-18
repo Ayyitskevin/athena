@@ -33,7 +33,7 @@ import urllib.request
 
 import jwt
 
-from athena.core import oidc, oidc_commands, users
+from athena.core import oidc, oidc_commands, user_commands, users
 
 logger = logging.getLogger(__name__)
 
@@ -257,8 +257,11 @@ def provision_or_link(
     user = users.get_user_by_email(conn, email)
     if user is None:
         # Fresh SSO account — no pre-existing account to seize, so no takeover risk.
-        user = users.create_user(
+        # Self-attributed (actor_id=None): the person signing in provisions their own
+        # account, and the command records the atomic 'created_user' event.
+        user = user_commands.create_user(
             conn,
+            actor_id=None,
             email=email,
             name=(claims.get("name") or "").strip() or email,
             role=users.DEFAULT_ROLE,

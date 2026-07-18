@@ -89,14 +89,20 @@ def create(
     existing = users.count_users(conn)
     if existing == 0:
         role = users.BOOTSTRAP_ROLE
+        # No authenticated actor exists yet — the bootstrap user is self-attributed.
+        actor_id = None
     else:
         if actor is None:
             raise HTTPException(status_code=401, detail="authentication required")
         require_admin(actor)
         role = payload.role or users.DEFAULT_ROLE
+        actor_id = actor["id"]
+    # The command owns the insert AND the atomic 'created_user' audit event, so a new
+    # actor entering the system is never a silent write.
     try:
-        return users.create_user(
+        return user_commands.create_user(
             conn,
+            actor_id=actor_id,
             email=payload.email,
             name=payload.name,
             password=payload.password,

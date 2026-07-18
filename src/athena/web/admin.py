@@ -502,8 +502,11 @@ def create_user(
             status_code=400,
         )
     try:
-        users.create_user(
+        # The command owns the insert AND its atomic 'created_user' audit event,
+        # attributed to the acting admin.
+        user_commands.create_user(
             conn,
+            actor_id=actor["id"],
             email=email,
             name=name,
             password=password.strip() or None,
