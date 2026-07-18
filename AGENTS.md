@@ -4,12 +4,11 @@ This is the contract for working in **this repo**. It is re-read every session
 and travels with the code, so it — not a chat prompt — is the source of truth
 for *how* we build here. Read it before you write.
 
-For project-wide rules of conduct, defer to your machine-level handbook
-(`~/.claude/CLAUDE.md` for Claude Code, `~/.grok/GROK.md` for Grok,
-`~/.codex/AGENTS.md` for Codex) — including its canonical **Permission
-Boundaries** block, which this file narrows for Athena (the PR-gate below is
-that narrowing). This file adds the rules **specific to Athena** and wins on
-Athena-specific conflicts.
+For project-wide rules of conduct, defer to your machine-level handbook (for
+Claude Code that is `~/.claude/CLAUDE.md`; other agents use their own
+equivalent) — including its canonical **Permission Boundaries** block, which
+this file narrows for Athena (the PR-gate below is that narrowing). This file
+adds the rules **specific to Athena** and wins on Athena-specific conflicts.
 
 ---
 
@@ -111,9 +110,9 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 - **`main` is the truth.** Open a PR so the change has a record and the review
   tail can look at it. In Athena, **agents may merge their own PR** once it's
   green — this is a dev project, not a live service, so we optimize for flow.
-  (This deliberately diverges from the fleet-wide "Kevin merges" rule, which
-  still holds for live services like Mise.) Still **never push directly to
-  `main`** — the PR is the gate, even when an agent merges it.
+  (This deliberately diverges from the fleet-wide "the operator merges" rule,
+  which still holds for live production services.) Still **never push directly
+  to `main`** — the PR is the gate, even when an agent merges it.
 - Rebase on `main` before opening the PR (linear history). Never force-push
   `main`; force-with-lease on your *own* feature branch after a rebase is fine.
 
@@ -157,5 +156,6 @@ tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
 
-Run the gate: `ruff check .` and `pytest -q`.
+Run the gate: `ruff check .` and `pytest -q` (add `-n 4` for the ~5x-faster
+parallel run — the suite is deterministic and CI uses it too).
 Run the app: `uvicorn athena.main:app --reload`.

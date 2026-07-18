@@ -171,6 +171,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, workflow, and architecture guardrails
 - [SECURITY.md](SECURITY.md) — trust boundary and private reporting
 - [CHANGELOG.md](CHANGELOG.md) — release-facing changes
+- [docs/ROADMAP.md](docs/ROADMAP.md) — where this is going, phase by phase
 - [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md) — transparent AI-assisted workflow
 - [docs/RUNS.md](docs/RUNS.md) — run replay, lineage, and forking
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context

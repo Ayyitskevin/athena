@@ -286,8 +286,10 @@ def _backoff_seconds(failure_count: int) -> int:
 
 
 def _event_payload(event: dict) -> dict:
-    """The JSON body delivered for one event — the same shape GET /events returns,
-    so a receiver and a poller see identical data."""
+    """The JSON body delivered for one event — a stable SUBSET of the row GET /events
+    returns (identity, verb, target, detail, timestamp). Run/lineage coordinates
+    (run_id, parent_run_id, forked_from_event_id) are not yet included here; adding
+    them so push consumers can mirror Mission Control is tracked in docs/ROADMAP.md."""
     return {
         "id": event["id"],
         "actor_id": event["actor_id"],

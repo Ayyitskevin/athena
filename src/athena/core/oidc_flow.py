@@ -206,8 +206,10 @@ def verify_id_token(
     client_id: str,
     nonce: str,
 ) -> dict:
-    """Fetch the IdP's signing key (JWKS, cached by PyJWKClient) for this token, then
-    validate it via decode_id_token."""
+    """Fetch the IdP's signing key for this token, then validate it via
+    decode_id_token. A fresh PyJWKClient is built per call, so the JWKS document is
+    fetched once per login — fine at self-hosted login volume; add a shared cached
+    client if that ever changes."""
     signing_key = jwt.PyJWKClient(jwks_uri).get_signing_key_from_jwt(id_token).key
     return decode_id_token(
         id_token, signing_key, issuer=issuer, client_id=client_id, nonce=nonce

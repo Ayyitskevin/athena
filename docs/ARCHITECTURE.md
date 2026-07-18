@@ -40,12 +40,13 @@ one database. That is the whole value of running notes and tasks in one workspac
    Issue create/core-edit is the first migrated slice; remaining legacy write
    pairs should move behind commands incrementally when touched.
 3. **Local-first, no premature hosting.** Built and version-controlled as a
-   normal software project. Self-hosting on the `flow` node is a *later*
-   decision, not a starting assumption.
+   normal software project. Self-hosting on a dedicated home-lab node is a
+   *later* decision, not a starting assumption.
 4. **Greenfield until cutover.** While we build, Athena reads from and writes to
-   nothing else. The existing systems (ORACLE for docs, Notion for tasks) stay
-   the source of truth. At the end we run a one-time **migration**, not an
-   ongoing sync — that avoids the "two systems, which one is right?" trap.
+   nothing else. The operator's existing systems (a wikilink markdown vault for
+   docs, a hosted tracker for tasks) stay the source of truth. At the end we run
+   a one-time **migration**, not an ongoing sync — that avoids the "two systems,
+   which one is right?" trap.
 
 ## Stack
 
@@ -102,7 +103,7 @@ There is no separate `api/` package: each module owns its REST surface
 - **Phase 3 — Migration tooling** *(current)*: the generic machinery is built —
   selective export bundles, read-only dry-run validation, replay manifests,
   manifest-gated import, plus Jira/Confluence source mappers. Still open: the
-  ORACLE (markdown + wikilinks) → Mentor and Notion Tasks → Aegis mappers,
+  markdown-vault (wikilinks) → Mentor and hosted-tracker → Aegis mappers,
   then dry-run, verify, cut over.
 - **Phase 4 — Fleet wiring & polish** *(largely done, landed alongside 2-3)*:
   MCP server, outbound webhooks, automation rules, cross-module search,

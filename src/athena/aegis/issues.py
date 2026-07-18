@@ -11,10 +11,11 @@ import sqlite3
 from athena.aegis import projects, statuses
 from athena.core import links, search
 
-# The lifecycle an issue moves through. This is the canonical set the whole app
-# agrees on — the REST API and the web forms both validate against it, and the
-# boards view lays out one column per status. 'open' is the create default
-# (matches the schema). Keep this in sync with templates' status <option>s.
+# The DEFAULT lifecycle for issues without a project. Since migration 0024,
+# statuses are per-project (aegis/statuses.py owns those sets and their board
+# columns); this tuple remains the fallback validated against for project-less
+# issues and the seed for a new project's defaults. 'open' is the create default
+# (matches the schema).
 STATUSES = ("open", "in_progress", "done")
 
 # How urgent an issue is, lowest → highest. 'medium' is the create default and

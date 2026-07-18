@@ -29,7 +29,9 @@ jobs:
       - name: Lint
         run: .venv/bin/python -m ruff check .
       - name: Run tests
-        run: .venv/bin/python -m pytest -q
+        # -n 4: the suite is deterministic (no sleeps, per-test tmp databases) and
+        # parallelizes cleanly — this cuts the gate from ~16 min to ~3-4 min.
+        run: .venv/bin/python -m pytest -q -n 4
       - name: Build and install through the source distribution
         run: |
           set -euo pipefail

@@ -543,8 +543,9 @@ def page_detail(
     # `user` was resolved above (for the visibility gate); reuse it here.
     can_write = user is not None and identity.can_write(user)
     # The discussion thread, oldest first. Each body is rendered the same way an
-    # issue comment is (cross-links + safe HTML), so [[page:N]]/[[issue:N]] mentions
-    # resolve in a page comment exactly as they do everywhere else.
+    # issue comment is: escaped plain text with [[user:N]] mentions resolved to
+    # @Name (render_comment). Comments deliberately do NOT resolve [[page:N]]/
+    # [[issue:N]] cross-links — that richer pass is for page/issue bodies only.
     comment_rows = page_comments.list_comments(conn, page_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])
