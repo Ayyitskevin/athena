@@ -117,37 +117,65 @@ def record_page_moved(
 
 
 def record_page_commented(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int, body: str = ""
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    body: str = "",
+    commit: bool = True,
 ) -> None:
     """Record that someone commented on the page — the page twin of the issue
     `commented` event. Targets the page (so it lands on the page's Activity and the
     global feed links there); the comment body lives on the page, not duplicated into
     the trail's detail. Commenting is participation, so the commenter starts watching
-    the page, and anyone named by [[user:N]] in the comment is mentioned."""
+    the page, and anyone named by [[user:N]] in the comment is mentioned.
+
+    ``commit=False`` composes this inside a command's transaction: the event, the watch,
+    and the mentions all defer their commit to the command owner."""
     event = activity.record(
         conn,
         actor_id=actor_id,
         verb="page_commented",
         target_kind="page",
         target_id=page_id,
+        commit=commit,
     )
-    notifications.watch(conn, actor_id, "page", page_id)
+    notifications.watch(conn, actor_id, "page", page_id, commit=commit)
     notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=body
+        conn, event_id=event["id"], actor_id=actor_id, text=body, commit=commit
+    )
+
+
+def record_page_comment_edited(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool = True
+) -> None:
+    """Record that a page comment's body was edited — the previously-silent half of the
+    comment lifecycle (who rewrote content). No detail: the current body lives on the
+    comment, and the point is that the change is now on the record at all. ``commit=False``
+    composes inside a command's transaction."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_comment_edited",
+        target_kind="page",
+        target_id=page_id,
+        commit=commit,
     )
 
 
 def record_page_comment_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, commit: bool = True
 ) -> None:
     """Record that a comment was removed from the page — the audit-worthy half of the
-    comment lifecycle (who took content down). No detail: the comment is gone."""
+    comment lifecycle (who took content down). No detail: the comment is gone.
+    ``commit=False`` composes inside a command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
         verb="page_comment_deleted",
         target_kind="page",
         target_id=page_id,
+        commit=commit,
     )
 
 

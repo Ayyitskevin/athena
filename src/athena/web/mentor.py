@@ -22,7 +22,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from athena import config
 from athena.core import access, activity, attachments, identity, labels, links, notifications, users
 from athena.core.deps import get_conn
-from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
+from athena.mentor import (
+    page_activity,
+    page_comment_commands,
+    page_comments,
+    pages,
+    space_activity,
+    spaces,
+)
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_body, render_comment
 from athena.web.router import _readonly_response, get_templates
@@ -878,8 +885,8 @@ def add_page_comment(
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
-    page_comments.add_comment(conn, page_id=page_id, author_id=user["id"], body=body)
-    page_activity.record_page_commented(
+    # The command owns the insert AND its atomic 'page_commented' event (auto-watch + mentions).
+    page_comment_commands.create_page_comment(
         conn, actor_id=user["id"], page_id=page_id, body=body
     )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
@@ -928,7 +935,13 @@ def edit_page_comment(
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
-    if page_comments.update_comment(conn, comment_id, body=body) is None:
+    # The command owns the edit AND its atomic 'page_comment_edited' event — this web
+    # path previously rewrote the body with NO audit trail at all.
+    try:
+        page_comment_commands.edit_page_comment(
+            conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id, body=body
+        )
+    except page_comment_commands.PageCommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
         return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
@@ -957,13 +970,12 @@ def delete_page_comment(
     _, err = _own_page_comment_or_response(conn, page_id, comment_id, user, allow_admin=True)
     if err is not None:
         return err
-    if not page_comments.delete_comment(conn, comment_id):
-        # vanished between the author check and the delete (a race) — 404, and don't
-        # record an event for a deletion that didn't happen.
+    # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
+    # that vanished in a race records nothing and 404s.
+    if not page_comment_commands.delete_page_comment(
+        conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id
+    ):
         return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
-    page_activity.record_page_comment_deleted(
-        conn, actor_id=user["id"], page_id=page_id
-    )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

@@ -17,7 +17,14 @@ from athena.core import access, activity, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
-from athena.mentor import page_activity, page_comments, pages, space_activity, spaces
+from athena.mentor import (
+    page_activity,
+    page_comment_commands,
+    page_comments,
+    pages,
+    space_activity,
+    spaces,
+)
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
@@ -610,13 +617,11 @@ def add_page_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    comment = page_comments.add_comment(
-        conn, page_id=page_id, author_id=actor["id"], body=body
-    )
-    page_activity.record_page_commented(
+    # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
+    # mentions), so a page comment and its activity footprint land together.
+    return page_comment_commands.create_page_comment(
         conn, actor_id=actor["id"], page_id=page_id, body=body
     )
-    return comment
 
 
 @pages_router.get("/{page_id}/comments", response_model=list[PageCommentOut])
@@ -671,10 +676,14 @@ def edit_page_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    updated = page_comments.update_comment(conn, comment_id, body=body)
-    if updated is None:  # vanished between the author check and the write (a race)
-        raise HTTPException(status_code=404, detail="no such comment")
-    return updated
+    # The command owns the edit AND its atomic 'page_comment_edited' event — previously
+    # a silent content rewrite.
+    try:
+        return page_comment_commands.edit_page_comment(
+            conn, actor_id=actor["id"], page_id=page_id, comment_id=comment_id, body=body
+        )
+    except page_comment_commands.PageCommentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @pages_router.delete("/{page_id}/comments/{comment_id}", status_code=204)
@@ -686,13 +695,12 @@ def delete_page_comment(
 ) -> None:
     _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
     _author_page_comment_or_error(conn, page_id, comment_id, actor, allow_admin=True)
-    if not page_comments.delete_comment(conn, comment_id):
-        # vanished between the author check and the delete (a race) — don't record
-        # an event for a deletion that didn't happen.
+    # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
+    # that vanished in a race records nothing and 404s.
+    if not page_comment_commands.delete_page_comment(
+        conn, actor_id=actor["id"], page_id=page_id, comment_id=comment_id
+    ):
         raise HTTPException(status_code=404, detail="no such comment")
-    page_activity.record_page_comment_deleted(
-        conn, actor_id=actor["id"], page_id=page_id
-    )
 
 
 @pages_router.post(
