@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import jwt
 
 from athena import config
-from athena.core import oidc, oidc_flow, sessions, users
+from athena.core import oidc, oidc_flow, security_events, sessions, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -135,6 +135,18 @@ def login(
 
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:
+        # When the attempt named a REAL account, the trail records that the
+        # account was probed (rate-limited above; the response stays opaque).
+        target = users.get_user_by_email(conn, email)
+        if target is not None:
+            security_events.record_failure(
+                conn,
+                actor_id=target["id"],
+                verb=security_events.VERB_LOGIN_FAILED,
+                target_kind="user",
+                target_id=target["id"],
+                detail="failed browser login",
+            )
         # One opaque message — never reveal whether the email exists.
         return templates.TemplateResponse(
             request=request,

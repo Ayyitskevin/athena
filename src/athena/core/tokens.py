@@ -139,6 +139,18 @@ def resolve_token(conn: sqlite3.Connection, raw: str) -> dict | None:
     return actor
 
 
+def get_revoked_token(conn: sqlite3.Connection, raw: str) -> dict | None:
+    """Identify a REVOKED token presented as a credential: {id, user_id}, or None
+    when the raw value matches no revoked token. Failure auditing uses this to
+    attribute the attempt to the token's owner; it never authenticates."""
+    row = conn.execute(
+        "SELECT id, user_id FROM api_tokens"
+        " WHERE token_hash = ? AND revoked_at IS NOT NULL",
+        (_hash(raw),),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
 def list_tokens(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     """Every token belonging to a user, hash withheld. Revoked ones included so
     the owner can see (and stop re-creating) them."""
