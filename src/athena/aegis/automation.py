@@ -137,10 +137,12 @@ def create_rule(
     conditions: dict | None = None,
     action_params: dict | None = None,
     target_kind: str = "issue",
+    commit: bool = True,
 ) -> dict:
     """Insert a rule and return it. conditions/action_params are stored as JSON text.
     The boundary validates trigger_verb/action_type/condition keys; this layer persists.
-    Raises sqlite3.IntegrityError if created_by isn't a real user (the FK)."""
+    Raises sqlite3.IntegrityError if created_by isn't a real user (the FK). ``commit=False``
+    lets an audited command fold the insert and its activity event into one transaction."""
     cur = conn.execute(
         "INSERT INTO automation_rules "
         "(name, trigger_verb, target_kind, conditions, action_type, action_params, "
@@ -155,7 +157,8 @@ def create_rule(
             created_by,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_rule(conn, cur.lastrowid)
 
 
@@ -186,23 +189,31 @@ def list_rules(
 
 
 def set_enabled(
-    conn: sqlite3.Connection, rule_id: int, enabled: bool
+    conn: sqlite3.Connection, rule_id: int, enabled: bool, *, commit: bool = True
 ) -> dict | None:
     """Switch a rule on/off WITHOUT deleting it (the pause twin of a webhook's active
-    flag). Returns the updated rule, or None if there is no such rule."""
+    flag). Returns the updated rule, or None if there is no such rule. ``commit=False``
+    lets an audited command fold the flip and its activity event into one transaction."""
     cur = conn.execute(
         "UPDATE automation_rules SET enabled = ? WHERE id = ?",
         (1 if enabled else 0, rule_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_rule(conn, rule_id)
 
 
-def delete_rule(conn: sqlite3.Connection, rule_id: int) -> bool:
+def delete_rule(
+    conn: sqlite3.Connection, rule_id: int, *, commit: bool = True
+) -> bool:
+    """Delete a rule. Returns True if one was removed, False if there was no such row.
+    ``commit=False`` lets an audited command fold the delete and its activity event
+    into one transaction."""
     cur = conn.execute("DELETE FROM automation_rules WHERE id = ?", (rule_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

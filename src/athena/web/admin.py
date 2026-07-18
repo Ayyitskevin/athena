@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena import config
-from athena.aegis import automation, delegations, projects, statuses
+from athena.aegis import (
+    automation,
+    automation_commands,
+    delegations,
+    projects,
+    statuses,
+)
 from athena.core import (
     activity,
     agent_commands,
@@ -877,12 +883,13 @@ def create_rule(
     if spec_error is not None:
         return _reject(spec_error)
 
-    automation.create_rule(
+    # The command owns the insert AND its atomic 'created_automation_rule' audit event.
+    automation_commands.create_rule(
         conn,
+        actor_id=actor["id"],
         name=name,
         trigger_verb=trigger_verb,
         action_type=action_type,
-        created_by=actor["id"],
         conditions=conditions,
         action_params=action_params,
     )
@@ -905,8 +912,13 @@ def toggle_rule(
     if err is not None:
         return err
     # The form posts the DESIRED next state ("1" enable, anything else pause) — a
-    # deterministic toggle that keeps the rule (and its place in fire order).
-    if automation.set_enabled(conn, rule_id, enabled == "1") is None:
+    # deterministic toggle that keeps the rule (and its place in fire order). The
+    # command records the flip atomically.
+    try:
+        automation_commands.set_rule_enabled(
+            conn, actor_id=actor["id"], rule_id=rule_id, enabled=enabled == "1"
+        )
+    except automation_commands.AutomationCommandError:
         return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)
 
@@ -925,6 +937,8 @@ def delete_rule(
     err = _admin_required(actor)
     if err is not None:
         return err
-    if not automation.delete_rule(conn, rule_id):
+    if not automation_commands.delete_rule(
+        conn, actor_id=actor["id"], rule_id=rule_id
+    ):
         return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)

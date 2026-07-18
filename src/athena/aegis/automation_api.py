@@ -17,7 +17,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from athena.aegis import automation
+from athena.aegis import automation, automation_commands
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
@@ -91,12 +91,14 @@ def create(
     )
     if error is not None:
         raise HTTPException(status_code=422, detail=error)
-    return automation.create_rule(
+    # The command owns the insert AND its atomic 'created_automation_rule' audit event,
+    # so standing up an instance-wide automated writer is never a silent act.
+    return automation_commands.create_rule(
         conn,
+        actor_id=actor["id"],
         name=name,
         trigger_verb=payload.trigger_verb,
         action_type=payload.action_type,
-        created_by=actor["id"],
         conditions=payload.conditions,
         action_params=payload.action_params,
         target_kind=payload.target_kind,
@@ -122,10 +124,13 @@ def update(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    updated = automation.set_enabled(conn, rule_id, payload.enabled)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such rule")
-    return updated
+    # The command records the arm/disarm flip atomically.
+    try:
+        return automation_commands.set_rule_enabled(
+            conn, actor_id=actor["id"], rule_id=rule_id, enabled=payload.enabled
+        )
+    except automation_commands.AutomationCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
@@ -134,5 +139,8 @@ def remove(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    if not automation.delete_rule(conn, rule_id):
+    # The command records the deletion atomically (naming the rule going away).
+    if not automation_commands.delete_rule(
+        conn, actor_id=actor["id"], rule_id=rule_id
+    ):
         raise HTTPException(status_code=404, detail="no such rule")
