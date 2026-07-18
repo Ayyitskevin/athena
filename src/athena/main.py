@@ -35,6 +35,8 @@ from athena.core import (
     activity_api,
     attachments_api,
     db,
+    identity,
+    security_events,
     events_api,
     idempotency,
     notifications,
@@ -1043,6 +1045,28 @@ def create_app(
         return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     app.add_exception_handler(activity.RunBindingError, _run_binding_conflict)
+
+    # A scope denial is a probe worth remembering: put it on the trail (its own
+    # connection — the request's is dependency-scoped), then answer exactly as
+    # the plain 403 always did. Registered on the subclass, so every other
+    # HTTPException keeps FastAPI's default handling.
+    def _record_scope_denial(request, exc: identity.ScopeDenied):
+        if exc.actor_id is not None:
+            conn = db.connect(request.app.state.db_path)
+            try:
+                security_events.record_failure(
+                    conn,
+                    actor_id=exc.actor_id,
+                    verb=security_events.VERB_SCOPE_DENIED,
+                    target_kind="user",
+                    target_id=exc.actor_id,
+                    detail=f"{exc.scope} on {request.method} {request.url.path}",
+                )
+            finally:
+                conn.close()
+        return JSONResponse(status_code=403, content={"detail": exc.detail})
+
+    app.add_exception_handler(identity.ScopeDenied, _record_scope_denial)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)

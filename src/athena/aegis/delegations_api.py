@@ -5,13 +5,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from athena.aegis import delegations
 from athena.core import tokens
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor, token_has_scope
+from athena.core.identity import ScopeDenied, current_actor, token_has_scope
 
 
 router = APIRouter(prefix="/delegations", tags=["aegis"])
@@ -109,10 +109,7 @@ def my_delegations(
         token_has_scope(actor, tokens.READ_SCOPE)
         or token_has_scope(actor, tokens.ISSUE_WRITE_SCOPE)
     ):
-        raise HTTPException(
-            status_code=403,
-            detail="token scope required: read or issue:write",
-        )
+        raise ScopeDenied(actor, "read or issue:write")
     return delegations.list_delegations(
         conn,
         actor,

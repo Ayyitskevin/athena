@@ -73,7 +73,7 @@ success) is observable, and the operator gets levers between "watch" and
 - [x] Per-agent **pause** (checked at identity resolution, audited, toggleable
       in the cockpit) — the lever an operator reaches for before the kill
       switch.
-- [ ] Audit authentication/authorization *failures*: failed logins,
+- [x] Audit authentication/authorization *failures*: failed logins,
       revoked-token use, and scope denials become activity events. An agent
       probing its boundary currently leaves no trace.
 - [ ] Audit the project lifecycle (create/edit/delete) — today a workspace

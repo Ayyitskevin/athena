@@ -28,7 +28,7 @@ import sqlite3
 from fastapi import Depends, Header, HTTPException, Request
 
 from athena import config
-from athena.core import rate_limits, tokens, users
+from athena.core import rate_limits, security_events, tokens, users
 from athena.core.deps import get_conn
 
 ACTOR_HEADER = "X-Athena-Actor"
@@ -48,9 +48,24 @@ def current_actor(
         raw = authorization[len(_BEARER_PREFIX) :].strip()
         actor = tokens.resolve_token(conn, raw)
         if actor is None:
+            # Bound the flood BEFORE recording: without this, invalid-bearer
+            # hammering was both unthrottled and (now) trail-writing.
+            _enforce_anon_rate_limit(request)
+            revoked = tokens.get_revoked_token(conn, raw)
+            if revoked is not None:
+                # A revoked credential being PRESENTED is the signal the kill
+                # switch exists for — attribute it to the token's owner.
+                security_events.record_failure(
+                    conn,
+                    actor_id=revoked["user_id"],
+                    verb=security_events.VERB_REVOKED_TOKEN_USED,
+                    target_kind="token",
+                    target_id=revoked["id"],
+                    detail="revoked bearer token presented",
+                )
             raise HTTPException(status_code=401, detail="invalid or revoked token")
-        _refuse_paused(actor)
         _enforce_token_rate_limit(request, actor)
+        _refuse_paused(conn, actor)
         return actor
 
     # 2. Actor header — local-trust fallback, only if explicitly enabled.
@@ -64,18 +79,28 @@ def current_actor(
         actor = users.get_user(conn, actor_id)
         if actor is None:
             raise HTTPException(status_code=401, detail="unknown actor")
-        _refuse_paused(actor)
+        _refuse_paused(conn, actor)
         return actor
 
     raise HTTPException(status_code=401, detail="authentication required")
 
 
-def _refuse_paused(actor: dict) -> None:
+def _refuse_paused(conn: sqlite3.Connection, actor: dict) -> None:
     """The pause lever, enforced at identity resolution: a paused account is
     refused EVERY authenticated action — reads, writes, heartbeats — until an
     admin resumes it. 403 (not 401): the credential is valid, the account is
-    deliberately frozen, and retrying with the same token is pointless."""
+    deliberately frozen, and retrying with the same token is pointless. Each
+    refused attempt lands on the trail — a paused agent that KEEPS trying is
+    exactly what the operator paused it to find out. On the bearer path this
+    runs after the per-token rate limit, so the recording is flood-bounded."""
     if actor.get("paused_at"):
+        security_events.record_failure(
+            conn,
+            actor_id=actor["id"],
+            verb=security_events.VERB_PAUSED_REFUSED,
+            target_kind="user",
+            target_id=actor["id"],
+        )
         raise HTTPException(status_code=403, detail="account is paused")
 
 
@@ -181,9 +206,23 @@ def token_has_scope(actor: dict | None, scope: str) -> bool:
     return tokens.ADMIN_SCOPE in scopes or scope in scopes
 
 
+class ScopeDenied(HTTPException):
+    """A 403 that also names WHO hit WHICH scope boundary, so the app-level
+    handler (main.py) can put the probe on the activity trail while returning
+    exactly the same response a plain HTTPException produced. An agent that
+    keeps walking into its scope wall is a story the operator should see."""
+
+    def __init__(self, actor: dict | None, scope: str) -> None:
+        super().__init__(
+            status_code=403, detail=f"token scope required: {scope}"
+        )
+        self.actor_id = actor.get("id") if actor else None
+        self.scope = scope
+
+
 def require_token_scope(actor: dict, scope: str) -> dict:
     if not token_has_scope(actor, scope):
-        raise HTTPException(status_code=403, detail=f"token scope required: {scope}")
+        raise ScopeDenied(actor, scope)
     return actor
 
 
@@ -222,7 +261,7 @@ def personal_write_actor(actor: dict = Depends(current_actor)) -> dict:
         tokens.DOCS_WRITE_SCOPE,
         tokens.ADMIN_SCOPE,
     }:
-        raise HTTPException(status_code=403, detail="token scope required: a write scope")
+        raise ScopeDenied(actor, "a write scope")
     return actor
 
 
