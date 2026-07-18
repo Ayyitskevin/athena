@@ -67,10 +67,10 @@ Goal: runs become tamper-resistant attribution units, misbehavior (not just
 success) is observable, and the operator gets levers between "watch" and
 "revoke everything".
 
-- [ ] Bind a run id to the first identity that uses it; reject writes that try
+- [x] Bind a run id to the first identity that uses it; reject writes that try
       to stamp into another identity's run. *(Run ids are honor-system today —
       replay artifacts should be evidence, not convention.)*
-- [ ] Per-agent **pause** (checked at identity resolution, audited, toggleable
+- [x] Per-agent **pause** (checked at identity resolution, audited, toggleable
       in the cockpit) — the lever an operator reaches for before the kill
       switch.
 - [ ] Audit authentication/authorization *failures*: failed logins,

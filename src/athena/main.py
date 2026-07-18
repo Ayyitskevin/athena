@@ -30,6 +30,7 @@ from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
+    activity,
     agent_runs_api,
     activity_api,
     attachments_api,
@@ -1034,6 +1035,14 @@ def create_app(
                         await task
 
     app = FastAPI(title="Athena", lifespan=lifespan)
+
+    # A tagged write that tries to continue ANOTHER actor's run is refused deep
+    # in activity.record (transport-neutral, transaction-rolled-back); this maps
+    # the refusal to the same 403 shape every authorization failure uses.
+    def _run_binding_conflict(request, exc: activity.RunBindingError):
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+    app.add_exception_handler(activity.RunBindingError, _run_binding_conflict)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
@@ -1072,6 +1081,13 @@ def create_app(
             conn = db.connect(request.app.state.db_path)
             try:
                 request.state.user = sessions.resolve_session(conn, raw)
+                # The pause lever reaches browser sessions too: a paused user is
+                # treated as signed out (no writes, no personal surfaces) until
+                # an admin resumes them — without burning their session.
+                if request.state.user is not None and request.state.user.get(
+                    "paused_at"
+                ):
+                    request.state.user = None
                 if request.state.user is not None:
                     request.state.csrf_token = sessions.csrf_token_for(conn, raw)
                     # Gate the badge by visibility too, so it matches the inbox: an

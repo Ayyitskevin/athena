@@ -37,6 +37,36 @@ _UNGATED = object()
 _AUTO_ISSUE_PROJECTS = object()
 
 
+class RunBindingError(Exception):
+    """A tagged write tried to continue a run id already bound to a DIFFERENT
+    actor. Transport-neutral (main.py maps it to a 403); raised inside the
+    caller's write transaction, so the refused write rolls back whole — the
+    forged event never lands and the run's replay stays single-author."""
+
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"run '{run_id}' is bound to another actor")
+        self.run_id = run_id
+
+
+def _bind_run(conn: sqlite3.Connection, run_id: str, actor_id: int) -> None:
+    """First tagged writer claims the run id; anyone else is refused.
+
+    Run ids are client-chosen strings, so without this any actor could write
+    events into another actor's run and poison its replay/lineage. The check
+    and the claim share the caller's immediate transaction, so two racing
+    first-writers serialize on SQLite's single-writer reservation."""
+    row = conn.execute(
+        "SELECT actor_id FROM run_bindings WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            "INSERT INTO run_bindings (run_id, actor_id) VALUES (?, ?)",
+            (run_id, actor_id),
+        )
+    elif row["actor_id"] != actor_id:
+        raise RunBindingError(run_id)
+
+
 def _like_pattern(value: str) -> str:
     """Return a literal LIKE pattern for operator search text."""
     escaped = (
@@ -95,7 +125,12 @@ def record(
     The event is stamped with the ambient run id, parent run id, and fork point (the
     X-Athena-Run / X-Athena-Parent-Run / X-Athena-Fork-From-Event headers for the
     request in flight, via run_context) so the caller never threads them through —
-    each is NULL when not supplied, which is every untagged or top-level action."""
+    each is NULL when not supplied, which is every untagged or top-level action.
+
+    A tagged write also claims (or must match) the run id's binding: the first
+    actor to write under a run id owns it, and a write by anyone else raises
+    RunBindingError — rolling back the whole command, so a run's trail can never
+    be spliced by a second author."""
     # Resolve every access-envelope input after acquiring SQLite's writer
     # reservation. A standalone commit=False call leaves this transaction open for
     # its command owner; nested command calls already hold the reservation.
@@ -132,6 +167,9 @@ def record(
             else:
                 resolved_scope_keys.add(scope["activity_scope_key"])
 
+        run_id = run_context.get_run_id()
+        if run_id is not None:
+            _bind_run(conn, run_id, actor_id)
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
@@ -143,7 +181,7 @@ def record(
                 target_kind,
                 target_id,
                 detail,
-                run_context.get_run_id(),
+                run_id,
                 run_context.get_parent_run_id(),
                 run_context.get_forked_from_event_id(),
                 0 if scope_is_complete else 1,

@@ -165,6 +165,38 @@ def count_admins(conn: sqlite3.Connection) -> int:
     ).fetchone()["n"]
 
 
+def count_active_admins(conn: sqlite3.Connection) -> int:
+    """Admins who can actually act: the admin role AND not paused. The pause
+    guard counts these — pausing the last one would brick the workspace (a
+    paused admin cannot resume anyone, itself included)."""
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE role = ? AND paused_at IS NULL",
+        (ADMIN_ROLE,),
+    ).fetchone()["n"]
+
+
+def set_paused(
+    conn: sqlite3.Connection, user_id: int, paused: bool, *, commit: bool = True
+) -> dict | None:
+    """Pause (or resume) a user and return the updated row, or None if the user
+    doesn't exist. Pausing freezes the account at identity resolution without
+    destroying anything; resume restores it exactly. ``commit=False`` lets the
+    audited command fold the flip and its activity event into one transaction."""
+    cur = conn.execute(
+        "UPDATE users SET paused_at = ? WHERE id = ?",
+        (_now(conn) if paused else None, user_id),
+    )
+    if commit:
+        conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_user(conn, user_id)
+
+
+def _now(conn: sqlite3.Connection) -> str:
+    return conn.execute("SELECT datetime('now')").fetchone()[0]
+
+
 def list_users(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
     return [_with_password_state(_row_to_user(row)) for row in rows]

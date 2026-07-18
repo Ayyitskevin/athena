@@ -10,6 +10,8 @@ They are the *authoritative* levers over an agent's credential lifecycle:
 
 - ``onboard_agent`` — the front door: create the agent user and mint its first
   scoped token, one atomic audited move.
+- ``set_user_paused`` — the pause: freeze every authenticated action without
+  destroying anything, and restore exactly on resume.
 - ``revoke_agent_tokens`` — the kill switch: revoke every live token a user holds.
 - ``offboard_user`` — the full lockout: demote to viewer, revoke every session,
   revoke every token, in one move.
@@ -47,6 +49,8 @@ from athena.core import (
 VERB_REVOKE_TOKENS = "revoked_agent_tokens"
 VERB_OFFBOARD = "offboarded_user"
 VERB_ONBOARD = "onboarded_agent"
+VERB_PAUSED = "paused_user"
+VERB_RESUMED = "resumed_user"
 
 
 class AgentCommandError(Exception):
@@ -188,6 +192,56 @@ def revoke_agent_tokens(
             commit=False,
         )
     return {"user_id": target_user_id, "revoked_token_count": revoked}
+
+
+def set_user_paused(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    target_user_id: int,
+    paused: bool,
+) -> dict:
+    """Pause or resume a user — the operator lever BETWEEN watch and revoke.
+
+    Pausing freezes the account at identity resolution (every authenticated
+    action refused, browser sessions treated as signed out) without destroying
+    anything: no tokens revoked, no sessions burned, no role change. Resume
+    restores it exactly. The flip and its 'paused_user'/'resumed_user' event
+    land in one transaction; a no-op flip (already in the requested state)
+    records nothing — repeated pushes of the same lever are not lifecycle
+    moments.
+
+    Refuses to pause the last ACTIVE admin (409): a paused admin cannot resume
+    anyone — itself included — so that pause would brick the workspace. Raises
+    AgentCommandError(404) for an unknown target, (401/403) when the actor is
+    missing or lacks the admin role/scope."""
+    actor = _require_admin_actor(actor)
+    with db.transaction(conn, immediate=True):
+        target = users.get_user(conn, target_user_id)
+        if target is None:
+            raise AgentCommandError("no such user", status_code=404)
+        if (
+            paused
+            and target["role"] == users.ADMIN_ROLE
+            and not target.get("paused_at")
+            and users.count_active_admins(conn) <= 1
+        ):
+            raise AgentCommandError(
+                "cannot pause the last active admin", status_code=409
+            )
+        already = bool(target.get("paused_at"))
+        if already == paused:
+            return target
+        updated = users.set_paused(conn, target_user_id, paused, commit=False)
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=VERB_PAUSED if paused else VERB_RESUMED,
+            target_kind="user",
+            target_id=target_user_id,
+            commit=False,
+        )
+    return updated
 
 
 def offboard_user(

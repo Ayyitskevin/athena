@@ -298,6 +298,20 @@ def build_server(client: AthenaClient) -> FastMCP:
         )
 
     @mutation_tool
+    def pause_agent(user_id: int) -> dict:
+        """Admin: PAUSE user_id — every authenticated action it attempts is
+        refused until resumed, but nothing is destroyed (tokens and sessions
+        stay intact). The lever to reach for BEFORE the kill switch when an
+        agent looks off-course. Audited. Requires an admin token."""
+        return client.set_user_paused(user_id, True)
+
+    @mutation_tool
+    def resume_agent(user_id: int) -> dict:
+        """Admin: RESUME a paused user_id — restores the account exactly as it
+        was before the pause. Audited. Requires an admin token."""
+        return client.set_user_paused(user_id, False)
+
+    @mutation_tool
     def revoke_agent_tokens(user_id: int) -> dict:
         """Admin kill switch: revoke EVERY live API token held by user_id — the
         lever to immediately stop a compromised or runaway agent. Idempotent and
