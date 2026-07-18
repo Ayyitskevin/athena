@@ -8,12 +8,36 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Added
 
+- A public roadmap (`docs/ROADMAP.md`) grounded in a full-codebase review:
+  phased plans for the agent loop, run integrity, docs-as-agent-memory, and
+  fleet operations.
+
+### Changed
+
+- The test gate runs in parallel (`pytest -n 4` via pytest-xdist), cutting the
+  suite from ~16 minutes to ~3 — the suite was already deterministic
+  (no sleeps, per-test databases), so no test changed.
+- Corrected four stale docstrings/comments that no longer matched the code
+  (issue status "canonical set", webhook payload/event parity, JWKS caching,
+  comment cross-link rendering), and removed operator-environment references
+  from the contributor docs. Research planning notes moved to `docs/research/`.
+
+## [0.1.0a1] - 2026-07-18
+
+### Added
+
 - AGPL-3.0-only licensing and package metadata.
 - Contributor and security policies.
 - A bounded peer-review guide and an explicit command-migration inventory.
 - Transparent documentation of Athena's AI-assisted development process.
 - A safe, loopback-only seeded demo command for a five-minute product tour.
 - A pull-request template that records scope, verification, risks, and AI help.
+- Atomic, audited application commands for the credential/privilege/content
+  writes that previously split mutation from audit (or recorded nothing):
+  dependency links, user role/agent-flag changes, user creation, API-token
+  mint/revoke, webhook lifecycle, SSO identity link/unlink, automation-rule
+  lifecycle, and issue/page comment create/edit/delete — each write and its
+  activity event now commit or roll back together.
 
 ### Changed
 

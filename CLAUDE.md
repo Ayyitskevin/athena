@@ -11,4 +11,4 @@ Claude-Code-specific notes:
   AGENTS.md narrows them for Athena and wins on Athena-specific conflicts.
 - Branch as `claude/<topic>`. You may merge your own PR here once green (the
   dev-project carve-out documented in AGENTS.md) — but never push `main`
-  directly, and the carve-out never extends to Mise or other live services.
+  directly, and the carve-out never extends to live production services.

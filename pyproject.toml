@@ -35,7 +35,18 @@ dependencies = [
 # `pytest -q` is the gate — so if `[dev]` didn't pull the SDK, a broken agent
 # interface (the product's differentiator) would pass a local run as skipped-not-run.
 # Installing `[dev]` therefore exercises server.py the same way CI does.
-dev = ["build>=1.5,<2", "pytest", "httpx", "httpx2>=2,<3", "ruff>=0.8,<1", "mcp>=1.2"]
+# pytest-xdist: the suite is deterministic (no time.sleep, Barrier-coordinated
+# races, per-test tmp_path databases), so it parallelizes cleanly — `pytest -n 4`
+# cuts the gate from ~16 min to ~3 min. Plain `pytest -q` remains valid.
+dev = [
+    "build>=1.5,<2",
+    "pytest",
+    "pytest-xdist>=3.5,<4",
+    "httpx",
+    "httpx2>=2,<3",
+    "ruff>=0.8,<1",
+    "mcp>=1.2",
+]
 # The MCP server is optional AT RUNTIME — it lets an AI agent drive Athena over MCP.
 # Install with `pip install athena[mcp]`. Kept out of the base runtime install so the
 # core app stays lean; the dev/test group above always pulls it so the wiring is tested.
