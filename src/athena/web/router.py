@@ -835,7 +835,7 @@ def _render_issue_detail(
     issue_id = issue["id"]
     user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
-    can_modify = can_write and issues.can_modify(issue, user["id"])
+    can_modify = can_write and issues.can_act_on(conn, issue, user)
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])

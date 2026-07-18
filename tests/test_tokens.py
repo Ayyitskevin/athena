@@ -24,7 +24,7 @@ def _user(client, email="kevin@example.com", name="Kevin") -> int:
 
 def _mint(client, user_id, name="laptop") -> str:
     """Bootstrap a token via the actor-header fallback; return the raw secret."""
-    r = client.post("/tokens", json={"name": name}, headers={"X-Athena-Actor": str(user_id)})
+    r = client.post("/tokens", json={"name": name, "scopes": ["admin"]}, headers={"X-Athena-Actor": str(user_id)})
     assert r.status_code == 201
     return r.json()["token"]
 
@@ -150,5 +150,5 @@ def test_managing_tokens_requires_auth(tmp_path):
     # management is 401 (the bootstrap path needs the actor header on first use).
     app = create_app(tmp_path / "noauth.db")
     with TestClient(app) as client:
-        assert client.post("/tokens", json={"name": "x"}).status_code == 401
+        assert client.post("/tokens", json={"name": "x", "scopes": ["admin"]}).status_code == 401
         assert client.get("/tokens").status_code == 401

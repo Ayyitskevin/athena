@@ -25,7 +25,10 @@ ISSUE_WRITE_SCOPE = "issue:write"
 DOCS_WRITE_SCOPE = "docs:write"
 ADMIN_SCOPE = "admin"
 SCOPES = (READ_SCOPE, ISSUE_WRITE_SCOPE, DOCS_WRITE_SCOPE, ADMIN_SCOPE)
-DEFAULT_SCOPES = (ADMIN_SCOPE,)
+# What a LEGACY stored row with no scopes column value means (rows minted before
+# scopes existed): full access. Deliberately NOT a default for new mints — there
+# is no default; normalize_scopes requires an explicit choice.
+LEGACY_SCOPES = (ADMIN_SCOPE,)
 
 # Columns safe to return to a caller — never the hash.
 _PUBLIC_COLS = "id, user_id, name, scopes, created_at, last_used_at, revoked_at"
@@ -38,9 +41,19 @@ def _hash(raw: str) -> str:
 
 
 def normalize_scopes(scopes: Iterable[str] | None) -> tuple[str, ...]:
-    """Validate and canonicalize token scopes for storage and policy checks."""
+    """Validate and canonicalize token scopes for storage and policy checks.
+
+    Omitting scopes on a MINT is an error: an agent-credential product must not
+    fail open, and the old behavior (None silently meant admin) inverted least
+    privilege — forgetting a field granted everything. Callers must say what a
+    token may do. (Legacy STORED rows with no scopes still read as full access —
+    that compatibility lives in parse_scopes, which never round-trips through
+    here for the missing case.)"""
     if scopes is None:
-        return DEFAULT_SCOPES
+        raise ValueError(
+            "token scopes are required; pass an explicit list "
+            f"(one or more of: {', '.join(SCOPES)})"
+        )
 
     seen: set[str] = set()
     for raw in scopes:
@@ -57,9 +70,11 @@ def normalize_scopes(scopes: Iterable[str] | None) -> tuple[str, ...]:
 
 
 def parse_scopes(raw: str | None) -> tuple[str, ...]:
-    """Parse the DB representation. Missing values mean legacy full access."""
+    """Parse the DB representation. A missing/empty STORED value means legacy full
+    access — rows minted before scopes existed keep their meaning. (New mints can
+    never produce such a row: normalize_scopes refuses omitted scopes.)"""
     if raw is None or raw.strip() == "":
-        return DEFAULT_SCOPES
+        return LEGACY_SCOPES
     return normalize_scopes(raw.split())
 
 

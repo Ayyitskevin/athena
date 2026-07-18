@@ -104,7 +104,7 @@ def test_viewer_can_read_but_cannot_write_api_resources(tmp_path):
 
         token = client.post(
             "/tokens",
-            json={"name": "viewer-token"},
+            json={"name": "viewer-token", "scopes": ["admin"]},
             headers={"X-Athena-Actor": str(viewer["id"])},
         )
         assert token.status_code == 403

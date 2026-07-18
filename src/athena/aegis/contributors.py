@@ -51,6 +51,20 @@ def remove_contributor(
     return cur.rowcount > 0
 
 
+def is_contributor(conn: sqlite3.Connection, issue_id: int, user_id: int) -> bool:
+    """Whether user_id is on this issue's contributor set — i.e. the issue was
+    delegated to them (or they were added as a teammate). The write-permission
+    gate (issues.can_act_on) uses this so a delegated agent can actually finish
+    the work it was handed."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM issue_contributors WHERE issue_id = ? AND user_id = ?",
+            (issue_id, user_id),
+        ).fetchone()
+        is not None
+    )
+
+
 def list_contributors(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
     """An issue's contributors, alphabetical by display name."""
     rows = conn.execute(

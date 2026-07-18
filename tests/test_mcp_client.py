@@ -30,7 +30,7 @@ def _client(tmp_path, name) -> tuple[TestClient, AthenaClient]:
     # trusted-actor path (enabled in tests by conftest).
     tc.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
     raw = tc.post(
-        "/tokens", json={"name": "mcp"}, headers={"X-Athena-Actor": "1"}
+        "/tokens", json={"name": "mcp", "scopes": ["admin"]}, headers={"X-Athena-Actor": "1"}
     ).json()["token"]
     tc.headers.update({"Authorization": f"Bearer {raw}"})
     return tc, AthenaClient(client=tc)

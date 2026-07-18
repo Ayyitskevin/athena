@@ -85,7 +85,7 @@ def test_bootstrap_then_enable_header_to_mint_first_token(tmp_path, monkeypatch)
 
         monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", True)
         minted = client.post(
-            "/tokens", json={"name": "bootstrap"}, headers={"X-Athena-Actor": str(uid)}
+            "/tokens", json={"name": "bootstrap", "scopes": ["admin"]}, headers={"X-Athena-Actor": str(uid)}
         )
         assert minted.status_code == 201
         raw = minted.json()["token"]

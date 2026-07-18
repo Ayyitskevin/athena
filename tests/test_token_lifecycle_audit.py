@@ -73,7 +73,7 @@ def test_minted_event_never_contains_the_raw_secret(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
-        raw = c.post("/tokens", json={"name": "laptop"}, headers=H1).json()["token"]
+        raw = c.post("/tokens", json={"name": "laptop", "scopes": ["admin"]}, headers=H1).json()["token"]
 
     ev = _events(db_file, "minted_token")
     assert len(ev) == 1
@@ -90,7 +90,7 @@ def test_rest_revoke_is_audited(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
-        token_id = c.post("/tokens", json={"name": "laptop"}, headers=H1).json()["id"]
+        token_id = c.post("/tokens", json={"name": "laptop", "scopes": ["admin"]}, headers=H1).json()["id"]
         assert c.delete(f"/tokens/{token_id}", headers=H1).status_code == 204
         # Revoking again is a 404 and must record nothing the second time.
         assert c.delete(f"/tokens/{token_id}", headers=H1).status_code == 404
@@ -108,10 +108,10 @@ def test_cross_owner_revoke_records_nothing(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)  # admin, id 1
         b = _make_user(c, "b@e.com")
-        a_token = c.post("/tokens", json={"name": "a-tok"}, headers=H1)
+        a_token = c.post("/tokens", json={"name": "a-tok", "scopes": ["admin"]}, headers=H1)
         a_token_id = a_token.json()["id"]
         b_raw = c.post(
-            "/tokens", json={"name": "b-tok"}, headers={"X-Athena-Actor": str(b["id"])}
+            "/tokens", json={"name": "b-tok", "scopes": ["admin"]}, headers={"X-Athena-Actor": str(b["id"])}
         ).json()["token"]
 
         attempt = c.delete(

@@ -278,7 +278,7 @@ def test_web_detail_hides_controls_for_bystander(tmp_path):
         _login(client, "cy@e.com", "Cy")  # user 3 — bystander session
         bystander_view = client.get(f"/aegis/issues/{issue_id}").text
         assert 'action="/aegis/issues/%d/status"' % issue_id not in bystander_view
-        assert "creator or assignee" in bystander_view
+        assert "delegated contributor" in bystander_view
 
 
 def test_web_creator_can_change_status(tmp_path):

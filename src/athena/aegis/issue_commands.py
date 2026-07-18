@@ -92,10 +92,12 @@ def _visible_issue(
     return issue
 
 
-def _modifiable_issue(issue: dict, actor: dict) -> dict:
-    if not issues.can_modify(issue, actor["id"]):
+def _modifiable_issue(conn: sqlite3.Connection, issue: dict, actor: dict) -> dict:
+    if not issues.can_act_on(conn, issue, actor):
         raise IssueCommandError(
-            "forbidden", "only the issue creator or assignee may modify it"
+            "forbidden",
+            "only the issue creator, assignee, a delegated contributor, "
+            "or an admin may modify it",
         )
     return issue
 
@@ -103,7 +105,7 @@ def _modifiable_issue(issue: dict, actor: dict) -> dict:
 def _writable_issue(
     conn: sqlite3.Connection, actor: dict, issue_id: int
 ) -> dict:
-    return _modifiable_issue(_visible_issue(conn, actor, issue_id), actor)
+    return _modifiable_issue(conn, _visible_issue(conn, actor, issue_id), actor)
 
 
 def get_writable_issue(
@@ -122,7 +124,7 @@ def get_writable_issue(
     # proceeds to the role/scope and creator-or-assignee checks.
     issue = _visible_issue(conn, actor, issue_id)
     _require_issue_writer(actor)
-    return _modifiable_issue(issue, actor)
+    return _modifiable_issue(conn, issue, actor)
 
 
 def create_issue(
@@ -521,8 +523,8 @@ def link_issues(
     an agent created over MCP left no attributable trace.
 
     Same authorization as any issue write: the actor must be a writer (role + scope)
-    and the creator or assignee of issue_id, and the TARGET must be an issue the actor
-    can see — a hidden or missing target collapses to the same "no such target issue",
+    who may act on issue_id (creator, assignee, delegated contributor, or admin), and
+    the TARGET must be an issue the actor can see — a hidden or missing target collapses to the same "no such target issue",
     so a write can't probe a private issue's existence. Idempotent: re-adding an
     identical edge records no second event. Returns issue_id's relationship summary.
     """
