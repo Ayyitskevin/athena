@@ -21,13 +21,9 @@ and MCP are thin callers that translate the single ``AgentCommandError`` into th
 own error shape — the authorization guard and the last-admin safety live here, in
 one place, not copied across three transports.
 
-The kill-switch and offboard commands repeat the role and token-scope checks
-below the transports, so a direct or future transport call cannot bypass the
-authorization policy that protects the REST and browser routes. ``onboard_agent``
-instead trusts the resolved actor its adapters hand it: every current surface
-(REST ``admin_actor``, the cockpit's ``_admin_required`` session gate, MCP via
-REST) enforces admin role + admin token scope before the command runs, and the
-actor is used for attribution.
+Adapters may reject non-admin requests early, but these commands repeat the role and
+token-scope checks. A direct or future transport call therefore cannot bypass the
+same authorization policy that protects the REST and browser routes.
 """
 
 from __future__ import annotations
@@ -105,11 +101,10 @@ def onboard_agent(
     the returned dict only; it is never written to the log.
 
     Scopes are required — an agent's first credential must say what it may do
-    (the same no-fail-open rule as every other mint surface). Authorization
-    (admin role + admin token scope) is the transport's job — REST/MCP gate via
-    ``admin_actor`` and the cockpit via ``_admin_required``; the command trusts
-    the resolved ``actor`` for attribution. Raises AgentCommandError(409) for a
+    (the same no-fail-open rule as every other mint surface). Raises
+    AgentCommandError(401/403) for a missing or non-admin actor, (409) for a
     duplicate email, (422) for blank email/name or missing/invalid scopes."""
+    actor = _require_admin_actor(actor)
     email = email.strip()
     name = name.strip()
     if not email or not name:

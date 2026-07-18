@@ -112,10 +112,39 @@ def test_onboard_is_admin_only(tmp_path):
     conn.close()
 
 
+def test_command_repeats_the_authz_checks_below_every_transport(tmp_path):
+    # The in-command guard is load-bearing: a future transport (or in-process
+    # caller) that forgets its own admin gate must still be refused HERE. This
+    # pins the command directly, not through REST.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        c.post(
+            "/users",
+            json={"email": "m@e.com", "name": "Mem", "role": "member"},
+            headers=H1,
+        )
+    conn = db.connect(db_file)
+    admin = users.get_user(conn, 1)
+    member = users.get_user(conn, 2)
+    scoped_admin = {**admin, "_token_scopes": ("read",)}
+    for actor, status in ((None, 401), (member, 403), (scoped_admin, 403)):
+        try:
+            agent_commands.onboard_agent(
+                conn, actor=actor, email="sol@e.com", name="Sol", scopes=["read"]
+            )
+            raise AssertionError("expected AgentCommandError")
+        except agent_commands.AgentCommandError as exc:
+            assert exc.status_code == status
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+    ).fetchone()["n"] == 0
+    conn.close()
+
+
 def test_admin_bearer_token_needs_the_admin_scope(tmp_path):
     # An admin holding a READ-scoped token must not be able to onboard through
-    # it — every transport gates on admin role AND admin token scope
-    # (require_admin / _admin_required) before the command runs.
+    # it — the command repeats the scope check below the transport.
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
