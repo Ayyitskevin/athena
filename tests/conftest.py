@@ -14,6 +14,7 @@ effect immediately.
 import pytest
 
 from athena import config
+from athena.core import passwords
 
 
 @pytest.fixture(autouse=True)
@@ -44,3 +45,13 @@ def isolated_attachment_dir(tmp_path, monkeypatch):
     # Attachments write blobs to config.ATTACH_DIR; point it at a per-test temp dir
     # so uploads never land in the repo and tests can't see each other's files.
     monkeypatch.setattr(config, "ATTACH_DIR", tmp_path / "attachments")
+
+
+@pytest.fixture(autouse=True)
+def fast_password_hashing(monkeypatch):
+    # Production PBKDF2 cost is deliberately expensive (600k iterations ≈ 200ms);
+    # hundreds of tests create users and log in, so run the suite at a cheap cost.
+    # The hash FORMAT and verify/rehash logic are identical at any count, and the
+    # policy itself (600k, needs_rehash, dummy_verify cost parity) is covered by
+    # dedicated tests that pin explicit iteration values.
+    monkeypatch.setattr(passwords, "_ITERATIONS", 2_000)

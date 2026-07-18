@@ -9,13 +9,14 @@ docs, cross-links, agent activity, and run metadata are useful in a code review.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
 
 from athena import config
 from athena.aegis import issue_commands, projects
-from athena.core import db, run_context, user_commands, users
+from athena.core import db, run_context, token_commands, tokens, user_commands, users
 from athena.mentor import page_activity, pages, space_activity, spaces
 
 DEMO_EMAIL = "operator@athena.local"
@@ -245,6 +246,17 @@ def seed_demo(
         finally:
             run_context.reset_run_id(review_run_token)
 
+        # Mint Sol a least-privilege API token through the audited command, so the
+        # demo's five-minute tour includes the differentiator: connecting a real AI
+        # agent over MCP. The raw secret exists only in this return value/printout —
+        # the database stores its hash, and the mint itself is on the activity trail.
+        agent_token = token_commands.mint_token(
+            conn,
+            actor_id=sol["id"],
+            name="demo-mcp",
+            scopes=[tokens.READ_SCOPE, tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE],
+        )
+
         counts = {
             table: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
             for table in ("users", "projects", "issues", "spaces", "pages", "activity")
@@ -255,6 +267,9 @@ def seed_demo(
             "email": DEMO_EMAIL,
             "password": DEMO_PASSWORD,
             "run_id": DEMO_RUN_ID,
+            "agent_email": "sol@athena.local",
+            "agent_token": agent_token["token"],
+            "agent_scopes": agent_token["scopes"],
             "ids": {
                 "operator": operator["id"],
                 "sol": sol["id"],
@@ -318,6 +333,25 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  Email:    {seeded['email']}")
     print(f"  Password: {seeded['password']}")
     print(f"  Run:      {seeded['run_id']}")
+    print()
+    print("Connect an AI agent over MCP (Sol's least-privilege token, shown once —")
+    print("its mint is already on the activity trail):")
+    print(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "athena": {
+                        "command": "athena-mcp",
+                        "env": {
+                            "ATHENA_BASE_URL": f"http://127.0.0.1:{args.port}",
+                            "ATHENA_TOKEN": seeded["agent_token"],
+                        },
+                    }
+                }
+            },
+            indent=2,
+        )
+    )
     if args.seed_only:
         return 0
 

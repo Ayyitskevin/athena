@@ -93,10 +93,26 @@ def verify_credentials(
     conn: sqlite3.Connection, *, email: str, password: str
 ) -> dict | None:
     """Return the user iff the email exists and the password matches. One opaque
-    None for both 'no such email' and 'wrong password' — don't reveal which."""
+    None for both 'no such email' and 'wrong password' — don't reveal which, in
+    the response OR in timing: when there is no stored hash to check (unknown
+    email, or an API-only account with no password) we still burn a full PBKDF2
+    verification so both rejections cost the same."""
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if row is None or not passwords.verify_password(password, row["password_hash"]):
+    if row is None or not row["password_hash"]:
+        passwords.dummy_verify(password)
         return None
+    if not passwords.verify_password(password, row["password_hash"]):
+        return None
+    # Successful login with a hash stored at an older cost: transparently upgrade
+    # it while we hold the plaintext. Password writes are a bounded flow outside
+    # the command layer (like set_password), so a direct audited-free UPDATE here
+    # matches the documented ownership in docs/COMMAND_MIGRATION.md.
+    if passwords.needs_rehash(row["password_hash"]):
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (passwords.hash_password(password), row["id"]),
+        )
+        conn.commit()
     return _row_to_user(row)
 
 
