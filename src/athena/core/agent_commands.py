@@ -19,15 +19,16 @@ and MCP are thin callers that translate the single ``AgentCommandError`` into th
 own error shape — the authorization guard and the last-admin safety live here, in
 one place, not copied across three transports.
 
-Callers MUST gate these on admin themselves (they reach another user's credentials);
-the command trusts the resolved ``actor_id`` it is given for attribution.
+Adapters may reject non-admin requests early, but these commands repeat the role and
+token-scope checks. A direct or future transport call therefore cannot bypass the
+same authorization policy that protects the REST and browser routes.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from athena.core import activity, db, sessions, tokens, users
+from athena.core import activity, db, identity, sessions, tokens, users
 
 # Free-form activity verbs. activity.verb is plain TEXT with no enum (see
 # migrations/0017_activity.sql), so a new verb is just a constant — no migration.
@@ -45,8 +46,27 @@ class AgentCommandError(Exception):
         self.status_code = status_code
 
 
+def _require_admin_actor(actor: dict | None) -> dict:
+    """Resolve the command's administrative authorization boundary.
+
+    Browser sessions and the explicitly trusted actor-header path have no token
+    scope cap. Bearer-token actors must carry the admin scope in addition to the
+    admin role. Keeping both checks here prevents a new adapter or an in-process
+    caller from turning the kill switch into an authorization bypass.
+    """
+    if actor is None:
+        raise AgentCommandError("authentication required", status_code=401)
+    if not identity.is_admin(actor):
+        raise AgentCommandError("admin role required", status_code=403)
+    if not identity.token_has_scope(actor, tokens.ADMIN_SCOPE):
+        raise AgentCommandError(
+            f"token scope required: {tokens.ADMIN_SCOPE}", status_code=403
+        )
+    return actor
+
+
 def revoke_agent_tokens(
-    conn: sqlite3.Connection, *, actor_id: int, target_user_id: int
+    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
 ) -> dict:
     """Revoke EVERY live API token held by ``target_user_id`` — the credential kill
     switch — and record one audited event attributed to the acting admin.
@@ -54,7 +74,9 @@ def revoke_agent_tokens(
     Idempotent: a second call revokes nothing and records that (revoked_token_count
     0). Raises AgentCommandError(404) if the target user does not exist. Reads and the
     write share one immediate transaction so a concurrent mint cannot slip a token in
-    between the count and the revoke."""
+    between the count and the revoke. Raises AgentCommandError(401/403) when the
+    actor is missing or lacks the admin role/scope."""
+    actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -64,7 +86,7 @@ def revoke_agent_tokens(
         )
         activity.record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_REVOKE_TOKENS,
             target_kind="user",
             target_id=target_user_id,
@@ -75,7 +97,7 @@ def revoke_agent_tokens(
 
 
 def offboard_user(
-    conn: sqlite3.Connection, *, actor_id: int, target_user_id: int
+    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
 ) -> dict:
     """Lock a user out in one atomic move: demote to viewer, revoke every session,
     revoke every token — the full offboarding lever — and record one audited event.
@@ -83,7 +105,10 @@ def offboard_user(
     Refuses to strip the last admin (mirrors the role-change guard) so a deploy can't
     lock itself out. Raises AgentCommandError(404) for an unknown target, (409) for the
     last-admin case. Idempotent enough to retry safely: re-running on an already-viewer
-    account with no sessions/tokens simply revokes zero of each."""
+    account with no sessions/tokens simply revokes zero of each. Raises
+    AgentCommandError(401/403) when the actor is missing or lacks the admin
+    role/scope."""
+    actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
@@ -101,7 +126,7 @@ def offboard_user(
         )
         activity.record(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             verb=VERB_OFFBOARD,
             target_kind="user",
             target_id=target_user_id,

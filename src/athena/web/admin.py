@@ -413,7 +413,7 @@ def revoke_agent_tokens(
         return err
     try:
         result = agent_commands.revoke_agent_tokens(
-            conn, actor_id=user["id"], target_user_id=user_id
+            conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
         return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
@@ -435,7 +435,7 @@ def offboard_agent(
         return err
     try:
         agent_commands.offboard_user(
-            conn, actor_id=user["id"], target_user_id=user_id
+            conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
         return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)

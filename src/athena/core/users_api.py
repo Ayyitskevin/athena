@@ -207,7 +207,7 @@ def revoke_user_tokens(
     runaway agent. Idempotent and audited."""
     try:
         return agent_commands.revoke_agent_tokens(
-            conn, actor_id=actor["id"], target_user_id=user_id
+            conn, actor=actor, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -223,7 +223,7 @@ def offboard(
     and revoke every token — one audited action. Refuses to strip the last admin."""
     try:
         return agent_commands.offboard_user(
-            conn, actor_id=actor["id"], target_user_id=user_id
+            conn, actor=actor, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
