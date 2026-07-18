@@ -138,6 +138,70 @@ def test_invalid_bearer_hammering_is_rate_limited(tmp_path):
     assert 429 in statuses
 
 
+def test_paused_recording_on_the_header_path_is_flood_bounded(tmp_path):
+    # The trusted-actor-header path carries no token, so nothing bounded the
+    # paused-refusal recording — a paused claimed id could flood the trail. It is
+    # now gated by the anon limiter: the 403 still returns every time, but the
+    # trail write stops once the anon budget is spent.
+    app, db_file = _app(tmp_path, anon_rate_limit_per_minute=3)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent_id = c.post(
+            "/users/onboard_agent",
+            json={"email": "sol@e.com", "name": "Sol", "scopes": ["read"]},
+            headers=H1,
+        ).json()["user"]["id"]
+        c.put(f"/users/{agent_id}/paused", json={"paused": True}, headers=H1)
+        statuses = [
+            c.get("/issues", headers={"X-Athena-Actor": str(agent_id)}).status_code
+            for _ in range(10)
+        ]
+    assert statuses == [403] * 10  # every attempt is still refused
+    # ...but recordings are bounded to the anon budget, not the attempt count.
+    assert len(_events(db_file, "paused_account_refused")) <= 3
+
+
+def _allowed_before_limit(tmp_path, name, headers, limit):
+    """How many /issues (an optional_actor public read) requests return non-429
+    before the anon limiter kicks in — the anon budget this header consumes."""
+    app = create_app(tmp_path / name, anon_rate_limit_per_minute=limit)
+    n = 0
+    with TestClient(app) as c:
+        c.post("/users", json={"email": "ann@e.com", "name": "Ann", "password": "pw"})
+        for _ in range(limit + 3):
+            if c.get("/issues", headers=headers).status_code == 429:
+                break
+            n += 1
+    return n
+
+
+def test_invalid_bearer_is_not_double_charged_via_optional_actor(tmp_path):
+    # An optional_actor endpoint (the issue list is public-readable) charging an
+    # invalid bearer twice would halve its effective anon budget vs a truly
+    # credential-less request. current_actor already charges the invalid bearer
+    # once; optional_actor must not charge it again — so both consume the budget
+    # at the SAME rate.
+    anon = _allowed_before_limit(tmp_path, "anon.db", {}, 6)
+    invalid_bearer = _allowed_before_limit(
+        tmp_path, "invalid.db", {"Authorization": "Bearer ath_wrong"}, 6
+    )
+    assert invalid_bearer == anon  # single-charge parity (double-charge halves it)
+
+
+def test_login_failure_recording_is_off_the_measured_path(tmp_path):
+    # The event is recorded on a response background task (TestClient still runs
+    # it), so a real account is audited without an inline write that would leak
+    # existence via latency.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        assert (
+            c.post("/login", data={"email": "ann@e.com", "password": "no"}).status_code
+            == 401
+        )
+    assert [e["target_id"] for e in _events(db_file, "login_failed")] == [1]
+
+
 def test_failure_recording_never_breaks_the_refusal_on_foreign_run(tmp_path):
     # A scope denial carrying ANOTHER actor's run header: the recording would
     # violate run binding, so it is skipped — but the 403 still goes out clean.

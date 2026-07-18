@@ -16,8 +16,18 @@ Two deliberate rules:
 - Recording is BEST-EFFORT: a failure event must never turn a clean 401/403
   into a 500, so recorders swallow (and log) their own errors. Success events
   keep their strict atomic contract in activity.record; only refusals trade
-  strictness for availability. Every recording path sits behind a rate limiter
-  (login/token/anon), so a hostile flood is bounded before it reaches the trail.
+  strictness for availability. Every recording path is flood-bounded before it
+  reaches the trail: the login limiter (browser login), the per-token limiter
+  (bearer paths), or the anon limiter — either raising (invalid bearer) or a
+  non-raising gate (the trusted-header paused refusal, whose 403 is unchanged).
+
+The one residual asymmetry is deliberate and documented: presenting a REVOKED
+token records an event while presenting a never-a-token string records none, so
+the revoked path is marginally slower. Distinguishing "a revoked token" from
+"random bytes" requires already holding a real revoked token's exact value, so
+the signal is near-worthless — and the recording is anon-limiter-bounded. The
+higher-value login oracle (which must stay existence-opaque) is closed instead
+by recording login failures on a response background task, off the measured path.
 """
 
 from __future__ import annotations

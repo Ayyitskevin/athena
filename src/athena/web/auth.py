@@ -18,14 +18,33 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 import jwt
+from starlette.background import BackgroundTask
 
 from athena import config
-from athena.core import oidc, oidc_flow, security_events, sessions, users
+from athena.core import db, oidc, oidc_flow, security_events, sessions, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 router = APIRouter()
+
+
+def _record_login_failure(db_path, user_id: int) -> None:
+    """Record a failed login on its OWN connection, run as a response background
+    task (after the bytes are sent) so it never enters the request's measured
+    latency. Best-effort: security_events.record_failure swallows its errors."""
+    conn = db.connect(db_path)
+    try:
+        security_events.record_failure(
+            conn,
+            actor_id=user_id,
+            verb=security_events.VERB_LOGIN_FAILED,
+            target_kind="user",
+            target_id=user_id,
+            detail="failed browser login",
+        )
+    finally:
+        conn.close()
 
 # Pins an in-flight SSO login to the browser that started it: set at /login/sso,
 # required to match the returned `state` at /auth/callback (login CSRF/fixation
@@ -135,20 +154,8 @@ def login(
 
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:
-        # When the attempt named a REAL account, the trail records that the
-        # account was probed (rate-limited above; the response stays opaque).
-        target = users.get_user_by_email(conn, email)
-        if target is not None:
-            security_events.record_failure(
-                conn,
-                actor_id=target["id"],
-                verb=security_events.VERB_LOGIN_FAILED,
-                target_kind="user",
-                target_id=target["id"],
-                detail="failed browser login",
-            )
         # One opaque message — never reveal whether the email exists.
-        return templates.TemplateResponse(
+        response = templates.TemplateResponse(
             request=request,
             name="login.html",
             context={
@@ -158,6 +165,18 @@ def login(
             },
             status_code=401,
         )
+        # When the attempt named a REAL account, record the probe — but AFTER the
+        # response, off the client-measured path. Doing the write inline would let
+        # a real account (write) be distinguished from an unknown one (no write)
+        # by response latency, reintroducing the existence oracle dummy_verify
+        # already erases for the password-hash cost. The email lookup itself is
+        # symmetric (one indexed SELECT either way), so it stays inline.
+        target = users.get_user_by_email(conn, email)
+        if target is not None:
+            response.background = BackgroundTask(
+                _record_login_failure, request.app.state.db_path, target["id"]
+            )
+        return response
 
     # Rotate the session at the auth boundary: tear down whatever session the
     # browser arrived with before minting the new one. create_session already

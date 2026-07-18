@@ -65,7 +65,9 @@ def current_actor(
                 )
             raise HTTPException(status_code=401, detail="invalid or revoked token")
         _enforce_token_rate_limit(request, actor)
-        _refuse_paused(conn, actor)
+        # Bearer requests are bounded by the per-token limiter above, so the
+        # paused-refusal recording is already flood-bounded here.
+        _refuse_paused(request, conn, actor, bounded=True)
         return actor
 
     # 2. Actor header — local-trust fallback, only if explicitly enabled.
@@ -79,21 +81,30 @@ def current_actor(
         actor = users.get_user(conn, actor_id)
         if actor is None:
             raise HTTPException(status_code=401, detail="unknown actor")
-        _refuse_paused(conn, actor)
+        # The header path carries no token, so nothing bounds it — gate the
+        # paused-refusal recording behind the anon limiter (non-raising) so a
+        # paused claimed id can't flood the trail. The 403 is unchanged either way.
+        _refuse_paused(request, conn, actor, bounded=False)
         return actor
 
     raise HTTPException(status_code=401, detail="authentication required")
 
 
-def _refuse_paused(conn: sqlite3.Connection, actor: dict) -> None:
+def _refuse_paused(
+    request: Request, conn: sqlite3.Connection, actor: dict, *, bounded: bool
+) -> None:
     """The pause lever, enforced at identity resolution: a paused account is
     refused EVERY authenticated action — reads, writes, heartbeats — until an
     admin resumes it. 403 (not 401): the credential is valid, the account is
     deliberately frozen, and retrying with the same token is pointless. Each
     refused attempt lands on the trail — a paused agent that KEEPS trying is
-    exactly what the operator paused it to find out. On the bearer path this
-    runs after the per-token rate limit, so the recording is flood-bounded."""
-    if actor.get("paused_at"):
+    exactly what the operator paused it to find out — but only while the caller
+    is under a rate limit (``bounded`` on the bearer path via the per-token
+    limiter, or the anon limiter on the unbounded header path), so the recording
+    can never flood the trail. The 403 is raised regardless of that gate."""
+    if not actor.get("paused_at"):
+        return
+    if bounded or _anon_rate_allows(request):
         security_events.record_failure(
             conn,
             actor_id=actor["id"],
@@ -101,7 +112,7 @@ def _refuse_paused(conn: sqlite3.Connection, actor: dict) -> None:
             target_kind="user",
             target_id=actor["id"],
         )
-        raise HTTPException(status_code=403, detail="account is paused")
+    raise HTTPException(status_code=403, detail="account is paused")
 
 
 def optional_actor(
@@ -122,7 +133,14 @@ def optional_actor(
         # No valid credential: this is an anonymous request. Throttle it by client IP so
         # a credential-free caller can't hammer these public reads — the per-token limiter
         # only guards authenticated paths, leaving anonymous reads otherwise unbounded.
-        _enforce_anon_rate_limit(request)
+        # An INVALID BEARER was already charged inside current_actor (it bounds the
+        # revoked-token recording there), so charging again here would count one
+        # request twice; only charge the truly credential-less case.
+        bearer_present = authorization is not None and authorization.lower().startswith(
+            _BEARER_PREFIX
+        )
+        if not bearer_present:
+            _enforce_anon_rate_limit(request)
         return None
 
 
@@ -163,6 +181,19 @@ def _client_ip(request: Request) -> str:
     proxy's IP; account for that at the proxy or leave the limit off (see config)."""
     client = request.client
     return client.host if client is not None else "unknown"
+
+
+def _anon_rate_allows(request: Request) -> bool:
+    """Non-raising anon-budget check for gating a best-effort trail write on an
+    otherwise-unbounded path: consumes one unit and reports whether the caller is
+    under the anonymous limit. Never changes the HTTP response — only whether a
+    failure event is recorded. No limiter configured means no bound to apply."""
+    limiter: rate_limits.FixedWindowRateLimiter | None = getattr(
+        request.app.state, "anon_rate_limiter", None
+    )
+    if limiter is None:
+        return True
+    return limiter.check(_client_ip(request)).allowed
 
 
 def _enforce_anon_rate_limit(request: Request) -> None:
