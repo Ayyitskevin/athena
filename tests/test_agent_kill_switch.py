@@ -122,7 +122,7 @@ def test_revoke_agent_tokens_command_kills_auth_and_audits(tmp_path):
 
         conn = db.connect(db_path)
         result = agent_commands.revoke_agent_tokens(
-            conn, actor_id=1, target_user_id=agent["id"]
+            conn, actor=users.get_user(conn, 1), target_user_id=agent["id"]
         )
         assert result == {"user_id": agent["id"], "revoked_token_count": 1}
 
@@ -143,8 +143,43 @@ def test_revoke_agent_tokens_unknown_user_raises_404(tmp_path):
         _bootstrap_admin(client)
     conn = db.connect(db_path)
     with pytest.raises(agent_commands.AgentCommandError) as ei:
-        agent_commands.revoke_agent_tokens(conn, actor_id=1, target_user_id=999)
+        agent_commands.revoke_agent_tokens(
+            conn, actor=users.get_user(conn, 1), target_user_id=999
+        )
     assert ei.value.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "command",
+    [agent_commands.revoke_agent_tokens, agent_commands.offboard_user],
+)
+def test_agent_control_commands_enforce_admin_role_and_token_scope(tmp_path, command):
+    """The command is the final authorization boundary, even without an adapter."""
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        member = _create_user(client, "member@e.com", "Member")
+        agent = _create_user(client, "agent@e.com", "Agent", is_agent=True)
+        _mint_token(client, agent["id"])
+
+    conn = db.connect(db_path)
+    admin = users.get_user(conn, 1)
+    attempts = [
+        (None, 401),
+        (users.get_user(conn, member["id"]), 403),
+        ({**admin, "_token_scopes": ["read"]}, 403),
+    ]
+    for actor, status_code in attempts:
+        with pytest.raises(agent_commands.AgentCommandError) as ei:
+            command(conn, actor=actor, target_user_id=agent["id"])
+        assert ei.value.status_code == status_code
+
+    # Every rejected attempt is side-effect free: credentials and role remain live,
+    # and no administrative event pretends the protected action happened.
+    assert users.get_user(conn, agent["id"])["role"] == "member"
+    assert all(t["revoked_at"] is None for t in tokens.list_tokens(conn, agent["id"]))
+    protected_verbs = {"revoked_agent_tokens", "offboarded_user"}
+    assert not any(e["verb"] in protected_verbs for e in activity.list_activity(conn))
 
 
 def test_offboard_user_demotes_revokes_sessions_and_tokens_atomically(tmp_path):
@@ -158,7 +193,9 @@ def test_offboard_user_demotes_revokes_sessions_and_tokens_atomically(tmp_path):
     sessions.create_session(conn, agent["id"])
     sessions.create_session(conn, agent["id"])
 
-    result = agent_commands.offboard_user(conn, actor_id=1, target_user_id=agent["id"])
+    result = agent_commands.offboard_user(
+        conn, actor=users.get_user(conn, 1), target_user_id=agent["id"]
+    )
     assert result["role"] == "viewer"
     assert result["revoked_session_count"] == 2
     assert result["revoked_token_count"] == 1
@@ -182,7 +219,9 @@ def test_offboard_refuses_to_strip_the_last_admin(tmp_path):
         _bootstrap_admin(client)
     conn = db.connect(db_path)
     with pytest.raises(agent_commands.AgentCommandError) as ei:
-        agent_commands.offboard_user(conn, actor_id=1, target_user_id=1)
+        agent_commands.offboard_user(
+            conn, actor=users.get_user(conn, 1), target_user_id=1
+        )
     assert ei.value.status_code == 409
     # The lone admin is left intact — no partial demotion.
     assert users.get_user(conn, 1)["role"] == "admin"
@@ -194,7 +233,9 @@ def test_offboard_admin_allowed_when_another_admin_remains(tmp_path):
         _bootstrap_admin(client)
         second = _create_user(client, "b@e.com", "B", role="admin")
     conn = db.connect(db_path)
-    result = agent_commands.offboard_user(conn, actor_id=1, target_user_id=second["id"])
+    result = agent_commands.offboard_user(
+        conn, actor=users.get_user(conn, 1), target_user_id=second["id"]
+    )
     assert result["role"] == "viewer"
     assert users.get_user(conn, second["id"])["role"] == "viewer"
 
