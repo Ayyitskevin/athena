@@ -146,6 +146,12 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.get_issue_work_context(ref)
 
     @mcp.tool()
+    def list_issue_comments(issue_id: int) -> list:
+        """Read one issue's comment thread, oldest first — the discussion a
+        delegated agent needs before acting. Write replies with comment_on_issue."""
+        return client.list_issue_comments(issue_id)
+
+    @mcp.tool()
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
         """Reconstruct an issue's lifecycle state from the activity log. Pass
         as_of_event_id to time-travel to the state at that activity checkpoint; omit
@@ -158,6 +164,27 @@ def build_server(client: AthenaClient) -> FastMCP:
         `after` to get only newer events; optionally filter by kind (issue/page).
         Returns {events, next_after, has_more}."""
         return client.recent_events(after=after, kind=kind)
+
+    @mcp.tool()
+    def whoami() -> dict:
+        """Who am I? Your identity (id, email, role, agent flag), the acting
+        token's effective scopes (null means the auth is not scope-limited), and
+        the run identity currently stamped on your writes. Call this FIRST to
+        learn what you may do instead of discovering limits through 403s."""
+        return {**client.whoami(), "run": client.current_run()}
+
+    @mcp.tool()
+    def list_notifications(unread: bool = False, limit: int = 50) -> list:
+        """Read YOUR notification inbox — mentions, watched-issue changes, and
+        work delegated to you land here. Pass unread=true for just the unseen."""
+        return client.list_notifications(unread=unread, limit=limit)
+
+    @mutation_tool
+    def mark_notifications_read() -> dict:
+        """Mark every unread notification in YOUR inbox as read (returns the
+        cleared count). Do this after acting on the inbox, so the next read
+        surfaces only what is genuinely new."""
+        return client.mark_all_notifications_read()
 
     @mcp.tool()
     def heartbeat_agent_run(run_id: RunId) -> dict:
@@ -215,10 +242,28 @@ def build_server(client: AthenaClient) -> FastMCP:
         )
 
     @mcp.tool()
+    def list_run_events(
+        run_id: str, before_id: int | None = None, limit: int = 100
+    ) -> list:
+        """Replay one run: exactly the activity events tagged with this run id,
+        newest first (page older history with before_id). Use it to review what
+        a run — yours or another agent's — actually did."""
+        return client.list_run_events(run_id, before_id=before_id, limit=limit)
+
+    @mcp.tool()
     def get_run_lineage(run_id: str) -> dict:
         """Read a tagged run's causal tree: ancestors, the focal run's replayable
         events, and descendant runs spawned from it."""
         return client.get_run_lineage(run_id)
+
+    @mcp.tool()
+    def get_run_replay(run_id: str) -> dict:
+        """Export one run as its portable replay ARTIFACT: the events in replay
+        order plus lineage placement and a determinism contract, frozen from one
+        consistent snapshot. Use list_run_events for a quick look; use this when
+        handing a run to another agent or preserving it for audit. Hidden or
+        unknown runs are a clean not-found."""
+        return client.get_run_replay(run_id)
 
     @mcp.tool()
     def get_run_fork_contract(
@@ -235,6 +280,22 @@ def build_server(client: AthenaClient) -> FastMCP:
         )
 
     # --- agent control (admin) ---------------------------------------------
+
+    @mutation_tool
+    def onboard_agent(
+        email: str,
+        name: str,
+        scopes: list[str],
+        token_name: str | None = None,
+    ) -> dict:
+        """Admin: provision a NEW agent teammate in one audited move — create its
+        user account (member role, token-only) and mint its first scoped token.
+        Scopes are required (least privilege: e.g. ["read", "issue:write"]).
+        Returns the user, the one-time raw token, and a ready-to-paste MCP config
+        block for connecting the agent. Requires an admin token."""
+        return client.onboard_agent(
+            email=email, name=name, scopes=scopes, token_name=token_name
+        )
 
     @mutation_tool
     def revoke_agent_tokens(user_id: int) -> dict:

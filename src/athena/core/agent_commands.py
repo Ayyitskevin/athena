@@ -6,8 +6,10 @@ admin cockpit can display an agent's live tokens but offers no lever to disable
 them, and the only revoke path is owner-scoped (you can revoke your own tokens,
 not another user's). These commands close that gap.
 
-They are the *authoritative* levers:
+They are the *authoritative* levers over an agent's credential lifecycle:
 
+- ``onboard_agent`` — the front door: create the agent user and mint its first
+  scoped token, one atomic audited move.
 - ``revoke_agent_tokens`` — the kill switch: revoke every live token a user holds.
 - ``offboard_user`` — the full lockout: demote to viewer, revoke every session,
   revoke every token, in one move.
@@ -26,14 +28,25 @@ same authorization policy that protects the REST and browser routes.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import sqlite3
 
-from athena.core import activity, db, identity, sessions, tokens, users
+from athena.core import (
+    activity,
+    db,
+    identity,
+    sessions,
+    token_commands,
+    tokens,
+    user_commands,
+    users,
+)
 
 # Free-form activity verbs. activity.verb is plain TEXT with no enum (see
 # migrations/0017_activity.sql), so a new verb is just a constant — no migration.
 VERB_REVOKE_TOKENS = "revoked_agent_tokens"
 VERB_OFFBOARD = "offboarded_user"
+VERB_ONBOARD = "onboarded_agent"
 
 
 class AgentCommandError(Exception):
@@ -63,6 +76,87 @@ def _require_admin_actor(actor: dict | None) -> dict:
             f"token scope required: {tokens.ADMIN_SCOPE}", status_code=403
         )
     return actor
+
+
+def onboard_agent(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    email: str,
+    name: str,
+    scopes: Iterable[str] | None,
+    token_name: str | None = None,
+) -> dict:
+    """Provision a working agent in ONE atomic move: create the agent user
+    (member role, no password — it acts through tokens only) and mint its first
+    scoped token, attributing the whole moment to the acting admin.
+
+    Without this, onboarding is three manual steps (create user, mark agent,
+    mint token) and the mint step must impersonate the new agent — which records
+    a 'minted_token' event claiming the agent minted its own credential before it
+    ever ran. Here the trail is truthful: 'created_user' and 'minted_token' keep
+    their enumeration invariants (every user, every token, has its event) but
+    both name the ADMIN as actor, and one 'onboarded_agent' event summarizes the
+    moment with the credential's power spelled out. The raw secret rides back in
+    the returned dict only; it is never written to the log.
+
+    Scopes are required — an agent's first credential must say what it may do
+    (the same no-fail-open rule as every other mint surface). Raises
+    AgentCommandError(401/403) for a missing or non-admin actor, (409) for a
+    duplicate email, (422) for blank email/name or missing/invalid scopes."""
+    actor = _require_admin_actor(actor)
+    email = email.strip()
+    name = name.strip()
+    if not email or not name:
+        raise AgentCommandError(
+            "agent email and name are required", status_code=422
+        )
+    try:
+        normalized = tokens.normalize_scopes(scopes)
+    except ValueError as exc:
+        raise AgentCommandError(str(exc), status_code=422) from exc
+    with db.transaction(conn, immediate=True):
+        try:
+            agent = user_commands.create_user(
+                conn,
+                actor_id=actor["id"],
+                email=email,
+                name=name,
+                role=users.DEFAULT_ROLE,
+                is_agent=True,
+            )
+        except sqlite3.IntegrityError as exc:
+            raise AgentCommandError("email already in use", status_code=409) from exc
+        # Minted inline rather than via token_commands.mint_token: that command
+        # attributes the event to the token's owner (self-service), which here
+        # would falsely record the agent minting its own credential.
+        token = tokens.create_token(
+            conn,
+            user_id=agent["id"],
+            name=token_name or name,
+            scopes=normalized,
+            commit=False,
+        )
+        scope_list = " ".join(token["scopes"])
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=token_commands.VERB_MINTED_TOKEN,
+            target_kind="token",
+            target_id=token["id"],
+            detail=f"{token['name']} [{scope_list}] (onboarding {agent['email']})",
+            commit=False,
+        )
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=VERB_ONBOARD,
+            target_kind="user",
+            target_id=agent["id"],
+            detail=f"{agent['email']} with token '{token['name']}' [{scope_list}]",
+            commit=False,
+        )
+    return {"user": agent, "token": token}
 
 
 def revoke_agent_tokens(

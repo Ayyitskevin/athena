@@ -139,6 +139,7 @@ def test_rest_requires_read_scope_isolates_actor_and_has_no_domain_side_effects(
 
         read_a = _token(client, agent_a["id"], ["read"], "read-a")
         read_b = _token(client, agent_b["id"], ["read"], "read-b")
+        write_a = _token(client, agent_a["id"], ["issue:write"], "write-a")
         docs_only = _token(
             client, agent_a["id"], ["docs:write"], "docs-only"
         )
@@ -146,7 +147,14 @@ def test_rest_requires_read_scope_isolates_actor_and_has_no_domain_side_effects(
         assert client.get("/delegations/me").status_code == 401
         denied = client.get("/delegations/me", headers=docs_only)
         assert denied.status_code == 403
-        assert denied.json()["detail"] == "token scope required: read"
+        assert denied.json()["detail"] == "token scope required: read or issue:write"
+        # The least-privilege WORKER token (issue:write only, no read) can still
+        # see its own inbox — otherwise delegation dead-ends before pickup.
+        write_inbox = client.get("/delegations/me", headers=write_a)
+        assert write_inbox.status_code == 200, write_inbox.text
+        assert [item["issue"]["title"] for item in write_inbox.json()["items"]] == [
+            "Agent A task"
+        ]
 
         before = _domain_snapshot(db_path)
         inbox_a = client.get("/delegations/me", headers=read_a)

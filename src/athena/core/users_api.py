@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from athena.core import agent_commands, user_commands, users
@@ -21,6 +21,7 @@ from athena.core.identity import (
     optional_actor,
     require_admin,
 )
+from athena.mcp.config import claude_mcp_config
 
 router = APIRouter(prefix="/users", tags=["core"])
 
@@ -65,6 +66,31 @@ class OffboardOut(BaseModel):
     role: Role
     revoked_session_count: int
     revoked_token_count: int
+
+
+class AgentOnboard(BaseModel):
+    email: str
+    name: str
+    # REQUIRED: an agent's first credential must say what it may do — the same
+    # least-privilege rule as POST /tokens (no omitted-scopes fail-open).
+    scopes: list[Literal["read", "issue:write", "docs:write", "admin"]]
+    # Defaults to the agent's name.
+    token_name: str | None = None
+
+
+class OnboardedTokenOut(BaseModel):
+    id: int
+    name: str
+    scopes: list[str]
+    # The raw secret — shown once, on onboarding, and never again.
+    token: str
+
+
+class AgentOnboardOut(BaseModel):
+    user: UserOut
+    token: OnboardedTokenOut
+    # Ready-to-paste MCP client config wired to this deployment and the new token.
+    mcp_config: dict
 
 
 class UserMeOut(UserOut):
@@ -142,6 +168,41 @@ def me(actor: dict = Depends(current_actor)) -> dict:
     Declared before /{user_id} so "me" is matched here, not as a user id."""
     scopes = actor.get("_token_scopes")
     return {**actor, "scopes": list(scopes) if scopes is not None else None}
+
+
+@router.post("/onboard_agent", response_model=AgentOnboardOut, status_code=201)
+def onboard_agent(
+    payload: AgentOnboard,
+    request: Request,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Provision a working agent in one call: create the agent user (member,
+    token-only — no password) and mint its first scoped token, atomically
+    audited and attributed to the acting admin. The response carries the
+    one-time raw token plus a ready-to-paste MCP config block, so "add an agent
+    teammate" is a single request instead of three manual steps.
+
+    Declared before the /{user_id} routes so the literal path wins."""
+    try:
+        result = agent_commands.onboard_agent(
+            conn,
+            actor=actor,
+            email=payload.email,
+            name=payload.name,
+            scopes=payload.scopes,
+            token_name=payload.token_name,
+        )
+    except agent_commands.AgentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {
+        "user": result["user"],
+        "token": result["token"],
+        "mcp_config": claude_mcp_config(
+            base_url=str(request.base_url).rstrip("/"),
+            token=result["token"]["token"],
+        ),
+    }
 
 
 @router.get("/{user_id}", response_model=UserOut)

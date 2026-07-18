@@ -356,6 +356,10 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def list_issue_comments(self, issue_id: int) -> Any:
+        """Read one issue's comment thread (oldest first)."""
+        return self._result(self._client.get(f"/issues/{issue_id}/comments"))
+
     def archive_issue(
         self, issue_id: int, *, idempotency_key: str | None = None
     ) -> Any:
@@ -529,6 +533,32 @@ class AthenaClient:
     def list_users(self) -> Any:
         return self._result(self._client.get("/users"))
 
+    def whoami(self) -> Any:
+        """Read the authenticated identity: id, email, role, agent flag, and the
+        acting token's effective scopes (null when the auth is not scope-limited)."""
+        return self._result(self._client.get("/users/me"))
+
+    def onboard_agent(
+        self,
+        *,
+        email: str,
+        name: str,
+        scopes: list[str],
+        token_name: str | None = None,
+    ) -> Any:
+        """Admin: provision an agent (user + first scoped token) in one audited
+        move. The response carries the one-time raw token and an MCP config block.
+        Deliberately NO idempotency_key: the server refuses durable replay for
+        endpoints that return a one-time secret (the raw token must never sit in
+        the replay store)."""
+        return self._mutate(
+            self._client.post,
+            "/users/onboard_agent",
+            json=self._params(
+                email=email, name=name, scopes=scopes, token_name=token_name
+            ),
+        )
+
     # --- pages (Mentor) -----------------------------------------------------
 
     def list_spaces(self) -> Any:
@@ -581,6 +611,29 @@ class AthenaClient:
         return self._result(
             self._client.get(
                 "/events", params=self._params(after=after, kind=kind, limit=limit)
+            )
+        )
+
+    def list_notifications(self, *, unread: bool = False, limit: int = 50) -> Any:
+        """Read the authenticated actor's own notification inbox."""
+        params: dict[str, Any] = {"limit": limit}
+        if unread:
+            params["unread"] = True
+        return self._result(self._client.get("/notifications", params=params))
+
+    def mark_all_notifications_read(self) -> Any:
+        """Clear the authenticated actor's inbox; returns how many were cleared."""
+        return self._mutate(self._client.post, "/notifications/read_all")
+
+    def list_run_events(
+        self, run_id: str, *, before_id: int | None = None, limit: int = 100
+    ) -> Any:
+        """Replay one run: exactly the activity events tagged with this run id
+        (newest first; page older history with before_id)."""
+        return self._result(
+            self._client.get(
+                "/activity",
+                params=self._params(run_id=run_id, before_id=before_id, limit=limit),
             )
         )
 
@@ -638,6 +691,10 @@ class AthenaClient:
     def get_run_lineage(self, run_id: str) -> Any:
         """Read one tagged run's causal tree."""
         return self._result(self._client.get(f"/activity/runs/{run_id}/lineage"))
+
+    def get_run_replay(self, run_id: str) -> Any:
+        """Freeze one visible run into its portable replay artifact."""
+        return self._result(self._client.get(f"/activity/runs/{run_id}/replay"))
 
     def get_run_fork_contract(
         self, run_id: str, *, fork_from_event_id: int, fork_run_id: str

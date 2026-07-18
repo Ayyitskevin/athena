@@ -237,7 +237,13 @@ _IDEMPOTENCY_API_ROOTS = (
     "/webhooks",
 )
 _SECRET_CREATE_PATHS = frozenset(
-    {"/tokens", "/webhooks", "/settings/tokens", "/admin/webhooks"}
+    {
+        "/tokens",
+        "/users/onboard_agent",
+        "/webhooks",
+        "/settings/tokens",
+        "/admin/webhooks",
+    }
 )
 _FINGERPRINT_HEADERS = (
     b"accept",

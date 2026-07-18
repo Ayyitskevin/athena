@@ -5,13 +5,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from athena.aegis import delegations
 from athena.core import tokens
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor, require_token_scope
+from athena.core.identity import current_actor, token_has_scope
 
 
 router = APIRouter(prefix="/delegations", tags=["aegis"])
@@ -100,7 +100,19 @@ def my_delegations(
     This is pickup context, not a claim, lease, progress report, or liveness signal.
     Blocker data is restricted to issues the same actor may see.
     """
-    require_token_scope(actor, tokens.READ_SCOPE)
+    # Personal pickup context for ISSUE work: readable with the read scope OR
+    # the issue-write scope. A least-privilege worker token (issue:write only)
+    # must be able to SEE the work delegated to it, or delegation dead-ends one
+    # step before pickup. A docs-only token stays refused — this inbox is Aegis
+    # state, and docs:write grants nothing issue-side.
+    if not (
+        token_has_scope(actor, tokens.READ_SCOPE)
+        or token_has_scope(actor, tokens.ISSUE_WRITE_SCOPE)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="token scope required: read or issue:write",
+        )
     return delegations.list_delegations(
         conn,
         actor,

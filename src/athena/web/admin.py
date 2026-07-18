@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -32,6 +33,7 @@ from athena.core import (
     webhooks,
 )
 from athena.core.deps import get_conn
+from athena.mcp.config import claude_mcp_config
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
@@ -368,6 +370,17 @@ def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )
 
 
+def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
+    """The agents-cockpit page context, shared by the GET view and the inline
+    onboarding POST (which re-renders the page carrying the one-time token)."""
+    agent_rows = agents.agent_admin_summaries(conn)
+    for agent in agent_rows:
+        agent["delegation_inbox"] = delegations.list_delegations(
+            conn, agent["user"], viewer=viewer, limit=20
+        )
+    return {"agents": agent_rows, "notice": None, "error": None, **extra}
+
+
 @router.get("/admin/agents", response_class=HTMLResponse)
 def agents_admin(
     request: Request,
@@ -381,11 +394,6 @@ def agents_admin(
     err = _admin_required(user)
     if err is not None:
         return err
-    agent_rows = agents.agent_admin_summaries(conn)
-    for agent in agent_rows:
-        agent["delegation_inbox"] = delegations.list_delegations(
-            conn, agent["user"], viewer=user, limit=20
-        )
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
     notice = None
@@ -396,7 +404,71 @@ def agents_admin(
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
-        context={"agents": agent_rows, "notice": notice, "error": error},
+        context=_agents_context(conn, user, notice=notice, error=error),
+    )
+
+
+@router.post(
+    "/admin/agents/onboard",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def onboard_agent(
+    request: Request,
+    email: str = Form(""),
+    name: str = Form(""),
+    token_name: str = Form(""),
+    scope_read: str | None = Form(None),
+    scope_issue_write: str | None = Form(None),
+    scope_docs_write: str | None = Form(None),
+    scope_admin: str | None = Form(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """One-click provisioning from the cockpit: agent user + first scoped token
+    in one audited command. Renders the result inline (no redirect) because the
+    raw token and its MCP config block are shown exactly once — a secret must
+    never ride a query string."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    # Validation (blank email/name, missing scopes) lives in the command — the
+    # except branch below renders its message inline.
+    try:
+        result = agent_commands.onboard_agent(
+            conn,
+            actor=user,
+            email=email,
+            name=name,
+            scopes=_selected_scopes(
+                scope_read, scope_issue_write, scope_docs_write, scope_admin
+            ),
+            token_name=token_name.strip() or None,
+        )
+    except agent_commands.AgentCommandError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/agents.html",
+            context=_agents_context(conn, user, error=str(exc)),
+            status_code=400,
+        )
+    onboarded = {
+        "user": result["user"],
+        "token": result["token"],
+        "config_json": json.dumps(
+            claude_mcp_config(
+                base_url=str(request.base_url).rstrip("/"),
+                token=result["token"]["token"],
+            ),
+            indent=2,
+        ),
+    }
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/agents.html",
+        context=_agents_context(conn, user, onboarded=onboarded),
+        status_code=201,
     )
 
 
