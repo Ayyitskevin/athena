@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from athena import config
 from athena.aegis import (
+    comment_commands,
     comments,
     contributors,
     dependencies,
@@ -892,13 +893,11 @@ def add_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    comment = comments.add_comment(
-        conn, issue_id=issue_id, author_id=actor["id"], body=body
-    )
-    issue_activity.record_commented(
+    # The command owns the insert AND its atomic 'commented' event (with the auto-watch
+    # and any mentions), so a comment and its activity footprint land together.
+    return comment_commands.create_comment(
         conn, actor_id=actor["id"], issue_id=issue_id, body=body
     )
-    return comment
 
 
 @router.get("/{issue_id}/comments", response_model=list[CommentOut])
@@ -951,10 +950,14 @@ def edit_comment(
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    updated = comments.update_comment(conn, comment_id, body=body)
-    if updated is None:  # vanished between the author check and the write (a race)
-        raise HTTPException(status_code=404, detail="no such comment")
-    return updated
+    # The command owns the edit AND its atomic 'comment_edited' event — previously a
+    # silent content rewrite.
+    try:
+        return comment_commands.edit_comment(
+            conn, actor_id=actor["id"], issue_id=issue_id, comment_id=comment_id, body=body
+        )
+    except comment_commands.CommentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.delete("/{issue_id}/comments/{comment_id}", status_code=204)
@@ -966,11 +969,12 @@ def delete_comment(
 ) -> None:
     _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
     _author_comment_or_error(conn, issue_id, comment_id, actor, allow_admin=True)
-    if not comments.delete_comment(conn, comment_id):
-        # vanished between the author check and the delete (a race) — don't record
-        # an event for a deletion that didn't happen.
+    # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
+    # vanished in a race records nothing and 404s.
+    if not comment_commands.delete_comment(
+        conn, actor_id=actor["id"], issue_id=issue_id, comment_id=comment_id
+    ):
         raise HTTPException(status_code=404, detail="no such comment")
-    issue_activity.record_comment_deleted(conn, actor_id=actor["id"], issue_id=issue_id)
 
 
 # --- Attachments on an issue ----------------------------------------------
