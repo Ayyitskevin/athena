@@ -33,7 +33,7 @@ import urllib.request
 
 import jwt
 
-from athena.core import oidc, users
+from athena.core import oidc, oidc_commands, users
 
 logger = logging.getLogger(__name__)
 
@@ -271,9 +271,17 @@ def provision_or_link(
             "an account already exists for this email; set OIDC_ALLOWED_DOMAINS to "
             "enable SSO auto-link, or link SSO from your account settings"
         )
-    # Audit the identity link (fires once, on first login for this issuer+sub — an
+    # Record the identity link (fires once, on first login for this issuer+sub — an
     # already-linked user returned earlier). For an existing account this only runs on
-    # the trusted, domain-allow-listed path above.
+    # the trusted, domain-allow-listed path above. The command binds the identity AND
+    # records the atomic 'linked_identity' event, attributed to the user themselves
+    # (this IS their sign-in), so a new login credential is never a silent write.
     logger.info("linking SSO identity (issuer=%s) to user %s", issuer, user["id"])
-    oidc.link_identity(conn, issuer=issuer, subject=subject, user_id=user["id"])
+    oidc_commands.link_identity(
+        conn,
+        actor_id=user["id"],
+        issuer=issuer,
+        subject=subject,
+        user_id=user["id"],
+    )
     return user

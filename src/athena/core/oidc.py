@@ -17,17 +17,24 @@ from athena.core import users
 
 
 def link_identity(
-    conn: sqlite3.Connection, *, issuer: str, subject: str, user_id: int
+    conn: sqlite3.Connection,
+    *,
+    issuer: str,
+    subject: str,
+    user_id: int,
+    commit: bool = True,
 ) -> dict:
     """Bind an external IdP identity (issuer + subject) to an Athena user and return
     the link. Raises sqlite3.IntegrityError if this (issuer, subject) is already
     linked (the composite PK keeps one provider-identity mapped to one user) or if
-    user_id isn't a real user (the foreign key)."""
+    user_id isn't a real user (the foreign key). ``commit=False`` lets an audited
+    command fold the link and its activity event into one transaction."""
     conn.execute(
         "INSERT INTO oidc_identities (issuer, subject, user_id) VALUES (?, ?, ?)",
         (issuer, subject, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_identity(conn, issuer=issuer, subject=subject)
 
 
@@ -63,15 +70,17 @@ def list_identities(conn: sqlite3.Connection, user_id: int) -> list[dict]:
 
 
 def unlink_identity(
-    conn: sqlite3.Connection, *, issuer: str, subject: str
+    conn: sqlite3.Connection, *, issuer: str, subject: str, commit: bool = True
 ) -> bool:
     """Remove a link. Returns True if one was removed, False if it wasn't linked (so
-    the caller can 404). The user row itself is untouched."""
+    the caller can 404). The user row itself is untouched. ``commit=False`` lets an
+    audited command fold the unlink and its activity event into one transaction."""
     cur = conn.execute(
         "DELETE FROM oidc_identities WHERE issuer = ? AND subject = ?",
         (issuer, subject),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
