@@ -74,3 +74,32 @@ def test_demo_cli_seed_only_is_clear_and_idempotently_safe(tmp_path, capsys):
     output = capsys.readouterr()
     assert "database already exists" in output.err
     assert db_path.read_bytes() == before
+
+
+def test_seed_demo_mints_a_scoped_agent_token_for_mcp(tmp_path):
+    # The five-minute tour must include the differentiator: connecting an agent
+    # over MCP. Seeding mints Sol a least-privilege token through the audited
+    # command — raw secret returned once, hash in the DB, mint on the trail.
+    db_path = tmp_path / "token.db"
+    seeded = seed_demo(db_path)
+
+    assert seeded["agent_email"] == "sol@athena.local"
+    assert seeded["agent_token"].startswith("ath_")
+    assert seeded["agent_scopes"] == ["read", "issue:write", "docs:write"]
+
+    conn = db.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT user_id, scopes, token_hash FROM api_tokens"
+        ).fetchone()
+        assert row["user_id"] == seeded["ids"]["sol"]
+        assert row["scopes"] == "read issue:write docs:write"
+        assert row["token_hash"] != seeded["agent_token"]  # hash, never the raw
+        minted = [
+            e
+            for e in activity.list_activity(conn, limit=200)
+            if e["verb"] == "minted_token"
+        ]
+        assert len(minted) == 1 and minted[0]["actor_id"] == seeded["ids"]["sol"]
+    finally:
+        conn.close()
