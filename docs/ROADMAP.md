@@ -38,26 +38,26 @@ Goal: an agent connecting over MCP can be onboarded with a scoped token, pick
 up delegated work, execute it under a run id, and complete it — and the
 operator can replay the run.
 
-- [ ] Thread run identity through the MCP transport: a per-session run id
+- [x] Thread run identity through the MCP transport: a per-session run id
       (environment) plus optional per-call override, mapped to the
       `X-Athena-Run` / `X-Athena-Parent-Run` / `X-Athena-Fork-From-Event`
       headers the API already honors. *(The single highest-leverage change in
       the repo: today MCP writes are invisible to run lineage and replay.)*
-- [ ] Fix the delegation dead-end: allow a delegated contributor to transition
+- [x] Fix the delegation dead-end: allow a delegated contributor to transition
       the issue delegated to it (with an admin override), so the flagship
       Assign → Work flow completes without a human performing every status
       change.
-- [ ] Require explicit scopes when minting tokens (today an omitted `scopes`
+- [x] Require explicit scopes when minting tokens (today an omitted `scopes`
       silently mints **admin** — a fail-open default in an agent-credential
       product). Legacy stored tokens keep their meaning.
-- [ ] Audited agent onboarding: one atomic admin command that mints a scoped
+- [x] Audited agent onboarding: one atomic admin command that mints a scoped
       token for an agent user, surfaced in the admin cockpit — provisioning
       should be as one-click and audited as revocation already is.
-- [ ] `whoami` MCP tool (identity + effective scopes) so an agent discovers its
+- [x] `whoami` MCP tool (identity + effective scopes) so an agent discovers its
       boundaries by asking, not by failing.
-- [ ] Scope-enforcement consistency: a least-privilege write token must be able
+- [x] Scope-enforcement consistency: a least-privilege write token must be able
       to read its own delegation inbox.
-- [ ] Highest-value MCP read gaps: issue comment threads, the notifications
+- [x] Highest-value MCP read gaps: issue comment threads, the notifications
       inbox, and run-replay artifacts — the primitives for agent-to-agent
       handoff via mentions and comments.
 

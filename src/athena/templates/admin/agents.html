@@ -18,6 +18,48 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
+{% if onboarded %}
+<div class="form-container">
+    <h3>Agent onboarded: {{ onboarded.user.name }}</h3>
+    <p class="note-small">
+        The token below is shown once and never again. Paste the MCP config into
+        the agent's client (Claude Desktop, Claude Code, or any MCP runner) to
+        connect it with exactly the scopes you granted.
+    </p>
+    <pre class="token-secret">{{ onboarded.token.token }}</pre>
+    <pre class="token-secret">{{ onboarded.config_json }}</pre>
+</div>
+{% endif %}
+
+<details class="form-container">
+    <summary>Onboard an agent</summary>
+    <form method="post" action="/admin/agents/onboard" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="onboard-name">Name</label>
+            <input id="onboard-name" type="text" name="name" required placeholder="e.g. Sol">
+        </div>
+        <div class="form-group">
+            <label for="onboard-email">Email</label>
+            <input id="onboard-email" type="email" name="email" required placeholder="sol@agents.local">
+        </div>
+        <div class="form-group">
+            <label for="onboard-token-name">Token name</label>
+            <input id="onboard-token-name" type="text" name="token_name" placeholder="defaults to the agent's name">
+        </div>
+        <div class="form-group">
+            <label>Token scopes (least privilege — grant only what the agent needs)</label>
+            <label><input type="checkbox" name="scope_read" value="1" checked> Read</label>
+            <label><input type="checkbox" name="scope_issue_write" value="1"> Aegis writes</label>
+            <label><input type="checkbox" name="scope_docs_write" value="1"> Mentor writes</label>
+            <label><input type="checkbox" name="scope_admin" value="1"> Admin</label>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create agent + token</button>
+        </div>
+    </form>
+</details>
+
 {% if agents %}
 <div class="agent-admin-list">
     {% for agent in agents %}

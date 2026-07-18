@@ -17,6 +17,7 @@ import sys
 from athena import config
 from athena.aegis import issue_commands, projects
 from athena.core import db, run_context, token_commands, tokens, user_commands, users
+from athena.mcp.config import claude_mcp_config
 from athena.mentor import page_activity, pages, space_activity, spaces
 
 DEMO_EMAIL = "operator@athena.local"
@@ -338,17 +339,10 @@ def main(argv: list[str] | None = None) -> int:
     print("its mint is already on the activity trail):")
     print(
         json.dumps(
-            {
-                "mcpServers": {
-                    "athena": {
-                        "command": "athena-mcp",
-                        "env": {
-                            "ATHENA_BASE_URL": f"http://127.0.0.1:{args.port}",
-                            "ATHENA_TOKEN": seeded["agent_token"],
-                        },
-                    }
-                }
-            },
+            claude_mcp_config(
+                base_url=f"http://127.0.0.1:{args.port}",
+                token=seeded["agent_token"],
+            ),
             indent=2,
         )
     )
