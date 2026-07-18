@@ -379,7 +379,7 @@
             {% elif request.state.user and not can_write %}
             <p class="note-small">Viewer role is read-only.</p>
             {% elif request.state.user %}
-            <p class="note-small">Only the issue creator or assignee can change status or assignment.</p>
+            <p class="note-small">Only the issue creator, assignee, a delegated contributor, or an admin can change status or assignment.</p>
             {% else %}
             <p class="note-small"><a href="/login">Sign in</a> to change status.</p>
             {% endif %}

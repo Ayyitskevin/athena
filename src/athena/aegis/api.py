@@ -597,10 +597,13 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
         conn, actor, issue["project_id"]
     ):
         raise HTTPException(status_code=404, detail="no such issue")
-    if not issues.can_modify(issue, actor["id"]):
+    if not issues.can_act_on(conn, issue, actor):
         raise HTTPException(
             status_code=403,
-            detail="only the issue creator or assignee may modify it",
+            detail=(
+                "only the issue creator, assignee, a delegated contributor, "
+                "or an admin may modify it"
+            ),
         )
     return issue
 

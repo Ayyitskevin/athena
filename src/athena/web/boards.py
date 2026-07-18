@@ -118,7 +118,8 @@ def board_move_issue(
 
     Gated like every other write — a logged-out caller is a 401 (the UI only offers
     the move when signed in), a read-only (viewer) role can't move a card at all, and
-    the move applies only if the session user is the issue's creator or assignee.
+    the move applies only if the session user may act on the issue (creator,
+    assignee, delegated contributor, or admin).
 
     A move that isn't allowed or doesn't apply — the actor can't write this issue, or
     the target status isn't valid for the issue's project (boards can mix projects
@@ -133,7 +134,7 @@ def board_move_issue(
             status_code=401,
         )
     # The board deliberately snaps back on a rejected move. The shared command is
-    # still the one owner of visibility, role/scope, creator-or-assignee policy,
+    # still the one owner of visibility, role/scope, can-act-on policy,
     # status validation, write, and audit; this adapter only chooses not to render
     # its domain error inline on a drag surface.
     try:

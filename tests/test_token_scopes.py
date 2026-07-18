@@ -54,7 +54,7 @@ def test_read_only_token_can_read_but_cannot_write(tmp_path):
         assert denied.status_code == 403
         assert denied.json()["detail"] == "token scope required: issue:write"
 
-        remint = client.post("/tokens", json={"name": "escape"}, headers=auth)
+        remint = client.post("/tokens", json={"name": "escape", "scopes": ["admin"]}, headers=auth)
         assert remint.status_code == 403
         assert remint.json()["detail"] == "token scope required: admin"
 
@@ -137,14 +137,19 @@ def test_docs_write_token_cannot_write_issues(tmp_path):
         assert issue.json()["detail"] == "token scope required: issue:write"
 
 
-def test_admin_scope_and_default_scope_preserve_full_token_access(tmp_path):
+def test_admin_scope_preserves_full_token_access_and_omitted_scopes_are_refused(tmp_path):
     app = create_app(tmp_path / "scope_admin.db")
     with TestClient(app) as client:
         _bootstrap_admin(client)
-        default_token = _mint(client, name="default")
-        explicit_admin = _mint(client, scopes=["admin"], name="admin")
+        # Omitting scopes used to silently mint ADMIN (fail-open); it is now a
+        # clear 422 — an agent-credential mint must say what it may do.
+        refused = client.post(
+            "/tokens", json={"name": "default"}, headers={"X-Athena-Actor": "1"}
+        )
+        assert refused.status_code == 422
+        assert "scopes are required" in refused.json()["detail"]
 
-        assert default_token["scopes"] == ["admin"]
+        explicit_admin = _mint(client, scopes=["admin"], name="admin")
         assert explicit_admin["scopes"] == ["admin"]
 
         auth = _bearer(explicit_admin["token"])

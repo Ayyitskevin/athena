@@ -29,6 +29,9 @@ TokenScope = Literal["read", "issue:write", "docs:write", "admin"]
 
 class TokenCreate(BaseModel):
     name: str
+    # REQUIRED in effect: omitting scopes is a 422 with a helpful message (the old
+    # behavior silently minted ADMIN — a fail-open default that inverted least
+    # privilege). Kept Optional in the model so the error is ours, not Pydantic's.
     scopes: list[TokenScope] | None = None
 
 

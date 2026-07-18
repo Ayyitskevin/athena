@@ -63,9 +63,21 @@ class AthenaError(RuntimeError):
         }
 
 
+# The run-identity headers RunContextMiddleware reads on every request. Managed as
+# a set so set_run can replace the whole identity atomically (stale parent/fork
+# headers from a previous run must never leak into the next one).
+_RUN_HEADERS = ("X-Athena-Run", "X-Athena-Parent-Run", "X-Athena-Fork-From-Event")
+
+
 class AthenaClient:
     """Calls Athena's REST API. Construct with a base URL + bearer token for real
-    use, or inject a pre-built client (e.g. a FastAPI TestClient) for tests."""
+    use, or inject a pre-built client (e.g. a FastAPI TestClient) for tests.
+
+    Run identity is CLIENT state: pass ``run_id`` (and optionally
+    ``parent_run_id``) at construction, or call :meth:`set_run` later, and every
+    subsequent request carries the ``X-Athena-Run`` family of headers — so each
+    write this client performs is attributed to that run in the activity trail,
+    replayable and lineage-linked, exactly like any other tagged actor."""
 
     def __init__(
         self,
@@ -74,6 +86,8 @@ class AthenaClient:
         *,
         client: Any | None = None,
         timeout: float = 30.0,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
     ):
         if client is not None:
             self._client = client
@@ -84,6 +98,43 @@ class AthenaClient:
             self._client = httpx.Client(
                 base_url=base_url, headers=headers, timeout=timeout
             )
+        if run_id is not None or parent_run_id is not None:
+            self.set_run(run_id, parent_run_id=parent_run_id)
+
+    def set_run(
+        self,
+        run_id: str | None,
+        *,
+        parent_run_id: str | None = None,
+        fork_from_event_id: int | None = None,
+    ) -> dict:
+        """Switch this client's run identity. Replaces ALL run headers at once —
+        omitted parts are cleared, so a new run never inherits the previous run's
+        parent or fork point. ``run_id=None`` clears the identity entirely (writes
+        go back to untagged). Returns the now-active identity.
+
+        This is what makes a fork contract actionable: GET /activity/runs/{id}/fork
+        returns exactly these header values — feed them here and keep working."""
+        for header in _RUN_HEADERS:
+            self._client.headers.pop(header, None)
+        if run_id is not None:
+            self._client.headers["X-Athena-Run"] = run_id
+            if parent_run_id is not None:
+                self._client.headers["X-Athena-Parent-Run"] = parent_run_id
+            if fork_from_event_id is not None:
+                self._client.headers["X-Athena-Fork-From-Event"] = str(
+                    fork_from_event_id
+                )
+        return self.current_run()
+
+    def current_run(self) -> dict:
+        """The run identity this client is currently stamping on requests."""
+        fork = self._client.headers.get("X-Athena-Fork-From-Event")
+        return {
+            "run_id": self._client.headers.get("X-Athena-Run"),
+            "parent_run_id": self._client.headers.get("X-Athena-Parent-Run"),
+            "fork_from_event_id": int(fork) if fork is not None else None,
+        }
 
     # --- internals ----------------------------------------------------------
 
@@ -591,7 +642,9 @@ class AthenaClient:
     def get_run_fork_contract(
         self, run_id: str, *, fork_from_event_id: int, fork_run_id: str
     ) -> Any:
-        """Validate and describe how to fork a run from one parent event."""
+        """Validate and describe how to fork a run from one parent event. The
+        returned ``headers`` map onto :meth:`set_run` — apply it and every
+        subsequent write continues the fork."""
         return self._result(
             self._client.get(
                 f"/activity/runs/{run_id}/fork",

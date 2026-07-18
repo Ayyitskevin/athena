@@ -2,9 +2,9 @@
 
 Agents and triage workflows must move many issues at once without N round-trips.
 This endpoint applies the same change to a list of issues, each attempted and
-AUTHORIZED on its own (creator-or-assignee per issue, exactly like the single-issue
-writes), reporting the per-issue outcome — so one issue's 403/404/422 never sinks
-the rest. These pin: the multi-field apply, the per-item failures, set-null
+AUTHORIZED on its own (creator / assignee / delegated contributor / admin per
+issue, exactly like the single-issue writes), reporting the per-issue outcome —
+so one issue's 403/404/422 never sinks the rest. These pin: the multi-field apply, the per-item failures, set-null
 clearing, the request-level guards, and that the audit trail records each change.
 """
 from fastapi.testclient import TestClient
@@ -36,11 +36,13 @@ def _get(client, iid, field):
 
 
 def test_best_effort_multi_field_with_per_item_outcomes(tmp_path):
+    # The batch runs as the MEMBER (user 2): admins may act on any issue, so the
+    # per-item "forbidden" outcome only exists for a non-admin actor.
     with TestClient(create_app(tmp_path / "bulk.db")) as client:
         _bootstrap(client)
         pid = _project(client)
-        a, b = _issue(client, pid, "a"), _issue(client, pid, "b")
-        theirs = _issue(client, pid, "theirs", headers=H2)  # owned by user 2
+        a, b = _issue(client, pid, "a", headers=H2), _issue(client, pid, "b", headers=H2)
+        theirs = _issue(client, pid, "theirs")  # owned by the admin, not the member
         sprint = client.post(f"/projects/{pid}/sprints", json={"name": "S1"}, headers=H1).json()["id"]
 
         r = client.post(
@@ -48,10 +50,10 @@ def test_best_effort_multi_field_with_per_item_outcomes(tmp_path):
             json={
                 "ids": [a, b, theirs, 9999],
                 "status": "in_progress",
-                "assignee_id": 1,
+                "assignee_id": 2,
                 "sprint_id": sprint,
             },
-            headers=H1,
+            headers=H2,
         )
         assert r.status_code == 200
         body = r.json()
@@ -59,12 +61,12 @@ def test_best_effort_multi_field_with_per_item_outcomes(tmp_path):
         outcomes = {res["id"]: res for res in body["results"]}
         assert outcomes[a]["ok"] and outcomes[b]["ok"]
         # The two we don't own / that don't exist are reported, not fatal.
-        assert not outcomes[theirs]["ok"] and "creator or assignee" in outcomes[theirs]["error"]
+        assert not outcomes[theirs]["ok"] and "delegated contributor" in outcomes[theirs]["error"]
         assert not outcomes[9999]["ok"] and outcomes[9999]["error"] == "no such issue"
 
         # The owned issues actually moved on all three fields; the others didn't.
         assert (_get(client, a, "status"), _get(client, a, "assignee_id"), _get(client, a, "sprint_id")) == (
-            "in_progress", 1, sprint,
+            "in_progress", 2, sprint,
         )
         assert _get(client, theirs, "status") == "open"
 

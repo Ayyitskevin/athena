@@ -58,11 +58,12 @@ def test_issue_writes_require_visibility(tmp_path):
         assert client.patch(f"/issues/{iid}", json={"title": "ok"}, headers=H_CREATOR).status_code == 200
         assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_CREATOR).status_code == 201
         assert client.post(f"/issues/{iid}/comments", json={"body": "hi"}, headers=H_CREATOR).status_code == 201
-        # Admin's god view grants VISIBILITY, so a visibility-only write (comment)
-        # succeeds — but admin is still not the issue's creator/assignee, so a
-        # modify-gated write (label attach) is a 403, not bypassed by the god view.
+        # Admin's god view grants VISIBILITY, and the admin override in
+        # issues.can_act_on grants MODIFY too — the operator lever works even on
+        # issues the admin doesn't own. (That the two gates are distinct is proven
+        # by the member below, who gains visibility but not modify.)
         assert client.post(f"/issues/{iid}/comments", json={"body": "adm"}, headers=H_ADMIN).status_code == 201
-        assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_ADMIN).status_code == 403
+        assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_ADMIN).status_code == 201
 
         # Membership grants VISIBILITY: the 404 turns into a 403 on a modify-gated write
         # (the member can now see it but isn't its creator/assignee), and a comment —

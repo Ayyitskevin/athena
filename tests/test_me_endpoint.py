@@ -88,7 +88,7 @@ def test_self_introspection_is_not_admin_gated_or_shadowed(tmp_path):
     with TestClient(create_app(tmp_path / "me_self.db")) as client:
         _bootstrap_admin(client)
         uid = _user(client, "agent@e.com", "Worker", role="member", is_agent=True)
-        token = _mint(client, actor_id=uid, name="worker")
+        token = _mint(client, actor_id=uid, name="worker", scopes=["read"])
 
         body = client.get("/users/me", headers=_bearer(token)).json()
         # A non-admin reads its OWN identity (the /{user_id} route would 403 a member

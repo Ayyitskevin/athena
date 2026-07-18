@@ -20,6 +20,7 @@ from __future__ import annotations
 from functools import wraps
 import json
 import os
+import secrets
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
@@ -166,6 +167,31 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.heartbeat_agent_run(run_id)
 
     @mcp.tool()
+    def begin_run(
+        run_id: RunId,
+        parent_run_id: RunId | None = None,
+        fork_from_event_id: int | None = None,
+    ) -> dict:
+        """Switch this session's run identity: every write you make afterwards is
+        attributed to `run_id` in the activity trail (replayable, lineage-linked).
+        A session already starts with an auto-minted run id, so call this when you
+        begin a NEW unit of work, continue a run you were assigned, or apply the
+        `headers` from get_run_fork_contract (pass its run/parent/fork values here
+        to work on the fork). Setting a new run clears the previous parent/fork
+        context. Returns the now-active identity."""
+        return client.set_run(
+            run_id,
+            parent_run_id=parent_run_id,
+            fork_from_event_id=fork_from_event_id,
+        )
+
+    @mcp.tool()
+    def current_run() -> dict:
+        """Read the run identity this session is currently stamping on writes:
+        {run_id, parent_run_id, fork_from_event_id}."""
+        return client.current_run()
+
+    @mcp.tool()
     def get_agent_run_health(agent_id: int | None = None) -> dict:
         """Read the admin-only fleet cockpit rollup: each agent's bounded recent
         runs, cooperative check-ins, replay posture, lineage counts, and totals.
@@ -200,7 +226,8 @@ def build_server(client: AthenaClient) -> FastMCP:
     ) -> dict:
         """Validate a fork point inside a parent run and return the child-run
         headers to use on subsequent writes, plus the visible shared-prefix events.
-        This creates no state; the child run begins when later writes use the headers."""
+        This creates no state; pass the returned run/parent/fork values to begin_run
+        and the child run starts with your next write."""
         return client.get_run_fork_contract(
             run_id,
             fork_from_event_id=fork_from_event_id,
@@ -544,8 +571,19 @@ def build_server(client: AthenaClient) -> FastMCP:
 
 def main() -> None:
     """Entry point for the `athena-mcp` script. Reads ATHENA_BASE_URL and
-    ATHENA_TOKEN from the environment and serves over stdio."""
+    ATHENA_TOKEN from the environment and serves over stdio.
+
+    Every session gets a run identity: ATHENA_RUN_ID if set (with optional
+    ATHENA_PARENT_RUN_ID), otherwise a fresh `mcp-<hex>` id minted here — so
+    every write an agent performs through this server is attributed to a run in
+    the activity trail BY DEFAULT, visible in Mission Control and replayable,
+    rather than falling into the untagged time-gap heuristic. The agent can
+    switch runs mid-session with the begin_run tool."""
     base_url = os.environ.get("ATHENA_BASE_URL", "http://127.0.0.1:8000")
     token = os.environ.get("ATHENA_TOKEN")
-    client = AthenaClient(base_url=base_url, token=token)
+    run_id = os.environ.get("ATHENA_RUN_ID") or f"mcp-{secrets.token_hex(6)}"
+    parent_run_id = os.environ.get("ATHENA_PARENT_RUN_ID") or None
+    client = AthenaClient(
+        base_url=base_url, token=token, run_id=run_id, parent_run_id=parent_run_id
+    )
     build_server(client).run()

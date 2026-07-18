@@ -159,7 +159,7 @@ def test_rest_numeric_key_mcp_and_web_share_the_public_contract(tmp_path):
         # MCP deliberately goes through REST. Its only addition is the response
         # validator under _etag, so agents can retain the exact packet validator.
         token = client.post(
-            "/tokens", json={"name": "work-context"}, headers=H_ADMIN
+            "/tokens", json={"name": "work-context", "scopes": ["admin"]}, headers=H_ADMIN
         ).json()["token"]
         client.headers.update({"Authorization": f"Bearer {token}"})
         mcp_packet = AthenaClient(client=client).get_issue_work_context(issue["key"])

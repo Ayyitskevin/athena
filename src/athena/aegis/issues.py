@@ -9,7 +9,7 @@ import re
 import sqlite3
 
 from athena.aegis import projects, statuses
-from athena.core import links, search
+from athena.core import links, search, users
 
 # The DEFAULT lifecycle for issues without a project. Since migration 0024,
 # statuses are per-project (aegis/statuses.py owns those sets and their board
@@ -422,8 +422,33 @@ def can_modify(issue: dict, actor_id: int) -> bool:
     The rule: the issue's creator OR its current assignee. An unassigned issue
     (assignee_id is None) can only be modified by its creator until someone is
     assigned. Reads and commenting are open to all authenticated actors and do
-    NOT pass through here — this gate is for writes only."""
+    NOT pass through here — this gate is for writes only.
+
+    This is the pure, connection-free core; the authoritative write gate is
+    can_act_on, which adds delegated contributors and the admin override."""
     return actor_id == issue["created_by"] or actor_id == issue["assignee_id"]
+
+
+def can_act_on(conn: sqlite3.Connection, issue: dict, actor: dict) -> bool:
+    """The authoritative write gate: creator, current assignee, a DELEGATED
+    CONTRIBUTOR, or an admin. The contributor arm is what lets an agent finish
+    work handed to it — delegation adds the agent to issue_contributors, so
+    without it the delegated agent could see its assignment but never transition
+    the issue (the Assign → Work loop dead-ended one step before completion).
+    The admin arm is the operator override (and unbricks issues whose creator
+    left). Reads issue_contributors directly (read-only; contributors.py stays
+    the sole writer of that table)."""
+    if can_modify(issue, actor["id"]):
+        return True
+    if actor.get("role") == users.ADMIN_ROLE:
+        return True
+    return (
+        conn.execute(
+            "SELECT 1 FROM issue_contributors WHERE issue_id = ? AND user_id = ?",
+            (issue["id"], actor["id"]),
+        ).fetchone()
+        is not None
+    )
 
 
 def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:

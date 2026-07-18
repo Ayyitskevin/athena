@@ -494,7 +494,7 @@ def test_revoked_bearer_token_cannot_replay_completed_response(tmp_path):
     with TestClient(create_app(tmp_path / "revoked-replay.db")) as client:
         _bootstrap(client)
         created_token = client.post(
-            "/tokens", json={"name": "agent"}, headers=H1
+            "/tokens", json={"name": "agent", "scopes": ["admin"]}, headers=H1
         ).json()
         bearer = {"Authorization": f"Bearer {created_token['token']}"}
         keyed = {"Idempotency-Key": "before-revoke", **bearer}
@@ -517,7 +517,7 @@ def test_keyed_bearer_request_and_replay_each_consume_rate_limit_once(tmp_path):
     )
     with TestClient(app) as client:
         _bootstrap(client)
-        raw = client.post("/tokens", json={"name": "agent"}, headers=H1).json()[
+        raw = client.post("/tokens", json={"name": "agent", "scopes": ["admin"]}, headers=H1).json()[
             "token"
         ]
         headers = {
@@ -542,7 +542,7 @@ def test_secret_bearing_creation_routes_reject_keys_without_persisting_secret(tm
         _bootstrap(client)
         headers = {"Idempotency-Key": "never-store-a-secret", **H1}
         responses = [
-            client.post("/tokens", json={"name": "unsafe"}, headers=headers),
+            client.post("/tokens", json={"name": "unsafe", "scopes": ["admin"]}, headers=headers),
             client.post(
                 "/webhooks",
                 json={"url": "https://example.com/events"},
@@ -848,7 +848,7 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
     with TestClient(create_app(db_path)) as client:
         _bootstrap(client)
         member_token = client.post(
-            "/tokens", json={"name": "member-agent"}, headers=H2
+            "/tokens", json={"name": "member-agent", "scopes": ["admin"]}, headers=H2
         ).json()["token"]
         bearer = {"Authorization": f"Bearer {member_token}"}
 
@@ -1055,7 +1055,7 @@ def test_role_downgrade_fences_admin_response_replay(tmp_path):
             headers=H1,
         ).json()
         admin_token = client.post(
-            "/tokens", json={"name": "admin-agent"}, headers=H1
+            "/tokens", json={"name": "admin-agent", "scopes": ["admin"]}, headers=H1
         ).json()["token"]
         bearer = {"Authorization": f"Bearer {admin_token}"}
         webhook = client.post(
@@ -1098,7 +1098,7 @@ def test_private_project_move_fences_old_issue_response(tmp_path):
     with TestClient(create_app(tmp_path / "move-fence.db")) as client:
         _bootstrap(client)
         member_token = client.post(
-            "/tokens", json={"name": "member"}, headers=H2
+            "/tokens", json={"name": "member", "scopes": ["admin"]}, headers=H2
         ).json()["token"]
         bearer = {"Authorization": f"Bearer {member_token}"}
         source = client.post(
@@ -1158,7 +1158,7 @@ def test_assignee_handoff_succeeds_once_then_fences_replay(tmp_path):
     with TestClient(create_app(tmp_path / "assignee-fence.db")) as client:
         _bootstrap(client)
         member_token = client.post(
-            "/tokens", json={"name": "assignee"}, headers=H2
+            "/tokens", json={"name": "assignee", "scopes": ["admin"]}, headers=H2
         ).json()["token"]
         bearer = {"Authorization": f"Bearer {member_token}"}
         issue = client.post("/issues", json={"title": "handoff"}, headers=H1).json()
@@ -1326,7 +1326,7 @@ def test_revoked_token_on_users_keeps_normal_401_after_bootstrap(tmp_path):
     with TestClient(create_app(db_path)) as client:
         _bootstrap(client)
         created_token = client.post(
-            "/tokens", json={"name": "revoked"}, headers=H1
+            "/tokens", json={"name": "revoked", "scopes": ["admin"]}, headers=H1
         ).json()
         assert client.delete(
             f"/tokens/{created_token['id']}", headers=H1
