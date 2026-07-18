@@ -505,8 +505,11 @@ def test_web_noop_edit_records_nothing(tmp_path):
             follow_redirects=False,
         )
     conn = db.connect(db_file)
+    # Scope to the ISSUE's events: the logged-in user is now itself audited with a
+    # 'created_user' event, and shares id 1 with the first issue, so a target_id-only
+    # filter would sweep it in.
     rows = conn.execute(
-        "SELECT verb FROM activity WHERE target_id = ? ORDER BY id",
+        "SELECT verb FROM activity WHERE target_id = ? AND target_kind = 'issue' ORDER BY id",
         (issue_id,),
     ).fetchall()
     conn.close()

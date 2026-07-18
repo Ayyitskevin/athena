@@ -19,6 +19,7 @@ import sqlite3
 from athena.core import activity, db, users
 
 # Free-form activity verbs (activity.verb is plain TEXT; see migrations/0017).
+VERB_CREATED_USER = "created_user"
 VERB_CHANGED_ROLE = "changed_role"
 VERB_MARKED_AGENT = "marked_agent"
 VERB_UNMARKED_AGENT = "unmarked_agent"
@@ -31,6 +32,54 @@ class UserCommandError(Exception):
     def __init__(self, message: str, *, status_code: int) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _create_detail(user: dict) -> str:
+    agent = ", agent" if user.get("is_agent") else ""
+    return f"{user['email']} ({user['role']}{agent})"
+
+
+def create_user(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int | None,
+    email: str,
+    name: str,
+    password: str | None = None,
+    role: str | None = None,
+    is_agent: bool = False,
+) -> dict:
+    """Create a user and record a 'created_user' event atomically — a new actor
+    entering the system is exactly the kind of privilege moment the append-only log
+    exists to attribute.
+
+    ``actor_id`` attributes the creation: pass the acting admin's id when an admin adds
+    a user, or None for a SELF-provisioning path (the unauthenticated bootstrap of the
+    first user, or an SSO first-login) — None records the event against the new user
+    itself, since there is no other actor to name. The password hash is never in the
+    detail (it records email, role, and the agent flag only). Raises sqlite3.IntegrityError
+    for a duplicate email and ValueError for an invalid role, unchanged from the bare
+    call, so the transports keep translating them exactly as they do today."""
+    with db.transaction(conn, immediate=True):
+        user = users.create_user(
+            conn,
+            email=email,
+            name=name,
+            password=password,
+            role=role,
+            is_agent=is_agent,
+            commit=False,
+        )
+        activity.record(
+            conn,
+            actor_id=actor_id if actor_id is not None else user["id"],
+            verb=VERB_CREATED_USER,
+            target_kind="user",
+            target_id=user["id"],
+            detail=_create_detail(user),
+            commit=False,
+        )
+        return user
 
 
 def set_user_role(

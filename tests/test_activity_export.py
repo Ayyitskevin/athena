@@ -38,10 +38,11 @@ def test_csv_shape_and_headers(tmp_path):
         assert r.headers["content-type"].startswith("text/csv")
         assert r.headers["content-disposition"] == 'attachment; filename="athena-activity.csv"'
         rows = _rows(r.text)
-        # Stable operator columns, and both lifecycle facts present (newest first).
+        # Stable operator columns, and every lifecycle fact present (newest first):
+        # the status change, the issue creation, and — now audited — Ann's own creation.
         assert r.text.splitlines()[0].split(",") == _HEADER
         verbs = [row["verb"] for row in rows]
-        assert verbs == ["changed_status", "created"]
+        assert verbs == ["changed_status", "created", "created_user"]
         assert rows[0]["detail"] == "open → in_progress" and rows[0]["actor_name"] == "Ann"
 
 

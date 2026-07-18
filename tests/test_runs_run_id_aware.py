@@ -102,9 +102,11 @@ def test_runs_api_carries_run_id(tmp_path):
             headers={**H1, "X-Athena-Run": "deploy-7"},
         )
         runs = client.get("/activity/runs?actor_id=1", headers=H1).json()
-        assert len(runs) == 1
-        assert runs[0]["run_id"] == "deploy-7"
-        assert runs[0]["event_count"] == 2
+        # The bootstrap user creation is itself an (untagged) audited run for actor 1,
+        # so filter to the tagged run this test is about.
+        tagged = [r for r in runs if r["run_id"] == "deploy-7"]
+        assert len(tagged) == 1
+        assert tagged[0]["event_count"] == 2
 
 
 def test_runs_web_card_shows_run_id(tmp_path):
