@@ -1,8 +1,18 @@
 [project]
 name = "athena"
-version = "0.0.1"
+version = "0.1.0a1"
 description = "Self-hosted operator workspace: docs, tasks, and cross-links — built for solo operators and AI agents"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Groupware",
+]
 dependencies = [
     "fastapi",
     "jinja2",
@@ -42,9 +52,15 @@ athena-import-manifest = "athena.ops:import_manifest_main"
 athena-map-source = "athena.ops:map_source_main"
 athena-restore = "athena.ops:restore_main"
 athena-mcp = "athena.mcp.server:main"
+athena-demo = "athena.demo:main"
+
+[project.urls]
+Homepage = "https://github.com/Ayyitskevin/athena"
+Repository = "https://github.com/Ayyitskevin/athena"
+Issues = "https://github.com/Ayyitskevin/athena/issues"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
