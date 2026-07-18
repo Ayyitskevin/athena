@@ -545,17 +545,18 @@ class AthenaClient:
         name: str,
         scopes: list[str],
         token_name: str | None = None,
-        idempotency_key: str | None = None,
     ) -> Any:
         """Admin: provision an agent (user + first scoped token) in one audited
-        move. The response carries the one-time raw token and an MCP config block."""
+        move. The response carries the one-time raw token and an MCP config block.
+        Deliberately NO idempotency_key: the server refuses durable replay for
+        endpoints that return a one-time secret (the raw token must never sit in
+        the replay store)."""
         return self._mutate(
             self._client.post,
             "/users/onboard_agent",
             json=self._params(
                 email=email, name=name, scopes=scopes, token_name=token_name
             ),
-            idempotency_key=idempotency_key,
         )
 
     # --- pages (Mentor) -----------------------------------------------------

@@ -161,6 +161,46 @@ def test_scopes_are_required_and_refusal_creates_nothing(tmp_path):
     assert _events(db_file, "onboarded_agent") == []
 
 
+def test_idempotency_key_is_refused_so_the_secret_never_enters_the_replay_store(
+    tmp_path,
+):
+    # The durable-idempotency layer stores and replays response bodies. This
+    # response carries a one-time secret, so — like POST /tokens — it must
+    # refuse the Idempotency-Key contract outright rather than persist the raw
+    # token in the replay store.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        r = c.post(
+            "/users/onboard_agent",
+            json={"email": "sol@e.com", "name": "Sol", "scopes": ["read"]},
+            headers={**H1, "Idempotency-Key": "onboard-1"},
+        )
+        assert r.status_code == 400
+        assert "one-time secret" in r.json()["detail"]
+    conn = db.connect(db_file)
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+    ).fetchone()["n"] == 0
+    conn.close()
+
+
+def test_blank_email_or_name_is_422_on_every_surface(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        for payload in (
+            {"email": "   ", "name": "Sol"},
+            {"email": "sol@e.com", "name": ""},
+        ):
+            r = _onboard(c, **payload)
+            assert r.status_code == 422
+            assert "email and name are required" in r.json()["detail"]
+    conn = db.connect(db_file)
+    assert conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 1
+    conn.close()
+
+
 def test_duplicate_email_is_409_and_leaves_no_partial_state(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:

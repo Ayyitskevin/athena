@@ -105,6 +105,12 @@ def onboard_agent(
     AgentCommandError(401/403) for a missing or non-admin actor, (409) for a
     duplicate email, (422) for missing or invalid scopes."""
     actor = _require_admin_actor(actor)
+    email = email.strip()
+    name = name.strip()
+    if not email or not name:
+        raise AgentCommandError(
+            "agent email and name are required", status_code=422
+        )
     try:
         normalized = tokens.normalize_scopes(scopes)
     except ValueError as exc:

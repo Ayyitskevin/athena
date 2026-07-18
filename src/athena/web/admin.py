@@ -433,16 +433,8 @@ def onboard_agent(
     err = _admin_required(user)
     if err is not None:
         return err
-    email, name = email.strip(), name.strip()
-    if not email or not name:
-        return templates.TemplateResponse(
-            request=request,
-            name="admin/agents.html",
-            context=_agents_context(
-                conn, user, error="Agent email and name are required."
-            ),
-            status_code=400,
-        )
+    # Validation (blank email/name, missing scopes) lives in the command — the
+    # except branch below renders its message inline.
     try:
         result = agent_commands.onboard_agent(
             conn,
