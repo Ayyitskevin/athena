@@ -21,6 +21,7 @@ from athena.core import (
     tokens,
     user_commands,
     users,
+    webhook_commands,
     webhooks,
 )
 from athena.core.deps import get_conn
@@ -680,13 +681,13 @@ def create_webhook(
             context=_webhooks_context(conn, error=reason),
             status_code=400,
         )
-    created = webhooks.create_webhook(
+    # The command owns the registration, its atomic audit event, and the "start at
+    # tip" cursor (only future events reach the endpoint, never the backlog).
+    created = webhook_commands.register_webhook(
         conn,
+        actor_id=actor["id"],
         url=url,
         event_kind=event_kind.strip() or None,
-        created_by=actor["id"],
-        # Start at the current tip so the endpoint receives only future events.
-        start_cursor=webhooks.current_tip(conn),
     )
     return templates.TemplateResponse(
         request=request,
@@ -712,8 +713,13 @@ def toggle_webhook(
     if err is not None:
         return err
     # The form posts the DESIRED next state ("1" resume, anything else pause) — a
-    # deterministic toggle. Resuming clears the backoff so it retries promptly.
-    if webhooks.set_webhook_active(conn, webhook_id, active == "1") is None:
+    # deterministic toggle. Resuming clears the backoff so it retries promptly. The
+    # command records the flip atomically.
+    try:
+        webhook_commands.set_webhook_active(
+            conn, actor_id=actor["id"], webhook_id=webhook_id, active=active == "1"
+        )
+    except webhook_commands.WebhookCommandError:
         return HTMLResponse(
             '<div class="error">No such webhook.</div>', status_code=404
         )
@@ -734,7 +740,9 @@ def delete_webhook(
     err = _admin_required(actor)
     if err is not None:
         return err
-    if not webhooks.delete_webhook(conn, webhook_id):
+    if not webhook_commands.delete_webhook(
+        conn, actor_id=actor["id"], webhook_id=webhook_id
+    ):
         return HTMLResponse(
             '<div class="error">No such webhook.</div>', status_code=404
         )
