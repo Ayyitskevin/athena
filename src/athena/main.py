@@ -1051,19 +1051,24 @@ def create_app(
     # the plain 403 always did. Registered on the subclass, so every other
     # HTTPException keeps FastAPI's default handling.
     def _record_scope_denial(request, exc: identity.ScopeDenied):
+        # Best-effort in full: opening the connection is INSIDE the guard too, so
+        # a connect failure can never turn this deliberate 403 into a 500.
         if exc.actor_id is not None:
-            conn = db.connect(request.app.state.db_path)
             try:
-                security_events.record_failure(
-                    conn,
-                    actor_id=exc.actor_id,
-                    verb=security_events.VERB_SCOPE_DENIED,
-                    target_kind="user",
-                    target_id=exc.actor_id,
-                    detail=f"{exc.scope} on {request.method} {request.url.path}",
-                )
-            finally:
-                conn.close()
+                conn = db.connect(request.app.state.db_path)
+                try:
+                    security_events.record_failure(
+                        conn,
+                        actor_id=exc.actor_id,
+                        verb=security_events.VERB_SCOPE_DENIED,
+                        target_kind="user",
+                        target_id=exc.actor_id,
+                        detail=f"{exc.scope} on {request.method} {request.url.path}",
+                    )
+                finally:
+                    conn.close()
+            except Exception:  # noqa: BLE001 — the 403 must go out regardless
+                _logger.exception("could not record scope denial")
         return JSONResponse(status_code=403, content={"detail": exc.detail})
 
     app.add_exception_handler(identity.ScopeDenied, _record_scope_denial)
