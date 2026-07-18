@@ -18,15 +18,22 @@ _SELECT = (
 
 
 def add_comment(
-    conn: sqlite3.Connection, *, page_id: int, author_id: int, body: str
+    conn: sqlite3.Connection,
+    *,
+    page_id: int,
+    author_id: int,
+    body: str,
+    commit: bool = True,
 ) -> dict:
     """Append a comment and return it. Raises sqlite3.IntegrityError if the page
-    or author doesn't exist (the foreign keys refuse the orphan)."""
+    or author doesn't exist (the foreign keys refuse the orphan). ``commit=False`` lets
+    an audited command fold the insert and its activity event into one transaction."""
     cur = conn.execute(
         "INSERT INTO page_comments (page_id, author_id, body) VALUES (?, ?, ?)",
         (page_id, author_id, body),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_comment(conn, cur.lastrowid)
 
 
@@ -36,25 +43,31 @@ def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict | None:
 
 
 def update_comment(
-    conn: sqlite3.Connection, comment_id: int, *, body: str
+    conn: sqlite3.Connection, comment_id: int, *, body: str, commit: bool = True
 ) -> dict | None:
     """Replace a comment's body and return it, or None if no comment has that id.
     Author-ownership (only the author may edit) is enforced at the boundary, not
-    here — this function just writes."""
+    here — this function just writes. ``commit=False`` lets an audited command fold the
+    edit and its activity event into one transaction."""
     cur = conn.execute(
         "UPDATE page_comments SET body = ? WHERE id = ?", (body, comment_id)
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_comment(conn, comment_id)
 
 
-def delete_comment(conn: sqlite3.Connection, comment_id: int) -> bool:
+def delete_comment(
+    conn: sqlite3.Connection, comment_id: int, *, commit: bool = True
+) -> bool:
     """Delete a comment. Returns True if a row was removed, False if no comment
-    had that id (so the caller can answer 404)."""
+    had that id (so the caller can answer 404). ``commit=False`` lets an audited command
+    fold the delete and its activity event into one transaction."""
     cur = conn.execute("DELETE FROM page_comments WHERE id = ?", (comment_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
