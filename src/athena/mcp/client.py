@@ -692,6 +692,10 @@ class AthenaClient:
         """Read one tagged run's causal tree."""
         return self._result(self._client.get(f"/activity/runs/{run_id}/lineage"))
 
+    def get_run_replay(self, run_id: str) -> Any:
+        """Freeze one visible run into its portable replay artifact."""
+        return self._result(self._client.get(f"/activity/runs/{run_id}/replay"))
+
     def get_run_fork_contract(
         self, run_id: str, *, fork_from_event_id: int, fork_run_id: str
     ) -> Any:

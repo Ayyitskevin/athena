@@ -114,7 +114,8 @@ def test_onboard_is_admin_only(tmp_path):
 
 def test_admin_bearer_token_needs_the_admin_scope(tmp_path):
     # An admin holding a READ-scoped token must not be able to onboard through
-    # it — the command repeats the scope check below the transport.
+    # it — every transport gates on admin role AND admin token scope
+    # (require_admin / _admin_required) before the command runs.
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)

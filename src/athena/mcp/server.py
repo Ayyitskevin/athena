@@ -257,6 +257,15 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.get_run_lineage(run_id)
 
     @mcp.tool()
+    def get_run_replay(run_id: str) -> dict:
+        """Export one run as its portable replay ARTIFACT: the events in replay
+        order plus lineage placement and a determinism contract, frozen from one
+        consistent snapshot. Use list_run_events for a quick look; use this when
+        handing a run to another agent or preserving it for audit. Hidden or
+        unknown runs are a clean not-found."""
+        return client.get_run_replay(run_id)
+
+    @mcp.tool()
     def get_run_fork_contract(
         run_id: str, fork_from_event_id: int, fork_run_id: str
     ) -> dict:

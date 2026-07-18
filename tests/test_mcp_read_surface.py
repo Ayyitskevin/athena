@@ -111,6 +111,21 @@ def test_notifications_inbox_roundtrip(tmp_path):
         admin.__exit__(None, None, None)
 
 
+def test_get_run_replay_freezes_the_run_into_an_artifact(tmp_path):
+    admin, agent, _ = _workspace(tmp_path, "artifact.db")
+    try:
+        issue = agent.create_issue(title="artifact work")
+        agent.update_issue(issue["id"], status="done")
+
+        artifact = agent.get_run_replay("sol-session")
+        assert artifact["run_id"] == "sol-session"
+        assert artifact["event_count"] == 2
+        assert [e["verb"] for e in artifact["events"]] == ["created", "changed_status"]
+        assert artifact["replay_order"] and artifact["determinism_contract"]
+    finally:
+        admin.__exit__(None, None, None)
+
+
 def test_list_run_events_replays_exactly_one_run(tmp_path):
     admin, agent, _ = _workspace(tmp_path, "replay.db")
     try:
