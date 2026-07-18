@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import (
+    comment_commands,
     comments,
     contributors,
     dashboard,
@@ -1454,8 +1455,8 @@ def add_issue_comment(
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
 
-    comments.add_comment(conn, issue_id=issue_id, author_id=user["id"], body=body)
-    issue_activity.record_commented(
+    # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
+    comment_commands.create_comment(
         conn, actor_id=user["id"], issue_id=issue_id, body=body
     )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
@@ -1502,7 +1503,13 @@ def edit_issue_comment(
     body = body.strip()
     if not body:
         return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
-    if comments.update_comment(conn, comment_id, body=body) is None:
+    # The command owns the edit AND its atomic 'comment_edited' event — this web path
+    # previously rewrote the body with NO audit trail at all.
+    try:
+        comment_commands.edit_comment(
+            conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id, body=body
+        )
+    except comment_commands.CommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
         return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
@@ -1532,11 +1539,12 @@ def delete_issue_comment(
     _, err = _own_comment_or_response(conn, issue_id, comment_id, user, allow_admin=True)
     if err is not None:
         return err
-    if not comments.delete_comment(conn, comment_id):
-        # vanished between the author check and the delete (a race) — 404, and don't
-        # record an event for a deletion that didn't happen.
+    # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
+    # vanished in a race records nothing and 404s.
+    if not comment_commands.delete_comment(
+        conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id
+    ):
         return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
-    issue_activity.record_comment_deleted(conn, actor_id=user["id"], issue_id=issue_id)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

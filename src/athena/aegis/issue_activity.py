@@ -520,37 +520,66 @@ def record_label_removed(
 
 
 def record_commented(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, body: str = ""
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    body: str = "",
+    commit: bool = True,
 ) -> None:
     """Record that someone commented on the issue. The event targets the issue (so
     it lands on the issue's History and the global feed links there); the comment
     body itself lives on the issue, not duplicated into the trail's detail. Anyone
-    named by [[user:N]] in the comment is mentioned (notified + auto-watched)."""
+    named by [[user:N]] in the comment is mentioned (notified + auto-watched).
+
+    ``commit=False`` composes this inside a command's transaction: the event, the
+    watch, and the mentions all defer their commit to the command owner, so the comment
+    and its whole activity footprint land or roll back together."""
     event = activity.record(
         conn,
         actor_id=actor_id,
         verb="commented",
         target_kind="issue",
         target_id=issue_id,
+        commit=commit,
     )
     # Commenting is participation — the commenter starts watching the issue.
-    notifications.watch(conn, actor_id, "issue", issue_id)
+    notifications.watch(conn, actor_id, "issue", issue_id, commit=commit)
     notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=body
+        conn, event_id=event["id"], actor_id=actor_id, text=body, commit=commit
+    )
+
+
+def record_comment_edited(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool = True
+) -> None:
+    """Record that a comment's body was edited — the previously-silent half of the
+    comment lifecycle (who rewrote content). No detail: the current body lives on the
+    comment, and the edit's point is that the change is now on the record at all.
+    ``commit=False`` composes inside a command's transaction."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="comment_edited",
+        target_kind="issue",
+        target_id=issue_id,
+        commit=commit,
     )
 
 
 def record_comment_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, commit: bool = True
 ) -> None:
     """Record that a comment was removed from the issue — the audit-worthy half of
-    the comment lifecycle (who took content down). No detail: the comment is gone."""
+    the comment lifecycle (who took content down). No detail: the comment is gone.
+    ``commit=False`` composes inside a command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
         verb="comment_deleted",
         target_kind="issue",
         target_id=issue_id,
+        commit=commit,
     )
 
 
