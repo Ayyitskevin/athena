@@ -386,6 +386,8 @@ def agents_admin(
     request: Request,
     revoked: int | None = Query(None),
     offboarded: str | None = Query(None),
+    paused: str | None = Query(None),
+    resumed: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -401,6 +403,10 @@ def agents_admin(
         notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
     elif offboarded:
         notice = "Offboarded: demoted to viewer, sessions and tokens revoked."
+    elif paused:
+        notice = "Paused: every authenticated action is refused until resumed."
+    elif resumed:
+        notice = "Resumed: the account is active again."
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
@@ -470,6 +476,46 @@ def onboard_agent(
         context=_agents_context(conn, user, onboarded=onboarded),
         status_code=201,
     )
+
+
+@router.post(
+    "/admin/agents/{user_id}/pause",
+    dependencies=[Depends(verify_csrf)],
+)
+def pause_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.set_user_paused(
+            conn, actor=user, target_user_id=user_id, paused=True
+        )
+    except agent_commands.AgentCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?paused=1", status_code=303)
+
+
+@router.post(
+    "/admin/agents/{user_id}/resume",
+    dependencies=[Depends(verify_csrf)],
+)
+def resume_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.set_user_paused(
+            conn, actor=user, target_user_id=user_id, paused=False
+        )
+    except agent_commands.AgentCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?resumed=1", status_code=303)
 
 
 @router.post(

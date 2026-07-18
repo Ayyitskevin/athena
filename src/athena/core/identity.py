@@ -49,6 +49,7 @@ def current_actor(
         actor = tokens.resolve_token(conn, raw)
         if actor is None:
             raise HTTPException(status_code=401, detail="invalid or revoked token")
+        _refuse_paused(actor)
         _enforce_token_rate_limit(request, actor)
         return actor
 
@@ -63,9 +64,19 @@ def current_actor(
         actor = users.get_user(conn, actor_id)
         if actor is None:
             raise HTTPException(status_code=401, detail="unknown actor")
+        _refuse_paused(actor)
         return actor
 
     raise HTTPException(status_code=401, detail="authentication required")
+
+
+def _refuse_paused(actor: dict) -> None:
+    """The pause lever, enforced at identity resolution: a paused account is
+    refused EVERY authenticated action — reads, writes, heartbeats — until an
+    admin resumes it. 403 (not 401): the credential is valid, the account is
+    deliberately frozen, and retrying with the same token is pointless."""
+    if actor.get("paused_at"):
+        raise HTTPException(status_code=403, detail="account is paused")
 
 
 def optional_actor(

@@ -54,6 +54,12 @@ class UserOut(BaseModel):
     role: Role
     is_agent: bool
     created_at: str
+    # Set while the operator pause lever is engaged; None for an active account.
+    paused_at: str | None = None
+
+
+class UserPausedUpdate(BaseModel):
+    paused: bool
 
 
 class TokenRevocationOut(BaseModel):
@@ -253,6 +259,24 @@ def update_agent(
             is_agent=payload.is_agent,
         )
     except user_commands.UserCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.put("/{user_id}/paused", response_model=UserOut)
+def update_paused(
+    user_id: int,
+    payload: UserPausedUpdate,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """The operator lever between watch and revoke: pause freezes the account at
+    identity resolution without destroying anything; resume restores it exactly.
+    Audited, idempotent, and refuses to pause the last active admin."""
+    try:
+        return agent_commands.set_user_paused(
+            conn, actor=actor, target_user_id=user_id, paused=payload.paused
+        )
+    except agent_commands.AgentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 

@@ -667,6 +667,13 @@ class AthenaClient:
             )
         )
 
+    def set_user_paused(self, user_id: int, paused: bool) -> Any:
+        """Admin pause lever: freeze (or resume) every authenticated action for a
+        user without revoking anything (admin only)."""
+        return self._mutate(
+            self._client.put, f"/users/{user_id}/paused", json={"paused": paused}
+        )
+
     def revoke_agent_tokens(self, user_id: int) -> Any:
         """Admin kill switch: revoke every live token another user holds (admin only)."""
         return self._mutate(self._client.delete, f"/users/{user_id}/tokens")

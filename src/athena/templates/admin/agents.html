@@ -66,7 +66,7 @@
     <section class="agent-admin-card">
         <header class="agent-admin-card-header">
             <div>
-                <h2>{{ agent.user.name }} <span class="agent-badge">agent</span></h2>
+                <h2>{{ agent.user.name }} <span class="agent-badge">agent</span>{% if agent.user.paused_at %} <span class="agent-badge">paused</span>{% endif %}</h2>
                 <p class="muted">
                     {{ agent.user.email }} &middot; {{ agent.user.role }} &middot; created {{ agent.user.created_at }}
                     {% if agent.last_activity_at %} &middot; last active {{ agent.last_activity_at }}{% endif %}
@@ -77,6 +77,18 @@
                 <span class="pill">{{ agent.revoked_token_count }} revoked</span>
             </div>
             <div class="agent-admin-controls">
+                {% if agent.user.paused_at %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/resume">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button">Resume</button>
+                </form>
+                {% else %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/pause"
+                      data-confirm="Pause {{ agent.user.name }}? Every authenticated action is refused until resumed — tokens and sessions stay intact.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary">Pause</button>
+                </form>
+                {% endif %}
                 <form method="post" action="/admin/agents/{{ agent.user.id }}/revoke-tokens"
                       data-confirm="Revoke ALL live tokens for {{ agent.user.name }}? Any agent using them stops immediately. New tokens can be minted later.">
                     {% include "partials/csrf.html" %}
