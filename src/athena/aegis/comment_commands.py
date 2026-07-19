@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import comments, issue_activity
-from athena.core import db
+from athena.core import db, search
 
 
 class CommentCommandError(Exception):
@@ -44,6 +44,12 @@ def create_comment(
         comment = comments.add_comment(
             conn, issue_id=issue_id, author_id=actor_id, body=body, commit=False
         )
+        # Index the comment body for full-text search, in the same transaction as the row
+        # and its event, so discussion is findable and the index never reflects a rolled-
+        # back comment.
+        search.index_document(
+            conn, kind="issue_comment", source_id=comment["id"], commit=False
+        )
         issue_activity.record_commented(
             conn, actor_id=actor_id, issue_id=issue_id, body=body, commit=False
         )
@@ -61,6 +67,10 @@ def edit_comment(
         updated = comments.update_comment(conn, comment_id, body=body, commit=False)
         if updated is None:
             raise CommentCommandError("no such comment", status_code=404)
+        # Re-index the rewritten body so search reflects the current text, not the old.
+        search.index_document(
+            conn, kind="issue_comment", source_id=comment_id, commit=False
+        )
         issue_activity.record_comment_edited(
             conn, actor_id=actor_id, issue_id=issue_id, commit=False
         )
@@ -77,6 +87,10 @@ def delete_comment(
     with db.transaction(conn, immediate=True):
         removed = comments.delete_comment(conn, comment_id, commit=False)
         if removed:
+            # The row is gone, so re-indexing removes its FTS entry (no dangling hit).
+            search.index_document(
+                conn, kind="issue_comment", source_id=comment_id, commit=False
+            )
             issue_activity.record_comment_deleted(
                 conn, actor_id=actor_id, issue_id=issue_id, commit=False
             )

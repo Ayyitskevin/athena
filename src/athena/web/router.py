@@ -263,12 +263,18 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     hits = hits[:_SEARCH_PAGE]
     for h in hits:
         # render_snippet escapes then turns search's [..] match markers into <mark>;
-        # the href maps a hit's kind to where it lives in the web UI.
+        # the href maps a hit's kind to where it lives in the web UI. A comment has no
+        # page of its own — it lives on its PARENT issue/page (parent_id from enrichment),
+        # so a comment hit links there, not to a bogus /mentor/pages/{comment_id}.
         h["snippet_html"] = render_snippet(h.get("snippet"))
-        h["href"] = (
-            f"/aegis/issues/{h['source_id']}" if h["kind"] == "issue"
-            else f"/mentor/pages/{h['source_id']}"
-        )
+        if h["kind"] == "issue":
+            h["href"] = f"/aegis/issues/{h['source_id']}"
+        elif h["kind"] == "page":
+            h["href"] = f"/mentor/pages/{h['source_id']}"
+        elif h["kind"] == "issue_comment":
+            h["href"] = f"/aegis/issues/{h.get('parent_id')}"
+        else:  # page_comment
+            h["href"] = f"/mentor/pages/{h.get('parent_id')}"
 
     def find_url(*, scope: str | None, page_num: int) -> str:
         return "/find?" + urlencode(

@@ -106,7 +106,7 @@ knowledge graph the database already stores.
 - [x] Title-based addressing: `[[Page Title]]` resolution and a
       fetch-by-title API/tool. Numeric ids are exactly the lookup agents are
       worst at.
-- [ ] Index comments into full-text search; record run provenance on page
+- [x] Index comments into full-text search; record run provenance on page
       versions.
 
 ## Phase 4 — Fleet operations
