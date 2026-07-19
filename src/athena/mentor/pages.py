@@ -76,6 +76,37 @@ def list_pages_in_space(
     return [dict(row) for row in rows]
 
 
+def find_pages_by_title(
+    conn: sqlite3.Connection,
+    title: str,
+    *,
+    space_id: int | None = None,
+    include_archived: bool = False,
+) -> list[dict]:
+    """Every page whose title matches `title` (case-insensitive, exact) — the
+    fetch-by-title lookup that lets an agent address a page by the thing it remembers
+    instead of a numeric id. Titles are NOT unique, so this returns a LIST: zero (no
+    such title), one (the common case), or several (a genuine ambiguity the caller
+    resolves — e.g. by space). Ordered by (space_id, id) so the result is deterministic.
+
+    ``space_id`` narrows to a single space. Archived (soft-deleted) pages are excluded
+    unless ``include_archived`` — a soft-deleted page is not a live target, the same rule
+    list_pages_in_space and search apply. Rides idx_pages_title (a NOCASE index), so the
+    match stays an index probe on a growing wiki."""
+    name = (title or "").strip()
+    if not name:
+        return []
+    sql = "SELECT * FROM pages WHERE title = ? COLLATE NOCASE"
+    params: list = [name]
+    if space_id is not None:
+        sql += " AND space_id = ?"
+        params.append(space_id)
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    sql += " ORDER BY space_id, id"
+    return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
 def set_archived(
     conn: sqlite3.Connection, page_id: int, archived: bool, *, commit: bool = True
 ) -> dict | None:

@@ -1,5 +1,5 @@
-"""Inline rendering for page/issue bodies — Markdown plus [[issue:N]]/[[page:N]]
-cross-link tokens, turned into safe HTML.
+"""Inline rendering for page/issue bodies — Markdown plus [[issue:N]]/[[page:N]],
+[[KEY-N]], and bare [[Page Title]] cross-link tokens, turned into safe HTML.
 
 This is the *presentation* half of the cross-link feature: core/links.py owns the
 token grammar and resolves what a reference points at; this module knows the web
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from html import unescape
 
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
@@ -158,7 +159,40 @@ def render_body(
             return f'<a href="{href}" class="xref">{label}</a>'
         return f'<span class="xref broken">{escape(match.group(0))}</span>'
 
+    def _title_link(match) -> str:
+        # [[Page Title]] — a bare wiki-link. Resolve the title to a concrete page (the
+        # source-space preference only applies at index time, not to a free-standing
+        # render), link it live, or render the literal token broken. A hit the viewer
+        # can't see is treated as a miss (broken), so a private space's page never leaks
+        # its title/existence through a title link — the same gate the typed refs use.
+        # This pass runs over already-escaped HTML, so a title like "Q&A" arrives here as
+        # "Q&amp;A". Undo the entity escaping so the lookup key matches the raw title the
+        # index recorded (the token grammar already excludes <>, so & is the only entity
+        # that reaches this point). Used ONLY as a DB lookup key, never re-emitted raw.
+        inner = unescape(match.group(1))
+        # A reserved token that its own pass left as a literal (a broken [[page:404]] /
+        # [[ATH-99]] / unknown [[user:9]], now sitting as text inside a broken span or
+        # mention) must NOT be re-read as a title. Leave it exactly as that pass rendered
+        # it.
+        if links._is_reserved_ref(inner):
+            return match.group(0)
+        ref = links.resolve_title_ref(conn, inner)
+        if ref["exists"] and links._visible_ref(conn, actor, "page", ref["id"]):
+            href = _HREF["page"].format(ref["id"])
+            label = escape(ref["title"])
+            return f'<a href="{href}" class="xref">{label}</a>'
+        # The literal token is emitted WITHOUT re-escaping: unlike the typed/key refs,
+        # a title can carry a `&` (rendered as "&amp;"), and match.group(0) is already
+        # the escaped-safe substring from `linked` — re-escaping it would double-escape
+        # the entity ("Q&amp;A" → "Q&amp;amp;A"). The <> exclusion in TITLE_REF_RE means
+        # this substring can never contain raw markup, so emitting it as-is is safe.
+        return f'<span class="xref broken">{match.group(0)}</span>'
+
     linked = links.REF_RE.sub(_link, safe)
     linked = links.KEY_REF_RE.sub(_key_link, linked)
     linked = _sub_mentions(conn, linked)
+    # Title wiki-links resolve LAST, over what the typed/key/mention passes left behind:
+    # by now every reserved token is either linked markup (no [[…]] left) or a rendered
+    # literal the guard above skips, so this pass only ever sees genuine [[Title]] text.
+    linked = links.TITLE_REF_RE.sub(_title_link, linked)
     return Markup(linked)

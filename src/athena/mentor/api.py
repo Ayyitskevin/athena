@@ -551,6 +551,28 @@ def list_pages(
     )
 
 
+@pages_router.get("/by-title", response_model=list[PageOut])
+def find_pages_by_title(
+    title: str,
+    space_id: int | None = None,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Fetch pages by their TITLE rather than a numeric id — the lookup an agent can do
+    # from memory (numeric ids are exactly what it's worst at). Titles are not unique, so
+    # this returns a list: [] (no match), one (the common case), or several (an ambiguity
+    # the caller resolves — pass space_id to narrow). Reads are open, but each match is
+    # gated by space visibility: a page in a private space the caller can't see is
+    # dropped, so a hidden page never reveals itself by title. Archived pages are hidden.
+    #
+    # NB: declared BEFORE GET /pages/{page_id} on purpose — FastAPI matches routes in
+    # declaration order, so this literal path must precede the {page_id} pattern or
+    # "/pages/by-title" would be parsed as a (non-integer) page id and 422.
+    matches = pages.find_pages_by_title(conn, title, space_id=space_id)
+    visible = [p for p in matches if access.can_see_space(conn, actor, p["space_id"])]
+    return _with_labels_many(conn, visible)
+
+
 @pages_router.get("/{page_id}", response_model=PageOut)
 def show_page(
     page_id: int,

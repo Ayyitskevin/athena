@@ -134,6 +134,182 @@ def test_self_reference_is_not_indexed(tmp_path):
     assert rows == []
 
 
+# --- unit: title (wiki-link) resolution -------------------------------------
+
+
+def test_resolve_title_ref_unique_match(tmp_path):
+    # WHY: [[Title]] is the address an agent remembers. A single live page with that
+    # title resolves to it, case-insensitively.
+    conn = _migrated_conn(tmp_path / "t1.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    pg = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    ref = links.resolve_title_ref(conn, "design doc")
+    assert ref == {"kind": "page", "id": pg["id"], "title": "Design Doc", "exists": True}
+
+
+def test_resolve_title_ref_ambiguous_is_unresolved(tmp_path):
+    # WHY: titles are not unique. Two live pages share a title, so a bare [[Title]] with
+    # no space to disambiguate must NOT guess — it resolves to nothing (renders broken).
+    conn = _migrated_conn(tmp_path / "t2.db")
+    _seed_user(conn)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
+    pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    ref = links.resolve_title_ref(conn, "Runbook")
+    assert ref["exists"] is False and ref["id"] is None
+
+
+def test_resolve_title_ref_prefers_source_space(tmp_path):
+    # WHY: a [[Title]] on a page means "the one in MY space" first — the wiki behavior
+    # that breaks an otherwise-ambiguous tie deterministically.
+    conn = _migrated_conn(tmp_path / "t3.db")
+    _seed_user(conn)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    in_a = pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
+    in_b = pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    assert links.resolve_title_ref(conn, "Runbook", space_id=a["id"])["id"] == in_a["id"]
+    assert links.resolve_title_ref(conn, "Runbook", space_id=b["id"])["id"] == in_b["id"]
+
+
+def test_resolve_title_ref_excludes_archived(tmp_path):
+    # WHY: an archived (soft-deleted) page is not a live target — a title ref must not
+    # resolve to it (and if it's the ONLY match, the ref is broken, like a deleted target).
+    conn = _migrated_conn(tmp_path / "t4.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    pg = pages.create_page(conn, space_id=sp["id"], title="Old Doc", created_by=1)
+    pages.set_archived(conn, pg["id"], True)
+    assert links.resolve_title_ref(conn, "Old Doc")["exists"] is False
+
+
+def test_title_ref_records_backlink_within_space(tmp_path):
+    # WHY: like a key ref, a resolved [[Title]] is stored as a concrete ('page', id) link,
+    # so the target's backlinks light up. A page's [[Title]] resolves in its own space.
+    conn = _migrated_conn(tmp_path / "t5.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    target = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    src = pages.create_page(
+        conn, space_id=sp["id"], title="Src", body="see [[Design Doc]]", created_by=1
+    )
+    out = [
+        (r["target_kind"], r["target_id"])
+        for r in conn.execute(
+            "SELECT target_kind, target_id FROM links WHERE source_kind='page' "
+            "AND source_id=?",
+            (src["id"],),
+        )
+    ]
+    assert out == [("page", target["id"])]
+    back = links.backlinks(conn, "page", target["id"])
+    assert [b["id"] for b in back] == [src["id"]]
+
+
+def test_ambiguous_title_ref_records_no_link(tmp_path):
+    # WHY: the "don't guess" contract — an ambiguous title (two matches, no in-space
+    # winner) stores no link, exactly as a broken key ref records no backlink.
+    conn = _migrated_conn(tmp_path / "t6.db")
+    _seed_user(conn)
+    a = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
+    pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
+    pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
+    # An ISSUE (no space) referencing the ambiguous title can't disambiguate.
+    src = issues.create_issue(conn, title="s", body="see [[Runbook]]", created_by=1)
+    rows = conn.execute(
+        "SELECT COUNT(*) AS n FROM links WHERE source_kind='issue' AND source_id=?",
+        (src["id"],),
+    ).fetchone()
+    assert rows["n"] == 0
+
+
+def test_typed_token_is_never_treated_as_a_title(tmp_path):
+    # WHY: [[page:N]] / [[user:N]] / [[KEY-N]] are owned by their own resolvers — the
+    # title pass must skip them, so a body's typed refs are unaffected by title indexing.
+    conn = _migrated_conn(tmp_path / "t7.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    tgt = pages.create_page(conn, space_id=sp["id"], title="Doc", created_by=1)
+    src = pages.create_page(
+        conn, space_id=sp["id"], title="Src", body=f"[[page:{tgt['id']}]]", created_by=1
+    )
+    rows = [
+        (r["target_kind"], r["target_id"])
+        for r in conn.execute(
+            "SELECT target_kind, target_id FROM links WHERE source_id=? "
+            "AND source_kind='page'",
+            (src["id"],),
+        )
+    ]
+    # Exactly one link, from the typed ref — not a second, duplicate title link.
+    assert rows == [("page", tgt["id"])]
+
+
+def test_render_body_links_live_title_reference(tmp_path):
+    conn = _migrated_conn(tmp_path / "t8.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    pg = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    html = str(render_body(conn, "see [[Design Doc]]"))
+    assert f'href="/mentor/pages/{pg["id"]}"' in html
+    assert 'class="xref"' in html and "Design Doc" in html
+
+
+def test_render_body_marks_broken_title_reference(tmp_path):
+    conn = _migrated_conn(tmp_path / "t9.db")
+    _seed_user(conn)
+    _space(conn)
+    html = str(render_body(conn, "ghost [[No Such Page]]"))
+    assert "xref broken" in html
+    assert "[[No Such Page]]" in html  # shown literally, not dropped
+
+
+def test_title_with_ampersand_round_trips_index_and_render(tmp_path):
+    # WHY: a real title like "Q&A" is HTML-escaped to "Q&amp;A" during render, but the
+    # index recorded the raw title. The render pass must un-escape before lookup so the
+    # inline link resolves to the SAME page the backlink points at — no split brain.
+    conn = _migrated_conn(tmp_path / "t11.db")
+    _seed_user(conn)
+    sp = _space(conn)
+    target = pages.create_page(conn, space_id=sp["id"], title="Q&A", created_by=1)
+    src = pages.create_page(
+        conn, space_id=sp["id"], title="Src", body="see [[Q&A]]", created_by=1
+    )
+    # Indexed: the backlink points at the real page.
+    assert [b["id"] for b in links.backlinks(conn, "page", target["id"])] == [src["id"]]
+    # Rendered: the inline link resolves to the same page (not a broken span).
+    html = str(render_body(conn, "see [[Q&A]]"))
+    assert f'href="/mentor/pages/{target["id"]}"' in html
+    assert "broken" not in html
+
+
+def test_broken_ampersand_title_is_not_double_escaped(tmp_path):
+    # WHY: a broken [[Q&A]] renders the literal token, and the entity must show as a
+    # single "&amp;" (browser: "&"), never a double-escaped "&amp;amp;". The token is
+    # already escaped-safe, so the broken span emits it as-is.
+    conn = _migrated_conn(tmp_path / "t12.db")
+    _seed_user(conn)
+    _space(conn)  # no page titled "Q&A" — the ref is broken
+    html = str(render_body(conn, "see [[Q&A]]"))
+    assert "xref broken" in html
+    assert "[[Q&amp;A]]" in html
+    assert "amp;amp;" not in html  # not double-escaped
+
+
+def test_render_broken_typed_ref_is_not_relinked_as_title(tmp_path):
+    # WHY: a broken [[page:404]] is rendered as a literal by its OWN pass; the later title
+    # pass must not re-read that literal and try to resolve "page:404" as a title.
+    conn = _migrated_conn(tmp_path / "t10.db")
+    _seed_user(conn)
+    _space(conn)
+    html = str(render_body(conn, "dangling [[page:404]]"))
+    assert html.count("xref") == 1  # only the one broken typed ref, no phantom title link
+    assert "[[page:404]]" in html
+
+
 # --- unit: backlinks + lazy resolution --------------------------------------
 
 

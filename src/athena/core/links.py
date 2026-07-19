@@ -1,8 +1,9 @@
 """The cross-link resolver — Athena's one-roof payoff.
 
 An issue in Aegis can reference a page in Mentor and vice-versa, because they
-share one database. Authors write a reference token in a body — `[[issue:42]]`
-or `[[page:7]]` — and this module:
+share one database. Authors write a reference token in a body — `[[issue:42]]`,
+`[[page:7]]`, a Jira-style `[[ATH-12]]`, or a bare `[[Page Title]]` wiki-link —
+and this module:
 
   * extracts those tokens (extract_refs),
   * keeps a derived index of them in the `links` table (sync_links, called from
@@ -52,6 +53,38 @@ REF_RE = re.compile(r"\[\[(issue|page):(\d+)\]\]")
 # the links table and backlinks stay numeric and stable.
 KEY_REF_RE = re.compile(r"\[\[([A-Za-z][A-Za-z0-9]*)-(\d+)\]\]")
 
+# Matches a bare [[Page Title]] wiki-link (Obsidian/Notion style): double brackets
+# around free text with no brackets, newline, or ANGLE BRACKETS inside. This grammar is
+# DELIBERATELY broad on the rest — it also matches the typed forms above — so the reserved
+# forms are excluded in code (_is_reserved_ref), never by the regex. A title ref addresses
+# a page by the thing an agent actually remembers (its title) instead of a numeric id;
+# like a key ref it resolves to a concrete page id at index time and is stored as an
+# ordinary ('page', id) link, so backlinks light up the same way [[page:N]] does.
+#
+# Angle brackets are excluded so the SAME regex is safe over both the raw body (indexing)
+# and the Markdown-rendered, HTML-escaped body (rendering): a token like [[**bold**]]
+# becomes [[<strong>bold</strong>]] once rendered, and excluding <> keeps this pass from
+# swallowing that emphasis markup (it stays bold-in-brackets, its pre-title-links look).
+# The one entity that still slips through is `&` (a real title like "Q&A" renders as
+# "Q&amp;A"); the render pass html-unescapes the inner before lookup so it matches the
+# raw title the index recorded.
+TITLE_REF_RE = re.compile(r"\[\[([^\[\]\n<>]+)\]\]")
+
+# The inner-text forms that are NOT titles — the typed/key/mention grammars, anchored
+# with fullmatch so ONLY an exact match is reserved (a title that merely CONTAINS a
+# colon, e.g. "Roadmap: 2026", is still a title). These are exactly the tokens the
+# other resolvers own, so [[Title]] resolution never steals one of them.
+_RESERVED_INNER_RE = re.compile(r"(?:issue|page|user):\d+|[A-Za-z][A-Za-z0-9]*-\d+")
+
+
+def _is_reserved_ref(inner: str) -> bool:
+    """Whether a [[...]] token's inner text is a typed/key/mention ref (owned by another
+    resolver) rather than a page title. Matched WITHOUT stripping, so it reserves
+    precisely the strings [[issue:N]]/[[page:N]]/[[user:N]]/[[KEY-N]] the other regexes
+    consume — a spaced variant like `[[ page:7 ]]` (which those regexes do NOT match) is
+    left to resolve as an ordinary title."""
+    return _RESERVED_INNER_RE.fullmatch(inner) is not None
+
 
 def extract_refs(text: str | None) -> list[tuple[str, int]]:
     """Every distinct (kind, id) reference in a body, in first-seen order.
@@ -89,6 +122,46 @@ def resolve_key_ref(conn: sqlite3.Connection, key: str, seq: int) -> dict:
     }
 
 
+def resolve_title_ref(
+    conn: sqlite3.Connection, title: str, *, space_id: int | None = None
+) -> dict:
+    """Resolve a [[Title]] wiki-link to {kind:'page', id, title, exists}.
+
+    A title reference names a page by its (case-insensitive) title instead of a numeric
+    id — the address agents are actually good at. Resolution is deliberately UNAMBIGUOUS:
+    titles are not unique, so it resolves ONLY when exactly one live page answers, and it
+    prefers the SOURCE page's own space to break a tie the way a wiki would (a [[Title]]
+    on a page means "the one in this space" first).
+
+      * archived pages are excluded — a soft-deleted page is not a live target;
+      * when `space_id` is given (the source is a page) AND any candidate is in that
+        space, candidates are narrowed to it;
+      * exactly one surviving candidate resolves; zero or several leave it UNRESOLVED
+        (id/title None, exists False) so it renders broken and records no link — the
+        same "don't guess" contract a broken numeric/key ref gets.
+
+    Reads the pages table directly (like resolve_key_ref) to keep links.py free of a
+    mentor import, so the core resolver never depends on a feature module. The COLLATE
+    NOCASE match rides idx_pages_title (a NOCASE index) so this stays an index probe even
+    though sync_links calls it on every write."""
+    name = (title or "").strip()
+    if not name:
+        return {"kind": "page", "id": None, "title": None, "exists": False}
+    rows = conn.execute(
+        "SELECT id, space_id, title FROM pages "
+        "WHERE title = ? COLLATE NOCASE AND archived_at IS NULL",
+        (name,),
+    ).fetchall()
+    if space_id is not None:
+        in_space = [r for r in rows if r["space_id"] == space_id]
+        if in_space:  # prefer the source's own space; fall back to a global unique match
+            rows = in_space
+    if len(rows) == 1:
+        row = rows[0]
+        return {"kind": "page", "id": row["id"], "title": row["title"], "exists": True}
+    return {"kind": "page", "id": None, "title": None, "exists": False}
+
+
 def sync_links(
     conn: sqlite3.Connection,
     *,
@@ -114,6 +187,25 @@ def sync_links(
         resolved = resolve_key_ref(conn, key, int(num))
         if resolved["exists"] and ("issue", resolved["id"]) not in targets:
             targets.append(("issue", resolved["id"]))
+    # [[Page Title]] wiki-links resolve to a concrete page id NOW (like key refs) and
+    # are stored as ordinary ('page', id) links, so a title reference lights up its
+    # target's backlinks exactly as [[page:N]] does. A page source disambiguates within
+    # its OWN space first; an issue source has no space, so it resolves globally.
+    # Reserved tokens ([[issue:N]]/[[page:N]]/[[user:N]]/[[KEY-N]]) are skipped — they
+    # are owned by the resolvers above. An unresolvable or ambiguous title is simply not
+    # stored (it renders broken and leaves no backlink — the key-ref asymmetry).
+    source_space_id = None
+    if source_kind == "page":
+        row = conn.execute(
+            "SELECT space_id FROM pages WHERE id = ?", (source_id,)
+        ).fetchone()
+        source_space_id = row["space_id"] if row else None
+    for inner in TITLE_REF_RE.findall(body or ""):
+        if _is_reserved_ref(inner):
+            continue
+        resolved = resolve_title_ref(conn, inner, space_id=source_space_id)
+        if resolved["exists"] and ("page", resolved["id"]) not in targets:
+            targets.append(("page", resolved["id"]))
     conn.execute(
         "DELETE FROM links WHERE source_kind = ? AND source_id = ?",
         (source_kind, source_id),
