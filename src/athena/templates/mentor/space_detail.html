@@ -16,6 +16,14 @@
     {% endif %}
 </div>
 
+<p class="filter-bar muted">
+    {% if include_archived %}
+    Showing archived pages · <a href="/mentor/spaces/{{ space.id }}">Hide archived</a>
+    {% else %}
+    <a href="/mentor/spaces/{{ space.id }}?archived=1">Show archived</a>
+    {% endif %}
+</p>
+
 {% if tree %}
 <table class="issues-table">
     <thead>
@@ -27,6 +35,7 @@
             <td class="issue-title" style="padding-left: {{ 1 + p.depth * 1.5 }}rem;">
                 {% if p.depth %}<span class="muted">└ </span>{% endif %}
                 <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
+                {% if p.archived_at %}<span class="badge">Archived</span>{% endif %}
             </td>
             <td class="muted">{{ p.updated_at }}</td>
         </tr>

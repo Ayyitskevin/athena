@@ -15,7 +15,8 @@
             <span class="breadcrumb-current" aria-current="page">{{ page.title }}</span>
         </nav>
         <h1>{{ page.title }}</h1>
-        <p class="subtitle muted">Updated {{ page.updated_at }}</p>
+        <p class="subtitle muted">Updated {{ page.updated_at }}{% if page.archived_at %}
+            · <span class="badge">Archived</span>{% endif %}</p>
     </div>
     <div class="header-actions">
         {% if request.state.user %}
@@ -246,6 +247,27 @@
             <button type="submit" class="button secondary">Move page</button>
         </div>
     </form>
+
+    {% if page.archived_at %}
+    <form method="post" action="/mentor/pages/{{ page.id }}/unarchive" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-actions">
+            <button type="submit" class="button secondary">Restore page</button>
+        </div>
+        <p class="note-small">Archived — hidden from the space tree, navigation, and
+            search. Restoring brings it back with its full history.</p>
+    </form>
+    {% else %}
+    <form method="post" action="/mentor/pages/{{ page.id }}/archive" class="issue-form"
+          data-confirm="Archive this page? It's hidden from the tree and search but kept and restorable.">
+        {% include "partials/csrf.html" %}
+        <div class="form-actions">
+            <button type="submit" class="button secondary">Archive page</button>
+        </div>
+        <p class="note-small">A reversible soft-delete — preserves the page, its history,
+            and its comments.</p>
+    </form>
+    {% endif %}
 
     <form method="post" action="/mentor/pages/{{ page.id }}/delete"
           data-confirm="Delete this page? Its history is removed too. This cannot be undone.">

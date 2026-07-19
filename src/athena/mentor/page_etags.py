@@ -24,6 +24,7 @@ _PAGE_FIELDS = (
     "created_at",
     "updated_by",
     "updated_at",
+    "archived_at",
 )
 _LABEL_FIELDS = ("id", "name", "color")
 

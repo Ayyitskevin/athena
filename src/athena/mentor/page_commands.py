@@ -108,3 +108,31 @@ def edit_page(
             conn, actor_id=actor_id, before=before, after=after, commit=False
         )
         return after
+
+
+def set_page_archived(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, archived: bool
+) -> dict:
+    """Archive (soft-delete) or restore a page atomically with its
+    ``page_archived``/``page_unarchived`` event. The row — and its versions and
+    comments — is preserved; only archived_at flips, so the default tree/nav/search
+    hide it while it stays fully restorable. Idempotent: re-archiving an archived
+    page (or restoring an active one) re-stamps but records no event.
+
+    Visibility/existence authorization is the transport boundary's job (like the page
+    edit and page-comment commands). Raises ``PageCommandError('not_found')`` if the
+    page vanished before the write (a race past the boundary's gate)."""
+    with db.transaction(conn, immediate=True):
+        before = pages.get_page(conn, page_id)
+        if before is None:
+            raise PageCommandError("not_found", "no such page")
+        after = pages.set_archived(conn, page_id, archived, commit=False)
+        page_activity.record_page_archive_change(
+            conn,
+            actor_id=actor_id,
+            page_id=page_id,
+            before=before["archived_at"],
+            after=after["archived_at"],
+            commit=False,
+        )
+        return after
