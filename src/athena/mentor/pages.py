@@ -228,42 +228,66 @@ def delete_page(conn: sqlite3.Connection, page_id: int) -> bool:
     this page's outgoing links, and re-indexing a now-missing row removes its search
     entry. (Inbound links from OTHER pages are left dangling on purpose — they
     resolve as 'broken', the same lazy-resolve contract as a not-yet-created
-    target.)"""
+    target.)
+
+    Owns its own transaction (BEGIN IMMEDIATE) and post-commit side effects. The
+    audited delete command instead composes the two halves — ``purge_page`` inside its
+    transaction (so the row deletes and the ``page_deleted`` event commit together) and
+    ``finalize_page_deletion`` after the commit."""
     if get_page(conn, page_id) is None:
         return False
-    # page_versions AND page_comments both REFERENCE pages(id) with no ON DELETE, so
-    # their rows MUST be cleared before the page row (deleting the parent first would
-    # trip the FK — and a page that was ever commented on would be permanently
-    # undeletable, surfacing as a 500). page_labels has ON DELETE CASCADE, so it needs
-    # no explicit clear. The danger is a half-delete: dependents gone, page still here,
-    # if the page delete then fails (e.g. a stray child's parent_id FK restricts it).
-    # BEGIN IMMEDIATE + rollback-on-failure makes the whole set atomic — exactly the
-    # pattern update_page uses — so a failed page delete restores its dependents too.
     conn.execute("BEGIN IMMEDIATE")
     try:
-        # attachments and watches key this page POLYMORPHICALLY (target_kind='page',
-        # target_id) with NO foreign key, so the DB clears neither. Purge them in THIS
-        # transaction so they die WITH the page rather than remaining as ghost
-        # subscriptions/files. Reserved activity-target ids also prevent later
-        # rebinding, but do not make dangling resources legitimate. purge_target returns
-        # blob names to unlink post-commit (a filesystem side effect can't be atomic).
-        # Notifications are left alone on purpose: they point at the append-only
-        # activity log, which outlives the page, so they never dangle (see notifications.py).
-        stored_names = attachments.purge_target(conn, "page", page_id)
-        notifications.delete_watches_for(conn, "page", page_id)
-        conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
-        conn.execute("DELETE FROM page_comments WHERE page_id = ?", (page_id,))
-        conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+        stored_names = purge_page(conn, page_id)
         conn.commit()
-    except Exception:
+    except BaseException:
         conn.rollback()
         raise
-    # Post-commit, non-transactional side effects: unlink the now-orphaned blob files
-    # (best-effort), then maintain the derived link/search indexes as before.
+    finalize_page_deletion(conn, page_id, stored_names)
+    return True
+
+
+def purge_page(conn: sqlite3.Connection, page_id: int) -> list[str]:
+    """Delete a page's dependents and the page row INSIDE the caller's transaction (no
+    BEGIN, no commit). Returns the stored blob names to unlink post-commit (via
+    ``finalize_page_deletion``). PRECONDITION: the page exists and has no child pages —
+    the caller checks (delete_page above, or the boundary before the delete command).
+
+    page_versions AND page_comments both REFERENCE pages(id) with no ON DELETE, so their
+    rows MUST be cleared before the page row (deleting the parent first would trip the FK
+    — and a page that was ever commented on would be permanently undeletable, surfacing
+    as a 500). page_labels has ON DELETE CASCADE, so it needs no explicit clear. The
+    danger is a half-delete: dependents gone, page still here, if the page delete then
+    fails (e.g. a stray child's parent_id FK restricts it) — so the whole set must run in
+    one transaction the caller owns and rolls back on failure.
+
+    attachments and watches key this page POLYMORPHICALLY (target_kind='page', target_id)
+    with NO foreign key, so the DB clears neither. Purge them in the SAME transaction so
+    they die WITH the page rather than remaining as ghost subscriptions/files. Reserved
+    activity-target ids also prevent later rebinding, but do not make dangling resources
+    legitimate. purge_target returns blob names to unlink post-commit (a filesystem side
+    effect can't be atomic). Notifications are left alone on purpose: they point at the
+    append-only activity log, which outlives the page, so they never dangle."""
+    stored_names = attachments.purge_target(conn, "page", page_id)
+    notifications.delete_watches_for(conn, "page", page_id)
+    conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM page_comments WHERE page_id = ?", (page_id,))
+    conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))
+    return stored_names
+
+
+def finalize_page_deletion(
+    conn: sqlite3.Connection, page_id: int, stored_names: list[str]
+) -> None:
+    """The post-commit, non-transactional side effects of a page delete: unlink the
+    now-orphaned blob files (best-effort), then maintain the derived indexes — an empty
+    body clears this page's outgoing links, and re-indexing a now-missing row removes its
+    search entry. Runs AFTER the delete transaction commits, so the indexes never reflect
+    a rolled-back delete. (Inbound links from OTHER pages are left dangling on purpose —
+    they resolve as 'broken', the lazy-resolve contract a not-yet-created target gets.)"""
     attachments.unlink_blobs(config.ATTACH_DIR, stored_names)
     links.sync_links(conn, source_kind="page", source_id=page_id, body="")
     search.index_document(conn, kind="page", source_id=page_id)
-    return True
 
 
 def validate_move(

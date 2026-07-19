@@ -710,8 +710,9 @@ def delete_page(
             status_code=409,
         )
     space_id = page["space_id"]
-    pages.delete_page(conn, page_id)
-    page_activity.record_page_deleted(
+    # The command owns the atomic delete AND its 'page_deleted' event, then the
+    # post-commit blob unlink + index maintenance.
+    page_commands.delete_page(
         conn, actor_id=user["id"], page_id=page_id, title=page["title"]
     )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)

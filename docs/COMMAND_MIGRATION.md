@@ -14,7 +14,7 @@ the review-facing source of truth for the `0.1.0a1` line.
 |---|---|---|
 | Issue core | Create; title/body/status/priority; assignee, project, and sprint placement; parent hierarchy; archive/restore; labels; contributors/delegation; typed dependency link/unlink; REST/browser comment create/edit/delete | None known |
 | Projects | Issue placement uses the issue command; project create/edit/delete | Visibility and membership |
-| Mentor | REST/browser page-comment create/edit/delete; page create/edit/move/version-restore (atomic mutation + audit; edit adds If-Match optimistic concurrency); page archive/restore (soft-delete) | Space create/edit/delete, visibility, membership; page hard-delete and labels |
+| Mentor | REST/browser page-comment create/edit/delete; full page lifecycle — create/edit/move/hard-delete/version-restore/archive-restore (atomic mutation + audit; edit adds If-Match optimistic concurrency) | Space create/edit/delete, visibility, membership; page labels |
 | Users and agents | User create, role/agent flag changes, token kill switch, and complete offboard | Password/session preference operations remain separate bounded flows |
 | API tokens | Mint and revoke | None known in the token lifecycle |
 | OIDC identities | Link and unlink | Provider exchange/discovery are transport/service flows rather than durable domain writes |
