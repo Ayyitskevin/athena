@@ -21,7 +21,6 @@ from athena.aegis import (
     dashboard,
     delegations,
     dependencies,
-    issue_activity,
     issue_commands,
     issue_history,
     issue_search,
@@ -1195,17 +1194,18 @@ def add_issue_label(
             '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
+    # Find-or-create the label (web vocabulary convenience), then the command owns
+    # the gate, the attach, and its atomic 'labeled' event — the same REST calls.
     label = labels.get_or_create_label(conn, name=name)
-    if labels.add_label_to_issue(conn, issue_id, label["id"]):  # idempotent
-        issue_activity.record_label_added(
-            conn, actor_id=user["id"], issue_id=issue_id, label_id=label["id"]
+    try:
+        issue_commands.attach_label(
+            conn, actor=user, issue_id=issue_id, label_id=label["id"]
         )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1224,13 +1224,16 @@ def remove_issue_label(
             '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    if labels.remove_label_from_issue(conn, issue_id, label_id):
-        issue_activity.record_label_removed(
-            conn, actor_id=user["id"], issue_id=issue_id, label_id=label_id
+    try:
+        issue_commands.detach_label(
+            conn, actor=user, issue_id=issue_id, label_id=label_id
         )
+    except issue_commands.IssueCommandError as exc:
+        # A label that isn't attached is a no-op in the UI (double-submit) — land
+        # back on the issue rather than 404. Real gate failures still surface.
+        if exc.detail == "label not on this issue":
+            return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1250,19 +1253,18 @@ def add_issue_contributor(
             '<div class="blocked">Please <a href="/login">sign in</a> to add contributors.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
     try:
         target = int(user_id)
     except ValueError:
         return HTMLResponse('<div class="error">Pick a user.</div>', status_code=400)
-    if users.get_user(conn, target) is None:
-        return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
-    if contributors.add_contributor(conn, issue_id, target, user["id"]):  # idempotent
-        issue_activity.record_contributor_added(
-            conn, actor_id=user["id"], issue_id=issue_id, user_id=target
+    # The command owns the gate, the user-exists check, the add + auto-watch, and
+    # the atomic 'added_contributor' event — the same one REST calls.
+    try:
+        issue_commands.add_contributor(
+            conn, actor=user, issue_id=issue_id, user_id=target
         )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1284,13 +1286,16 @@ def remove_issue_contributor(
             '<div class="blocked">Please <a href="/login">sign in</a> to manage contributors.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    if contributors.remove_contributor(conn, issue_id, user_id):
-        issue_activity.record_contributor_removed(
-            conn, actor_id=user["id"], issue_id=issue_id, user_id=user_id
+    try:
+        issue_commands.remove_contributor(
+            conn, actor=user, issue_id=issue_id, user_id=user_id
         )
+    except issue_commands.IssueCommandError as exc:
+        # Not a contributor → no-op redirect (double-submit); real gate failures
+        # still surface as the shared HTML rejection.
+        if exc.detail == "not a contributor on this issue":
+            return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

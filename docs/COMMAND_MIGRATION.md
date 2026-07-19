@@ -12,7 +12,7 @@ the review-facing source of truth for the `0.1.0a1` line.
 
 | Area | Command-backed | Known migration debt |
 |---|---|---|
-| Issue core | Create; title/body/status/priority; assignee, project, and sprint placement; parent hierarchy; archive/restore; typed dependency link/unlink; REST/browser comment create/edit/delete | Labels and contributors/delegation |
+| Issue core | Create; title/body/status/priority; assignee, project, and sprint placement; parent hierarchy; archive/restore; labels; contributors/delegation; typed dependency link/unlink; REST/browser comment create/edit/delete | None known |
 | Projects | Issue placement uses the issue command; project create/edit/delete | Visibility and membership |
 | Mentor | REST/browser page-comment create/edit/delete | Space and page create/edit/move/delete/restore, visibility, membership, and labels |
 | Users and agents | User create, role/agent flag changes, token kill switch, and complete offboard | Password/session preference operations remain separate bounded flows |
