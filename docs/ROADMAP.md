@@ -100,10 +100,10 @@ knowledge graph the database already stores.
       permanently destroys a page, its versions, and its comments.
 - [x] Complete the Mentor command migration: atomic mutation + audit for page
       create/edit/move/delete/restore and space lifecycle.
-- [ ] Knowledge-graph MCP tools: backlinks, outgoing links, page versions and
+- [x] Knowledge-graph MCP tools: backlinks, outgoing links, page versions and
       restore, space-scoped search — the graph exists; agents can't walk it
       yet.
-- [ ] Title-based addressing: `[[Page Title]]` resolution and a
+- [x] Title-based addressing: `[[Page Title]]` resolution and a
       fetch-by-title API/tool. Numeric ids are exactly the lookup agents are
       worst at.
 - [ ] Index comments into full-text search; record run provenance on page

@@ -489,6 +489,38 @@ def test_pages_through_the_client(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_find_pages_by_title_through_the_client(tmp_path):
+    # WHY: an agent addresses a page by the title it remembers, not a numeric id. The
+    # client turns that title into the page(s) it names — and disambiguates by space
+    # when a title is reused, so the numeric id it then hands to get_page is the right one.
+    tc, ath = _client(tmp_path, "bytitle.db")
+    try:
+        eng = tc.post("/spaces", json={"key": "ENG", "name": "Eng"}).json()
+        ops = tc.post("/spaces", json={"key": "OPS", "name": "Ops"}).json()
+        eng_doc = ath.create_page(space_id=eng["id"], title="Runbook", body="eng")
+        ops_doc = ath.create_page(space_id=ops["id"], title="Runbook", body="ops")
+        ath.create_page(space_id=eng["id"], title="Onboarding")
+
+        # A unique title resolves to exactly one page.
+        onboarding = ath.find_pages_by_title("Onboarding")
+        assert [p["id"] for p in onboarding] == [
+            p["id"] for p in ath.list_pages(eng["id"]) if p["title"] == "Onboarding"
+        ]
+
+        # A reused title returns every match (case-insensitively), newest space last.
+        both = ath.find_pages_by_title("runbook")
+        assert {p["id"] for p in both} == {eng_doc["id"], ops_doc["id"]}
+
+        # space_id narrows the ambiguity to one space.
+        narrowed = ath.find_pages_by_title("Runbook", space_id=ops["id"])
+        assert [p["id"] for p in narrowed] == [ops_doc["id"]]
+
+        # An unknown title is an empty list, not an error.
+        assert ath.find_pages_by_title("Nothing Here") == []
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_recent_events_envelope(tmp_path):
     tc, ath = _client(tmp_path, "ev.db")
     try:
@@ -1023,6 +1055,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "list_spaces",
             "list_pages",
             "get_page",
+            "find_pages_by_title",
             "create_page",
             "update_page",
             # The newly-added organize-an-issue surface.

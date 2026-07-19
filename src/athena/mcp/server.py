@@ -612,6 +612,16 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.get_page(page_id)
 
     @mcp.tool()
+    def find_pages_by_title(title: str, space_id: int | None = None) -> list:
+        """Find Mentor pages by their TITLE instead of a numeric id — the address you can
+        recall without a lookup (numeric ids are exactly what an agent is worst at).
+        Returns every exact, case-insensitive title match: [] if none, one for the common
+        case, or several when a title is reused across spaces (pass space_id to narrow to
+        one). Archived pages, and pages in spaces you can't see, are omitted. Use it to
+        turn a remembered title into a page id for get_page / update_page."""
+        return client.find_pages_by_title(title, space_id=space_id)
+
+    @mcp.tool()
     def page_backlinks(page_id: int) -> list:
         """What references this page — the INCOMING edges of the knowledge graph. Each
         item is {kind, id, title, exists}: another issue or page whose body cross-links

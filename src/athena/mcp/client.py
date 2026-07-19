@@ -575,6 +575,19 @@ class AthenaClient:
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
 
+    def find_pages_by_title(
+        self, title: str, *, space_id: int | None = None
+    ) -> Any:
+        """Look up pages by their TITLE instead of a numeric id — the address an agent
+        can recall. Returns every exact (case-insensitive) match (titles aren't unique),
+        so the caller can disambiguate; pass space_id to narrow to one space."""
+        return self._result(
+            self._client.get(
+                "/pages/by-title",
+                params=self._params(title=title, space_id=space_id),
+            )
+        )
+
     def page_backlinks(self, page_id: int) -> Any:
         """What references this page — the incoming edges of the knowledge graph."""
         return self._result(self._client.get(f"/pages/{page_id}/backlinks"))
