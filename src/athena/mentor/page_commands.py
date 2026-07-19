@@ -110,6 +110,97 @@ def edit_page(
         return after
 
 
+def create_page(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    title: str,
+    body: str = "",
+    parent_id: int | None = None,
+) -> dict:
+    """Create a page atomically with its ``page_created`` event (the creator's
+    auto-watch and any mentions included). Transport-shape validation — a non-empty
+    title, and a parent that is a real page in the SAME space — is the boundary's job
+    (as with the page edit/comment commands); the foreign keys are the backstop.
+    Returns the new page."""
+    with db.transaction(conn, immediate=True):
+        page = pages.create_page(
+            conn,
+            space_id=space_id,
+            title=title,
+            body=body,
+            parent_id=parent_id,
+            created_by=actor_id,
+            commit=False,
+        )
+        page_activity.record_page_created(
+            conn,
+            actor_id=actor_id,
+            page_id=page["id"],
+            title=page["title"],
+            body=page["body"],
+            commit=False,
+        )
+        return page
+
+
+def move_page(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, new_parent_id: int | None
+) -> dict:
+    """Re-parent a page atomically with its ``page_moved`` event, under the write lock
+    so validate-then-write can't race a concurrent move into a cycle. Raises
+    ``PageCommandError('not_found')`` if the page vanished, or ``('invalid', reason)``
+    if the move is illegal (another space, itself, or its own descendant). A move to
+    the same parent is a no-op that records nothing. Returns the moved page."""
+    with db.transaction(conn, immediate=True):
+        page = pages.get_page(conn, page_id)
+        if page is None:
+            raise PageCommandError("not_found", "no such page")
+        moved, reason = pages.move(conn, page, new_parent_id, commit=False)
+        if reason is not None:
+            raise PageCommandError("invalid", reason)
+        page_activity.record_page_moved(
+            conn,
+            actor_id=actor_id,
+            page_id=page_id,
+            before_parent_id=page["parent_id"],
+            after_parent_id=new_parent_id,
+            commit=False,
+        )
+        return moved
+
+
+def restore_page_version(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, version: int
+) -> dict:
+    """Restore a page's content to a prior revision atomically with its
+    ``page_restored`` event. This is a non-destructive edit: the live content is first
+    snapshotted into history (via update_page), so nothing is lost. Raises
+    ``PageCommandError('not_found')`` if the page or that version is missing. Restoring
+    content identical to the live row is a no-op that records nothing. Returns the
+    page."""
+    with db.transaction(conn, immediate=True):
+        before = pages.get_page(conn, page_id)
+        if before is None:
+            raise PageCommandError("not_found", "no such page")
+        restored = pages.restore_version(
+            conn, page_id, version, editor_id=actor_id, commit=False
+        )
+        if restored is None:
+            raise PageCommandError("not_found", "no such page or version")
+        page_activity.record_page_restored(
+            conn,
+            actor_id=actor_id,
+            page_id=page_id,
+            version=version,
+            before=before,
+            after=restored,
+            commit=False,
+        )
+        return restored
+
+
 def set_page_archived(
     conn: sqlite3.Connection, *, actor_id: int, page_id: int, archived: bool
 ) -> dict:

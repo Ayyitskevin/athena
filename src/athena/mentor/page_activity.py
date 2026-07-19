@@ -30,10 +30,14 @@ def record_page_created(
     page_id: int,
     title: str,
     body: str = "",
+    commit: bool = True,
 ) -> None:
     """A page was created — the first audit fact in its history. The creator starts
     watching it (Mentor is a shared wiki, but you follow what you start); anyone
-    named by [[user:N]] in the body is mentioned (notified + auto-watched)."""
+    named by [[user:N]] in the body is mentioned (notified + auto-watched).
+
+    ``commit=False`` composes this inside the audited create command's transaction so
+    the page row, its event, the creator's auto-watch, and any mentions land together."""
     event = activity.record(
         conn,
         actor_id=actor_id,
@@ -41,10 +45,11 @@ def record_page_created(
         target_kind="page",
         target_id=page_id,
         detail=title,
+        commit=commit,
     )
-    notifications.watch(conn, actor_id, "page", page_id)
+    notifications.watch(conn, actor_id, "page", page_id, commit=commit)
     notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=body
+        conn, event_id=event["id"], actor_id=actor_id, text=body, commit=commit
     )
 
 
@@ -104,11 +109,13 @@ def record_page_moved(
     page_id: int,
     before_parent_id: int | None,
     after_parent_id: int | None,
+    commit: bool = True,
 ) -> None:
     """A page was re-parented. No-op if the parent didn't actually change (set_parent
     matches the row even when the value is unchanged, so the no-op guard lives here,
     like the issue project-move rule). The detail names the new parent so the feed
-    can say where it landed; an empty detail means it was moved to the top level."""
+    can say where it landed; an empty detail means it was moved to the top level.
+    ``commit=False`` composes inside the audited move command's transaction."""
     if before_parent_id == after_parent_id:
         return
     if after_parent_id is None:
@@ -123,6 +130,7 @@ def record_page_moved(
         target_kind="page",
         target_id=page_id,
         detail=detail,
+        commit=commit,
     )
 
 
@@ -256,12 +264,14 @@ def record_page_restored(
     version: int,
     before: dict,
     after: dict,
+    commit: bool = True,
 ) -> None:
     """A page's content was rolled back to a prior revision. Recorded as its own verb
     (not page_edited) so the trail says "restored v3", not just "edited". No-op if the
     restored content was identical to the live row — restore_version returns the page
     untouched in that case (it never files a redundant version), and so we record
-    nothing either."""
+    nothing either. ``commit=False`` composes inside the audited restore command's
+    transaction."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
     activity.record(
@@ -271,4 +281,5 @@ def record_page_restored(
         target_kind="page",
         target_id=page_id,
         detail=f"v{version}",
+        commit=commit,
     )
