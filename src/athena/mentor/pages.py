@@ -311,6 +311,15 @@ def purge_page(conn: sqlite3.Connection, page_id: int) -> list[str]:
     append-only activity log, which outlives the page, so they never dangle."""
     stored_names = attachments.purge_target(conn, "page", page_id)
     notifications.delete_watches_for(conn, "page", page_id)
+    # Clear the FTS entries for this page's comments BEFORE the comment rows go — the
+    # search_index has no foreign key to them, so they would otherwise dangle as hits
+    # pointing at deleted comments (the page's OWN entry is cleared post-commit by
+    # finalize_page_deletion's re-index of the now-missing page).
+    conn.execute(
+        "DELETE FROM search_index WHERE kind = 'page_comment' AND source_id IN "
+        "(SELECT id FROM page_comments WHERE page_id = ?)",
+        (page_id,),
+    )
     conn.execute("DELETE FROM page_versions WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM page_comments WHERE page_id = ?", (page_id,))
     conn.execute("DELETE FROM pages WHERE id = ?", (page_id,))

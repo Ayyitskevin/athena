@@ -31,10 +31,26 @@ from athena.core import access
 # the boundary instead of surfacing as an sqlite3 OverflowError.
 MAX_OFFSET = 2**63 - 1
 
-# The searchable kinds and the table each lives in. Both tables expose `title`
-# and `body`. Values are fixed literals, never caller input, so building a query
-# string from them is safe.
-_SOURCE = {"issue": "issues", "page": "pages"}
+# The searchable kinds and how to read each one's text: the table, its title column
+# (None for a comment, which has no title of its own), and its body column. Issues and
+# pages carry title + body; issue/page comments carry only a body (the FTS title is
+# indexed empty and the hit borrows its PARENT's title at read time, see _enrich).
+# Values are fixed literals, never caller input, so building a query string from them is
+# safe. The two comment kinds make discussion searchable alongside the docs it annotates.
+_SOURCE = {
+    "issue": {"table": "issues", "title": "title", "body": "body"},
+    "page": {"table": "pages", "title": "title", "body": "body"},
+    "issue_comment": {"table": "comments", "title": None, "body": "body"},
+    "page_comment": {"table": "page_comments", "title": None, "body": "body"},
+}
+
+# Comment kinds → the parent (kind, table, foreign-key column) the hit resolves to for its
+# title, context, and link. A comment has no address of its own in the UI; it is read and
+# linked through the issue/page it hangs off.
+_COMMENT_PARENT = {
+    "issue_comment": {"parent_kind": "issue", "table": "comments", "fk": "issue_id"},
+    "page_comment": {"parent_kind": "page", "table": "page_comments", "fk": "page_id"},
+}
 
 # Sentinel for search()'s `actor`: "no visibility gating at all" (an internal caller,
 # or a test exercising ranking). Distinct from actor=None, which is a real anonymous
@@ -47,25 +63,31 @@ def index_document(
 ) -> None:
     """Make the search_index entry for one source match its live row exactly.
 
-    Called from the data-access layer after an issue/page is created or edited.
+    Called from the data-access layer after an issue/page/comment is created or edited.
     We REPLACE (delete-then-insert) rather than diff: the source row is the single
     source of truth, so re-deriving from it is simplest and always correct — and,
     crucially, re-reading the WHOLE row means a title-only or body-only edit still
-    indexes the full current text, not a stale half. If the row is gone (defensive
-    — there is no delete path today), the entry is simply removed. ``commit=False``
-    lets an application command commit the source, projections, and audit together."""
-    table = _SOURCE[kind]
+    indexes the full current text, not a stale half. If the row is gone (a deleted
+    comment, or a purged page), the entry is simply removed — so calling this AFTER a
+    delete clears the FTS entry. ``commit=False`` lets an application command commit the
+    source, projections, and audit together.
+
+    A comment has no title column, so its FTS title is indexed empty (`_SOURCE[kind]`
+    carries title=None); the hit borrows its parent's title at read time (_enrich)."""
+    spec = _SOURCE[kind]
+    cols = spec["body"] if spec["title"] is None else f"{spec['title']}, {spec['body']}"
     row = conn.execute(
-        f"SELECT title, body FROM {table} WHERE id = ?", (source_id,)
+        f"SELECT {cols} FROM {spec['table']} WHERE id = ?", (source_id,)
     ).fetchone()
     conn.execute(
         "DELETE FROM search_index WHERE kind = ? AND source_id = ?", (kind, source_id)
     )
     if row is not None:
+        title = row[spec["title"]] if spec["title"] is not None else ""
         conn.execute(
             "INSERT INTO search_index (kind, source_id, title, body) "
             "VALUES (?, ?, ?, ?)",
-            (kind, source_id, row["title"], row["body"]),
+            (kind, source_id, title, row[spec["body"]]),
         )
     if commit:
         conn.commit()
@@ -120,6 +142,43 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
             page_ids,
         ).fetchall():
             page_ctx[row["id"]] = {"space_key": row["space_key"]}
+    # Comment hits borrow their PARENT's identity: a comment has no title/link of its own,
+    # so it renders and links through the issue/page it hangs off. Resolve each comment
+    # kind's parents in ONE batch query (joining comment → parent → project/space), keyed
+    # by comment id.
+    ic_ids = [h["source_id"] for h in hits if h["kind"] == "issue_comment"]
+    pc_ids = [h["source_id"] for h in hits if h["kind"] == "page_comment"]
+    ic_ctx: dict[int, dict] = {}
+    if ic_ids:
+        ph = ",".join("?" for _ in ic_ids)
+        for row in conn.execute(
+            f"SELECT c.id AS cid, i.id AS pid, i.title, i.status, i.project_seq, "
+            f"p.key AS project_key FROM comments c JOIN issues i ON i.id = c.issue_id "
+            f"LEFT JOIN projects p ON p.id = i.project_id WHERE c.id IN ({ph})",
+            ic_ids,
+        ).fetchall():
+            key = (
+                f"{row['project_key']}-{row['project_seq']}"
+                if row["project_key"] and row["project_seq"] is not None
+                else None
+            )
+            ic_ctx[row["cid"]] = {
+                "parent_id": row["pid"], "title": row["title"],
+                "key": key, "status": row["status"],
+            }
+    pc_ctx: dict[int, dict] = {}
+    if pc_ids:
+        ph = ",".join("?" for _ in pc_ids)
+        for row in conn.execute(
+            f"SELECT c.id AS cid, pg.id AS pid, pg.title, s.key AS space_key "
+            f"FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
+            f"JOIN spaces s ON s.id = pg.space_id WHERE c.id IN ({ph})",
+            pc_ids,
+        ).fetchall():
+            pc_ctx[row["cid"]] = {
+                "parent_id": row["pid"], "title": row["title"],
+                "space_key": row["space_key"],
+            }
     for h in hits:
         if h["kind"] == "issue":
             ctx = issue_ctx.get(h["source_id"], {})
@@ -127,6 +186,19 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
             h["status"] = ctx.get("status")
         elif h["kind"] == "page":
             ctx = page_ctx.get(h["source_id"], {})
+            h["space_key"] = ctx.get("space_key")
+        elif h["kind"] == "issue_comment":
+            ctx = ic_ctx.get(h["source_id"], {})
+            h["parent_kind"] = "issue"
+            h["parent_id"] = ctx.get("parent_id")
+            h["title"] = ctx.get("title") or ""  # borrow the parent issue's title
+            h["key"] = ctx.get("key")
+            h["status"] = ctx.get("status")
+        elif h["kind"] == "page_comment":
+            ctx = pc_ctx.get(h["source_id"], {})
+            h["parent_kind"] = "page"
+            h["parent_id"] = ctx.get("parent_id")
+            h["title"] = ctx.get("title") or ""  # borrow the parent page's title
             h["space_key"] = ctx.get("space_key")
     return hits
 
@@ -136,10 +208,16 @@ def _visibility_clause(
 ) -> tuple[str, list]:
     """Build the SQL fragment (with a leading AND) + params that keep only hits the
     actor may see: an issue hit whose project is visible (or backlog), a page hit whose
-    space is visible. Returns ('', []) for an admin (who sees all — no gate needed).
-    The subqueries resolve the visible source ids from the visible project/space sets,
-    so we never enumerate them in Python. An actor with no visible spaces matches no
-    pages; backlog issues (no project) always pass."""
+    space is visible, and a COMMENT hit whose parent issue/page is visible on the same
+    rule (a comment inherits its parent's audience). Returns ('', []) for an admin (who
+    sees all — no gate needed). The subqueries resolve the visible source ids from the
+    visible project/space sets, so we never enumerate them in Python. An actor with no
+    visible spaces matches no pages (nor page comments); backlog issues (no project)
+    always pass, so do comments on them.
+
+    A comment kind NOT listed in the disjunction would be dropped entirely (source_id in
+    nothing), so every searchable kind must appear here — the reason this gate and the
+    _SOURCE map are edited together."""
     vis_projects = access.visible_project_filter(conn, actor)
     if vis_projects is None:  # admin → unrestricted
         return "", []
@@ -148,19 +226,39 @@ def _visibility_clause(
     params: list = []
     if vis_projects:
         ph = ",".join("?" for _ in vis_projects)
-        issue_src = f"SELECT id FROM issues WHERE project_id IS NULL OR project_id IN ({ph})"
-        params.extend(vis_projects)
+        issue_where = f"project_id IS NULL OR project_id IN ({ph})"
     else:
-        issue_src = "SELECT id FROM issues WHERE project_id IS NULL"
+        issue_where = "project_id IS NULL"
     if vis_spaces:
-        ph = ",".join("?" for _ in vis_spaces)
-        page_src = f"SELECT id FROM pages WHERE space_id IN ({ph})"
-        params.extend(vis_spaces)
+        ph2 = ",".join("?" for _ in vis_spaces)
+        page_where = f"space_id IN ({ph2})"
     else:
-        page_src = "SELECT id FROM pages WHERE 0"  # no visible spaces → no page hits
+        page_where = "0"  # no visible spaces → no page (or page-comment) hits
+
+    # The visible-issue and visible-page id sets, reused for both the entity hits and the
+    # comment hits that hang off them. Params are appended in clause order: issue set,
+    # issue-comment set (issue params again), page set, page-comment set (space again).
+    issue_src = f"SELECT id FROM issues WHERE {issue_where}"
+    ic_src = (
+        f"SELECT c.id FROM comments c JOIN issues i ON i.id = c.issue_id "
+        f"WHERE {issue_where.replace('project_id', 'i.project_id')}"
+    )
+    page_src = f"SELECT id FROM pages WHERE {page_where}"
+    pc_src = (
+        f"SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
+        f"WHERE {page_where.replace('space_id', 'pg.space_id')}"
+    )
+    if vis_projects:
+        params.extend(vis_projects)  # issue_src
+        params.extend(vis_projects)  # ic_src
+    if vis_spaces:
+        params.extend(vis_spaces)  # page_src
+        params.extend(vis_spaces)  # pc_src
     clause = (
         f"AND ((kind = 'issue' AND source_id IN ({issue_src})) "
-        f"OR (kind = 'page' AND source_id IN ({page_src}))) "
+        f"OR (kind = 'issue_comment' AND source_id IN ({ic_src})) "
+        f"OR (kind = 'page' AND source_id IN ({page_src})) "
+        f"OR (kind = 'page_comment' AND source_id IN ({pc_src}))) "
     )
     return clause, params
 
@@ -232,13 +330,20 @@ def search(
     if not include_archived:
         # Exclude archived issues AND archived pages by source (the FTS index carries no
         # archived flag). Both kinds soft-delete via archived_at, so a hit is dropped
-        # when its own row is archived. Applied in SQL before LIMIT/OFFSET, so paging
-        # stays correct.
+        # when its own row is archived — and a COMMENT is dropped when its PARENT is
+        # archived, matching how the parent itself drops out (an archived doc hides its
+        # discussion too). Applied in SQL before LIMIT/OFFSET, so paging stays correct.
         sql += (
             "AND NOT (kind = 'issue' AND source_id IN "
             "(SELECT id FROM issues WHERE archived_at IS NOT NULL)) "
             "AND NOT (kind = 'page' AND source_id IN "
             "(SELECT id FROM pages WHERE archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'issue_comment' AND source_id IN "
+            "(SELECT c.id FROM comments c JOIN issues i ON i.id = c.issue_id "
+            "WHERE i.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'page_comment' AND source_id IN "
+            "(SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
+            "WHERE pg.archived_at IS NOT NULL)) "
         )
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"

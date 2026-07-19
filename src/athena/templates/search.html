@@ -54,13 +54,15 @@
         <li class="search-hit">
             <div class="search-hit-head">
                 <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
-                {% if h.kind == 'issue' %}
+                {% if h.kind in ('issue', 'issue_comment') %}
                     {% if h.key %}<span class="issue-id">{{ h.key }}</span>{% endif %}
                     {% if h.status %}<span class="status {{ h.status }}">{{ h.status }}</span>{% endif %}
-                {% elif h.kind == 'page' and h.space_key %}
+                {% elif h.kind in ('page', 'page_comment') and h.space_key %}
                     <span class="search-hit-kind">{{ h.space_key }}</span>
                 {% endif %}
-                <span class="search-hit-kind">{{ h.kind }}</span>
+                {# A comment borrows its parent's title/context above; the badge says it's
+                   discussion, not the doc itself, and the link lands on that parent. #}
+                <span class="search-hit-kind">{{ 'comment' if h.kind in ('issue_comment', 'page_comment') else h.kind }}</span>
             </div>
             {% if h.snippet_html %}<p class="search-hit-snippet">{{ h.snippet_html }}</p>{% endif %}
         </li>

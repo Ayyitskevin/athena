@@ -30,9 +30,13 @@ class SearchHit(BaseModel):
     snippet: str
     # Per-kind context (null for the other kind): an issue carries its project key
     # (ATH-12, or null for a backlog issue) and status; a page carries its space key.
+    # A comment hit ('issue_comment'/'page_comment') borrows its parent's title and
+    # context, and names the parent it lives on so the client can link there.
     key: str | None = None
     status: str | None = None
     space_key: str | None = None
+    parent_kind: str | None = None
+    parent_id: int | None = None
 
 
 @router.get("", response_model=list[SearchHit])
