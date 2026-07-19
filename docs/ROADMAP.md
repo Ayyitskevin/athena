@@ -96,7 +96,7 @@ knowledge graph the database already stores.
 - [x] Page optimistic concurrency: ETag / `If-Match` parity with issues on page
       edits (REST + MCP), so two agents editing shared memory get a clean 412
       instead of silent last-write-wins.
-- [ ] Page soft-delete (`archived_at`, matching issues) — today one call
+- [x] Page soft-delete (`archived_at`, matching issues) — today one call
       permanently destroys a page, its versions, and its comments.
 - [ ] Complete the Mentor command migration: atomic mutation + audit for page
       create/edit/move/delete/restore and space lifecycle.

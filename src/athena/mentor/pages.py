@@ -49,14 +49,45 @@ def get_page(conn: sqlite3.Connection, page_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def list_pages_in_space(conn: sqlite3.Connection, space_id: int) -> list[dict]:
+def list_pages_in_space(
+    conn: sqlite3.Connection, space_id: int, *, include_archived: bool = False
+) -> list[dict]:
     """Every page in a space, alphabetical by title. Each row carries its
-    parent_id so a caller can assemble the tree; this returns the flat set."""
-    rows = conn.execute(
-        "SELECT * FROM pages WHERE space_id = ? ORDER BY title COLLATE NOCASE",
-        (space_id,),
-    ).fetchall()
+    parent_id so a caller can assemble the tree; this returns the flat set.
+
+    ``include_archived`` defaults False: an archived (soft-deleted) page is hidden
+    from the default tree/nav, exactly as an archived issue drops out of the issue
+    lists. Pass True for the "show archived" view that lets an operator find and
+    restore one. A single-page read (get_page) is never filtered — you can always
+    open an archived page by its id to unarchive it."""
+    sql = "SELECT * FROM pages WHERE space_id = ?"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    sql += " ORDER BY title COLLATE NOCASE"
+    rows = conn.execute(sql, (space_id,)).fetchall()
     return [dict(row) for row in rows]
+
+
+def set_archived(
+    conn: sqlite3.Connection, page_id: int, archived: bool, *, commit: bool = True
+) -> dict | None:
+    """Archive (soft-delete) a page or restore it. Returns the updated page, or None
+    if no page has that id. The row — and its versions and comments — is never
+    destroyed: archiving only stamps archived_at (and clearing it restores the page),
+    so the history is preserved and the default tree/nav/search simply hide it.
+    Idempotent: re-archiving an archived page just re-stamps the time; the command
+    records the audit fact only on a real change. ``commit=False`` lets the audited
+    command fold the flip and its event together (the Mentor twin of
+    issues.set_archived)."""
+    if archived:
+        conn.execute(
+            "UPDATE pages SET archived_at = datetime('now') WHERE id = ?", (page_id,)
+        )
+    else:
+        conn.execute("UPDATE pages SET archived_at = NULL WHERE id = ?", (page_id,))
+    if commit:
+        conn.commit()
+    return get_page(conn, page_id)
 
 
 def update_page(

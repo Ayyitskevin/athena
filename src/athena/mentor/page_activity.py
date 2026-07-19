@@ -221,6 +221,33 @@ def record_page_label_removed(
     )
 
 
+def record_page_archive_change(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    before: str | None,
+    after: str | None,
+    commit: bool = True,
+) -> None:
+    """Record a page archive (soft-delete) or restore — the Mentor twin of the issue
+    archive event. before/after are the page's archived_at values (None means active,
+    a timestamp means archived), so we compare PRESENCE, not the exact time:
+    re-archiving an already-archived page re-stamps it but isn't a lifecycle change and
+    records nothing. ``commit=False`` lets the audited command fold the flip and this
+    event into one transaction."""
+    if (before is not None) == (after is not None):
+        return
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="page_archived" if after is not None else "page_unarchived",
+        target_kind="page",
+        target_id=page_id,
+        commit=commit,
+    )
+
+
 def record_page_restored(
     conn: sqlite3.Connection,
     *,

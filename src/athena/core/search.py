@@ -200,10 +200,10 @@ def search(
     happens in SQL, before LIMIT/OFFSET, so paging stays correct. An admin sees
     everything, so no predicate is added for them.
 
-    `include_archived` defaults False: archived (soft-deleted) issues drop out of every
-    list, so search excludes them too — the derived FTS index doesn't carry the archived
-    flag, so the exclusion is applied here by source. Pages have no archival, so this
-    only ever removes archived issue hits. Pass True to search the archive as well."""
+    `include_archived` defaults False: archived (soft-deleted) issues and pages drop out
+    of every list, so search excludes them too — the derived FTS index doesn't carry the
+    archived flag, so the exclusion is applied here by source for both kinds. Pass True to
+    search the archive as well."""
     if offset < 0 or offset > MAX_OFFSET:
         raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
     if not query or not query.strip():
@@ -230,12 +230,15 @@ def search(
             sql += clause
             params.extend(vis_params)
     if not include_archived:
-        # Exclude archived issues by source (the FTS index has no archived flag). Pages
-        # have no archival, so only archived issue hits are removed. In SQL, before
-        # LIMIT/OFFSET, so paging stays correct.
+        # Exclude archived issues AND archived pages by source (the FTS index carries no
+        # archived flag). Both kinds soft-delete via archived_at, so a hit is dropped
+        # when its own row is archived. Applied in SQL before LIMIT/OFFSET, so paging
+        # stays correct.
         sql += (
             "AND NOT (kind = 'issue' AND source_id IN "
             "(SELECT id FROM issues WHERE archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'page' AND source_id IN "
+            "(SELECT id FROM pages WHERE archived_at IS NOT NULL)) "
         )
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"

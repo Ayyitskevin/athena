@@ -564,11 +564,34 @@ class AthenaClient:
     def list_spaces(self) -> Any:
         return self._result(self._client.get("/spaces"))
 
-    def list_pages(self, space_id: int) -> Any:
-        return self._result(self._client.get(f"/spaces/{space_id}/pages"))
+    def list_pages(self, space_id: int, *, include_archived: bool = False) -> Any:
+        params: dict[str, Any] = {}
+        if include_archived:  # only send it when set, so the default stays clean
+            params["include_archived"] = True
+        return self._result(
+            self._client.get(f"/spaces/{space_id}/pages", params=params)
+        )
 
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
+
+    def archive_page(
+        self, page_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/archive",
+            idempotency_key=idempotency_key,
+        )
+
+    def unarchive_page(
+        self, page_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/unarchive",
+            idempotency_key=idempotency_key,
+        )
 
     def create_page(
         self,

@@ -425,7 +425,13 @@ def space_detail(
             status_code=404,
         )
 
-    page_rows = pages.list_pages_in_space(conn, space_id)
+    # The "Show archived" toggle submits a truthy value to include soft-deleted pages
+    # in the tree (so they can be found and restored); by default they're hidden.
+    archived_raw = (request.query_params.get("archived") or "").strip()
+    include_archived = archived_raw.lower() in ("1", "true", "on", "yes")
+    page_rows = pages.list_pages_in_space(
+        conn, space_id, include_archived=include_archived
+    )
     can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
@@ -441,6 +447,7 @@ def space_detail(
             "can_write": can_write,
             "can_delete": can_write and user["id"] == space["created_by"],
             "page_count": len(page_rows),
+            "include_archived": include_archived,
             "activity": activity.list_activity(
                 conn, target_kind="space", target_id=space_id
             ),
@@ -713,6 +720,55 @@ def delete_page(
         conn, actor_id=user["id"], page_id=page_id, title=page["title"]
     )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/archive", dependencies=[Depends(verify_csrf)])
+def archive_page(
+    request: Request,
+    page_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Archive (soft-delete) a page from its detail page — the reversible alternative
+    to Delete. Gated on the session user; the command owns the flip AND its atomic
+    'page_archived' event. 303 back to the page (it still exists, just archived)."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "archive pages")
+    if err is not None:
+        return err
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    try:
+        page_commands.set_page_archived(
+            conn, actor_id=user["id"], page_id=page_id, archived=True
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+@router.post("/mentor/pages/{page_id}/unarchive", dependencies=[Depends(verify_csrf)])
+def unarchive_page(
+    request: Request,
+    page_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Restore an archived page from its detail page. Gated on the session user; the
+    command records 'page_unarchived' only if it was actually archived."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "restore pages")
+    if err is not None:
+        return err
+    _, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    try:
+        page_commands.set_page_archived(
+            conn, actor_id=user["id"], page_id=page_id, archived=False
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/attachments", dependencies=[Depends(verify_csrf)])

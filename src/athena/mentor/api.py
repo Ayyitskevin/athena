@@ -110,6 +110,8 @@ class PageOut(BaseModel):
     # The current revision's editor + time (== creator/created_at until first edit).
     updated_by: int
     updated_at: str
+    # When the page was archived (soft-deleted), or null if it's active.
+    archived_at: str | None = None
     # The shared labels attached to this page (alphabetical), or [] if none.
     labels: list[LabelOut] = []
 
@@ -535,15 +537,20 @@ def create_page(
 @spaces_router.get("/{space_id}/pages", response_model=list[PageOut])
 def list_pages(
     space_id: int,
+    include_archived: bool = False,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Reads are open. 404 if the space is missing OR private to the caller (distinct
     # from a real visible space that simply has no pages yet, which returns []). The
-    # space gate covers the pages: every page here is in this space.
+    # space gate covers the pages: every page here is in this space. Archived pages are
+    # hidden by default; include_archived=true surfaces them (the "show archived" view).
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(conn, actor, space_id):
         raise HTTPException(status_code=404, detail="no such space")
-    return _with_labels_many(conn, pages.list_pages_in_space(conn, space_id))
+    return _with_labels_many(
+        conn,
+        pages.list_pages_in_space(conn, space_id, include_archived=include_archived),
+    )
 
 
 @pages_router.get("/{page_id}", response_model=PageOut)
@@ -653,6 +660,45 @@ def delete_page(
     page_activity.record_page_deleted(
         conn, actor_id=actor["id"], page_id=page_id, title=page["title"]
     )
+
+
+@pages_router.post("/{page_id}/archive", response_model=PageOut)
+def archive_page(
+    page_id: int,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Soft-delete: hides the page from the tree/nav/search but preserves it (and its
+    # history and comments), reversible via unarchive — the non-destructive
+    # alternative to DELETE. Open like edit, only on a page the actor can see. 404 if
+    # missing or hidden. Idempotent: re-archiving records no new event.
+    _page_for_read(conn, page_id, actor)
+    try:
+        page = page_commands.set_page_archived(
+            conn, actor_id=actor["id"], page_id=page_id, archived=True
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
+    return _with_labels(conn, page)
+
+
+@pages_router.post("/{page_id}/unarchive", response_model=PageOut)
+def unarchive_page(
+    page_id: int,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Restore an archived page to the active tree/nav/search via the same command;
+    # records "page_unarchived" only if it was actually archived. 404 if missing or
+    # hidden.
+    _page_for_read(conn, page_id, actor)
+    try:
+        page = page_commands.set_page_archived(
+            conn, actor_id=actor["id"], page_id=page_id, archived=False
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
+    return _with_labels(conn, page)
 
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])

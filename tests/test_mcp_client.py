@@ -183,6 +183,18 @@ MUTATION_CASES = [
         "/pages/4",
         lambda c, k: c.update_page(4, title="x", idempotency_key=k),
     ),
+    (
+        "archive_page",
+        "POST",
+        "/pages/4/archive",
+        lambda c, k: c.archive_page(4, idempotency_key=k),
+    ),
+    (
+        "unarchive_page",
+        "POST",
+        "/pages/4/unarchive",
+        lambda c, k: c.unarchive_page(4, idempotency_key=k),
+    ),
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
@@ -221,6 +233,8 @@ MCP_MUTATION_CASES = [
     ("detach_label", {"issue_id": 7, "label_id": 9}),
     ("create_page", {"space_id": 4, "title": "x"}),
     ("update_page", {"page_id": 4}),
+    ("archive_page", {"page_id": 4}),
+    ("unarchive_page", {"page_id": 4}),
 ]
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES

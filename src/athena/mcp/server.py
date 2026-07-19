@@ -599,9 +599,10 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.list_spaces()
 
     @mcp.tool()
-    def list_pages(space_id: int) -> list:
-        """List the pages in a space."""
-        return client.list_pages(space_id)
+    def list_pages(space_id: int, include_archived: bool = False) -> list:
+        """List the pages in a space. Archived (soft-deleted) pages are hidden by
+        default; pass include_archived=true to see them."""
+        return client.list_pages(space_id, include_archived=include_archived)
 
     @mcp.tool()
     def get_page(page_id: int) -> dict:
@@ -648,6 +649,24 @@ def build_server(client: AthenaClient) -> FastMCP:
             if_match=if_match,
             idempotency_key=idempotency_key,
         )
+
+    @mutation_tool
+    def archive_page(
+        page_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Archive (soft-delete) a page: it's hidden from the space tree, navigation,
+        and search, but the page — with its full version history and comments — is
+        kept and can be restored. The non-destructive alternative to deleting a page.
+        Returns the page."""
+        return client.archive_page(page_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def unarchive_page(
+        page_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Restore a previously archived page to the active tree/nav/search. Returns
+        the page."""
+        return client.unarchive_page(page_id, idempotency_key=idempotency_key)
 
     return mcp
 
