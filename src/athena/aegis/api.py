@@ -33,6 +33,8 @@ from athena.aegis import (
     issue_history,
     issue_search,
     issues,
+    lease_commands,
+    leases,
     project_activity,
     project_commands,
     projects,
@@ -1480,6 +1482,23 @@ class ContributorOut(BaseModel):
     added_at: str
 
 
+class LeaseOut(BaseModel):
+    # The exclusive claim on an issue: who holds it, when it was taken, when it expires,
+    # and whether that window is still open (active=false is an expired, reclaimable lease).
+    issue_id: int
+    holder_id: int
+    holder_name: str
+    claimed_at: str
+    expires_at: str
+    active: bool
+
+
+class ClaimIn(BaseModel):
+    # How long the lease should hold before it must be renewed. Omitted → the server
+    # default. Bounded by the command to [MIN, MAX] lease seconds.
+    lease_seconds: int | None = None
+
+
 class ContributorAdd(BaseModel):
     user_id: int
 
@@ -1546,6 +1565,83 @@ def remove_issue_contributor(
     try:
         return issue_commands.remove_contributor(
             conn, actor=actor, issue_id=issue_id, user_id=user_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
+
+
+# --- Delegation claim/lease: accept / decline / complete -------------------
+#
+# The run-time interlock that stops two delegated agents from silently working the same
+# issue. A lease is exclusive (one active per issue); claiming acquires it, completing
+# releases it, declining rejects the delegation. Reads of the current lease are open;
+# the writes need the issue-write scope and the claimant gate the command enforces.
+
+
+@router.get("/{issue_id}/lease", response_model=LeaseOut | None)
+def get_issue_lease(
+    issue_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | None:
+    # Who holds this issue right now (or null if unclaimed) — so an agent can see it is
+    # taken before trying to claim. 404 if the issue is missing or hidden, like the other
+    # sub-resource reads; the lease itself carries `active` (an expired lease reads
+    # active=false rather than vanishing, so the last holder is still visible).
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None or not access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    ):
+        raise HTTPException(status_code=404, detail="no such issue")
+    return leases.get_lease(conn, issue_id)
+
+
+@router.post("/{issue_id}/claim", response_model=LeaseOut, status_code=201)
+def claim_issue(
+    issue_id: int,
+    payload: ClaimIn | None = None,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Accept: take the exclusive lease. 409 if another agent holds it (the interlock);
+    # re-claiming your own lease renews it. The command owns the atomic acquire + event.
+    lease_seconds = (payload.lease_seconds if payload else None)
+    kwargs = {} if lease_seconds is None else {"lease_seconds": lease_seconds}
+    try:
+        return lease_commands.claim_issue(
+            conn, actor=actor, issue_id=issue_id, **kwargs
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
+
+
+@router.post("/{issue_id}/complete", status_code=204)
+def complete_issue_claim(
+    issue_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    # Complete: release the lease you hold (the issue is freed for the next claimant).
+    # 409 if you don't hold an active lease. Releases the coordination lease only — status
+    # changes go through the ordinary status command.
+    try:
+        lease_commands.complete_claim(conn, actor=actor, issue_id=issue_id)
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
+
+
+@router.post("/{issue_id}/decline", response_model=list[ContributorOut])
+def decline_issue_delegation(
+    issue_id: int,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Decline: remove yourself from the contributor set so the work is visibly refused, not
+    # silently dropped. 404 if you weren't a delegated contributor. Returns the remaining
+    # contributors; any lease you held is released with the same act.
+    try:
+        return lease_commands.decline_delegation(
+            conn, actor=actor, issue_id=issue_id
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
