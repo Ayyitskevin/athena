@@ -497,16 +497,11 @@ def create_page(
             )
         parent = int(parent_id)
 
-    page = pages.create_page(
-        conn, space_id=space_id, title=title, body=body.strip() or "",
-        parent_id=parent, created_by=user["id"],
-    )
-    page_activity.record_page_created(
-        conn,
-        actor_id=user["id"],
-        page_id=page["id"],
-        title=page["title"],
-        body=page["body"],
+    # The command owns the atomic insert AND its 'page_created' event (auto-watch +
+    # mentions).
+    page = page_commands.create_page(
+        conn, actor_id=user["id"], space_id=space_id, title=title,
+        body=body.strip() or "", parent_id=parent,
     )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
@@ -677,18 +672,18 @@ def move_page(
             return HTMLResponse('<div class="error">Invalid parent page.</div>', status_code=400)
         new_parent = int(parent_id)
 
-    _moved, err = pages.move(conn, page, new_parent)
-    if err is not None:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(err)}</div>', status_code=400
+    # The command owns the atomic re-parent AND its 'page_moved' event. An illegal move
+    # (another space, self, a descendant) comes back as PageCommandError('invalid').
+    try:
+        page_commands.move_page(
+            conn, actor_id=user["id"], page_id=page_id, new_parent_id=new_parent
         )
-    page_activity.record_page_moved(
-        conn,
-        actor_id=user["id"],
-        page_id=page_id,
-        before_parent_id=page["parent_id"],
-        after_parent_id=new_parent,
-    )
+    except page_commands.PageCommandError as exc:
+        if exc.kind == "not_found":
+            return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -905,22 +900,19 @@ def restore_version(
     if err is not None:
         return err
 
-    before, err = _page_visible_or_response(conn, page_id, user)
+    _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
-    restored = pages.restore_version(conn, page_id, version, editor_id=user["id"])
-    if restored is None:
+    # The command owns the atomic restore AND its 'page_restored' event; a missing
+    # page/version comes back as PageCommandError('not_found').
+    try:
+        page_commands.restore_page_version(
+            conn, actor_id=user["id"], page_id=page_id, version=version
+        )
+    except page_commands.PageCommandError:
         return HTMLResponse(
             '<div class="error">No such page or version.</div>', status_code=404
         )
-    page_activity.record_page_restored(
-        conn,
-        actor_id=user["id"],
-        page_id=page_id,
-        version=version,
-        before=before,
-        after=restored,
-    )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

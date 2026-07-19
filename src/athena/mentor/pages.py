@@ -23,12 +23,17 @@ def create_page(
     created_by: int,
     body: str = "",
     parent_id: int | None = None,
+    commit: bool = True,
 ) -> dict:
     """Insert a page and return it. The foreign keys refuse an orphan: space_id
     must be a real space, parent_id (when given) a real page, created_by a real
     user. A new page is its own current revision, so updated_by/updated_at start
     equal to the creator and creation time — this is what the first edit will
-    snapshot as version 1."""
+    snapshot as version 1.
+
+    ``commit=False`` composes this inside the audited create command's transaction:
+    the row, its derived link/search index, and the command's ``page_created`` event
+    (with the creator's auto-watch and any mentions) commit or roll back together."""
     cur = conn.execute(
         "INSERT INTO pages (id, space_id, parent_id, title, body, created_by, "
         "updated_by, updated_at) "
@@ -36,12 +41,15 @@ def create_page(
         "FROM activity_target_id_sequences WHERE target_kind = 'page'",
         (space_id, parent_id, title, body, created_by, created_by),
     )
-    conn.commit()
-    # Index any [[issue:N]]/[[page:N]] references this page's body makes.
-    links.sync_links(conn, source_kind="page", source_id=cur.lastrowid, body=body)
-    # Index its title + body for full-text search.
-    search.index_document(conn, kind="page", source_id=cur.lastrowid)
-    return get_page(conn, cur.lastrowid)
+    page_id = cur.lastrowid
+    # Index any [[issue:N]]/[[page:N]] references this page's body makes, and its
+    # title + body for full-text search — inside the same transaction (commit=False)
+    # so the derived indexes never reflect a rolled-back create.
+    links.sync_links(conn, source_kind="page", source_id=page_id, body=body, commit=False)
+    search.index_document(conn, kind="page", source_id=page_id, commit=False)
+    if commit:
+        conn.commit()
+    return get_page(conn, page_id)
 
 
 def get_page(conn: sqlite3.Connection, page_id: int) -> dict | None:
@@ -297,29 +305,44 @@ def validate_move(
 
 
 def move(
-    conn: sqlite3.Connection, page: dict, new_parent_id: int | None
+    conn: sqlite3.Connection,
+    page: dict,
+    new_parent_id: int | None,
+    *,
+    commit: bool = True,
 ) -> tuple[dict | None, str | None]:
-    """Re-parent a page ATOMICALLY: run validate_move and the UPDATE inside one
-    BEGIN IMMEDIATE. validate_move alone can't stop a check-then-write race — two
+    """Re-parent a page ATOMICALLY: run validate_move and the UPDATE while holding
+    SQLite's write lock. validate_move alone can't stop a check-then-write race — two
     concurrent moves (move A under B / move B under A) each validate against the
     pre-move tree, both pass, then both write, forming a cycle. Holding the write lock
     across validate+write serializes them, so the second move re-validates against the
     first's committed result and is rejected. Returns (updated_page, None) on success,
     or (None, reason) when the move is illegal — the caller turns `reason` into its
     422/400. `page` is the already-fetched row; only its id/space_id are read (a move
-    changes neither), while validate_move re-reads the live tree under the lock."""
-    conn.execute("BEGIN IMMEDIATE")
+    changes neither), while validate_move re-reads the live tree under the lock.
+
+    Left to itself (``commit=True``) it opens the write transaction with BEGIN
+    IMMEDIATE and owns the commit. ``commit=False`` instead composes inside the audited
+    move command's own ``db.transaction(immediate=True)`` — which already holds the
+    lock — so the re-parent and its ``page_moved`` event commit or roll back together;
+    an illegal move returns (None, reason) without touching the row, and the command
+    raises to roll back the (empty) savepoint."""
+    if commit:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         reason = validate_move(conn, page, new_parent_id)
         if reason is not None:
-            conn.rollback()
+            if commit:
+                conn.rollback()
             return None, reason
         conn.execute(
             "UPDATE pages SET parent_id = ? WHERE id = ?", (new_parent_id, page["id"])
         )
-        conn.commit()
-    except Exception:
-        conn.rollback()
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
         raise
     return get_page(conn, page["id"]), None
 
@@ -346,7 +369,12 @@ def get_page_version(
 
 
 def restore_version(
-    conn: sqlite3.Connection, page_id: int, version: int, *, editor_id: int
+    conn: sqlite3.Connection,
+    page_id: int,
+    version: int,
+    *,
+    editor_id: int,
+    commit: bool = True,
 ) -> dict | None:
     """Restore a page's content to a prior revision. Returns the updated page, or
     None if no such page/version exists (so the boundary can 404).
@@ -377,4 +405,5 @@ def restore_version(
         editor_id=editor_id,
         title=snapshot["title"],
         body=snapshot["body"],
+        commit=commit,
     )

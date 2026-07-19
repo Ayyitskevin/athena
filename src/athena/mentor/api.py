@@ -516,20 +516,15 @@ def create_page(
             raise HTTPException(
                 status_code=422, detail="parent must be a page in this space"
             )
-    page = pages.create_page(
+    # The command owns the atomic insert AND its 'page_created' event (auto-watch +
+    # mentions), so a page and its activity footprint land together.
+    page = page_commands.create_page(
         conn,
+        actor_id=actor["id"],
         space_id=space_id,
         title=title,
         body=payload.body,
         parent_id=payload.parent_id,
-        created_by=actor["id"],
-    )
-    page_activity.record_page_created(
-        conn,
-        actor_id=actor["id"],
-        page_id=page["id"],
-        title=page["title"],
-        body=page["body"],
     )
     return _with_labels(conn, page)
 
@@ -628,17 +623,15 @@ def move_page(
     # edit (no creator lock) — but only on a page they can see. 404 if the page is
     # missing or hidden; 422 if the new parent is invalid (another space, the page
     # itself, or its own descendant — a cycle).
-    page = _page_for_read(conn, page_id, actor)
-    moved, err = pages.move(conn, page, payload.parent_id)
-    if err is not None:
-        raise HTTPException(status_code=422, detail=err)
-    page_activity.record_page_moved(
-        conn,
-        actor_id=actor["id"],
-        page_id=page_id,
-        before_parent_id=page["parent_id"],
-        after_parent_id=payload.parent_id,
-    )
+    _page_for_read(conn, page_id, actor)
+    # The command owns the atomic re-parent (validate + write under the lock) AND its
+    # 'page_moved' event; an illegal move is a 422, a vanished page a 404.
+    try:
+        moved = page_commands.move_page(
+            conn, actor_id=actor["id"], page_id=page_id, new_parent_id=payload.parent_id
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
     return _with_labels(conn, moved)
 
 
@@ -911,18 +904,15 @@ def restore_version(
     # creator-locked the way delete is — but only on a page the actor can see. 404 if
     # the page is missing/hidden or that version is missing; the snapshot's author
     # stamps nothing, the restoring actor stamps the new live revision.
-    before = _page_for_read(conn, page_id, actor)
-    restored = pages.restore_version(conn, page_id, version, editor_id=actor["id"])
-    if restored is None:
-        raise HTTPException(status_code=404, detail="no such page or version")
-    page_activity.record_page_restored(
-        conn,
-        actor_id=actor["id"],
-        page_id=page_id,
-        version=version,
-        before=before,
-        after=restored,
-    )
+    _page_for_read(conn, page_id, actor)
+    # The command owns the atomic restore (snapshot-then-overwrite via update_page) AND
+    # its 'page_restored' event; a missing page/version is a 404.
+    try:
+        restored = page_commands.restore_page_version(
+            conn, actor_id=actor["id"], page_id=page_id, version=version
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
     return _with_labels(conn, restored)
 
 
