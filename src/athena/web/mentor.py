@@ -28,7 +28,6 @@ from athena.mentor import (
     page_comment_commands,
     page_comments,
     pages,
-    space_activity,
     space_commands,
     spaces,
 )
@@ -342,14 +341,10 @@ def space_set_visibility(
             status_code=400,
         )
     if visibility != space["visibility"]:
-        spaces.set_visibility(conn, space_id, visibility)
-        if visibility == "private":
-            access.add_space_member(
-                conn, space_id, space["created_by"], added_by=user["id"]
-            )
-        space_activity.record_space_visibility_changed(
-            conn, actor_id=user["id"], space_id=space_id,
-            name=space["name"], visibility=visibility,
+        # The command owns the atomic flip, the creator-as-member add (going private),
+        # and the visibility event.
+        space_commands.set_space_visibility(
+            conn, actor_id=user["id"], space_id=space_id, visibility=visibility
         )
     return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
 
@@ -372,10 +367,14 @@ def space_add_member(
     member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
     if member is None:
         return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
-    if access.add_space_member(conn, space_id, member["id"], added_by=user["id"]):
-        space_activity.record_space_member_added(
-            conn, actor_id=user["id"], space_id=space_id, member_name=member["name"]
-        )
+    # The command owns the atomic grant AND its 'space_member_added' event (idempotent).
+    space_commands.add_space_member(
+        conn,
+        actor_id=user["id"],
+        space_id=space_id,
+        user_id=member["id"],
+        member_name=member["name"],
+    )
     return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
 
 
@@ -398,11 +397,15 @@ def space_remove_member(
     if err is not None:
         return err
     member = users.get_user(conn, member_id)
-    if access.remove_space_member(conn, space_id, member_id):
-        space_activity.record_space_member_removed(
-            conn, actor_id=user["id"], space_id=space_id,
-            member_name=member["name"] if member else str(member_id),
-        )
+    # The command owns the atomic revoke AND its 'space_member_removed' event; a no-op
+    # (they weren't a member) records nothing and still 303s back.
+    space_commands.remove_space_member(
+        conn,
+        actor_id=user["id"],
+        space_id=space_id,
+        user_id=member_id,
+        member_name=member["name"] if member else str(member_id),
+    )
     return RedirectResponse(f"/mentor/spaces/{space_id}/access", status_code=303)
 
 

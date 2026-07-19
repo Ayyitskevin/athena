@@ -93,11 +93,18 @@ def record_space_deleted(
 
 
 def record_space_visibility_changed(
-    conn: sqlite3.Connection, *, actor_id: int, space_id: int, name: str, visibility: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    name: str,
+    visibility: str,
+    commit: bool = True,
 ) -> None:
     """A space was made private or public — the Mentor twin of the project event. The
     verb encodes the direction, the detail names the space. Recorded only on a real
-    transition (the caller skips a no-op set-to-same-value)."""
+    transition (the caller skips a no-op set-to-same-value). ``commit=False`` composes
+    this inside the audited visibility command's transaction."""
     verb = "space_made_private" if visibility == "private" else "space_made_public"
     activity.record(
         conn,
@@ -106,14 +113,22 @@ def record_space_visibility_changed(
         target_kind="space",
         target_id=space_id,
         detail=name,
+        commit=commit,
     )
 
 
 def record_space_member_added(
-    conn: sqlite3.Connection, *, actor_id: int, space_id: int, member_name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    member_name: str,
+    commit: bool = True,
 ) -> None:
     """A user was granted access to a private space. The detail is the member's name;
-    recorded only on a real change (re-adding an existing member records nothing)."""
+    recorded only on a real change (re-adding an existing member records nothing).
+    ``commit=False`` composes this inside the audited space-access command's
+    transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -121,15 +136,22 @@ def record_space_member_added(
         target_kind="space",
         target_id=space_id,
         detail=member_name,
+        commit=commit,
     )
 
 
 def record_space_member_removed(
-    conn: sqlite3.Connection, *, actor_id: int, space_id: int, member_name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    member_name: str,
+    commit: bool = True,
 ) -> None:
     """A user's access to a private space was revoked. The detail is the member's name,
     preserved here even though the membership row is gone; recorded only when a row was
-    actually removed."""
+    actually removed. ``commit=False`` composes this inside the audited space-access
+    command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -137,4 +159,5 @@ def record_space_member_removed(
         target_kind="space",
         target_id=space_id,
         detail=member_name,
+        commit=commit,
     )

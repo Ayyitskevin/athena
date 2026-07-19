@@ -98,7 +98,7 @@ knowledge graph the database already stores.
       instead of silent last-write-wins.
 - [x] Page soft-delete (`archived_at`, matching issues) — today one call
       permanently destroys a page, its versions, and its comments.
-- [ ] Complete the Mentor command migration: atomic mutation + audit for page
+- [x] Complete the Mentor command migration: atomic mutation + audit for page
       create/edit/move/delete/restore and space lifecycle.
 - [ ] Knowledge-graph MCP tools: backlinks, outgoing links, page versions and
       restore, space-scoped search — the graph exists; agents can't walk it

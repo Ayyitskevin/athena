@@ -7,17 +7,21 @@ change and its audit fact commit or roll back together — previously they ran i
 SEPARATE commits, so a crash between them could create a space with no
 ``space_created`` event, or delete one with no ``space_deleted``.
 
+It also owns the space access lifecycle — the visibility flip (public↔private, which
+also inserts the creator as a member when going private) and membership add/remove —
+each folding its mutation(s) and event into one transaction.
+
 Transport-shape validation and authorization (key normalization + uniqueness, the
-creator-only delete gate, the space-holds-no-pages precondition) stay at the transport
+creator-only delete gate, the creator-or-admin access-management gate, the
+space-holds-no-pages precondition, and target-user existence) stay at the transport
 boundary, as they do for the page commands — the command owns atomicity + audit.
-Space visibility and membership are separate commands (a later slice).
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from athena.core import db
+from athena.core import access, db
 from athena.mentor import space_activity, spaces
 
 
@@ -97,5 +101,83 @@ def delete_space(
         if removed:
             space_activity.record_space_deleted(
                 conn, actor_id=actor_id, space_id=space_id, name=name, commit=False
+            )
+        return removed
+
+
+def set_space_visibility(
+    conn: sqlite3.Connection, *, actor_id: int, space_id: int, visibility: str
+) -> dict:
+    """Flip a space public↔private atomically with its ``space_made_private`` /
+    ``space_made_public`` event. Going private also inserts the creator as an explicit
+    member (they keep access via ``created_by`` regardless, but this surfaces them in the
+    roster) — folded into the SAME transaction, so the flip, the membership row, and the
+    event can't half-land. The boundary validates the value and skips a no-op
+    set-to-same, so this is only called on a real transition. Raises
+    ``SpaceCommandError(404)`` if the space vanished."""
+    with db.transaction(conn, immediate=True):
+        before = spaces.get_space(conn, space_id)
+        if before is None:
+            raise SpaceCommandError("no such space", status_code=404)
+        updated = spaces.set_visibility(conn, space_id, visibility, commit=False)
+        if updated is None:
+            raise SpaceCommandError("no such space", status_code=404)
+        if visibility == "private":
+            access.add_space_member(
+                conn, space_id, before["created_by"], added_by=actor_id, commit=False
+            )
+        space_activity.record_space_visibility_changed(
+            conn,
+            actor_id=actor_id,
+            space_id=space_id,
+            name=updated["name"],
+            visibility=visibility,
+            commit=False,
+        )
+        return updated
+
+
+def add_space_member(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    user_id: int,
+    member_name: str,
+) -> bool:
+    """Grant a user read access to a private space atomically with its
+    ``space_member_added`` event. Idempotent: a re-add records nothing and returns
+    False. The boundary validates the user exists (422) and passes the member's name for
+    the audit detail."""
+    with db.transaction(conn, immediate=True):
+        added = access.add_space_member(
+            conn, space_id, user_id, added_by=actor_id, commit=False
+        )
+        if added:
+            space_activity.record_space_member_added(
+                conn, actor_id=actor_id, space_id=space_id, member_name=member_name,
+                commit=False,
+            )
+        return added
+
+
+def remove_space_member(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    user_id: int,
+    member_name: str,
+) -> bool:
+    """Revoke a user's access to a private space atomically with its
+    ``space_member_removed`` event. Returns True if a row was removed (the boundary 404s
+    a non-member); no event for a removal that didn't happen. The boundary passes the
+    member's name for the audit detail (the membership row is gone by the time it reads)."""
+    with db.transaction(conn, immediate=True):
+        removed = access.remove_space_member(conn, space_id, user_id, commit=False)
+        if removed:
+            space_activity.record_space_member_removed(
+                conn, actor_id=actor_id, space_id=space_id, member_name=member_name,
+                commit=False,
             )
         return removed

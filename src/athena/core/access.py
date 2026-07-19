@@ -99,28 +99,38 @@ def list_project_members(conn: sqlite3.Connection, project_id: int) -> list[dict
 # --- space membership -------------------------------------------------------
 
 def add_space_member(
-    conn: sqlite3.Connection, space_id: int, user_id: int, added_by: int | None
+    conn: sqlite3.Connection,
+    space_id: int,
+    user_id: int,
+    added_by: int | None,
+    *,
+    commit: bool = True,
 ) -> bool:
     """Grant a user read access to a (private) space. Idempotent, like its project
-    twin; returns True only on a real change."""
+    twin; returns True only on a real change. ``commit=False`` composes this inside the
+    audited space-access command's transaction."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO space_members (space_id, user_id, added_by) "
         "VALUES (?, ?, ?)",
         (space_id, user_id, added_by),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
 def remove_space_member(
-    conn: sqlite3.Connection, space_id: int, user_id: int
+    conn: sqlite3.Connection, space_id: int, user_id: int, *, commit: bool = True
 ) -> bool:
-    """Revoke a user's space membership. Returns True if a row was removed."""
+    """Revoke a user's space membership. Returns True if a row was removed.
+    ``commit=False`` composes this inside the audited space-access command's
+    transaction."""
     cur = conn.execute(
         "DELETE FROM space_members WHERE space_id = ? AND user_id = ?",
         (space_id, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
