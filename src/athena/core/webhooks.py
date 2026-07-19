@@ -287,9 +287,11 @@ def _backoff_seconds(failure_count: int) -> int:
 
 def _event_payload(event: dict) -> dict:
     """The JSON body delivered for one event — a stable SUBSET of the row GET /events
-    returns (identity, verb, target, detail, timestamp). Run/lineage coordinates
-    (run_id, parent_run_id, forked_from_event_id) are not yet included here; adding
-    them so push consumers can mirror Mission Control is tracked in docs/ROADMAP.md."""
+    returns (identity, verb, target, detail, timestamp) plus its run/lineage
+    coordinates, so a push consumer can mirror Mission Control (group by run, walk
+    parent/child lineage, place a fork) without polling /activity/runs. The three
+    lineage keys are ALWAYS present for a stable schema and are null for an untagged
+    or top-level event — the same shape GET /events exposes."""
     return {
         "id": event["id"],
         "actor_id": event["actor_id"],
@@ -299,6 +301,9 @@ def _event_payload(event: dict) -> dict:
         "target_id": event["target_id"],
         "detail": event["detail"],
         "created_at": event["created_at"],
+        "run_id": event["run_id"],
+        "parent_run_id": event["parent_run_id"],
+        "forked_from_event_id": event["forked_from_event_id"],
     }
 
 

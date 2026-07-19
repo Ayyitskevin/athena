@@ -13,7 +13,7 @@ the review-facing source of truth for the `0.1.0a1` line.
 | Area | Command-backed | Known migration debt |
 |---|---|---|
 | Issue core | Create; title/body/status/priority; assignee, project, and sprint placement; typed dependency link/unlink; REST/browser comment create/edit/delete | Parent hierarchy, archive/restore, labels, and contributors/delegation |
-| Projects | Issue placement uses the issue command | Project create/edit/delete, visibility, and membership |
+| Projects | Issue placement uses the issue command; project create/edit/delete | Visibility and membership |
 | Mentor | REST/browser page-comment create/edit/delete | Space and page create/edit/move/delete/restore, visibility, membership, and labels |
 | Users and agents | User create, role/agent flag changes, token kill switch, and complete offboard | Password/session preference operations remain separate bounded flows |
 | API tokens | Mint and revoke | None known in the token lifecycle |

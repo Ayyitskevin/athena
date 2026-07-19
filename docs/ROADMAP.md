@@ -84,7 +84,7 @@ success) is observable, and the operator gets levers between "watch" and
 - [ ] Migrate the remaining risky Aegis writes to commands per
       [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md): parent hierarchy,
       archive/restore, labels, contributors.
-- [ ] Include run/lineage coordinates in webhook payloads so push consumers can
+- [x] Include run/lineage coordinates in webhook payloads so push consumers can
       mirror Mission Control.
 
 ## Phase 3 — Docs become safe shared agent memory
