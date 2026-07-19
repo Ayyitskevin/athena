@@ -1157,30 +1157,25 @@ def change_issue_parent(
             '<div class="blocked">Please <a href="/login">sign in</a> to set a parent.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
     parent_ref = parent_ref.strip()
     if parent_ref == "":
         parent_id: int | None = None
     else:
         parent = issues.get_by_ref(conn, parent_ref)
-        # A parent the actor can't see collapses to the same 400 as a missing one, so
-        # you can't nest under (or probe the existence of) a hidden issue.
-        if parent is None or not access.can_see_issue(conn, user, parent["id"]):
+        # An unresolvable ref is a web parsing failure (400); a ref that resolves to
+        # a HIDDEN issue is caught by the command's see-the-parent check, which
+        # collapses to the same "No such parent issue." — no existence probe.
+        if parent is None:
             return HTMLResponse('<div class="error">No such parent issue.</div>', status_code=400)
         parent_id = parent["id"]
-    reason = issues.validate_parent(conn, issue_id, parent_id)
-    if reason is not None:
-        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
-    issues.set_parent(conn, issue_id, parent_id)
-    issue_activity.record_parent_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["parent_id"],
-        after=parent_id,
-    )
+    # The command owns the see-the-parent check, self/cycle validation, the write,
+    # and the atomic audit event — the same one the REST route calls.
+    try:
+        issue_commands.set_issue_parent(
+            conn, actor=user, issue_id=issue_id, parent_id=parent_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1388,17 +1383,13 @@ def archive_issue_web(
             '<div class="blocked">Please <a href="/login">sign in</a> to archive.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    updated = issues.set_archived(conn, issue_id, True)
-    issue_activity.record_archive_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["archived_at"],
-        after=updated["archived_at"],
-    )
+    # The command owns the gate, the soft-delete, and its atomic 'archived' event.
+    try:
+        issue_commands.set_issue_archived(
+            conn, actor=user, issue_id=issue_id, archived=True
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1416,17 +1407,12 @@ def unarchive_issue_web(
             '<div class="blocked">Please <a href="/login">sign in</a> to restore.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    updated = issues.set_archived(conn, issue_id, False)
-    issue_activity.record_archive_change(
-        conn,
-        actor_id=user["id"],
-        issue_id=issue_id,
-        before=issue["archived_at"],
-        after=updated["archived_at"],
-    )
+    try:
+        issue_commands.set_issue_archived(
+            conn, actor=user, issue_id=issue_id, archived=False
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 

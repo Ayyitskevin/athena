@@ -509,6 +509,57 @@ def _update_issue(
     return updated
 
 
+def set_issue_archived(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, archived: bool
+) -> dict:
+    """Archive (soft-delete) or restore an issue and record the audit fact
+    atomically. Same gate as any issue write (visible + creator/assignee/
+    delegated/admin). Idempotent: re-archiving an archived issue re-stamps the
+    time but records no new event. Raises IssueCommandError(404/403)."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        before = _writable_issue(conn, actor, issue_id)
+        updated = issues.set_archived(conn, issue_id, archived, commit=False)
+        issue_activity.record_archive_change(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            before=before["archived_at"],
+            after=updated["archived_at"],
+            commit=False,
+        )
+        return updated
+
+
+def set_issue_parent(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, parent_id: int | None
+) -> dict:
+    """Nest an issue under a parent (parent_id=None clears it) and record the
+    'set_parent'/'removed_parent' event atomically. The parent must be one the
+    actor can SEE — a hidden parent collapses to the same 'no such parent issue'
+    a missing one gives, so a write can't nest under (or probe) a private issue.
+    Same write gate as status/assign; validation (self, cycle, existence) runs in
+    the command. Raises IssueCommandError(404/403/422). No event when unchanged."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        before = _writable_issue(conn, actor, issue_id)
+        if parent_id is not None and not access.can_see_issue(conn, actor, parent_id):
+            raise IssueCommandError("invalid", "no such parent issue")
+        reason = issues.validate_parent(conn, issue_id, parent_id)
+        if reason is not None:
+            raise IssueCommandError("invalid", reason)
+        updated = issues.set_parent(conn, issue_id, parent_id, commit=False)
+        issue_activity.record_parent_change(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            before=before["parent_id"],
+            after=parent_id,
+            commit=False,
+        )
+        return updated
+
+
 def link_issues(
     conn: sqlite3.Connection,
     *,

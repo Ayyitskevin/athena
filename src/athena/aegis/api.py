@@ -680,19 +680,15 @@ def archive_issue(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Archiving (soft-delete) is a write on the issue — creator-or-assignee only
-    # (404 / 403), the same gate as status/assign. The row is never destroyed; it's
-    # hidden from the default lists and can be restored. Idempotent: re-archiving an
-    # archived issue re-stamps the time but records no new audit fact.
-    before = _issue_for_write(conn, issue_id, actor)
-    updated = issues.set_archived(conn, issue_id, True)
-    issue_activity.record_archive_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["archived_at"],
-        after=updated["archived_at"],
-    )
+    # The command owns the soft-delete AND its atomic 'archived' event under the
+    # same creator/assignee/delegated/admin gate. Idempotent: re-archiving records
+    # no new fact.
+    try:
+        updated = issue_commands.set_issue_archived(
+            conn, actor=actor, issue_id=issue_id, archived=True
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -702,17 +698,14 @@ def unarchive_issue(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Restore an archived issue to the active lists. Same write gate; records
+    # Restore an archived issue to the active lists via the same command; records
     # "unarchived" only if it was actually archived.
-    before = _issue_for_write(conn, issue_id, actor)
-    updated = issues.set_archived(conn, issue_id, False)
-    issue_activity.record_archive_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["archived_at"],
-        after=updated["archived_at"],
-    )
+    try:
+        updated = issue_commands.set_issue_archived(
+            conn, actor=actor, issue_id=issue_id, archived=False
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -840,28 +833,16 @@ def set_parent(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Nesting an issue is a write on it — creator-or-assignee only (404/403), same
-    # gate as status/assign/project. The parent is validated for existence, self,
-    # and cycles (422); clearing (None) is always allowed.
-    before = _issue_for_write(conn, issue_id, actor)
-    # The parent must be one the actor can see: a hidden parent collapses to the same
-    # "no such parent issue" 422 validate_parent gives a missing one, so you can't nest
-    # under (or probe the existence of) an issue in a private project you're not in.
-    if payload.parent_id is not None and not access.can_see_issue(
-        conn, actor, payload.parent_id
-    ):
-        raise HTTPException(status_code=422, detail="no such parent issue")
-    reason = issues.validate_parent(conn, issue_id, payload.parent_id)
-    if reason is not None:
-        raise HTTPException(status_code=422, detail=reason)
-    updated = issues.set_parent(conn, issue_id, payload.parent_id)
-    issue_activity.record_parent_change(
-        conn,
-        actor_id=actor["id"],
-        issue_id=issue_id,
-        before=before["parent_id"],
-        after=payload.parent_id,
-    )
+    # The command owns the nest AND its atomic 'set_parent'/'removed_parent'
+    # event, the creator/assignee/delegated/admin gate, the see-the-parent check
+    # (a hidden parent collapses to "no such parent issue"), and self/cycle
+    # validation (422). Clearing (None) is always allowed.
+    try:
+        updated = issue_commands.set_issue_parent(
+            conn, actor=actor, issue_id=issue_id, parent_id=payload.parent_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
