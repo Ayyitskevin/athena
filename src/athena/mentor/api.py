@@ -25,7 +25,6 @@ from athena.mentor import (
     page_comments,
     page_etags,
     pages,
-    space_activity,
     space_commands,
     spaces,
 )
@@ -417,21 +416,14 @@ def set_space_visibility(
         )
     if visibility == space["visibility"]:
         return space  # no-op set-to-same — no write, no event
-    updated = spaces.set_visibility(conn, space_id, visibility)
-    # Going private: record the creator as an explicit member so they show in the
-    # roster (they keep access via created_by regardless).
-    if visibility == "private":
-        access.add_space_member(
-            conn, space_id, space["created_by"], added_by=actor["id"]
+    # The command owns the atomic flip, the creator-as-member add (when going private),
+    # and the 'space_made_private'/'space_made_public' event.
+    try:
+        return space_commands.set_space_visibility(
+            conn, actor_id=actor["id"], space_id=space_id, visibility=visibility
         )
-    space_activity.record_space_visibility_changed(
-        conn,
-        actor_id=actor["id"],
-        space_id=space_id,
-        name=updated["name"],
-        visibility=visibility,
-    )
-    return updated
+    except space_commands.SpaceCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @spaces_router.get("/{space_id}/members", response_model=list[MemberOut])
@@ -463,10 +455,15 @@ def add_space_member(
     member = users.get_user(conn, payload.user_id)
     if member is None:
         raise HTTPException(status_code=422, detail="no such user")
-    if access.add_space_member(conn, space_id, payload.user_id, added_by=actor["id"]):
-        space_activity.record_space_member_added(
-            conn, actor_id=actor["id"], space_id=space_id, member_name=member["name"]
-        )
+    # The command owns the atomic grant AND its 'space_member_added' event (idempotent —
+    # a re-add records nothing).
+    space_commands.add_space_member(
+        conn,
+        actor_id=actor["id"],
+        space_id=space_id,
+        user_id=payload.user_id,
+        member_name=member["name"],
+    )
     return access.list_space_members(conn, space_id)
 
 
@@ -480,14 +477,16 @@ def remove_space_member(
     # Creator or admin only. 404 if the user wasn't a member.
     _space_for_privacy(conn, space_id, actor)
     member = users.get_user(conn, user_id)
-    if not access.remove_space_member(conn, space_id, user_id):
-        raise HTTPException(status_code=404, detail="user is not a member")
-    space_activity.record_space_member_removed(
+    # The command owns the atomic revoke AND its 'space_member_removed' event; a
+    # non-member records nothing and 404s.
+    if not space_commands.remove_space_member(
         conn,
         actor_id=actor["id"],
         space_id=space_id,
+        user_id=user_id,
         member_name=member["name"] if member else str(user_id),
-    )
+    ):
+        raise HTTPException(status_code=404, detail="user is not a member")
     return access.list_space_members(conn, space_id)
 
 

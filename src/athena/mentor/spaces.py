@@ -109,18 +109,21 @@ def update_space(
 
 
 def set_visibility(
-    conn: sqlite3.Connection, space_id: int, visibility: str
+    conn: sqlite3.Connection, space_id: int, visibility: str, *, commit: bool = True
 ) -> dict | None:
     """Flip a space public ↔ private. Returns the updated space, or None if no space
     has that id (so the boundary can 404). The twin of aegis.projects.set_visibility:
     the boundary validates the value ('public' | 'private'), the column CHECK is the
     backstop, and this is the SOLE writer of spaces.visibility (core/access.py only
     reads it). Narrowing to 'private' is immediate — every page/space read already
-    filters through access.can_see_space."""
+    filters through access.can_see_space. ``commit=False`` composes this inside the
+    audited visibility command's transaction so the flip, the creator's membership
+    row (when going private), and the event land together."""
     cur = conn.execute(
         "UPDATE spaces SET visibility = ? WHERE id = ?", (visibility, space_id)
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_space(conn, space_id)
