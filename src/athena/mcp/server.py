@@ -63,10 +63,11 @@ def build_server(client: AthenaClient) -> FastMCP:
         "For retry-critical calls, choose a stable, non-secret idempotency_key "
         "containing 1-255 visible ASCII characters before the first attempt and "
         "reuse it only for the exact same call. For tools exposing if_match, first "
-        "call get_issue and copy its _etag exactly. If a write returns 412, refetch "
-        "the issue, merge the intended change with its current state, and retry with "
-        "the refreshed _etag plus a new idempotency_key because the changed "
-        "precondition makes it a different call."
+        "call the matching read (get_issue for an issue, get_page for a page) and "
+        "copy its _etag exactly. If a write returns 412, refetch the resource, merge "
+        "the intended change with its current state, and retry with the refreshed "
+        "_etag plus a new idempotency_key because the changed precondition makes it a "
+        "different call."
     )
 
     def mutation_tool(function):
@@ -604,7 +605,9 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     @mcp.tool()
     def get_page(page_id: int) -> dict:
-        """Get one Mentor page (title + Markdown body)."""
+        """Get one Mentor page (title + Markdown body). The response includes the
+        server's opaque ETag as _etag; copy it exactly into if_match on a guarded
+        update_page to make the edit fail rather than clobber a concurrent change."""
         return client.get_page(page_id)
 
     @mutation_tool
@@ -630,14 +633,19 @@ def build_server(client: AthenaClient) -> FastMCP:
         page_id: int,
         title: str | None = None,
         body: str | None = None,
+        if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Update a page's title and/or body. Each edit is snapshotted into the
-        page's version history automatically."""
+        page's version history automatically. Pass if_match with the page's current
+        ETag (from get_page) for an optimistic-lock edit: if another agent changed the
+        page since you read it, the edit fails with a 412 instead of clobbering their
+        write — the shared-memory-safe way for concurrent agents to edit one page."""
         return client.update_page(
             page_id,
             title=title,
             body=body,
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 

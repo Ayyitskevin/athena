@@ -49,11 +49,20 @@ def record_page_created(
 
 
 def record_page_edited(
-    conn: sqlite3.Connection, *, actor_id: int, before: dict, after: dict
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    before: dict,
+    after: dict,
+    commit: bool = True,
 ) -> None:
     """A page's content changed. No-op if neither title nor body actually moved —
     a save with no edits is not a lifecycle moment (mirrors the issue no-op rule,
-    and Mentor itself cuts no new version for an unchanged save)."""
+    and Mentor itself cuts no new version for an unchanged save).
+
+    ``commit=False`` composes this inside the audited page-edit command's transaction:
+    the event, the editor's auto-watch, and any mentions defer their commit to the
+    command owner so the page row and its audit footprint land together."""
     if before["title"] == after["title"] and before["body"] == after["body"]:
         return
     event = activity.record(
@@ -63,12 +72,13 @@ def record_page_edited(
         target_kind="page",
         target_id=after["id"],
         detail=after["title"],
+        commit=commit,
     )
     # Editing is participation — the editor starts watching the page.
-    notifications.watch(conn, actor_id, "page", after["id"])
+    notifications.watch(conn, actor_id, "page", after["id"], commit=commit)
     # A newly-added [[user:N]] in the edited body mentions that person.
     notifications.process_mentions(
-        conn, event_id=event["id"], actor_id=actor_id, text=after["body"]
+        conn, event_id=event["id"], actor_id=actor_id, text=after["body"], commit=commit
     )
 
 

@@ -24,6 +24,7 @@ from athena.core import access, activity, attachments, identity, labels, links, 
 from athena.core.deps import get_conn
 from athena.mentor import (
     page_activity,
+    page_commands,
     page_comment_commands,
     page_comments,
     pages,
@@ -620,19 +621,23 @@ def edit_page(
     if err is not None:
         return err
 
-    before, err = _page_visible_or_response(conn, page_id, user)
+    _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     title = title.strip()
     if not title:
         return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
 
-    after = pages.update_page(
-        conn, page_id, editor_id=user["id"], title=title, body=body.strip()
-    )
-    page_activity.record_page_edited(
-        conn, actor_id=user["id"], before=before, after=after
-    )
+    # The command owns the atomic snapshot+overwrite and its 'page_edited' event; the
+    # browser form carries no If-Match, so this stays last-write-wins (the optimistic
+    # lock is a REST/MCP concern for concurrent agents). A page that vanished between
+    # the visibility check and the write (a race) 404s rather than 500s.
+    try:
+        page_commands.edit_page(
+            conn, actor_id=user["id"], page_id=page_id, title=title, body=body.strip()
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

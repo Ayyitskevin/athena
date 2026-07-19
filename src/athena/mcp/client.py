@@ -593,6 +593,7 @@ class AthenaClient:
         *,
         title: str | None = None,
         body: str | None = None,
+        if_match: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         payload = self._params(title=title, body=body)
@@ -600,6 +601,7 @@ class AthenaClient:
             self._client.patch,
             f"/pages/{page_id}",
             json=payload,
+            if_match=if_match,
             idempotency_key=idempotency_key,
         )
 
