@@ -473,8 +473,8 @@ def test_assignment_surfaces_share_audit_watch_notification_and_noop_semantics(
                 expected_actor = automation.system_actor_id(conn)
                 changed = automation.execute_action(
                     conn,
-                    {"action_type": "assign", "action_params": {"user_id": 2}},
-                    {"target_id": issue["id"]},
+                    {"id": 1, "action_type": "assign", "action_params": {"user_id": 2}},
+                    {"id": 9001, "target_id": issue["id"]},
                     actor_id=expected_actor,
                 )
                 conn.close()
@@ -806,8 +806,8 @@ def test_automation_status_rolls_back_when_audit_fails(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="automation audit failed"):
             automation.execute_action(
                 conn,
-                {"action_type": "set_status", "action_params": {"status": "done"}},
-                {"target_id": issue["id"]},
+                {"id": 1, "action_type": "set_status", "action_params": {"status": "done"}},
+                {"id": 9002, "target_id": issue["id"]},
                 actor_id=actor_id,
             )
 
@@ -856,8 +856,8 @@ def test_automation_assignee_rolls_back_when_audit_fails(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="automation assignment audit failed"):
             automation.execute_action(
                 conn,
-                {"action_type": "assign", "action_params": {"user_id": 2}},
-                {"target_id": issue["id"]},
+                {"id": 1, "action_type": "assign", "action_params": {"user_id": 2}},
+                {"id": 9003, "target_id": issue["id"]},
                 actor_id=actor_id,
             )
 
