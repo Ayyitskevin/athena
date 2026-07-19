@@ -115,7 +115,7 @@ Goal: multiple agents coordinate without double-work, fleet throughput is
 measurable, and the architecture's rules are machine-enforced against the very
 agents that contribute here.
 
-- [ ] Delegation claim/lease protocol (accept / decline / complete) so two
+- [x] Delegation claim/lease protocol (accept / decline / complete) so two
       agents cannot silently pull the same issue.
 - [ ] Project- and sprint-scoped boards with agent-vs-human swimlanes.
 - [ ] Fleet throughput metrics derived from the existing trail: cycle time,

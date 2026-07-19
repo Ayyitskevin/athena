@@ -489,6 +489,72 @@ def record_delegated(
     )
 
 
+def record_issue_claimed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    expires_at: str,
+    renewed: bool,
+    commit: bool = True,
+) -> None:
+    """Record that an actor took (or renewed) the exclusive lease on an issue — the
+    coordination fact that stops a second agent from silently pulling the same work. The
+    detail carries the lease expiry so the trail shows how long the claim was good for.
+    A renewal (the holder re-claiming) records 'lease_renewed' rather than 'claimed', so
+    the run history distinguishes taking the work from extending the window. ``commit=False``
+    folds it into the claim command's transaction."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="lease_renewed" if renewed else "claimed",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=f"until {expires_at}",
+        commit=commit,
+    )
+
+
+def record_claim_completed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    commit: bool = True,
+) -> None:
+    """Record that the leaseholder released the issue by completing its claimed work —
+    the lease is gone and the issue is free for the next claimant. ``commit=False`` folds
+    it into the complete command's transaction."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="claim_completed",
+        target_kind="issue",
+        target_id=issue_id,
+        commit=commit,
+    )
+
+
+def record_delegation_declined(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    commit: bool = True,
+) -> None:
+    """Record that an actor declined a delegation handed to them (removing itself from the
+    contributor set) — so the operator sees the work was refused, not silently dropped, and
+    can re-route it. ``commit=False`` folds it into the decline command's transaction."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="delegation_declined",
+        target_kind="issue",
+        target_id=issue_id,
+        commit=commit,
+    )
+
+
 def record_contributor_removed(
     conn: sqlite3.Connection,
     *,

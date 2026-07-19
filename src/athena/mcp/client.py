@@ -346,6 +346,48 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def get_issue_lease(self, issue_id: int) -> Any:
+        """Who holds the exclusive claim on this issue right now (or null if unclaimed).
+        Check it before claiming to see whether another agent is already working it."""
+        return self._result(self._client.get(f"/issues/{issue_id}/lease"))
+
+    def claim_issue(
+        self,
+        issue_id: int,
+        *,
+        lease_seconds: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Take the exclusive lease on a delegated issue (accept). 409 if another agent
+        holds it; re-claiming your own lease renews the window."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/claim",
+            json=self._params(lease_seconds=lease_seconds),
+            idempotency_key=idempotency_key,
+        )
+
+    def complete_claim(
+        self, issue_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Release the lease you hold by completing the claimed work (complete)."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/complete",
+            idempotency_key=idempotency_key,
+        )
+
+    def decline_delegation(
+        self, issue_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Decline a delegation handed to you (decline): remove yourself from the
+        contributor set so the work is visibly refused and can be re-routed."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/decline",
+            idempotency_key=idempotency_key,
+        )
+
     def comment_on_issue(
         self, issue_id: int, body: str, *, idempotency_key: str | None = None
     ) -> Any:

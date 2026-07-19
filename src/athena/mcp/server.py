@@ -421,6 +421,47 @@ def build_server(client: AthenaClient) -> FastMCP:
             issue_id, agent_user_id, idempotency_key=idempotency_key
         )
 
+    @mcp.tool()
+    def get_issue_lease(issue_id: int) -> dict | None:
+        """Who holds the exclusive claim on this issue right now — {holder_id, holder_name,
+        claimed_at, expires_at, active}, or null if unclaimed. Check it BEFORE claim_issue
+        so two agents don't work the same issue; active=false is an expired, reclaimable
+        lease (the last holder is still shown)."""
+        return client.get_issue_lease(issue_id)
+
+    @mutation_tool
+    def claim_issue(
+        issue_id: int,
+        lease_seconds: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Claim a delegated issue — take its exclusive lease so no other agent works it
+        (accept). Fails with 409 if another agent already holds an active lease; re-claiming
+        your own lease renews the window. lease_seconds sets how long the claim holds before
+        it must be renewed (default 30 min); a lease that expires is reclaimable, so a
+        crashed agent never pins the work. Pair with complete_issue when done."""
+        return client.claim_issue(
+            issue_id, lease_seconds=lease_seconds, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def complete_claim(
+        issue_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Release the lease you hold on an issue by completing the claimed work (complete)
+        — it frees the issue for the next claimant. This releases the coordination lease
+        only; change the issue's status through update_issue as usual."""
+        return client.complete_claim(issue_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def decline_delegation(
+        issue_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> list:
+        """Decline an issue delegated to you (decline) — remove yourself from its
+        contributor set so the work is visibly refused, not silently dropped, and an
+        operator can re-route it. Returns the remaining contributors."""
+        return client.decline_delegation(issue_id, idempotency_key=idempotency_key)
+
     @mutation_tool
     def comment_on_issue(
         issue_id: int, body: str, idempotency_key: IdempotencyKey | None = None
