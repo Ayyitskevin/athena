@@ -17,7 +17,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from athena.core import activity, db, webhooks
+from athena.core import activity, db, run_context, webhooks
 from athena.main import create_app
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -177,6 +177,44 @@ def test_new_webhook_starts_at_tip_no_history(tmp_path):
 
 
 # --- delivery logic (stub poster) -------------------------------------------
+
+
+def test_payload_carries_run_lineage_coordinates(tmp_path):
+    # A push consumer must be able to mirror Mission Control: group by run, walk
+    # parent/child lineage, and place a fork — so the delivered body carries the
+    # same run coordinates GET /events exposes.
+    conn = _conn(tmp_path / "lineage.db")
+    webhooks.create_webhook(
+        conn, url="https://93.184.216.34/hook", created_by=1, start_cursor=0
+    )
+    # An untagged event: the three lineage keys are present but null.
+    plain = _event(conn, target_id=10, verb="created")
+    # A run-tagged event forked from the first, with a parent run.
+    run_token = run_context.set_run_id("child-run")
+    parent_token = run_context.set_parent_run_id("goal-run")
+    fork_token = run_context.set_forked_from_event_id(plain["id"])
+    try:
+        tagged = activity.record(
+            conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=10
+        )
+    finally:
+        run_context.reset_forked_from_event_id(fork_token)
+        run_context.reset_parent_run_id(parent_token)
+        run_context.reset_run_id(run_token)
+
+    poster = _Poster(ok=True)
+    webhooks.deliver_pending(conn, poster=poster, now=NOW)
+    conn.close()
+
+    bodies = {json.loads(c["body"])["id"]: json.loads(c["body"]) for c in poster.calls}
+    # Stable schema: the keys are ALWAYS present…
+    assert bodies[plain["id"]]["run_id"] is None
+    assert bodies[plain["id"]]["parent_run_id"] is None
+    assert bodies[plain["id"]]["forked_from_event_id"] is None
+    # …and carry the real coordinates when the event is tagged.
+    assert bodies[tagged["id"]]["run_id"] == "child-run"
+    assert bodies[tagged["id"]]["parent_run_id"] == "goal-run"
+    assert bodies[tagged["id"]]["forked_from_event_id"] == plain["id"]
 
 
 def test_delivery_signs_orders_and_advances_cursor(tmp_path):
