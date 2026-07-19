@@ -78,7 +78,7 @@ success) is observable, and the operator gets levers between "watch" and
       probing its boundary currently leaves no trace.
 - [x] Audit the project lifecycle (create/edit/delete) — today a workspace
       container can appear or vanish with no record of who did it.
-- [ ] Give automation lineage: stamp rule-driven writes with the triggering
+- [x] Give automation lineage: stamp rule-driven writes with the triggering
       event and rule, and make the comment action idempotent across a crashed
       pass.
 - [ ] Migrate the remaining risky Aegis writes to commands per

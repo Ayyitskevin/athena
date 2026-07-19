@@ -25,8 +25,14 @@ import sqlite3
 from collections.abc import Callable
 
 from athena import config
-from athena.aegis import comments, contributors, issue_activity, issue_commands, issues
-from athena.core import activity, db, labels, users
+from athena.aegis import (
+    comment_commands,
+    contributors,
+    issue_activity,
+    issue_commands,
+    issues,
+)
+from athena.core import activity, db, labels, run_context, users
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +347,30 @@ def system_actor_id(conn: sqlite3.Connection) -> int:
     )["id"]
 
 
+def automation_run_id(rule_id: int, event_id: int) -> str:
+    """The lineage run id stamped on every write a rule makes for one trigger event.
+    Unique per (rule, triggering event) firing, so it both groups the action in
+    replay/lineage AND doubles as the idempotency key below — re-running the same
+    firing after a crash can recognize it already happened."""
+    return f"automation:rule-{rule_id}:event-{event_id}"
+
+
+def _already_fired(conn: sqlite3.Connection, firing_run_id: str) -> bool:
+    """Whether this exact (rule, event) firing already recorded its action. The
+    engine advances its cursor only at end-of-pass, so a crash after an action
+    committed but before the cursor moved re-reads the event on restart. The
+    assign/status/label/contributor actions are naturally idempotent (they no-op
+    when already in the desired state), but a comment always appends — so without
+    this guard a crashed pass would double-post it. Keyed on the lineage run id we
+    are about to stamp, so the trail is its own dedup ledger (no extra table)."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM activity WHERE run_id = ? LIMIT 1", (firing_run_id,)
+        ).fetchone()
+        is not None
+    )
+
+
 def execute_action(
     conn: sqlite3.Connection, rule: dict, event: dict, *, actor_id: int
 ) -> bool:
@@ -352,10 +382,34 @@ def execute_action(
     stranding the engine. The actions mirror the issue write endpoints' data-layer +
     activity-recorder pair, so an automated change is indistinguishable in the log from a
     human one except for the actor. Migrated issue changes go through the same atomic
-    application command as REST/web, under the explicit Automation system policy."""
+    application command as REST/web, under the explicit Automation system policy.
+
+    LINEAGE: every write here is stamped (via run_context) with a per-firing run id
+    (automation:rule-<id>:event-<id>), the triggering event as its fork point, and
+    the triggering event's own run as parent — so an automated change on the trail
+    answers "which rule, fired by which event, in which run" without a schema change.
+    That same run id makes the firing idempotent across a crashed pass."""
     issue = issues.get_issue(conn, event["target_id"])
     if issue is None:
         return False
+    firing_run_id = automation_run_id(rule["id"], event["id"])
+    if _already_fired(conn, firing_run_id):
+        return False
+    run_token = run_context.set_run_id(firing_run_id)
+    parent_token = run_context.set_parent_run_id(event.get("run_id"))
+    fork_token = run_context.set_forked_from_event_id(event["id"])
+    try:
+        return _perform_action(conn, rule, event, issue, actor_id=actor_id)
+    finally:
+        run_context.reset_forked_from_event_id(fork_token)
+        run_context.reset_parent_run_id(parent_token)
+        run_context.reset_run_id(run_token)
+
+
+def _perform_action(
+    conn: sqlite3.Connection, rule: dict, event: dict, issue: dict, *, actor_id: int
+) -> bool:
+    """The action if-chain, run inside execute_action's lineage context."""
     params = rule["action_params"]
 
     if rule["action_type"] == "assign":
@@ -408,8 +462,10 @@ def execute_action(
         body = (params.get("body") or "").strip()
         if not body:
             return False
-        comments.add_comment(conn, issue_id=issue["id"], author_id=actor_id, body=body)
-        issue_activity.record_commented(
+        # Atomic add + audit (one transaction), so the firing's activity event and
+        # its comment row land together — a crash can't leave a comment with no
+        # trail entry, which is what makes the run-id idempotency guard reliable.
+        comment_commands.create_comment(
             conn, actor_id=actor_id, issue_id=issue["id"], body=body
         )
         return True
