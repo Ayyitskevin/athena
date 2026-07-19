@@ -76,7 +76,7 @@ success) is observable, and the operator gets levers between "watch" and
 - [x] Audit authentication/authorization *failures*: failed logins,
       revoked-token use, and scope denials become activity events. An agent
       probing its boundary currently leaves no trace.
-- [ ] Audit the project lifecycle (create/edit/delete) — today a workspace
+- [x] Audit the project lifecycle (create/edit/delete) — today a workspace
       container can appear or vanish with no record of who did it.
 - [ ] Give automation lineage: stamp rule-driven writes with the triggering
       event and rule, and make the comment action idempotent across a crashed

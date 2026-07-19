@@ -22,6 +22,51 @@ import sqlite3
 from athena.core import activity
 
 
+def record_project_created(
+    conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, key: str
+) -> None:
+    """A project (workspace container) was created — the trail's first record that
+    it exists and who made it. Detail carries the name and issue-key prefix."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="created_project",
+        target_kind="project",
+        target_id=project_id,
+        detail=f"{name} ({key})",
+    )
+
+
+def record_project_edited(
+    conn: sqlite3.Connection, *, actor_id: int, project_id: int, changes: str
+) -> None:
+    """A project's name/key/description was edited. Detail summarizes what changed
+    so a rename (ATH -> OPS) is legible in the feed."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="edited_project",
+        target_kind="project",
+        target_id=project_id,
+        detail=changes,
+    )
+
+
+def record_project_deleted(
+    conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, key: str
+) -> None:
+    """A project was deleted. The event OUTLIVES its target (activity.target_id has
+    no FK), so the detail preserves the name/key the vanished container had."""
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="deleted_project",
+        target_kind="project",
+        target_id=project_id,
+        detail=f"{name} ({key})",
+    )
+
+
 def record_project_visibility_changed(
     conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, visibility: str
 ) -> None:

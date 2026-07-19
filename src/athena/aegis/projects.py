@@ -35,6 +35,7 @@ def create_project(
     key: str,
     created_by: int,
     description: str = "",
+    commit: bool = True,
 ) -> dict:
     """Insert a project and return it. Raises sqlite3.IntegrityError if a project
     with this name OR key already exists (both are UNIQUE, case-insensitive) or if
@@ -42,7 +43,11 @@ def create_project(
 
     key is the issue-key prefix (e.g. "ATH" -> issues ATH-1, ATH-2, ...). It is
     stored uppercased so it is canonical; the boundary validates its shape
-    (letters/digits, leading letter) and turns a duplicate into a clean 409."""
+    (letters/digits, leading letter) and turns a duplicate into a clean 409.
+
+    ``commit=False`` lets the audited command fold the insert, its default statuses,
+    and the 'created' event into one transaction (the project and its trail land or
+    roll back together)."""
     cur = conn.execute(
         "INSERT INTO projects "
         "(id, name, key, description, created_by, activity_scope_key) "
@@ -50,11 +55,13 @@ def create_project(
         "WHERE target_kind = 'project'",
         (name, key.upper(), description, created_by, secrets.token_hex(16)),
     )
-    conn.commit()
+    project_id = cur.lastrowid
     # Give the new project the default status set, so it has a working lifecycle
     # immediately and can be customized from there.
-    statuses.seed_defaults(conn, cur.lastrowid)
-    return get_project(conn, cur.lastrowid)
+    statuses.seed_defaults(conn, project_id, commit=False)
+    if commit:
+        conn.commit()
+    return get_project(conn, project_id)
 
 
 def get_project(conn: sqlite3.Connection, project_id: int) -> dict | None:
@@ -112,6 +119,7 @@ def update_project(
     name: str | None = None,
     key: str | None = None,
     description: str | None = None,
+    commit: bool = True,
 ) -> dict | None:
     """Partial edit: only the fields passed as non-None are written, the rest are
     left as-is (mirrors issues.update_issue). Returns the updated project, or None
@@ -121,7 +129,8 @@ def update_project(
 
     Editing the key only changes the prefix shown in issue keys (ATH-1 -> OPS-1);
     it does NOT renumber anything, because the per-project sequence is independent
-    of the prefix."""
+    of the prefix. ``commit=False`` lets the audited command fold the edit and its
+    'edited_project' event into one transaction."""
     sets, params = [], []
     if name is not None:
         sets.append("name = ?")
@@ -138,7 +147,8 @@ def update_project(
     cur = conn.execute(
         f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_project(conn, project_id)
@@ -164,7 +174,9 @@ def set_visibility(
     return get_project(conn, project_id)
 
 
-def delete_project(conn: sqlite3.Connection, project_id: int) -> bool:
+def delete_project(
+    conn: sqlite3.Connection, project_id: int, *, commit: bool = True
+) -> bool:
     """Delete a project. Returns True if a project was deleted, False if no
     project had that id (so the boundary can 404).
 
@@ -173,9 +185,14 @@ def delete_project(conn: sqlite3.Connection, project_id: int) -> bool:
     cascade or detach, because reassigning a pile of issues (or orphaning them) is
     a data decision a delete must not make silently. (If a stray issue somehow
     remained, the issues.project_id foreign key has no ON DELETE, so it would
-    refuse the delete and raise rather than orphan it.)"""
+    refuse the delete and raise rather than orphan it.)
+
+    ``commit=False`` lets the audited command fold the delete and its
+    'deleted_project' event into one transaction — the record of who deleted it
+    OUTLIVES the project (target_id has no FK), so the trail keeps the fact."""
     cur = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
