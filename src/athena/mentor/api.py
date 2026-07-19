@@ -135,6 +135,9 @@ class PageVersionOut(BaseModel):
     body: str
     edited_by: int
     created_at: str
+    # The agent run that authored this revision's content, or null for a human write
+    # (or a revision snapshotted before run provenance was recorded).
+    run_id: str | None = None
 
 
 class LinkOut(BaseModel):

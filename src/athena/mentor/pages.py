@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena import config
-from athena.core import attachments, links, notifications, search
+from athena.core import attachments, links, notifications, run_context, search
 
 
 def create_page(
@@ -34,12 +34,16 @@ def create_page(
     ``commit=False`` composes this inside the audited create command's transaction:
     the row, its derived link/search index, and the command's ``page_created`` event
     (with the creator's auto-watch and any mentions) commit or roll back together."""
+    # Stamp the run that authored this first revision (None for a human write), the
+    # same run context the activity log records — so the page, its history, and its
+    # audit event all attribute to the same run.
     cur = conn.execute(
         "INSERT INTO pages (id, space_id, parent_id, title, body, created_by, "
-        "updated_by, updated_at) "
-        "SELECT next_id, ?, ?, ?, ?, ?, ?, datetime('now') "
+        "updated_by, updated_at, run_id) "
+        "SELECT next_id, ?, ?, ?, ?, ?, ?, datetime('now'), ? "
         "FROM activity_target_id_sequences WHERE target_kind = 'page'",
-        (space_id, parent_id, title, body, created_by, created_by),
+        (space_id, parent_id, title, body, created_by, created_by,
+         run_context.get_run_id()),
     )
     page_id = cur.lastrowid
     # Index any [[issue:N]]/[[page:N]] references this page's body makes, and its
@@ -180,10 +184,13 @@ def update_page(
         next_version = conn.execute(
             "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
         ).fetchone()["n"] + 1
+        # The snapshot carries the SUPERSEDED revision's own run_id (like its edited_by
+        # and created_at) — the run that authored this content, not the run doing the
+        # superseding. NULL when that revision was a human write or predates 0052.
         conn.execute(
             "INSERT INTO page_versions "
-            "(page_id, version, title, body, edited_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(page_id, version, title, body, edited_by, created_at, run_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 page_id,
                 next_version,
@@ -191,14 +198,17 @@ def update_page(
                 page["body"],
                 page["updated_by"],
                 page["updated_at"],
+                page["run_id"],
             ),
         )
 
+        # The live row now belongs to THIS edit's run (None for a human write), so the
+        # next snapshot attributes this content to the run that just wrote it.
         assignments = ", ".join(f"{col} = ?" for col in fields)
         conn.execute(
             f"UPDATE pages SET {assignments}, updated_by = ?, "
-            "updated_at = datetime('now') WHERE id = ?",
-            (*fields.values(), editor_id, page_id),
+            "updated_at = datetime('now'), run_id = ? WHERE id = ?",
+            (*fields.values(), editor_id, run_context.get_run_id(), page_id),
         )
         # Re-index inside the write transaction (commit=False) so the derived link and
         # search indexes commit or roll back WITH the edit — they can never reflect a

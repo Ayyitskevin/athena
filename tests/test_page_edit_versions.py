@@ -96,6 +96,57 @@ def test_each_version_keeps_its_own_author(tmp_path):
     assert live["updated_by"] == 2  # the present revision is Bob's
 
 
+def test_each_version_keeps_its_authoring_run(tmp_path):
+    # Run provenance mirrors authorship: the snapshot of a revision carries the RUN that
+    # produced that content (the page's run_id when the snapshot was cut), not the run of
+    # the edit that superseded it — so per-version provenance stays honest across runs.
+    from athena.core import run_context
+
+    conn = _migrated_conn(tmp_path / "runs.db")
+    tok = run_context.set_run_id("run-alpha")
+    page = _space_with_page(conn, body="v1")  # created under run-alpha
+    run_context.reset_run_id(tok)
+    assert pages.get_page(conn, page["id"])["run_id"] == "run-alpha"
+
+    tok2 = run_context.set_run_id("run-beta")
+    pages.update_page(conn, page["id"], editor_id=1, body="v2")  # edit under run-beta
+    run_context.reset_run_id(tok2)
+
+    history = pages.list_page_versions(conn, page["id"])
+    assert history[0]["version"] == 1
+    assert history[0]["run_id"] == "run-alpha"  # the superseded content's run, not beta
+    assert pages.get_page(conn, page["id"])["run_id"] == "run-beta"  # live row = this edit
+
+
+def test_human_write_records_no_run(tmp_path):
+    # A write with no run context (a human at the keyboard) records run_id = NULL, not an
+    # invented one — provenance is honest about the absence of a run.
+    conn = _migrated_conn(tmp_path / "human.db")
+    page = _space_with_page(conn, body="v1")  # no run context set
+    assert pages.get_page(conn, page["id"])["run_id"] is None
+    pages.update_page(conn, page["id"], editor_id=1, body="v2")
+    assert pages.list_page_versions(conn, page["id"])[0]["run_id"] is None
+
+
+def test_version_run_id_surfaced_over_rest(tmp_path):
+    # The version endpoint exposes run_id so an operator can read provenance without
+    # cross-referencing the activity log.
+    app = create_app(tmp_path / "restrun.db")
+    with TestClient(app) as client:
+        conn = db.connect(tmp_path / "restrun.db")
+        conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
+        conn.commit()
+        conn.close()
+        h = {"X-Athena-Actor": "1", "X-Athena-Run": "run-rest"}
+        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        pg = client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "Doc", "body": "v1"}, headers=h
+        ).json()
+        client.patch(f"/pages/{pg['id']}", json={"body": "v2"}, headers=h)
+        versions = client.get(f"/pages/{pg['id']}/versions", headers=h).json()
+        assert versions[0]["run_id"] == "run-rest"
+
+
 def test_no_changing_fields_cuts_no_version(tmp_path):
     conn = _migrated_conn(tmp_path / "noop.db")
     page = _space_with_page(conn)
