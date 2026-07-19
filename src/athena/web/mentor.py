@@ -29,6 +29,7 @@ from athena.mentor import (
     page_comments,
     pages,
     space_activity,
+    space_commands,
     spaces,
 )
 from athena.web.csrf import verify_csrf
@@ -150,11 +151,9 @@ def create_space(
     if spaces.get_space_by_key(conn, key) is not None:
         return HTMLResponse('<div class="error">A space with that key already exists.</div>', status_code=409)
 
-    space = spaces.create_space(
-        conn, key=key, name=name, description=description.strip(), created_by=user["id"]
-    )
-    space_activity.record_space_created(
-        conn, actor_id=user["id"], space_id=space["id"], name=space["name"]
+    # The command owns the atomic insert AND its 'space_created' event.
+    space = space_commands.create_space(
+        conn, actor_id=user["id"], key=key, name=name, description=description.strip()
     )
     return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
@@ -193,8 +192,8 @@ def delete_space(
             '<div class="error">Delete or move this space\'s pages first.</div>',
             status_code=409,
         )
-    spaces.delete_space(conn, space_id)
-    space_activity.record_space_deleted(
+    # The command owns the atomic delete AND its 'space_deleted' event.
+    space_commands.delete_space(
         conn, actor_id=user["id"], space_id=space_id, name=space["name"]
     )
     return RedirectResponse("/mentor", status_code=303)
@@ -258,12 +257,19 @@ def edit_space(
             '<div class="error">A space with that key already exists.</div>', status_code=409
         )
 
-    after = spaces.update_space(
-        conn, space_id, key=key, name=name, description=description.strip()
-    )
-    space_activity.record_space_edited(
-        conn, actor_id=user["id"], before=before, after=after
-    )
+    # The command owns the atomic update AND its 'space_edited' event (a no-op change
+    # records nothing). A space that vanished in a race 404s rather than 500s.
+    try:
+        space_commands.edit_space(
+            conn,
+            actor_id=user["id"],
+            space_id=space_id,
+            key=key,
+            name=name,
+            description=description.strip(),
+        )
+    except space_commands.SpaceCommandError:
+        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
 
 

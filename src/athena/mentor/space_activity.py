@@ -20,9 +20,15 @@ from athena.core import activity
 
 
 def record_space_created(
-    conn: sqlite3.Connection, *, actor_id: int, space_id: int, name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    name: str,
+    commit: bool = True,
 ) -> None:
-    """A space was created — the first audit fact in its history."""
+    """A space was created — the first audit fact in its history. ``commit=False``
+    composes this inside the audited create command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -30,16 +36,23 @@ def record_space_created(
         target_kind="space",
         target_id=space_id,
         detail=name,
+        commit=commit,
     )
 
 
 def record_space_edited(
-    conn: sqlite3.Connection, *, actor_id: int, before: dict, after: dict
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    before: dict,
+    after: dict,
+    commit: bool = True,
 ) -> None:
     """A space's key, name, or description changed. No-op if none of the three
     actually moved — the web edit form always resubmits all fields, so an unchanged
     save is not a lifecycle moment (mirrors the page no-op rule). The detail names
-    the space (its current name) so the feed reads cleanly."""
+    the space (its current name) so the feed reads cleanly. ``commit=False`` composes
+    this inside the audited edit command's transaction."""
     if (
         before["key"] == after["key"]
         and before["name"] == after["name"]
@@ -53,14 +66,21 @@ def record_space_edited(
         target_kind="space",
         target_id=after["id"],
         detail=after["name"],
+        commit=commit,
     )
 
 
 def record_space_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, space_id: int, name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    name: str,
+    commit: bool = True,
 ) -> None:
     """A space was removed — who took the container down, with its name preserved in
-    the detail since the space row itself is gone."""
+    the detail since the space row itself is gone. ``commit=False`` composes this
+    inside the audited delete command's transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -68,6 +88,7 @@ def record_space_deleted(
         target_kind="space",
         target_id=space_id,
         detail=name,
+        commit=commit,
     )
 
 

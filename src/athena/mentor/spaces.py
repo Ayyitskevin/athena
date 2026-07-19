@@ -17,18 +17,23 @@ def create_space(
     name: str,
     created_by: int,
     description: str = "",
+    commit: bool = True,
 ) -> dict:
     """Insert a space and return it. Raises sqlite3.IntegrityError if a space with
     this key already exists (key is UNIQUE, case-insensitive) or if created_by
-    isn't a real user (the foreign key refuses the orphan)."""
+    isn't a real user (the foreign key refuses the orphan). ``commit=False`` composes
+    this inside the audited create command's transaction so the row and its
+    ``space_created`` event land together."""
     cur = conn.execute(
         "INSERT INTO spaces (id, key, name, description, created_by) "
         "SELECT next_id, ?, ?, ?, ? FROM activity_target_id_sequences "
         "WHERE target_kind = 'space'",
         (key, name, description, created_by),
     )
-    conn.commit()
-    return get_space(conn, cur.lastrowid)
+    space_id = cur.lastrowid
+    if commit:
+        conn.commit()
+    return get_space(conn, space_id)
 
 
 def get_space(conn: sqlite3.Connection, space_id: int) -> dict | None:
@@ -71,13 +76,15 @@ def update_space(
     key: str | None = None,
     name: str | None = None,
     description: str | None = None,
+    commit: bool = True,
 ) -> dict | None:
     """Partial edit: only the fields passed as non-None are written, the rest are
     left as-is (mirrors aegis.update_project). Returns the updated space, or None if
     no space has that id. Raises sqlite3.IntegrityError if the new key collides with
     another space (key is UNIQUE, case-insensitive) — the boundary checks for a
     duplicate first and returns a clean 409. The key is normalized to UPPERCASE here
-    too, so "eng" and "ENG" stay one identity exactly as create does."""
+    too, so "eng" and "ENG" stay one identity exactly as create does. ``commit=False``
+    composes this inside the audited edit command's transaction."""
     sets, params = [], []
     if key is not None:
         sets.append("key = ?")
@@ -94,7 +101,8 @@ def update_space(
     cur = conn.execute(
         f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_space(conn, space_id)
@@ -118,7 +126,9 @@ def set_visibility(
     return get_space(conn, space_id)
 
 
-def delete_space(conn: sqlite3.Connection, space_id: int) -> bool:
+def delete_space(
+    conn: sqlite3.Connection, space_id: int, *, commit: bool = True
+) -> bool:
     """Delete a space. Returns True if a space was deleted, False if no space had
     that id (so the boundary can 404).
 
@@ -129,7 +139,10 @@ def delete_space(conn: sqlite3.Connection, space_id: int) -> bool:
     follow). Unlike a page, a space has no version history or derived link/search
     rows of its own, so there is nothing to clean up beyond the row itself. (If a
     stray page somehow remained, the pages.space_id foreign key has no ON DELETE, so
-    it would refuse the delete and raise rather than orphan it.)"""
+    it would refuse the delete and raise rather than orphan it.) ``commit=False``
+    composes this inside the audited delete command's transaction so the row delete and
+    its ``space_deleted`` event land together."""
     cur = conn.execute("DELETE FROM spaces WHERE id = ?", (space_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0

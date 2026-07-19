@@ -26,6 +26,7 @@ from athena.mentor import (
     page_etags,
     pages,
     space_activity,
+    space_commands,
     spaces,
 )
 
@@ -258,17 +259,14 @@ def create_space(
         raise HTTPException(status_code=422, detail="space name is required")
     if spaces.get_space_by_key(conn, key) is not None:
         raise HTTPException(status_code=409, detail="space key already exists")
-    space = spaces.create_space(
+    # The command owns the atomic insert AND its 'space_created' event.
+    return space_commands.create_space(
         conn,
+        actor_id=actor["id"],
         key=key,
         name=name,
         description=payload.description,
-        created_by=actor["id"],
     )
-    space_activity.record_space_created(
-        conn, actor_id=actor["id"], space_id=space["id"], name=space["name"]
-    )
-    return space
 
 
 @spaces_router.get("/{space_id}", response_model=SpaceOut)
@@ -316,13 +314,19 @@ def edit_space(
         clash = spaces.get_space_by_key(conn, key)
         if clash is not None and clash["id"] != space_id:
             raise HTTPException(status_code=409, detail="space key already exists")
-    after = spaces.update_space(
-        conn, space_id, key=key, name=name, description=payload.description
-    )
-    space_activity.record_space_edited(
-        conn, actor_id=actor["id"], before=before, after=after
-    )
-    return after
+    # The command owns the atomic update AND its 'space_edited' event (a no-op change
+    # records nothing). A space that vanished in a race is a 404.
+    try:
+        return space_commands.edit_space(
+            conn,
+            actor_id=actor["id"],
+            space_id=space_id,
+            key=key,
+            name=name,
+            description=payload.description,
+        )
+    except space_commands.SpaceCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> dict:
@@ -365,8 +369,8 @@ def delete_space(
     # a delete must not silently wipe a documentation tree.
     if pages.count_pages_in_space(conn, space_id) > 0:
         raise HTTPException(status_code=409, detail="delete or move its pages first")
-    spaces.delete_space(conn, space_id)
-    space_activity.record_space_deleted(
+    # The command owns the atomic delete AND its 'space_deleted' event.
+    space_commands.delete_space(
         conn, actor_id=actor["id"], space_id=space_id, name=space["name"]
     )
 
