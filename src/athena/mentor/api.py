@@ -712,6 +712,23 @@ def backlinks(
     return links.backlinks(conn, target_kind="page", target_id=page_id, actor=actor)
 
 
+@pages_router.get("/{page_id}/outgoing-links", response_model=list[LinkOut])
+def outgoing_links(
+    page_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # "What does this page reference?" — the forward edges of the knowledge graph (the
+    # [[issue:N]]/[[page:N]] cross-links in its body), the mirror of /backlinks. Gated by
+    # the viewer: a link to a private issue/page the caller can't see is hidden, and each
+    # target carries whether it still `exists` (broken links resolve lazily). 404 if the
+    # page is missing or in a space the caller can't see.
+    _page_for_read(conn, page_id, actor)
+    return links.outgoing_links(
+        conn, source_kind="page", source_id=page_id, actor=actor
+    )
+
+
 # --- Page comments: the discussion thread on a page -----------------------
 
 

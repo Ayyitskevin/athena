@@ -575,6 +575,35 @@ class AthenaClient:
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
 
+    def page_backlinks(self, page_id: int) -> Any:
+        """What references this page — the incoming edges of the knowledge graph."""
+        return self._result(self._client.get(f"/pages/{page_id}/backlinks"))
+
+    def page_outgoing_links(self, page_id: int) -> Any:
+        """What this page references — the outgoing edges of the knowledge graph."""
+        return self._result(self._client.get(f"/pages/{page_id}/outgoing-links"))
+
+    def list_page_versions(self, page_id: int) -> Any:
+        """The page's superseded revisions, newest first (the live page is not one)."""
+        return self._result(self._client.get(f"/pages/{page_id}/versions"))
+
+    def get_page_version(self, page_id: int, version: int) -> Any:
+        """One historical revision's title + body."""
+        return self._result(
+            self._client.get(f"/pages/{page_id}/versions/{version}")
+        )
+
+    def restore_page_version(
+        self, page_id: int, version: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Restore the page's content to a prior revision (a non-destructive edit —
+        the current content is snapshotted into history first)."""
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/versions/{version}/restore",
+            idempotency_key=idempotency_key,
+        )
+
     def archive_page(
         self, page_id: int, *, idempotency_key: str | None = None
     ) -> Any:

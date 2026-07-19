@@ -195,6 +195,12 @@ MUTATION_CASES = [
         "/pages/4/unarchive",
         lambda c, k: c.unarchive_page(4, idempotency_key=k),
     ),
+    (
+        "restore_page_version",
+        "POST",
+        "/pages/4/versions/2/restore",
+        lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
+    ),
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
@@ -235,6 +241,7 @@ MCP_MUTATION_CASES = [
     ("update_page", {"page_id": 4}),
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
+    ("restore_page_version", {"page_id": 4, "version": 2}),
 ]
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES

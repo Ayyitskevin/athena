@@ -611,6 +611,46 @@ def build_server(client: AthenaClient) -> FastMCP:
         update_page to make the edit fail rather than clobber a concurrent change."""
         return client.get_page(page_id)
 
+    @mcp.tool()
+    def page_backlinks(page_id: int) -> list:
+        """What references this page — the INCOMING edges of the knowledge graph. Each
+        item is {kind, id, title, exists}: another issue or page whose body cross-links
+        here. Results the caller may not see (private space/project) are hidden. Use it
+        to find what depends on a doc before editing it."""
+        return client.page_backlinks(page_id)
+
+    @mcp.tool()
+    def page_outgoing_links(page_id: int) -> list:
+        """What this page references — the OUTGOING edges of the knowledge graph (the
+        [[issue:N]]/[[page:N]] cross-links in its body). Each item is {kind, id, title,
+        exists}; exists=false marks a broken link (target deleted or never created).
+        Use it to walk from a doc to the things it points at."""
+        return client.page_outgoing_links(page_id)
+
+    @mcp.tool()
+    def list_page_versions(page_id: int) -> list:
+        """The page's superseded revisions, newest first (the live page is NOT one of
+        them — get it with get_page). Each is {id, page_id, version, title, body,
+        edited_by, created_at}. Pair with restore_page_version to roll back."""
+        return client.list_page_versions(page_id)
+
+    @mcp.tool()
+    def get_page_version(page_id: int, version: int) -> dict:
+        """Fetch one historical page revision by its version number (title + body as of
+        that revision), for diffing against the live page or another version."""
+        return client.get_page_version(page_id, version)
+
+    @mutation_tool
+    def restore_page_version(
+        page_id: int, version: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Restore a page's content to a prior version. Non-destructive: the current
+        content is snapshotted into history first, so a restore is itself reversible.
+        Returns the restored (now-live) page."""
+        return client.restore_page_version(
+            page_id, version, idempotency_key=idempotency_key
+        )
+
     @mutation_tool
     def create_page(
         space_id: int,
