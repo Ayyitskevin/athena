@@ -141,6 +141,63 @@ def test_restore_rolls_back_the_content_when_audit_fails(tmp_path):
     assert _events(db_file, "page_restored") == []
 
 
+def test_delete_rolls_back_the_page_and_dependents_when_audit_fails(tmp_path):
+    import athena.mentor.page_activity as page_activity
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        sp = _space(c)
+        page = _page(c, sp["id"], body="v1")
+        # Give it a version (an edit) and a comment, so the delete has dependents whose
+        # survival proves the whole delete rolled back — not just the page row.
+        c.patch(f"/pages/{page['id']}", json={"body": "v2"}, headers=H1)
+        c.post(
+            f"/pages/{page['id']}/comments", json={"body": "hi"}, headers=H1
+        )
+    conn = db.connect(db_file)
+    original = page_activity.record_page_deleted
+
+    def boom(*a, **k):
+        raise RuntimeError("audit down")
+
+    page_activity.record_page_deleted = boom
+    try:
+        try:
+            page_commands.delete_page(
+                conn, actor_id=1, page_id=page["id"], title=page["title"]
+            )
+            raise AssertionError("expected the recorder failure to propagate")
+        except RuntimeError:
+            pass
+    finally:
+        page_activity.record_page_deleted = original
+    # The page, its version, and its comment all survive — the delete rolled back with
+    # its failed event, and no page_deleted landed.
+    from athena.mentor import page_comments
+
+    assert pages.get_page(conn, page["id"]) is not None
+    assert pages.list_page_versions(conn, page["id"]) != []
+    assert page_comments.list_comments(conn, page["id"]) != []
+    conn.close()
+    assert _events(db_file, "page_deleted") == []
+
+
+def test_delete_removes_the_page_and_records_the_event(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        sp = _space(c)
+        page = _page(c, sp["id"])
+        assert c.delete(f"/pages/{page['id']}", headers=H1).status_code == 204
+        # Gone, and the deletion is on the trail (title preserved in the detail).
+        assert c.get(f"/pages/{page['id']}", headers=H1).status_code == 404
+    deleted = _events(db_file, "page_deleted")
+    assert [(e["actor_id"], e["target_id"], e["detail"]) for e in deleted] == [
+        (1, page["id"], page["title"])
+    ]
+
+
 def test_create_move_restore_record_attributed_events(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:

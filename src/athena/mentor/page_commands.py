@@ -201,6 +201,31 @@ def restore_page_version(
         return restored
 
 
+def delete_page(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, title: str
+) -> bool:
+    """Hard-delete a page atomically with its ``page_deleted`` event, then run the
+    post-commit blob-unlink + index side effects. Returns True if a page was removed,
+    False if it had already vanished (a race past the boundary's checks — no event for a
+    delete that didn't happen). The caller enforces the no-children precondition (409),
+    visibility, and passes the page's ``title`` (the row is gone by the time the event
+    is read, so the title is preserved in the audit detail).
+
+    The DB deletes and the audit event commit or roll back together (the atomicity the
+    migration buys); the filesystem/index side effects — which can't be transactional —
+    run only after that commit, so a rolled-back delete leaves nothing orphaned."""
+    stored_names: list[str] = []
+    with db.transaction(conn, immediate=True):
+        if pages.get_page(conn, page_id) is None:
+            return False
+        stored_names = pages.purge_page(conn, page_id)
+        page_activity.record_page_deleted(
+            conn, actor_id=actor_id, page_id=page_id, title=title, commit=False
+        )
+    pages.finalize_page_deletion(conn, page_id, stored_names)
+    return True
+
+
 def set_page_archived(
     conn: sqlite3.Connection, *, actor_id: int, page_id: int, archived: bool
 ) -> dict:

@@ -649,8 +649,9 @@ def delete_page(
         raise HTTPException(
             status_code=409, detail="move or delete its child pages first"
         )
-    pages.delete_page(conn, page_id)
-    page_activity.record_page_deleted(
+    # The command owns the atomic delete AND its 'page_deleted' event, then the
+    # post-commit blob unlink + index maintenance.
+    page_commands.delete_page(
         conn, actor_id=actor["id"], page_id=page_id, title=page["title"]
     )
 

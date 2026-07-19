@@ -88,10 +88,17 @@ def record_page_edited(
 
 
 def record_page_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, page_id: int, title: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    title: str,
+    commit: bool = True,
 ) -> None:
     """A page was removed — who took the document down, with its title preserved in
-    the detail since the page row itself is gone."""
+    the detail since the page row itself is gone. ``commit=False`` composes inside the
+    audited delete command's transaction so the row deletes and this event land
+    together."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -99,6 +106,7 @@ def record_page_deleted(
         target_kind="page",
         target_id=page_id,
         detail=title,
+        commit=commit,
     )
 
 
