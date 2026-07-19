@@ -35,6 +35,7 @@ from athena.aegis import (
     issue_search,
     issues,
     project_activity,
+    project_commands,
     projects,
     sprints,
     statuses,
@@ -1120,12 +1121,14 @@ def create_project(
         raise HTTPException(status_code=409, detail="project already exists")
     if projects.get_project_by_key(conn, key) is not None:
         raise HTTPException(status_code=409, detail="project key already in use")
-    return projects.create_project(
+    # The command owns the insert, its default statuses, AND the atomic
+    # 'created_project' audit event — a workspace container never appears silently.
+    return project_commands.create_project(
         conn,
+        actor_id=actor["id"],
         name=name,
         key=key,
         description=payload.description,
-        created_by=actor["id"],
     )
 
 
@@ -1200,8 +1203,14 @@ def update_project(
         clash = projects.get_project_by_key(conn, key)
         if clash is not None and clash["id"] != project_id:
             raise HTTPException(status_code=409, detail="project key already in use")
-    updated = projects.update_project(
-        conn, project_id, name=name, key=key, description=payload.description
+    # The command owns the edit AND its atomic 'edited_project' audit event.
+    updated = project_commands.update_project(
+        conn,
+        actor_id=actor["id"],
+        project_id=project_id,
+        name=name,
+        key=key,
+        description=payload.description,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such project")
@@ -1230,7 +1239,11 @@ def delete_project(
         raise HTTPException(
             status_code=409, detail="delete its sprints first"
         )
-    projects.delete_project(conn, project_id)
+    # The command owns the delete AND its atomic 'deleted_project' event, which
+    # outlives the vanished container so the trail keeps who removed it.
+    project_commands.delete_project(
+        conn, actor_id=actor["id"], project_id=project_id
+    )
 
 
 # --- Project access control: privacy toggle + membership ------------------

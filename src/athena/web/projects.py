@@ -15,7 +15,14 @@ import sqlite3
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.aegis import issues, project_activity, projects, sprints, statuses
+from athena.aegis import (
+    issues,
+    project_activity,
+    project_commands,
+    projects,
+    sprints,
+    statuses,
+)
 from athena.core import access, identity, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -86,12 +93,12 @@ def create_project(
         return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
     if projects.get_project_by_key(conn, normalized_key) is not None:
         return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
-    projects.create_project(
+    project_commands.create_project(
         conn,
+        actor_id=user["id"],
         name=name,
         key=normalized_key,
         description=description.strip(),
-        created_by=user["id"],
     )
     return RedirectResponse("/aegis/projects", status_code=303)
 
@@ -203,8 +210,13 @@ def project_edit_save(
     key_clash = projects.get_project_by_key(conn, normalized_key)
     if key_clash is not None and key_clash["id"] != project_id:
         return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
-    projects.update_project(
-        conn, project_id, name=name, key=normalized_key, description=description.strip()
+    project_commands.update_project(
+        conn,
+        actor_id=user["id"],
+        project_id=project_id,
+        name=name,
+        key=normalized_key,
+        description=description.strip(),
     )
     return RedirectResponse("/aegis/projects", status_code=303)
 
@@ -239,7 +251,7 @@ def project_delete(
             '<div class="error">Delete this project\'s sprints first.</div>',
             status_code=409,
         )
-    projects.delete_project(conn, project_id)
+    project_commands.delete_project(conn, actor_id=user["id"], project_id=project_id)
     return RedirectResponse("/aegis/projects", status_code=303)
 
 

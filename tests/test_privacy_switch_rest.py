@@ -138,11 +138,14 @@ def test_visibility_set_to_same_is_noop(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR).json()["id"]
-        # Setting public→public writes nothing and records no event.
+        # Setting public→public writes nothing and records no VISIBILITY event.
+        # (Creating the project itself now records a 'created_project' event —
+        # the lifecycle-audit slice — so filter to the visibility verbs.)
         client.put(f"/projects/{pid}/visibility", json={"visibility": "public"}, headers=H_CREATOR)
         conn = db.connect(db_file)
         rows = activity.list_activity(conn, target_kind="project", target_id=pid)
-        assert rows == []
+        vis_verbs = {"project_made_private", "project_made_public"}
+        assert [r for r in rows if r["verb"] in vis_verbs] == []
 
 
 # --- Spaces (the Mentor twin — same mechanism) -----------------------------

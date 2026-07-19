@@ -27,15 +27,20 @@ def _default_rows() -> list[dict]:
     ]
 
 
-def seed_defaults(conn: sqlite3.Connection, project_id: int) -> None:
-    """Give a brand-new project the default status set. Called from project create."""
+def seed_defaults(
+    conn: sqlite3.Connection, project_id: int, *, commit: bool = True
+) -> None:
+    """Give a brand-new project the default status set. Called from project create.
+    ``commit=False`` lets the create command fold the seed into its own
+    transaction, so a project and its starting statuses land or roll back together."""
     for i, (name, category) in enumerate(DEFAULT_STATUSES):
         conn.execute(
             "INSERT INTO project_statuses (project_id, name, category, position) "
             "VALUES (?, ?, ?, ?)",
             (project_id, name, category, i),
         )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def list_statuses(conn: sqlite3.Connection, project_id: int | None) -> list[dict]:
