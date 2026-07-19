@@ -341,6 +341,7 @@ def record_parent_change(
     issue_id: int,
     before: int | None,
     after: int | None,
+    commit: bool = True,
 ) -> None:
     """Record a parent (hierarchy) change. No-op if the parent didn't change.
     Clearing records "removed_parent"; setting records "set_parent" with the new
@@ -348,7 +349,8 @@ def record_parent_change(
 
     Parent relations may cross projects. Scope the event to the child plus both
     relationship endpoints so a public child cannot publish a private parent's key.
-    """
+    ``commit=False`` lets the audited command fold the write and this event into
+    one transaction."""
     if before == after:
         return
     project_ids = _project_ids_for_issues(conn, issue_id, before, after)
@@ -360,6 +362,7 @@ def record_parent_change(
             target_kind="issue",
             target_id=issue_id,
             issue_project_ids=project_ids,
+            commit=commit,
         )
         return
     parent = issues.get_issue(conn, after)
@@ -372,6 +375,7 @@ def record_parent_change(
         target_id=issue_id,
         detail=detail,
         issue_project_ids=project_ids,
+        commit=commit,
     )
 
 
@@ -590,11 +594,14 @@ def record_archive_change(
     issue_id: int,
     before: str | None,
     after: str | None,
+    commit: bool = True,
 ) -> None:
     """Record an archive (soft-delete) or restore. before/after are the issue's
     archived_at values — None means active, a timestamp means archived — so we
     compare PRESENCE, not the exact time: re-archiving an already-archived issue
-    re-stamps the time but isn't a lifecycle change, and records nothing."""
+    re-stamps the time but isn't a lifecycle change, and records nothing.
+    ``commit=False`` lets the audited command fold the write and this event into
+    one transaction."""
     if (before is not None) == (after is not None):
         return
     activity.record(
@@ -603,4 +610,5 @@ def record_archive_change(
         verb="archived" if after is not None else "unarchived",
         target_kind="issue",
         target_id=issue_id,
+        commit=commit,
     )

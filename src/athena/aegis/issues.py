@@ -255,13 +255,14 @@ def set_sprint(
 
 
 def set_archived(
-    conn: sqlite3.Connection, issue_id: int, archived: bool
+    conn: sqlite3.Connection, issue_id: int, archived: bool, *, commit: bool = True
 ) -> dict | None:
     """Archive (soft-delete) an issue or restore it. Returns the updated issue, or
     None if no issue has that id. The row is never destroyed — archiving only stamps
     archived_at (and clearing it restores the issue), so the history is preserved and
     the default lists simply hide it. Idempotent: re-archiving an archived issue just
-    re-stamps the time; the boundary records the audit fact only on a real change."""
+    re-stamps the time; the boundary records the audit fact only on a real change.
+    ``commit=False`` lets the audited command fold the flip and its event together."""
     if archived:
         conn.execute(
             "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (issue_id,)
@@ -270,7 +271,8 @@ def set_archived(
         conn.execute(
             "UPDATE issues SET archived_at = NULL WHERE id = ?", (issue_id,)
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_issue(conn, issue_id)
 
 
@@ -333,16 +335,22 @@ def set_project(
 
 
 def set_parent(
-    conn: sqlite3.Connection, issue_id: int, parent_id: int | None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    parent_id: int | None,
+    *,
+    commit: bool = True,
 ) -> dict | None:
     """Nest an issue under a parent (parent_id=None clears it to top-level).
     Returns the updated issue, or None if no issue has that id. Validation
     (existence, no self-parent, no cycle) is the boundary's job — see
-    validate_parent; the FK is the backstop for a non-NULL unknown parent."""
+    validate_parent; the FK is the backstop for a non-NULL unknown parent.
+    ``commit=False`` lets the audited command fold the write and its event together."""
     cur = conn.execute(
         "UPDATE issues SET parent_id = ? WHERE id = ?", (parent_id, issue_id)
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_issue(conn, issue_id)
