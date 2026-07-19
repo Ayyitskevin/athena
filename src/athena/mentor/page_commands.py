@@ -1,0 +1,110 @@
+"""Application commands for audited, atomic page writes.
+
+Today this owns the page-EDIT write: the snapshot-then-overwrite, its derived
+link/search re-index, the ``page_edited`` audit event (with the editor's auto-watch
+and any mentions), and an optional ``If-Match`` precondition, all folded into one
+``db.transaction(immediate=True)``. It is the Mentor twin of the edit path in
+aegis/issue_commands.update_issue, and the foundation for page optimistic
+concurrency — ETag / If-Match parity with issues.
+
+Previously an edit committed the row change (mentor/pages.update_page) and its
+activity event in SEPARATE transactions: a crash between them could rewrite a page's
+body with no ``page_edited`` event on the trail. And there was no conditional-write
+path at all, so two agents editing shared memory silently clobbered each other
+(last-write-wins). This command closes both gaps.
+
+Visibility/existence authorization (``access.can_see_space``) stays at the transport
+boundary, as it does for the page-comment commands — the command re-reads the page
+under the write lock so the precondition check and the mutation cannot straddle a
+concurrent edit.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+from athena.core import db, etag
+from athena.mentor import page_activity, page_etags, pages
+
+_ERROR_KINDS = (
+    "not_found",
+    "invalid",
+    "invalid_precondition",
+    "precondition_too_large",
+    "precondition_failed",
+)
+
+
+class PageCommandError(Exception):
+    """A transport-neutral page-command rejection.
+
+    ``kind`` lets each adapter map to a status (REST: 404/422/400/431/412);
+    ``current_etag`` accompanies a ``precondition_failed`` so the boundary can echo
+    the live validator in the 412's ``ETag`` header, exactly as issues do.
+    """
+
+    def __init__(self, kind: str, detail: str, *, current_etag: str | None = None) -> None:
+        super().__init__(detail)
+        if kind not in _ERROR_KINDS:
+            raise ValueError(f"unknown PageCommandError kind: {kind}")
+        self.kind = kind
+        self.detail = detail
+        self.current_etag = current_etag
+
+
+def edit_page(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    page_id: int,
+    title: str | None = None,
+    body: str | None = None,
+    if_match: list[str] | None = None,
+) -> dict:
+    """Edit a page's title and/or body atomically with its ``page_edited`` event,
+    under an optional ``If-Match`` precondition evaluated inside the write lock.
+
+    ``title``/``body`` follow the data layer's partial-update rule: a field left None
+    is untouched (the boundary strips/validates the title and guarantees at least one
+    field). Returns the updated page. Raises ``PageCommandError('not_found')`` if the
+    page vanished before the write (a race past the boundary's visibility gate), and
+    the precondition kinds when an ``If-Match`` is supplied and malformed, too large,
+    or stale.
+
+    The current representation and the strong-comparison check both run inside this
+    ``BEGIN IMMEDIATE`` transaction, so two writers holding the same tag cannot both
+    pass the precondition and mutate — the point of an optimistic lock.
+    """
+    with db.transaction(conn, immediate=True):
+        before = pages.get_page(conn, page_id)
+        if before is None:
+            raise PageCommandError("not_found", "no such page")
+
+        if if_match is not None:
+            current = page_etags.current_etag(conn, before)
+            try:
+                condition = etag.parse_if_match(if_match)
+            except etag.IfMatchTooLarge as exc:
+                raise PageCommandError("precondition_too_large", str(exc)) from exc
+            except etag.InvalidIfMatch as exc:
+                raise PageCommandError("invalid_precondition", str(exc)) from exc
+            if not condition.matches(current):
+                raise PageCommandError(
+                    "precondition_failed",
+                    "If-Match precondition failed",
+                    current_etag=current,
+                )
+
+        after = pages.update_page(
+            conn,
+            page_id,
+            editor_id=actor_id,
+            title=title,
+            body=body,
+            commit=False,
+        )
+        # after is never None here: the page existed under the same write lock.
+        page_activity.record_page_edited(
+            conn, actor_id=actor_id, before=before, after=after, commit=False
+        )
+        return after

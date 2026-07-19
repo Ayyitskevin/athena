@@ -66,6 +66,7 @@ def update_page(
     editor_id: int,
     title: str | None = None,
     body: str | None = None,
+    commit: bool = True,
 ) -> dict | None:
     """Edit a page's title and/or body, snapshotting the prior content into its
     history first. Partial: only the fields passed as non-None change. Returns the
@@ -73,21 +74,27 @@ def update_page(
     changing fields the page is returned untouched and no version is cut.
 
     The snapshot-then-overwrite happens in one transaction so history can never
-    diverge from the live page. We open it with BEGIN IMMEDIATE so the page is
-    re-read, the next version is computed, and both writes land while this
-    connection holds SQLite's write lock — without it two concurrent editors can
-    both read COUNT()+1 == the same number and collide on UNIQUE(page_id, version).
+    diverge from the live page. Left to itself (``commit=True``) it opens that
+    transaction with BEGIN IMMEDIATE so the page is re-read, the next version is
+    computed, and both writes land while this connection holds SQLite's write lock —
+    without it two concurrent editors can both read COUNT()+1 == the same number and
+    collide on UNIQUE(page_id, version). ``commit=False`` instead composes this inside
+    an audited page command's own ``db.transaction(immediate=True)``: the row change,
+    the version snapshot, the derived link/search re-index, and the command's activity
+    event all commit or roll back together (the Mentor twin of issues.update_issue).
     The version number is dense per page — one more than the count already stored —
     so versions read 1, 2, 3… The snapshot carries the SUPERSEDED revision's own
     author and time (the page's current updated_by/updated_at), not the editor
     doing the replacing; the new editor stamps the fresh live row. Column names in
     the SET clause are hardcoded literals, never caller input, so the f-string is
     safe; values stay parameterized."""
-    conn.execute("BEGIN IMMEDIATE")
+    if commit:
+        conn.execute("BEGIN IMMEDIATE")
     try:
         page = get_page(conn, page_id)
         if page is None:
-            conn.rollback()
+            if commit:
+                conn.rollback()
             return None
 
         fields = {
@@ -96,7 +103,8 @@ def update_page(
             if val is not None
         }
         if not fields:
-            conn.rollback()  # nothing to change — no new revision, release the lock
+            if commit:
+                conn.rollback()  # nothing to change — no new revision, release the lock
             return page
 
         next_version = conn.execute(
@@ -122,18 +130,23 @@ def update_page(
             "updated_at = datetime('now') WHERE id = ?",
             (*fields.values(), editor_id, page_id),
         )
-        conn.commit()
-    except Exception:
-        conn.rollback()
+        # Re-index inside the write transaction (commit=False) so the derived link and
+        # search indexes commit or roll back WITH the edit — they can never reflect a
+        # rolled-back revision. Links only when the body changed (the only field that
+        # carries [[...]] tokens); search whenever title or body moved.
+        if "body" in fields:
+            links.sync_links(
+                conn, source_kind="page", source_id=page_id,
+                body=fields["body"], commit=False,
+            )
+        if "title" in fields or "body" in fields:
+            search.index_document(conn, kind="page", source_id=page_id, commit=False)
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
         raise
-    # Re-index references only when the body actually changed (the only field
-    # that carries [[...]] tokens); a title-only edit leaves them be. Runs after
-    # the snapshot transaction commits, so links never reflect a rolled-back edit.
-    if "body" in fields:
-        links.sync_links(conn, source_kind="page", source_id=page_id, body=fields["body"])
-    # Re-index for search whenever an indexed field (title or body) changed.
-    if "title" in fields or "body" in fields:
-        search.index_document(conn, kind="page", source_id=page_id)
     return get_page(conn, page_id)
 
 

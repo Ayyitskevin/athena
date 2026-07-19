@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from athena import config
@@ -19,8 +20,10 @@ from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
 from athena.mentor import (
     page_activity,
+    page_commands,
     page_comment_commands,
     page_comments,
+    page_etags,
     pages,
     space_activity,
     spaces,
@@ -170,6 +173,59 @@ def _with_labels_many(conn: sqlite3.Connection, page_rows: list[dict]) -> list[d
     for page in page_rows:
         page["labels"] = by_page.get(page["id"], [])
     return page_rows
+
+
+def _if_match_values(request: Request) -> list[str] | None:
+    """Preserve every raw If-Match field line for standards-aware parsing (the Mentor
+    twin of the aegis helper — the command evaluates the parsed condition under the
+    write lock)."""
+    values = [
+        value.decode("latin-1")
+        for name, value in request.scope.get("headers", ())
+        if name.lower() == b"if-match"
+    ]
+    return values or None
+
+
+def _tagged_page(conn: sqlite3.Connection, page: dict, response: Response) -> dict:
+    """Return the exact public representation and its matching strong ETag, so a client
+    can round-trip it as an If-Match validator on the next edit."""
+    public, current = page_etags.resource_and_etag(conn, page)
+    response.headers["ETag"] = current
+    return public
+
+
+# Conditional-request failures map to the same stable codes and status the issue
+# edit path uses, so REST clients (and the shared MCP client) handle a stale page
+# edit exactly as they handle a stale issue edit.
+_PAGE_PRECONDITION_HTTP = {
+    "invalid_precondition": (400, "invalid_if_match"),
+    "precondition_too_large": (431, "if_match_too_large"),
+    "precondition_failed": (412, "precondition_failed"),
+}
+
+_PAGE_COMMAND_STATUS = {
+    "not_found": 404,
+    "invalid": 422,
+    "invalid_precondition": 400,
+    "precondition_too_large": 431,
+    "precondition_failed": 412,
+}
+
+
+def _page_command_error_response(exc: page_commands.PageCommandError) -> JSONResponse:
+    """Render a conditional-request failure with a stable code and the current tag, or
+    raise the route's ordinary HTTP error for the non-precondition kinds."""
+    spec = _PAGE_PRECONDITION_HTTP.get(exc.kind)
+    if spec is not None:
+        status_code, code = spec
+        headers = {"ETag": exc.current_etag} if exc.current_etag is not None else None
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": exc.detail, "code": code},
+            headers=headers,
+        )
+    raise HTTPException(status_code=_PAGE_COMMAND_STATUS[exc.kind], detail=exc.detail)
 
 
 @spaces_router.get("", response_model=list[SpaceOut])
@@ -493,11 +549,14 @@ def list_pages(
 @pages_router.get("/{page_id}", response_model=PageOut)
 def show_page(
     page_id: int,
+    response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
+    # Emit the page's strong ETag so a client can capture it and send it back as an
+    # If-Match on the next edit — the read half of optimistic concurrency.
     page = _page_for_read(conn, page_id, actor)
-    return _with_labels(conn, page)
+    return _tagged_page(conn, page, response)
 
 
 def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -> dict:
@@ -516,27 +575,39 @@ def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -
 def edit_page(
     page_id: int,
     payload: PageUpdate,
+    request: Request,
+    response: Response,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Editing is open to any authenticated actor, mirroring create (a page has no
     # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
     # history anyway) — but only on a page they can see. 404 if missing or hidden.
-    before = _page_for_read(conn, page_id, actor)
-    # Only the fields the client actually sent are touched.
+    _page_for_read(conn, page_id, actor)
+    # Transport-shape validation stays at the boundary (as the page-comment commands
+    # do): only the fields the client actually sent are touched, and a sent-but-empty
+    # title is rejected before the command runs.
     sent = payload.model_dump(exclude_unset=True)
     if not sent:
         raise HTTPException(status_code=422, detail="no fields to update")
     title = payload.title.strip() if payload.title is not None else None
     if title is not None and not title:
         raise HTTPException(status_code=422, detail="title cannot be empty")
-    after = pages.update_page(
-        conn, page_id, editor_id=actor["id"], title=title, body=payload.body
-    )
-    page_activity.record_page_edited(
-        conn, actor_id=actor["id"], before=before, after=after
-    )
-    return _with_labels(conn, after)
+    # The command owns the atomic snapshot+overwrite, its 'page_edited' audit event,
+    # and the optional If-Match precondition (evaluated under the write lock, so a
+    # stale editor gets a clean 412 instead of silently clobbering shared memory).
+    try:
+        after = page_commands.edit_page(
+            conn,
+            actor_id=actor["id"],
+            page_id=page_id,
+            title=title,
+            body=payload.body,
+            if_match=_if_match_values(request),
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
+    return _tagged_page(conn, after, response)
 
 
 @pages_router.put("/{page_id}/move", response_model=PageOut)

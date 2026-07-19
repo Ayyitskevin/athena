@@ -191,6 +191,7 @@ IF_MATCH_TOOL_NAMES = {
     "set_issue_placement",
     "assign_issue",
     "set_issue_sprint",
+    "update_page",
 }
 MCP_MUTATION_CASES = [
     ("create_issue", {"title": "x"}),

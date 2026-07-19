@@ -93,7 +93,7 @@ Goal: the knowledge layer supports concurrent agent writers as safely and
 traceably as the issue layer already does, and agents can traverse the
 knowledge graph the database already stores.
 
-- [ ] Page optimistic concurrency: ETag / `If-Match` parity with issues on page
+- [x] Page optimistic concurrency: ETag / `If-Match` parity with issues on page
       edits (REST + MCP), so two agents editing shared memory get a clean 412
       instead of silent last-write-wins.
 - [ ] Page soft-delete (`archived_at`, matching issues) — today one call
