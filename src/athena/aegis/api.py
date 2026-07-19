@@ -28,7 +28,6 @@ from athena.aegis import (
     comments,
     contributors,
     dependencies,
-    issue_activity,
     issue_etags,
     issue_commands,
     issue_history,
@@ -1440,14 +1439,14 @@ def attach_label(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Changing an issue's labels is a write — same gate as status/assign.
-    issue = _issue_for_write(conn, issue_id, actor)
-    if labels.get_label(conn, payload.label_id) is None:
-        raise HTTPException(status_code=422, detail="no such label")
-    if labels.add_label_to_issue(conn, issue_id, payload.label_id):  # idempotent
-        issue_activity.record_label_added(
-            conn, actor_id=actor["id"], issue_id=issue_id, label_id=payload.label_id
+    # The command owns the attach AND its atomic 'labeled' event under the
+    # creator/assignee/delegated/admin gate. Idempotent: re-attach records nothing.
+    try:
+        issue = issue_commands.attach_label(
+            conn, actor=actor, issue_id=issue_id, label_id=payload.label_id
         )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, issue)
 
 
@@ -1458,12 +1457,12 @@ def detach_label(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    issue = _issue_for_write(conn, issue_id, actor)
-    if not labels.remove_label_from_issue(conn, issue_id, label_id):
-        raise HTTPException(status_code=404, detail="label not on this issue")
-    issue_activity.record_label_removed(
-        conn, actor_id=actor["id"], issue_id=issue_id, label_id=label_id
-    )
+    try:
+        issue = issue_commands.detach_label(
+            conn, actor=actor, issue_id=issue_id, label_id=label_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
     return _with_labels(conn, issue)
 
 
@@ -1504,16 +1503,14 @@ def add_issue_contributor(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    # Delegating is a write — same creator-or-assignee gate as labels/status.
-    _issue_for_write(conn, issue_id, actor)
-    if users.get_user(conn, payload.user_id) is None:
-        raise HTTPException(status_code=422, detail="no such user")
-    # Idempotent: record (and auto-watch) only when a NEW pairing was created.
-    if contributors.add_contributor(conn, issue_id, payload.user_id, actor["id"]):
-        issue_activity.record_contributor_added(
-            conn, actor_id=actor["id"], issue_id=issue_id, user_id=payload.user_id
+    # The command owns the add, its auto-watch, and its atomic 'added_contributor'
+    # event under the same write gate. Idempotent: re-add records nothing.
+    try:
+        return issue_commands.add_contributor(
+            conn, actor=actor, issue_id=issue_id, user_id=payload.user_id
         )
-    return contributors.list_contributors(conn, issue_id)
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
 
 
 @router.post("/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201)
@@ -1525,18 +1522,18 @@ def delegate_issue_to_agent(
 ) -> list[dict]:
     # Agent delegation is the explicit agent-as-teammate path: the human assignee stays
     # accountable; the target agent is added as a contributor and receives a distinct
-    # delegated audit event. Generic contributor add remains available for humans.
-    _issue_for_write(conn, issue_id, actor)
-    target = users.get_user(conn, payload.user_id)
-    if target is None:
-        raise HTTPException(status_code=422, detail="no such user")
-    if not target["is_agent"]:
-        raise HTTPException(status_code=422, detail="delegation target must be an agent")
-    if contributors.add_contributor(conn, issue_id, payload.user_id, actor["id"]):
-        issue_activity.record_delegated(
-            conn, actor_id=actor["id"], issue_id=issue_id, user_id=payload.user_id
+    # 'delegated' event. The command owns the add + atomic event; require_agent gates
+    # the target to an agent. Generic contributor add remains available for humans.
+    try:
+        return issue_commands.add_contributor(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            user_id=payload.user_id,
+            require_agent=True,
         )
-    return contributors.list_contributors(conn, issue_id)
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc
 
 
 @router.delete("/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut])
@@ -1546,10 +1543,9 @@ def remove_issue_contributor(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    _issue_for_write(conn, issue_id, actor)
-    if not contributors.remove_contributor(conn, issue_id, user_id):
-        raise HTTPException(status_code=404, detail="not a contributor on this issue")
-    issue_activity.record_contributor_removed(
-        conn, actor_id=actor["id"], issue_id=issue_id, user_id=user_id
-    )
-    return contributors.list_contributors(conn, issue_id)
+    try:
+        return issue_commands.remove_contributor(
+            conn, actor=actor, issue_id=issue_id, user_id=user_id
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _issue_command_http_error(exc) from exc

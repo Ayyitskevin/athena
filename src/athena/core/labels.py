@@ -136,31 +136,35 @@ def label_usage(
 
 
 def add_label_to_issue(
-    conn: sqlite3.Connection, issue_id: int, label_id: int
+    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool = True
 ) -> bool:
     """Attach a label to an issue. Idempotent: re-attaching the same pair is a
     no-op (the composite PK + OR IGNORE swallow the duplicate). Returns True if a
     new pairing was created, False if it was already attached — so the caller can
     record the audit event only on a real change. Raises sqlite3.IntegrityError
-    if the issue or label doesn't exist (the FKs)."""
+    if the issue or label doesn't exist (the FKs). ``commit=False`` lets the
+    audited command fold the attach and its event into one transaction."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO issue_labels (issue_id, label_id) VALUES (?, ?)",
         (issue_id, label_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
 def remove_label_from_issue(
-    conn: sqlite3.Connection, issue_id: int, label_id: int
+    conn: sqlite3.Connection, issue_id: int, label_id: int, *, commit: bool = True
 ) -> bool:
     """Detach a label from an issue. Returns True if a pairing was removed, False
-    if the pair wasn't attached (so the caller can 404)."""
+    if the pair wasn't attached (so the caller can 404). ``commit=False`` lets the
+    audited command fold the detach and its event into one transaction."""
     cur = conn.execute(
         "DELETE FROM issue_labels WHERE issue_id = ? AND label_id = ?",
         (issue_id, label_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

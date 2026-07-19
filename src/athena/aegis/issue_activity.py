@@ -438,14 +438,20 @@ def record_link_removed(
 
 
 def record_contributor_added(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    user_id: int,
+    commit: bool = True,
 ) -> None:
     """Record that someone was delegated/added as a contributor, stamped with their
     display name. The new contributor starts watching the issue BEFORE we record the
     event, so the delegation itself lands in their inbox (they're a watcher when it
     fans out) — exactly how a new assignee is brought in. Caller records only when
-    the add actually created a new pairing."""
-    notifications.watch(conn, user_id, "issue", issue_id)
+    the add actually created a new pairing. ``commit=False`` folds the watch and the
+    event into the audited command's transaction."""
+    notifications.watch(conn, user_id, "issue", issue_id, commit=False)
     contributor = users.get_user(conn, user_id)
     activity.record(
         conn,
@@ -454,16 +460,23 @@ def record_contributor_added(
         target_kind="issue",
         target_id=issue_id,
         detail=contributor["name"] if contributor else "",
+        commit=commit,
     )
 
 
 def record_delegated(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    user_id: int,
+    commit: bool = True,
 ) -> None:
     """Record explicit agent delegation. Like contributor-add, the delegated agent
     starts watching before the event is recorded, so the delegation itself appears
-    in their inbox. Caller records only when a new contributor pairing was created."""
-    notifications.watch(conn, user_id, "issue", issue_id)
+    in their inbox. Caller records only when a new contributor pairing was created.
+    ``commit=False`` folds the watch and the event into one transaction."""
+    notifications.watch(conn, user_id, "issue", issue_id, commit=False)
     agent = users.get_user(conn, user_id)
     activity.record(
         conn,
@@ -472,14 +485,21 @@ def record_delegated(
         target_kind="issue",
         target_id=issue_id,
         detail=agent["name"] if agent else "",
+        commit=commit,
     )
 
 
 def record_contributor_removed(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    user_id: int,
+    commit: bool = True,
 ) -> None:
     """Record that a contributor was removed, stamped with their display name. Caller
-    records only when a pairing was actually removed."""
+    records only when a pairing was actually removed. ``commit=False`` folds it into
+    the audited command's transaction."""
     contributor = users.get_user(conn, user_id)
     activity.record(
         conn,
@@ -488,14 +508,21 @@ def record_contributor_removed(
         target_kind="issue",
         target_id=issue_id,
         detail=contributor["name"] if contributor else "",
+        commit=commit,
     )
 
 
 def record_label_added(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    label_id: int,
+    commit: bool = True,
 ) -> None:
     """Record that a label was attached, stamped with the label's name. Caller
-    records only when the attach actually created a new pairing."""
+    records only when the attach actually created a new pairing. ``commit=False``
+    folds it into the audited command's transaction."""
     label = labels.get_label(conn, label_id)
     activity.record(
         conn,
@@ -504,14 +531,21 @@ def record_label_added(
         target_kind="issue",
         target_id=issue_id,
         detail=label["name"] if label else "",
+        commit=commit,
     )
 
 
 def record_label_removed(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    label_id: int,
+    commit: bool = True,
 ) -> None:
     """Record that a label was detached, stamped with the label's name. Caller
-    records only when a pairing was actually removed."""
+    records only when a pairing was actually removed. ``commit=False`` folds it into
+    the audited command's transaction."""
     label = labels.get_label(conn, label_id)
     activity.record(
         conn,
@@ -520,6 +554,7 @@ def record_label_removed(
         target_kind="issue",
         target_id=issue_id,
         detail=label["name"] if label else "",
+        commit=commit,
     )
 
 

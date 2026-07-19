@@ -22,32 +22,41 @@ _SELECT = (
 
 
 def add_contributor(
-    conn: sqlite3.Connection, issue_id: int, user_id: int, added_by: int
+    conn: sqlite3.Connection,
+    issue_id: int,
+    user_id: int,
+    added_by: int,
+    *,
+    commit: bool = True,
 ) -> bool:
     """Add a contributor to an issue. Idempotent: re-adding the same pair is a no-op
     (composite PK + OR IGNORE swallow the duplicate). Returns True if a NEW pairing
     was created, False if it was already there — so the caller records the audit
     event only on a real change. Raises sqlite3.IntegrityError if the issue or user
-    doesn't exist (the FKs)."""
+    doesn't exist (the FKs). ``commit=False`` lets the audited command fold the add
+    and its event into one transaction."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO issue_contributors (issue_id, user_id, added_by) "
         "VALUES (?, ?, ?)",
         (issue_id, user_id, added_by),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
 def remove_contributor(
-    conn: sqlite3.Connection, issue_id: int, user_id: int
+    conn: sqlite3.Connection, issue_id: int, user_id: int, *, commit: bool = True
 ) -> bool:
     """Remove a contributor. Returns True if a pairing was removed, False if the
-    user wasn't a contributor (so the caller can 404)."""
+    user wasn't a contributor (so the caller can 404). ``commit=False`` lets the
+    audited command fold the removal and its event into one transaction."""
     cur = conn.execute(
         "DELETE FROM issue_contributors WHERE issue_id = ? AND user_id = ?",
         (issue_id, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

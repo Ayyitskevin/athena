@@ -16,6 +16,7 @@ import sqlite3
 from typing import Literal
 
 from athena.aegis import (
+    contributors as contributors_data,
     dependencies,
     issue_activity,
     issue_etags,
@@ -23,7 +24,7 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access, db, etag, identity, tokens, users
+from athena.core import access, db, etag, identity, labels, tokens, users
 
 ErrorKind = Literal[
     "unauthorized",
@@ -558,6 +559,117 @@ def set_issue_parent(
             commit=False,
         )
         return updated
+
+
+def attach_label(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, label_id: int
+) -> dict:
+    """Attach a label to an issue and record the 'labeled' event atomically. Same
+    write gate as status/assign. Idempotent: re-attaching records nothing. Raises
+    IssueCommandError(404/403) for the issue gate, (422) for an unknown label.
+    Returns the (unchanged) issue row so the caller can reshape it."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        issue = _writable_issue(conn, actor, issue_id)
+        if labels.get_label(conn, label_id) is None:
+            raise IssueCommandError("invalid", "no such label")
+        if labels.add_label_to_issue(conn, issue_id, label_id, commit=False):
+            issue_activity.record_label_added(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                label_id=label_id,
+                commit=False,
+            )
+        return issue
+
+
+def detach_label(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, label_id: int
+) -> dict:
+    """Detach a label and record the 'unlabeled' event atomically. Same write gate.
+    Raises IssueCommandError(404/403) for the issue gate, (404) when the label isn't
+    on this issue."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        issue = _writable_issue(conn, actor, issue_id)
+        if not labels.remove_label_from_issue(conn, issue_id, label_id, commit=False):
+            raise IssueCommandError("not_found", "label not on this issue")
+        issue_activity.record_label_removed(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            label_id=label_id,
+            commit=False,
+        )
+        return issue
+
+
+def add_contributor(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    user_id: int,
+    require_agent: bool = False,
+) -> list[dict]:
+    """Add a contributor (or, with require_agent, delegate to an agent) and record
+    the 'added_contributor'/'delegated' event atomically — the new contributor's
+    auto-watch, the audit event, and the membership row land or roll back together.
+    Same write gate. Idempotent: re-adding an existing contributor records nothing.
+    Raises IssueCommandError(404/403) for the issue gate, (422) for an unknown user
+    or (with require_agent) a non-agent target. Returns the contributor list."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        _writable_issue(conn, actor, issue_id)
+        target = users.get_user(conn, user_id)
+        if target is None:
+            raise IssueCommandError("invalid", "no such user")
+        if require_agent and not target["is_agent"]:
+            raise IssueCommandError(
+                "invalid", "delegation target must be an agent"
+            )
+        if contributors_data.add_contributor(
+            conn, issue_id, user_id, actor["id"], commit=False
+        ):
+            recorder = (
+                issue_activity.record_delegated
+                if require_agent
+                else issue_activity.record_contributor_added
+            )
+            recorder(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                user_id=user_id,
+                commit=False,
+            )
+        return contributors_data.list_contributors(conn, issue_id)
+
+
+def remove_contributor(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, user_id: int
+) -> list[dict]:
+    """Remove a contributor and record the 'removed_contributor' event atomically.
+    Same write gate. Raises IssueCommandError(404/403) for the issue gate, (404)
+    when the user isn't a contributor. Returns the remaining contributor list."""
+    actor = _require_issue_writer(actor)
+    with db.transaction(conn, immediate=True):
+        _writable_issue(conn, actor, issue_id)
+        if not contributors_data.remove_contributor(
+            conn, issue_id, user_id, commit=False
+        ):
+            raise IssueCommandError(
+                "not_found", "not a contributor on this issue"
+            )
+        issue_activity.record_contributor_removed(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            user_id=user_id,
+            commit=False,
+        )
+        return contributors_data.list_contributors(conn, issue_id)
 
 
 def link_issues(

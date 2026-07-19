@@ -81,7 +81,7 @@ success) is observable, and the operator gets levers between "watch" and
 - [x] Give automation lineage: stamp rule-driven writes with the triggering
       event and rule, and make the comment action idempotent across a crashed
       pass.
-- [ ] Migrate the remaining risky Aegis writes to commands per
+- [x] Migrate the remaining risky Aegis writes to commands per
       [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md): parent hierarchy,
       archive/restore, labels, contributors.
 - [x] Include run/lineage coordinates in webhook payloads so push consumers can
