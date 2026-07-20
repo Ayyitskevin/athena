@@ -8,6 +8,12 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Added
 
+- Project- and sprint-scoped fleet boards with explicit agent, human, and
+  unassigned swimlanes; filter state survives HTMX, drag, and no-JS moves while
+  private project and sprint names remain visibility-gated.
+- An additive `assignee_is_agent` issue projection plus optional sprint
+  filtering on the MCP `list_issues` tool, so agent clients can query the same
+  sprint and actor dimensions as the web board.
 - A public roadmap (`docs/ROADMAP.md`) grounded in a full-codebase review:
   phased plans for the agent loop, run integrity, docs-as-agent-memory, and
   fleet operations.

@@ -18,6 +18,7 @@ _ISSUE_FIELDS = (
     "created_at",
     "assignee_id",
     "assignee_name",
+    "assignee_is_agent",
     "project_id",
     "project_name",
     "parent_id",

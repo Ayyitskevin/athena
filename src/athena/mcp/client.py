@@ -211,12 +211,17 @@ class AthenaClient:
         *,
         status: str | None = None,
         project: str | None = None,
+        sprint: int | None = None,
         label: str | None = None,
         search: str | None = None,
         include_archived: bool = False,
     ) -> Any:
         params = self._params(
-            status=status, project=project, label=label, search=search
+            status=status,
+            project=project,
+            sprint=sprint,
+            label=label,
+            search=search,
         )
         if include_archived:  # only send it when set, so the default stays clean
             params["include_archived"] = True

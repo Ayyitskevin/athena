@@ -226,6 +226,10 @@ class IssueOut(BaseModel):
     created_at: str
     assignee_id: int | None = None
     assignee_name: str | None = None
+    # Additive actor-kind projection used by operator surfaces and MCP clients to
+    # distinguish agent-owned, human-owned, and unassigned work without a user
+    # lookup. None means the issue is unassigned.
+    assignee_is_agent: bool | None = None
     project_id: int | None = None
     project_name: str | None = None
     parent_id: int | None = None
@@ -419,11 +423,11 @@ def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
 def index(
     status: str | None = None,
     priority: str | None = None,
-    assignee: int | None = None,
+    assignee: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     label: str | None = None,
     search: str | None = None,
     project: str | None = None,
-    sprint: int | None = None,
+    sprint: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     include_archived: bool = False,
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0, le=issues.MAX_OFFSET),

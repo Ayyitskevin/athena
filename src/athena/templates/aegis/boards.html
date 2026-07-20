@@ -3,52 +3,100 @@
 {% block title %}Boards — Aegis{% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div
+    class="page-header"
+    id="board-request-coordinator"
+    hx-sync="this:queue all"
+    hx-target=".board"
+    hx-swap="outerHTML">
     <div>
         <a href="/aegis" class="muted">← Back to Aegis</a>
         <h1>Boards</h1>
         <p class="subtitle">Kanban workflow</p>
     </div>
-    <div class="header-actions">
+    <form
+        method="get"
+        action="/aegis/boards"
+        class="header-actions board-filters"
+        aria-label="Board filters">
+        <label class="visually-hidden" for="board-search">Search boards</label>
         <input
+            id="board-search"
             type="text"
             name="search"
             placeholder="Search boards..."
             value="{{ search }}"
             class="search-input board-filter-search"
             hx-get="/aegis/boards"
-            hx-trigger="keyup changed delay:300ms"
+            hx-trigger="input changed delay:300ms"
             hx-target=".board"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="closest form"
+            hx-replace-url="true">
+        <label class="visually-hidden" for="board-status">Filter by status</label>
         <select
+            id="board-status"
             class="filter-select board-filter-status"
             name="status"
             hx-get="/aegis/boards"
             hx-target=".board"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="closest form"
+            hx-replace-url="true">
             <option value="">All statuses</option>
             {% for s in all_statuses %}
             <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
             {% endfor %}
         </select>
-        <button 
+        <label class="visually-hidden" for="board-project">Filter by project</label>
+        <select
+            id="board-project"
+            class="filter-select board-filter-project"
+            name="project"
+            hx-get="/aegis/boards"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="closest form"
+            hx-replace-url="true">
+            <option value="">All projects</option>
+            <option value="none" {% if project_filter == "none" %}selected{% endif %}>No project (backlog)</option>
+            {% for p in all_projects %}
+            <option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>
+            {% endfor %}
+        </select>
+        <label class="visually-hidden" for="board-sprint">Filter by sprint</label>
+        <select
+            id="board-sprint"
+            class="filter-select board-filter-sprint"
+            name="sprint"
+            hx-get="/aegis/boards"
+            hx-target=".board"
+            hx-swap="outerHTML"
+            hx-include="closest form"
+            hx-replace-url="true">
+            <option value="">All sprints</option>
+            {% for s in all_sprints %}
+            <option value="{{ s.id }}" {% if sprint_filter == s.id|string %}selected{% endif %}>{{ s.project_key }} · {{ s.name }}</option>
+            {% endfor %}
+        </select>
+        <button
+            type="submit"
             class="button secondary"
             hx-get="/aegis/boards"
             hx-target=".board"
             hx-swap="outerHTML"
-            hx-include="[name='status'],[name='search']">
+            hx-include="closest form"
+            hx-replace-url="true">
             Refresh
         </button>
-    </div>
+    </form>
 </div>
 
 {% include "aegis/partials/boards_content.html" %}
 
 <p class="note">
-    Kanban view over real issues data from the API.
-    {% if request.state.user %}Drag a card to another column to change its status.{% endif %}
+    Fleet view over real issues data.
+    {% if request.state.user %}Drag within a swimlane or use Move to change status.{% endif %}
 </p>
 {% endblock %}
 

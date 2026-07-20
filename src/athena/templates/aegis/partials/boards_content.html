@@ -1,54 +1,74 @@
-<div class="board" data-csrf="{{ request.state.csrf_token or '' }}">
-    {% for col in board_columns %}
-    <div class="board-column" data-status="{{ col.name }}">
-        <h3>{{ col.label }} <span class="count">({{ col.issues | length }})</span></h3>
-        <div class="board-cards">
-            {% for issue in col.issues %}
-            <div class="board-card" data-issue-id="{{ issue.id }}"{% if request.state.user %} draggable="true"{% endif %}>
-                <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</a>
-                {% if issue.project_name %}
-                <div class="project"><a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a></div>
-                {% endif %}
-                {% if issue.body %}
-                <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
-                {% endif %}
-                {% if issue.labels %}
-                <div class="label-list">
-                    {% for l in issue.labels %}
-                    <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+<div class="board" aria-live="polite">
+    {% if board_total %}
+    {% for lane in board_lanes %}
+    <section
+        class="board-swimlane"
+        data-lane="{{ lane.key }}"
+        aria-labelledby="board-lane-{{ lane.key }}">
+        <div class="board-swimlane-header">
+            <h2 id="board-lane-{{ lane.key }}">{{ lane.label }}</h2>
+            <span class="count">{{ lane.count }} issue{% if lane.count != 1 %}s{% endif %}</span>
+        </div>
+        <div class="board-columns">
+            {% for col in lane.columns %}
+            <div class="board-column" data-status="{{ col.name }}">
+                <h3>{{ col.label }} <span class="count">({{ col.issues | length }})</span></h3>
+                <div class="board-cards">
+                    {% for issue in col.issues %}
+                    <div
+                        class="board-card"
+                        data-issue-id="{{ issue.id }}"
+                        data-assignee-kind="{{ lane.key }}"{% if request.state.user %} draggable="true"{% endif %}>
+                        <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</a>
+                        {% if issue.project_name %}
+                        <div class="project"><a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a></div>
+                        {% endif %}
+                        {% if issue.body %}
+                        <div class="body-snippet">{{ issue.body[:80] }}{% if issue.body|length > 80 %}...{% endif %}</div>
+                        {% endif %}
+                        {% if issue.labels %}
+                        <div class="label-list">
+                            {% for l in issue.labels %}
+                            <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <div class="meta small">
+                            <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
+                            · <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>
+                            · {{ issue.created_at }}
+                        </div>
+                        {% if request.state.user %}
+                        {# Keyboard-accessible twin of the drag gesture: pick a status,
+                           then Move. With HTMX it swaps the board in place; without JS
+                           the native POST redirects back to the same filtered board. #}
+                        <form class="board-move" method="post"
+                              action="/aegis/boards/move/{{ issue.id }}">
+                            {% include "partials/csrf.html" %}
+                            <input type="hidden" name="search" value="{{ search }}">
+                            <input type="hidden" name="status" value="{{ status_filter }}">
+                            <input type="hidden" name="project" value="{{ project_filter }}">
+                            <input type="hidden" name="sprint" value="{{ sprint_filter }}">
+                            <label class="visually-hidden" for="move-{{ issue.id }}">Move {{ issue.key or "#" ~ issue.id }} to status</label>
+                            <select id="move-{{ issue.id }}" name="new_status" class="board-move-select">
+                                {% for s in issue.status_options %}
+                                <option value="{{ s }}" {% if s == issue.status %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="button secondary small">Move</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="empty small">No issues</div>
                     {% endfor %}
                 </div>
-                {% endif %}
-                <div class="meta small">
-                    <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
-                    · <span class="assignee">{{ issue.assignee_name or "Unassigned" }}</span>
-                    · {{ issue.created_at }}
-                </div>
-                {% if request.state.user %}
-                {# Keyboard-accessible twin of the drag gesture: pick a status, Move.
-                   With HTMX it swaps the board in place; without JS the native POST
-                   redirects back to the board. #}
-                <form class="board-move" method="post"
-                      action="/aegis/boards/move/{{ issue.id }}"
-                      hx-post="/aegis/boards/move/{{ issue.id }}"
-                      hx-target=".board" hx-swap="outerHTML">
-                    {% include "partials/csrf.html" %}
-                    <input type="hidden" name="search" value="{{ search }}">
-                    <input type="hidden" name="status" value="{{ status_filter }}">
-                    <label class="visually-hidden" for="move-{{ issue.id }}">Move {{ issue.key or "#" ~ issue.id }} to status</label>
-                    <select id="move-{{ issue.id }}" name="new_status" class="board-move-select">
-                        {% for s in issue.status_options %}
-                        <option value="{{ s }}" {% if s == issue.status %}selected{% endif %}>{{ s.replace("_", " ").title() }}</option>
-                        {% endfor %}
-                    </select>
-                    <button type="submit" class="button secondary small">Move</button>
-                </form>
-                {% endif %}
             </div>
-            {% else %}
-            <div class="empty small">No issues</div>
             {% endfor %}
         </div>
-    </div>
+    </section>
     {% endfor %}
+    {% else %}
+    <div class="board-empty empty">No issues match these filters.</div>
+    {% endif %}
 </div>

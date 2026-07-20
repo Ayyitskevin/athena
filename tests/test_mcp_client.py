@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
-from athena.aegis import automation
+from athena.aegis import automation, issues
 from athena.core import db
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -360,6 +360,17 @@ def test_work_context_client_gets_packet_through_result_and_exposes_etag():
         "_etag": '"context-v1"',
     }
     assert transport.calls == [("GET", "/issues/ATH-7/work-context", {})]
+
+
+def test_list_issues_forwards_sprint_only_when_explicit():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.list_issues(sprint=7)
+    assert transport.calls.pop() == ("GET", "/issues", {"params": {"sprint": 7}})
+
+    client.list_issues(sprint=None)
+    assert transport.calls.pop() == ("GET", "/issues", {"params": {}})
 
 
 def test_athena_error_preserves_legacy_construction_and_pickle_state():
@@ -815,6 +826,51 @@ def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
+    # WHY: the fleet board's actor lanes also need an agent-facing query. Exercise
+    # FastMCP -> client -> REST and prove sprint filtering retains True/False/None.
+    pytest.importorskip("mcp")
+    import asyncio
+    import json
+
+    from athena.mcp.server import build_server
+
+    tc, ath = _client(tmp_path, "sprint-actor-kinds.db")
+    try:
+        human = tc.post("/users", json={"email": "human@e.com", "name": "Human"}).json()
+        agent = tc.post(
+            "/users",
+            json={"email": "agent@e.com", "name": "Agent", "is_agent": True},
+        ).json()
+        project = tc.post("/projects", json={"name": "Fleet", "key": "FLT"}).json()
+        sprint = tc.post(
+            f"/projects/{project['id']}/sprints", json={"name": "Now"}
+        ).json()
+
+        expected = {}
+        for title, assignee_id, actor_kind in (
+            ("agent sprint work", agent["id"], True),
+            ("human sprint work", human["id"], False),
+            ("unassigned sprint work", None, None),
+        ):
+            issue = ath.create_issue(title=title, project_id=project["id"])
+            if assignee_id is not None:
+                ath.assign_issue(issue["id"], assignee_id)
+            ath.set_issue_sprint(issue["id"], sprint["id"])
+            expected[title] = actor_kind
+        ath.create_issue(title="outside sprint", project_id=project["id"])
+
+        result = asyncio.run(
+            build_server(ath).call_tool("list_issues", {"sprint": sprint["id"]})
+        )
+        rows = [json.loads(content.text) for content in result]
+        assert {
+            issue["title"]: issue["assignee_is_agent"] for issue in rows
+        } == expected
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
     tc, ath = _client(tmp_path, "idempotent-client.db")
     try:
@@ -1037,6 +1093,23 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
     assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
 
 
+def test_list_issues_mcp_tool_forwards_sprint():
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    asyncio.run(server.call_tool("list_issues", {"sprint": 7}))
+
+    called_name, args, kwargs = client.calls.pop()
+    assert called_name == "list_issues"
+    assert args == ()
+    assert kwargs["sprint"] == 7
+
+
 def test_mcp_server_registers_tools_and_calls_through(tmp_path):
     pytest.importorskip("mcp")
     import asyncio
@@ -1109,6 +1182,21 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
                 for option in placement_schema["properties"][field_name]["anyOf"]
             }
             assert types == {"integer", "null"}
+
+        list_schema = tools["list_issues"].inputSchema
+        assert "sprint" in list_schema["properties"]
+        assert "sprint" not in set(list_schema.get("required", []))
+        sprint_types = {
+            option["type"] for option in list_schema["properties"]["sprint"]["anyOf"]
+        }
+        assert sprint_types == {"integer", "null"}
+        sprint_integer = next(
+            option
+            for option in list_schema["properties"]["sprint"]["anyOf"]
+            if option["type"] == "integer"
+        )
+        assert sprint_integer["minimum"] == 0
+        assert sprint_integer["maximum"] == issues.MAX_SQLITE_INTEGER
         assert MUTATION_TOOL_NAMES <= names
 
         work_context_tool = tools["get_issue_work_context"]

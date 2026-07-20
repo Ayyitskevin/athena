@@ -26,7 +26,7 @@ from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
-from athena.aegis import delegations
+from athena.aegis import delegations, issues
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -52,6 +52,7 @@ RunId = Annotated[
 
 DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
 DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
+IssueFilterId = Annotated[int, Field(ge=0, le=issues.MAX_SQLITE_INTEGER)]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
@@ -98,16 +99,21 @@ def build_server(client: AthenaClient) -> FastMCP:
     def list_issues(
         status: str | None = None,
         project: str | None = None,
+        sprint: IssueFilterId | None = None,
         label: str | None = None,
         search: str | None = None,
         include_archived: bool = False,
     ) -> list:
         """List Aegis issues, optionally filtered by status (open/in_progress/done),
-        project (id or 'none' for the backlog), label name, or a text substring.
-        Archived issues are hidden by default; pass include_archived=true to see them."""
+        project (id or 'none' for the backlog), sprint id, label name, or a text
+        substring. Omit sprint to include every sprint (there is no unsprinted-only
+        value). Each result's assignee_is_agent is true for an agent, false for a
+        human, and null when unassigned. Archived issues are hidden by default; pass
+        include_archived=true to see them."""
         return client.list_issues(
             status=status,
             project=project,
+            sprint=sprint,
             label=label,
             search=search,
             include_archived=include_archived,

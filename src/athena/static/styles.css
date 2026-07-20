@@ -784,12 +784,64 @@ footer {
     padding: 0.25rem 0.75rem;
 }
 
-/* Board (kanban stub) */
+/* Fleet board — actor swimlanes stacked vertically, status columns within each. */
 .board {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
     margin: 1rem 0;
+}
+
+.board-swimlane {
+    border: 1px solid #dfe3e8;
+    border-radius: 8px;
+    padding: 0.9rem;
+    background: #fff;
+}
+
+.board-swimlane-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.board-swimlane-header h2 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.board-swimlane-header .count {
+    color: #666;
+    font-size: 0.8rem;
+}
+
+.board-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+    gap: 1rem;
+}
+
+.board-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+}
+
+.board-filters {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.board-filters .search-input,
+.board-filters .filter-select {
+    flex: 1 1 10rem;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.board-filters .button {
+    flex: 0 0 auto;
 }
 
 .board-column {
