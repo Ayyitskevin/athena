@@ -90,6 +90,29 @@ There is no separate `api/` package: each module owns its REST surface
 (`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves
 `/issues` lives next to the SQL that backs it.
 
+The enforced dependency direction is `web -> (aegis | mentor) -> core`: web may
+use either feature module and shared core, while Aegis and Mentor are independent
+peers that may use core but never each other. Core never depends on a feature or
+web module, and no layer imports `main.py`, the composition root. Run
+`python scripts/check_import_contracts.py` to verify direct, indirect, and
+supported literal dynamic imports. Dynamic checking accepts bare
+`__import__` calls and direct
+`importlib.import_module` calls after an unaliased, direct
+top-level `import importlib`; literal external targets remain
+outside the layer graph. Imports of `builtins` or frozen import machinery,
+aliased or submodule imports of `importlib`, re-exports of loader names, and
+direct loader/module escapes fail closed. Explicit acquisitions through
+`.importlib`, `.builtins`, or machinery-module keys in literal mapping
+subscripts or `.get(...)` also fail closed. Loader names reached from a module
+name bound by an `import` statement through `getattr(...)`, attributes, or
+`.__dict__` lookups also fail closed. Explicit `__builtins__` access and all
+wildcard imports also fail because their bindings cannot be statically
+inventoried. Arbitrary computed reflection, `eval`/
+`exec`, and custom import hooks are outside this static policy.
+The checker reserves the built-in `__builtins__`,
+`__import__`, and `getattr` names. CI runs the same
+check without importing application code.
+
 ## Roadmap (dogfood-first)
 
 - **Phase 0 — Project setup** *(done)*: repo, skeleton, dev environment,

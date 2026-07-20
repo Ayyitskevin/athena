@@ -120,8 +120,8 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 ## Definition of done (all must hold before you call it done)
 
-1. `ruff check .` and `pytest -q` are **green** — no skipped or mocked-away
-   tests passed off as passing.
+1. `ruff check .`, `python scripts/check_import_contracts.py`, and `pytest -q`
+   are **green** — no skipped or mocked-away tests passed off as passing.
 2. You **ran it**: the app boots and the feature works against the real DB
    (`uvicorn athena.main:app`, hit the route). "Should work" is not "works."
 3. **No stray data stores** — grep your diff for in-memory lists/dicts standing
@@ -156,6 +156,6 @@ tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
 
-Run the gate: `ruff check .` and `pytest -q` (add `-n 4` for the ~5x-faster
-parallel run — the suite is deterministic and CI uses it too).
+Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`, and
+`pytest -q -n 4` (plain `pytest -q` remains valid).
 Run the app: `uvicorn athena.main:app --reload`.

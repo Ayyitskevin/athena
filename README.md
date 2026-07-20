@@ -121,6 +121,7 @@ Linux/Python 3.12. The gate:
 
 ```bash
 .venv/bin/python -m ruff check .
+.venv/bin/python scripts/check_import_contracts.py
 .venv/bin/python -m pytest -q
 .venv/bin/python scripts/smoke_app.py
 ```
@@ -156,6 +157,7 @@ python -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
 .venv/bin/python -m ruff check .
+.venv/bin/python scripts/check_import_contracts.py
 .venv/bin/python -m pytest -q
 .venv/bin/python scripts/smoke_app.py
 .venv/bin/uvicorn athena.main:app --reload
