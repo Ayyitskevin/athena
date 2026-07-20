@@ -411,7 +411,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # submits real ids, so this only guards a hand-edited URL).
     priority_filter = (request.query_params.get("priority") or "").strip()
     assignee_raw = (request.query_params.get("assignee") or "").strip()
-    assignee_id = int(assignee_raw) if assignee_raw.lstrip("-").isdigit() else None
+    assignee_id = issues.parse_filter_id(assignee_raw)
     label_filter = (request.query_params.get("label") or "").strip()
     project_raw = (request.query_params.get("project") or "").strip()
     # "none" selects the backlog (issues with no project); a number selects that
@@ -427,7 +427,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # anything else (incl. blank) means "don't filter by sprint" — the same lenient
     # parse the assignee filter uses, since the dropdown only ever submits real ids.
     sprint_raw = (request.query_params.get("sprint") or "").strip()
-    sprint_id = int(sprint_raw) if sprint_raw.isdigit() else None
+    sprint_id = issues.parse_filter_id(sprint_raw)
     # Archived issues are hidden by default (the soft-delete semantics every list
     # wants); the "Show archived" toggle submits a truthy value to include them.
     archived_raw = (request.query_params.get("archived") or "").strip()

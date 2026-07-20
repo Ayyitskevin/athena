@@ -70,6 +70,44 @@ def test_sprint_reads_404_for_outsider(tmp_path):
         assert client.get(f"/sprints/{sid}", headers=H_OUTSIDER).status_code == 200
 
 
+def test_issue_sprint_filter_does_not_become_a_private_sprint_oracle(tmp_path):
+    # WHY: MCP now exposes the existing issue sprint filter. Filtering by a hidden
+    # sprint must look exactly like filtering by an unknown id to an outsider.
+    db_file = tmp_path / "sprint_filter.db"
+    with TestClient(create_app(db_file)) as client:
+        _bootstrap(client)
+        _, pp = _private_project(client, db_file)
+        sid = client.post(
+            f"/projects/{pp}/sprints",
+            json={"name": "Secret Sprint"},
+            headers=H_CREATOR,
+        ).json()["id"]
+        issue = client.post(
+            "/issues",
+            json={"title": "Hidden sprint issue", "project_id": pp},
+            headers=H_CREATOR,
+        ).json()
+        client.put(
+            f"/issues/{issue['id']}/sprint",
+            json={"sprint_id": sid},
+            headers=H_CREATOR,
+        )
+
+        outsider = client.get("/issues", params={"sprint": sid}, headers=H_OUTSIDER)
+        unknown = client.get("/issues", params={"sprint": 999999}, headers=H_OUTSIDER)
+        anonymous = client.get("/issues", params={"sprint": sid})
+        assert (
+            outsider.status_code == unknown.status_code == anonymous.status_code == 200
+        )
+        assert outsider.json() == unknown.json() == anonymous.json() == []
+        assert [
+            row["id"]
+            for row in client.get(
+                "/issues", params={"sprint": sid}, headers=H_CREATOR
+            ).json()
+        ] == [issue["id"]]
+
+
 def test_web_sprint_page_404s_for_anonymous(tmp_path):
     db_file = tmp_path / "spr_web.db"
     with TestClient(create_app(db_file)) as client:

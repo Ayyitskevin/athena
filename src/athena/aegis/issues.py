@@ -36,12 +36,12 @@ def _like_contains(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
-# Every read returns the assignee's display name and the project's name + key
-# alongside the row (NULL when unassigned / no project), so callers never resolve
-# the ids themselves. LEFT JOINs, not JOINs: an unassigned or project-less issue
-# must still come back.
+# Every read returns the assignee's display name + actor kind and the project's
+# name + key alongside the row (NULL when unassigned / no project), so callers
+# never resolve the ids themselves. LEFT JOINs, not JOINs: an unassigned or
+# project-less issue must still come back.
 _SELECT = (
-    "SELECT i.*, u.name AS assignee_name, "
+    "SELECT i.*, u.name AS assignee_name, u.is_agent AS assignee_is_agent, "
     "p.name AS project_name, p.key AS project_key "
     "FROM issues i "
     "LEFT JOIN users u ON u.id = i.assignee_id "
@@ -58,6 +58,8 @@ def _to_issue(row: sqlite3.Row) -> dict:
     in the one place every read funnels through, so the API and the web view can
     never disagree on an issue's key."""
     issue = dict(row)
+    if issue.get("assignee_is_agent") is not None:
+        issue["assignee_is_agent"] = bool(issue["assignee_is_agent"])
     if issue.get("project_key") and issue.get("project_seq") is not None:
         issue["key"] = f"{issue['project_key']}-{issue['project_seq']}"
     else:
@@ -493,6 +495,24 @@ def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
     return _to_issue(row) if row else None
 
 
+MAX_SQLITE_INTEGER = (1 << 63) - 1
+
+
+def parse_filter_id(value: str | None) -> int | None:
+    """Parse a non-negative, SQLite-bindable decimal id from a filter value."""
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized or not normalized.isascii() or not normalized.isdigit():
+        return None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        # Python rejects extremely long decimal strings before conversion.
+        return None
+    return parsed if parsed <= MAX_SQLITE_INTEGER else None
+
+
 def parse_project_filter(project: str | None) -> tuple[int | None, bool] | None:
     """Interpret the ?project= filter value, shared by the REST API and the web
     list so the two can never drift on what the param means. Returns:
@@ -511,9 +531,8 @@ def parse_project_filter(project: str | None) -> tuple[int | None, bool] | None:
     value = project.strip()
     if value.lower() == "none":
         return None, True
-    if value.isdigit():
-        return int(value), False
-    return None
+    project_id = parse_filter_id(value)
+    return (project_id, False) if project_id is not None else None
 
 
 def list_issues(

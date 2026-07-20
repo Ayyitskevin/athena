@@ -49,6 +49,10 @@ def test_parse_project_filter_valid_shapes():
     assert issues.parse_project_filter("none") == (None, True)
     assert issues.parse_project_filter("NONE") == (None, True)  # case-insensitive
     assert issues.parse_project_filter("42") == (42, False)
+    assert issues.parse_filter_id("0") == 0
+    assert issues.parse_filter_id(str(issues.MAX_SQLITE_INTEGER)) == (
+        issues.MAX_SQLITE_INTEGER
+    )
 
 
 def test_parse_project_filter_invalid_is_none_not_a_tuple():
@@ -56,6 +60,8 @@ def test_parse_project_filter_invalid_is_none_not_a_tuple():
     # so callers reject it instead of unpacking garbage into "show everything".
     assert issues.parse_project_filter("abc") is None
     assert issues.parse_project_filter("1x") is None
+    assert issues.parse_project_filter("²") is None
+    assert issues.parse_project_filter(str(1 << 63)) is None
 
 
 # --- web↔API agree: invalid project filter fails loud on both ----------------
@@ -71,6 +77,36 @@ def test_invalid_project_filter_web_400_api_422(tmp_path):
         _make_issue(client, "anything")
         assert client.get("/aegis/issues?project=bogus").status_code == 400
         assert client.get("/issues?project=bogus").status_code == 422
+
+
+def test_numeric_issue_filters_are_safe_at_every_http_boundary(tmp_path):
+    # WHY: FastAPI can parse integers larger than SQLite can bind, while Python's
+    # Unicode digit predicates accept characters int() cannot convert. REST rejects
+    # invalid ids; the legacy web read treats them as an omitted filter, never a 500.
+    db_file = tmp_path / "numeric-bounds.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_user(db_file)
+        _make_issue(client, "still visible")
+
+        for field_name in ("assignee", "sprint"):
+            assert (
+                client.get(
+                    "/issues",
+                    params={field_name: issues.MAX_SQLITE_INTEGER},
+                ).status_code
+                == 200
+            )
+            for malformed in ("²", str(1 << 63), "-1"):
+                assert (
+                    client.get("/issues", params={field_name: malformed}).status_code
+                    == 422
+                )
+                web = client.get(
+                    "/aegis/issues", params={field_name: malformed}
+                )
+                assert web.status_code == 200
+                assert "still visible" in web.text
 
 
 # --- web↔API agree: search casing is LIKE's job, not a pre-lower -------------

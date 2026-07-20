@@ -11,9 +11,14 @@ these tests pin down is the contract the gesture rides on:
   * it is a write: logged-out is 401, a missing CSRF token is 403, and a move by
     someone who isn't the issue's creator/assignee (or to a status the issue's
     project doesn't have) is refused by re-rendering UNCHANGED — the card snaps back;
-  * the re-render keeps the active search/status filter, so a move doesn't blow the
+  * the board groups primary assignees into agent/human/unassigned swimlanes and
+    composes search/status/project/sprint filters without widening visibility;
+  * every move path preserves all active filters, so a move doesn't blow the
     board's current view away.
 """
+
+from urllib.parse import parse_qs, urlparse
+
 from athena.core import db
 from athena.main import create_app
 from fastapi.testclient import TestClient
@@ -42,6 +47,12 @@ def _issue(client, title, **kw):
     return client.post("/issues", json={"title": title, **kw}, headers=H1).json()
 
 
+def _lane(body: str, key: str) -> str:
+    """Return one top-level swimlane's markup (sections are never nested)."""
+    start = body.index(f'data-lane="{key}"')
+    return body[start : body.index("</section>", start)]
+
+
 # --- markup: the hooks the drag script needs --------------------------------
 
 
@@ -54,7 +65,7 @@ def test_board_renders_drag_hooks_for_signed_in_user(tmp_path):
         assert f'data-issue-id="{iss["id"]}"' in body
         assert 'draggable="true"' in body
         assert 'data-status="open"' in body
-        assert csrf in body  # the board carries the session CSRF for the POST
+        assert csrf in body  # the native move form carries the session CSRF
         assert "/static/board-dnd.js" in body
 
 
@@ -67,6 +78,260 @@ def test_board_cards_not_draggable_when_logged_out(tmp_path):
         body = client.get("/aegis/boards").text
         assert "look only" in body  # still readable
         assert 'draggable="true"' not in body
+
+
+def test_board_filters_are_one_scoped_native_get_form(tmp_path):
+    # WHY: global hx-include selectors also match every card's stale hidden fields.
+    # Scoping to the filter form keeps HTMX deterministic and leaves a no-JS GET path.
+    with TestClient(create_app(tmp_path / "filters-markup.db")) as client:
+        _admin(client)
+        _issue(client, "filterable")
+        _login(client)
+        body = client.get("/aegis/boards").text
+
+        assert 'action="/aegis/boards"' in body
+        assert 'class="header-actions board-filters"' in body
+        assert 'id="board-request-coordinator"' in body
+        assert 'hx-sync="this:queue all"' in body
+        assert 'hx-target=".board"' in body
+        assert 'hx-swap="outerHTML"' in body
+        assert body.count('hx-include="closest form"') == 5
+        assert body.count('hx-sync="this:queue all"') == 1
+        # Card forms stay native for no-JS use; JS sends through the stable source.
+        assert 'hx-post="/aegis/boards/move/' not in body
+        assert 'hx-include="[name=' not in body
+        for control in (
+            "board-search",
+            "board-status",
+            "board-project",
+            "board-sprint",
+        ):
+            assert f'for="{control}"' in body
+            assert f'id="{control}"' in body
+
+        script = client.get("/static/board-dnd.js").text
+        assert "form.requestSubmit();" in script
+        assert 'document.addEventListener("submit"' in script
+        assert "source: coordinator" in script
+        assert 'target: ".board"' not in script
+        assert "window.htmx.ajax" in script
+
+
+def test_board_columns_include_unoccupied_valid_destinations(tmp_path):
+    # WHY: narrowing to cards that are all open must not erase the in-progress and
+    # done destinations and turn drag-to-move into a dead-end.
+    with TestClient(create_app(tmp_path / "destinations.db")) as client:
+        _admin(client)
+        _issue(client, "only-open-card")
+        _login(client)
+        body = client.get("/aegis/boards").text
+
+        for key in ("agent", "human", "unassigned"):
+            lane = _lane(body, key)
+            for status_name in ("open", "in_progress", "done"):
+                assert lane.count(f'data-status="{status_name}"') == 1
+
+
+def test_board_swimlanes_use_primary_assignee_kind(tmp_path):
+    # WHY: an unassigned issue has a NULL actor kind; it must not be mistaken for a
+    # human (False). The API projection and board grouping must tell the same truth.
+    with TestClient(create_app(tmp_path / "lanes.db")) as client:
+        _admin(client)
+        human = client.post(
+            "/users",
+            json={"email": "human@e.com", "name": "Human"},
+            headers=H1,
+        ).json()
+        agent = client.post(
+            "/users",
+            json={"email": "agent@e.com", "name": "Agent", "is_agent": True},
+            headers=H1,
+        ).json()
+        human_issue = _issue(client, "human-owned-card")
+        agent_issue = _issue(client, "agent-owned-card")
+        unassigned_issue = _issue(client, "unassigned-card", status="done")
+
+        human_assigned = client.put(
+            f"/issues/{human_issue['id']}/assignee",
+            json={"assignee_id": human["id"]},
+            headers=H1,
+        ).json()
+        agent_assigned = client.put(
+            f"/issues/{agent_issue['id']}/assignee",
+            json={"assignee_id": agent["id"]},
+            headers=H1,
+        ).json()
+        assert human_assigned["assignee_is_agent"] is False
+        assert agent_assigned["assignee_is_agent"] is True
+        assert unassigned_issue["assignee_is_agent"] is None
+
+        listed = {
+            issue["id"]: issue["assignee_is_agent"]
+            for issue in client.get("/issues", headers=H1).json()
+        }
+        assert listed == {
+            human_issue["id"]: False,
+            agent_issue["id"]: True,
+            unassigned_issue["id"]: None,
+        }
+        assert (
+            client.get(f"/issues/{agent_issue['id']}", headers=H1).json()[
+                "assignee_is_agent"
+            ]
+            is True
+        )
+
+        body = client.get("/aegis/boards").text
+        expected = {
+            "agent": "agent-owned-card",
+            "human": "human-owned-card",
+            "unassigned": "unassigned-card",
+        }
+        for key, title in expected.items():
+            lane = _lane(body, key)
+            assert title in lane
+            assert body.count(title) == 1
+            # Every lane gets the same status targets, even when one is empty.
+            assert lane.count('data-status="open"') == 1
+            assert lane.count('data-status="done"') == 1
+            for other_title in set(expected.values()) - {title}:
+                assert other_title not in lane
+
+
+def test_board_project_backlog_and_sprint_filters_compose(tmp_path):
+    with TestClient(create_app(tmp_path / "placement-filters.db")) as client:
+        _admin(client)
+        first = client.post(
+            "/projects", json={"name": "First", "key": "ONE"}, headers=H1
+        ).json()
+        second = client.post(
+            "/projects", json={"name": "Second", "key": "TWO"}, headers=H1
+        ).json()
+        first_sprint = client.post(
+            f"/projects/{first['id']}/sprints",
+            json={"name": "Sprint A"},
+            headers=H1,
+        ).json()
+        second_sprint = client.post(
+            f"/projects/{second['id']}/sprints",
+            json={"name": "Sprint B"},
+            headers=H1,
+        ).json()
+        in_first_sprint = _issue(client, "first-sprint-card", project_id=first["id"])
+        _issue(client, "first-unsprinted-card", project_id=first["id"])
+        in_second_sprint = _issue(client, "second-sprint-card", project_id=second["id"])
+        _issue(client, "global-backlog-card")
+        for issue, sprint in (
+            (in_first_sprint, first_sprint),
+            (in_second_sprint, second_sprint),
+        ):
+            client.put(
+                f"/issues/{issue['id']}/sprint",
+                json={"sprint_id": sprint["id"]},
+                headers=H1,
+            )
+
+        by_project = client.get("/aegis/boards", params={"project": first["id"]}).text
+        assert "first-sprint-card" in by_project
+        assert "first-unsprinted-card" in by_project
+        assert "second-sprint-card" not in by_project
+        assert "global-backlog-card" not in by_project
+        assert f'value="{first["id"]}" selected' in by_project
+
+        by_sprint = client.get(
+            "/aegis/boards", params={"sprint": first_sprint["id"]}
+        ).text
+        assert "first-sprint-card" in by_sprint
+        assert "first-unsprinted-card" not in by_sprint
+        assert "second-sprint-card" not in by_sprint
+        assert f'value="{first_sprint["id"]}" selected' in by_sprint
+        assert "ONE · Sprint A" in by_sprint
+
+        backlog_only = client.get("/aegis/boards", params={"project": "none"}).text
+        assert "global-backlog-card" in backlog_only
+        assert "first-sprint-card" not in backlog_only
+
+        mismatch = client.get(
+            "/aegis/boards",
+            params={"project": second["id"], "sprint": first_sprint["id"]},
+        ).text
+        assert "No issues match these filters." in mismatch
+        for title in (
+            "first-sprint-card",
+            "first-unsprinted-card",
+            "second-sprint-card",
+            "global-backlog-card",
+        ):
+            assert title not in mismatch
+
+
+def test_board_filter_options_and_crafted_queries_respect_visibility(tmp_path):
+    # WHY: project/sprint dropdowns and direct query strings are both read oracles.
+    # A hidden container's names and cards must remain indistinguishable from absent.
+    with TestClient(create_app(tmp_path / "visibility.db")) as client:
+        _admin(client)
+        public = client.post(
+            "/projects", json={"name": "Public Project", "key": "PUB"}, headers=H1
+        ).json()
+        private = client.post(
+            "/projects",
+            json={"name": "Secret Project Marker", "key": "SEC"},
+            headers=H1,
+        ).json()
+        public_sprint = client.post(
+            f"/projects/{public['id']}/sprints",
+            json={"name": "Public Sprint"},
+            headers=H1,
+        ).json()
+        private_sprint = client.post(
+            f"/projects/{private['id']}/sprints",
+            json={"name": "Secret Sprint Marker"},
+            headers=H1,
+        ).json()
+        public_issue = _issue(client, "public-card", project_id=public["id"])
+        private_issue = _issue(client, "secret-card-marker", project_id=private["id"])
+        for issue, sprint in (
+            (public_issue, public_sprint),
+            (private_issue, private_sprint),
+        ):
+            client.put(
+                f"/issues/{issue['id']}/sprint",
+                json={"sprint_id": sprint["id"]},
+                headers=H1,
+            )
+        assert (
+            client.put(
+                f"/projects/{private['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+
+        anonymous = client.get("/aegis/boards").text
+        private_project_probe = client.get(
+            "/aegis/boards", params={"project": private["id"]}
+        ).text
+        private_sprint_probe = client.get(
+            "/aegis/boards", params={"sprint": private_sprint["id"]}
+        ).text
+        assert "public-card" in anonymous
+        assert "Public Project" in anonymous
+        assert "Public Sprint" in anonymous
+        for secret in (
+            "secret-card-marker",
+            "Secret Project Marker",
+            "Secret Sprint Marker",
+        ):
+            assert secret not in anonymous
+            assert secret not in private_project_probe
+            assert secret not in private_sprint_probe
+
+        _login(client)
+        creator_view = client.get("/aegis/boards").text
+        assert "secret-card-marker" in creator_view
+        assert "Secret Project Marker" in creator_view
+        assert "Secret Sprint Marker" in creator_view
 
 
 # --- the move endpoint ------------------------------------------------------
@@ -186,22 +451,131 @@ def test_move_invalid_status_snaps_back(tmp_path):
         assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "open"
 
 
+def test_invalid_project_filter_fails_before_move(tmp_path):
+    # WHY: filter validation must happen before the command. Otherwise a forged form
+    # can successfully mutate the issue and only then fail while rendering a 400.
+    with TestClient(create_app(tmp_path / "invalid-project.db")) as client:
+        _admin(client)
+        iss = _issue(client, "must-stay-open")
+        csrf = _login(client)
+        before_events = client.get(
+            f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+        ).json()
+
+        for malformed in ("not-an-id", "²", str(1 << 63)):
+            assert (
+                client.get("/aegis/boards", params={"project": malformed}).status_code
+                == 400
+            )
+            moved = client.post(
+                f"/aegis/boards/move/{iss['id']}",
+                data={
+                    "new_status": "done",
+                    "project": malformed,
+                    "csrf_token": csrf,
+                },
+                headers=HX,
+            )
+            assert moved.status_code == 400
+            assert (
+                client.get(f"/issues/{iss['id']}", headers=H1).json()["status"]
+                == "open"
+            )
+            assert (
+                client.get(
+                    f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+                ).json()
+                == before_events
+            )
+
+
+def test_invalid_sprint_filter_is_lenient_for_reads_but_strict_before_move(tmp_path):
+    # WHY: read-only queries retain the issue-list compatibility behavior, but
+    # malformed write context must never accompany a mutation.
+    with TestClient(create_app(tmp_path / "invalid-sprint.db")) as client:
+        _admin(client)
+        iss = _issue(client, "must-stay-open")
+        csrf = _login(client)
+        before_events = client.get(
+            f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+        ).json()
+
+        for malformed in ("not-an-id", "²", str(1 << 63)):
+            read = client.get("/aegis/boards", params={"sprint": malformed})
+            assert read.status_code == 200
+            assert "must-stay-open" in read.text
+
+            moved = client.post(
+                f"/aegis/boards/move/{iss['id']}",
+                data={
+                    "new_status": "done",
+                    "sprint": malformed,
+                    "csrf_token": csrf,
+                },
+                headers=HX,
+            )
+            assert moved.status_code == 400
+            assert (
+                client.get(f"/issues/{iss['id']}", headers=H1).json()["status"]
+                == "open"
+            )
+            assert (
+                client.get(
+                    f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+                ).json()
+                == before_events
+            )
+
+
 def test_move_preserves_active_filter(tmp_path):
-    # WHY: a move from a filtered board must keep the filter — re-rendering the whole
-    # unfiltered board would yank the view out from under the user.
+    # WHY: a move from a filtered board must keep every filter — re-rendering a
+    # wider board would yank the operator's view out from under them.
     with TestClient(create_app(tmp_path / "filt.db")) as client:
         _admin(client)
-        keep = _issue(client, "keepme alpha")
-        _issue(client, "other beta")
+        project = client.post(
+            "/projects", json={"name": "Scoped", "key": "SCO"}, headers=H1
+        ).json()
+        other_project = client.post(
+            "/projects", json={"name": "Other", "key": "OTH"}, headers=H1
+        ).json()
+        sprint = client.post(
+            f"/projects/{project['id']}/sprints",
+            json={"name": "Now"},
+            headers=H1,
+        ).json()
+        keep = _issue(client, "keepme in sprint", project_id=project["id"])
+        client.put(
+            f"/issues/{keep['id']}/sprint",
+            json={"sprint_id": sprint["id"]},
+            headers=H1,
+        )
+        _issue(client, "keepme outside sprint", project_id=project["id"])
+        _issue(client, "keepme other project", project_id=other_project["id"])
+        _issue(client, "other search term", project_id=project["id"])
         csrf = _login(client)
         r = client.post(
             f"/aegis/boards/move/{keep['id']}",
-            data={"new_status": "in_progress", "csrf_token": csrf, "search": "keepme"},
+            data={
+                "new_status": "in_progress",
+                "csrf_token": csrf,
+                "search": "keepme",
+                "project": str(project["id"]),
+                "sprint": str(sprint["id"]),
+            },
             headers=HX,
         )
         assert r.status_code == 200
-        assert "keepme alpha" in r.text
-        assert "other beta" not in r.text  # the search filter survived the move
+        assert "keepme in sprint" in r.text
+        assert "keepme outside sprint" not in r.text
+        assert "keepme other project" not in r.text
+        assert "other search term" not in r.text
+        for name, value in (
+            ("search", "keepme"),
+            ("status", ""),
+            ("project", str(project["id"])),
+            ("sprint", str(sprint["id"])),
+        ):
+            assert f'name="{name}" value="{value}"' in r.text
 
 
 # --- keyboard / no-JS move (the accessible twin of the drag gesture) ---------
@@ -253,15 +627,42 @@ def test_keyboard_move_via_form_redirects_and_applies(tmp_path):
 def test_keyboard_move_redirect_preserves_filter(tmp_path):
     with TestClient(create_app(tmp_path / "kpf.db")) as client:
         _admin(client)
-        iss = _issue(client, "card")
+        project = client.post(
+            "/projects", json={"name": "Project", "key": "PRO"}, headers=H1
+        ).json()
+        sprint = client.post(
+            f"/projects/{project['id']}/sprints",
+            json={"name": "Sprint"},
+            headers=H1,
+        ).json()
+        iss = _issue(client, "card", project_id=project["id"])
+        client.put(
+            f"/issues/{iss['id']}/sprint",
+            json={"sprint_id": sprint["id"]},
+            headers=H1,
+        )
         csrf = _login(client)
         r = client.post(
             f"/aegis/boards/move/{iss['id']}",
-            data={"new_status": "done", "csrf_token": csrf, "search": "card", "status": "open"},
+            data={
+                "new_status": "done",
+                "csrf_token": csrf,
+                "search": "card",
+                "status": "open",
+                "project": str(project["id"]),
+                "sprint": str(sprint["id"]),
+            },
             follow_redirects=False,
         )
         assert r.status_code == 303
-        assert "search=card" in r.headers["location"]
+        location = urlparse(r.headers["location"])
+        assert location.path == "/aegis/boards"
+        assert parse_qs(location.query, keep_blank_values=True) == {
+            "search": ["card"],
+            "status": ["open"],
+            "project": [str(project["id"])],
+            "sprint": [str(sprint["id"])],
+        }
 
 
 def test_keyboard_move_write_gate_snaps_back(tmp_path):

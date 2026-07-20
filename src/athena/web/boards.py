@@ -6,6 +6,7 @@ own APIRouter, mounted by main.py. A thin client over the issues data layer — 
 owns no data. The shared label/status render helpers and the template accessor are
 imported from web.router (where the issues cluster still lives).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -14,7 +15,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.aegis import issue_commands, issues, statuses
+from athena.aegis import issue_commands, issues, projects, sprints, statuses
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -23,27 +24,63 @@ from athena.web.router import _attach_labels, _statuses_in_use, get_templates
 router = APIRouter()
 
 
+def _board_scope(
+    project_filter: str,
+    sprint_filter: str,
+    *,
+    strict_sprint: bool = False,
+) -> tuple[int | None, bool, int | None] | None:
+    """Parse placement filters with the same semantics as the issue-list view.
+
+    A malformed project fails loud instead of widening to every project. Read-only
+    sprint queries intentionally retain the issue-list's lenient behavior, while a
+    write caller opts into strict validation so malformed context cannot accompany a
+    mutation.
+    """
+    parsed_project = issues.parse_project_filter(project_filter)
+    if parsed_project is None:
+        return None
+    project_id, backlog = parsed_project
+    sprint_id = issues.parse_filter_id(sprint_filter)
+    if sprint_filter and sprint_id is None and strict_sprint:
+        return None
+    return project_id, backlog, sprint_id
+
+
 def _render_board(
     request: Request,
     conn: sqlite3.Connection,
     *,
     search: str,
     status_filter: str,
+    project_filter: str,
+    sprint_filter: str,
 ):
-    """Render the board for the current search/status filter — the ONE place the
-    board's column-grouping lives, shared by the GET view and the drag-move POST so
-    a move re-renders exactly the board a fresh load would. Returns the full page on
-    a normal request and just the .board partial on an HTMX request (so a swap
-    replaces only the board, keeping the filter chrome)."""
-    # Same data-layer path as the issues list and the API: filtering (status +
-    # search) is done by list_issues, NOT re-implemented in Python here. The board
-    # only shows issues in projects the viewer may see (admins all; backlog always).
+    """Render one visibility-safe, placement-filtered fleet board.
+
+    This is the ONE place the board's swimlane/column grouping lives, shared by the
+    GET view and the drag-move POST so a move re-renders exactly what a fresh load
+    would. Normal requests receive the full page; HTMX requests receive only the
+    .board partial, keeping the filter chrome in place.
+    """
+    scope = _board_scope(project_filter, sprint_filter)
+    if scope is None:
+        return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
+    project_id, backlog, sprint_id = scope
+
+    # Same data-layer path as the issues list and API: every filter is applied by
+    # list_issues, NOT re-implemented in Python. The board only sees issues in
+    # projects the viewer may see (admins all; backlog always).
     user = getattr(request.state, "user", None)
+    visible_project_ids = access.visible_project_filter(conn, user)
     filtered = issues.list_issues(
         conn,
         status=status_filter or None,
         search=search,
-        visible_project_ids=access.visible_project_filter(conn, user),
+        project_id=project_id,
+        backlog=backlog,
+        sprint_id=sprint_id,
+        visible_project_ids=visible_project_ids,
     )
     _attach_labels(conn, filtered)
 
@@ -58,63 +95,137 @@ def _render_board(
         issue["status_options"] = status_opts[pid]
 
     # Statuses are per-project now, so the board's columns are dynamic: the union of
-    # statuses present, ordered by category (todo → doing → done) then name, so a
-    # board that mixes projects with different status sets still reads coherently.
+    # valid destinations for every matching card (including currently unoccupied
+    # statuses), ordered by category (todo → doing → done) then name. A narrow filter
+    # therefore still has somewhere to drag an open card.
     from collections import defaultdict
 
-    grouped: dict[str, list] = defaultdict(list)
+    grouped: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for issue in filtered:
-        grouped[issue.get("status", "")].append(issue)
+        if issue.get("assignee_id") is None:
+            lane = "unassigned"
+        elif issue.get("assignee_is_agent"):
+            lane = "agent"
+        else:
+            lane = "human"
+        grouped[lane][issue.get("status", "")].append(issue)
 
     cat_rank = {"todo": 0, "doing": 1, "done": 2}
 
     def _sort_key(name: str) -> tuple[int, str]:
         return (cat_rank.get(statuses.global_category(conn, name), 1), name)
 
-    board_columns = [
-        {"name": name, "label": name.replace("_", " ").title(), "issues": grouped[name]}
-        for name in sorted(grouped, key=_sort_key)
-    ]
+    status_names = sorted(
+        {
+            status_name
+            for issue in filtered
+            for status_name in issue["status_options"]
+        }
+        | {issue.get("status", "") for issue in filtered},
+        key=_sort_key,
+    )
+    board_lanes = []
+    for key, label in (
+        ("agent", "Agent work"),
+        ("human", "Human work"),
+        ("unassigned", "Unassigned"),
+    ):
+        lane_issues = grouped[key]
+        board_lanes.append(
+            {
+                "key": key,
+                "label": label,
+                "count": sum(len(items) for items in lane_issues.values()),
+                "columns": [
+                    {
+                        "name": name,
+                        "label": name.replace("_", " ").title(),
+                        "issues": lane_issues[name],
+                    }
+                    for name in status_names
+                ],
+            }
+        )
+
     # The status filter offers every status currently in use on issues THIS VIEWER may
     # see — the same gated option set the issue list uses.
-    all_statuses = _statuses_in_use(conn, access.visible_project_filter(conn, user))
+    all_statuses = _statuses_in_use(conn, visible_project_ids)
 
-    template = "aegis/partials/boards_content.html" if request.headers.get("HX-Request") else "aegis/boards.html"
+    # Placement filter options are visibility-safe. Sprint labels carry their
+    # project key to disambiguate same-named sprints across projects.
+    all_projects = projects.list_projects(conn, visible_project_ids)
+    project_keys = {project["id"]: project["key"] for project in all_projects}
+    all_sprints = [
+        {
+            "id": sprint["id"],
+            "name": sprint["name"],
+            "project_key": project_keys[sprint["project_id"]],
+        }
+        for sprint in sprints.list_sprints(conn)
+        if sprint["project_id"] in project_keys
+    ]
+
+    template = (
+        "aegis/partials/boards_content.html"
+        if request.headers.get("HX-Request")
+        else "aegis/boards.html"
+    )
     return get_templates().TemplateResponse(
         request=request,
         name=template,
         context={
-            "board_columns": board_columns,
+            "board_lanes": board_lanes,
+            "board_total": len(filtered),
             "all_statuses": all_statuses,
             "search": search,
             "status_filter": status_filter,
+            "all_projects": all_projects,
+            "project_filter": project_filter,
+            "all_sprints": all_sprints,
+            "sprint_filter": sprint_filter,
         },
     )
 
 
 @router.get("/aegis/boards", response_class=HTMLResponse)
 def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
-    """Boards view (Aegis) using real list_issues with search/filter."""
+    """Fleet board using the shared issue query and visibility contract."""
     search = (request.query_params.get("search") or "").strip()
     status_filter = (request.query_params.get("status") or "").strip()
-    return _render_board(request, conn, search=search, status_filter=status_filter)
+    project_filter = (request.query_params.get("project") or "").strip()
+    sprint_filter = (request.query_params.get("sprint") or "").strip()
+    return _render_board(
+        request,
+        conn,
+        search=search,
+        status_filter=status_filter,
+        project_filter=project_filter,
+        sprint_filter=sprint_filter,
+    )
 
 
-@router.post("/aegis/boards/move/{issue_id}", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/boards/move/{issue_id}",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
 def board_move_issue(
     request: Request,
     issue_id: int,
     new_status: str = Form(...),
     search: str = Form(""),
     status: str = Form(""),
+    project: str = Form(""),
+    sprint: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Change an issue's status from the board, then show the board with the card in
     its new column. Two callers share this endpoint: the drag gesture (board-dnd.js,
     an HTMX request that swaps just the .board) and the per-card keyboard "Move" form
-    (a plain POST when JS is off). Both send new_status plus the active search/status
-    filter; the response shape follows the request — an HTMX swap of the re-rendered
-    board, or a 303 back to /aegis/boards (so a refresh doesn't re-POST) for the form.
+    (a plain POST when JS is off). Both send new_status plus the active
+    search/status/project/sprint filters; the response shape follows the request —
+    an HTMX swap of the re-rendered board, or a 303 back to /aegis/boards (so a
+    refresh doesn't re-POST) for the form.
 
     Gated like every other write — a logged-out caller is a 401 (the UI only offers
     the move when signed in), a read-only (viewer) role can't move a card at all, and
@@ -127,6 +238,13 @@ def board_move_issue(
     back. This quick-move path deliberately skips the open-blockers advisory nudge the
     detail page shows: dependencies are advisory, and that warning belongs on the
     focused view, not a quick board move."""
+    search, status = search.strip(), status.strip()
+    project, sprint = project.strip(), sprint.strip()
+    # Validate before the write: a forged, malformed filter must not mutate an issue
+    # and only then fail while re-rendering its response.
+    if _board_scope(project, sprint, strict_sprint=True) is None:
+        return HTMLResponse("<h1>Invalid board filter</h1>", status_code=400)
+
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -143,12 +261,26 @@ def board_move_issue(
         )
     except issue_commands.IssueCommandError:
         pass
-    search, status = search.strip(), status.strip()
     if request.headers.get("HX-Request"):
-        return _render_board(request, conn, search=search, status_filter=status)
+        return _render_board(
+            request,
+            conn,
+            search=search,
+            status_filter=status,
+            project_filter=project,
+            sprint_filter=sprint,
+        )
     # No-JS keyboard form: redirect to the board (preserving filters) so the URL is a
     # GET and a refresh re-reads rather than re-submitting the move.
     return RedirectResponse(
-        "/aegis/boards?" + urlencode({"search": search, "status": status}),
+        "/aegis/boards?"
+        + urlencode(
+            {
+                "search": search,
+                "status": status,
+                "project": project,
+                "sprint": sprint,
+            }
+        ),
         status_code=303,
     )
