@@ -28,6 +28,8 @@ jobs:
           .venv/bin/python -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
       - name: Lint
         run: .venv/bin/python -m ruff check .
+      - name: Check import contracts
+        run: .venv/bin/python scripts/check_import_contracts.py
       - name: Run tests
         # -n 4: the suite is deterministic (no sleeps, per-test tmp databases) and
         # parallelizes cleanly — this cuts the gate from ~16 min to ~3-4 min.
@@ -48,7 +50,9 @@ jobs:
             echo "expected exactly one sdist, wheel, and extracted source tree" >&2
             exit 1
           fi
-          if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" || ! -f "${source_trees[0]}/scripts/smoke_app.py" ]]; then
+          if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" ]] \
+            || [[ ! -f "${source_trees[0]}/scripts/smoke_app.py" ]] \
+            || [[ ! -f "${source_trees[0]}/scripts/check_import_contracts.py" ]]; then
             echo "source distribution is missing its verification helpers" >&2
             exit 1
           fi
@@ -56,6 +60,8 @@ jobs:
           .venv/bin/python \
             "${source_trees[0]}/scripts/verify_wheel.py" \
             "${wheels[0]}"
+          .venv/bin/python \
+            "${source_trees[0]}/scripts/check_import_contracts.py"
           echo "ATHENA_SDIST_SOURCE=${source_trees[0]}" >> "$GITHUB_ENV"
           .venv/bin/python -m pip uninstall --yes athena
           .venv/bin/python -m pip install --no-deps "${wheels[0]}"
