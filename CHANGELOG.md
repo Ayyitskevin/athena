@@ -28,6 +28,12 @@ follow semantic versioning while the project remains pre-1.0.
   comment cross-link rendering), and removed operator-environment references
   from the contributor docs. Research planning notes moved to `docs/research/`.
 
+### Fixed
+
+- Saved-filter assignee ids now reject invalid types and values outside SQLite's
+  integer range before persistence; malformed stored criteria fail closed instead
+  of widening the query or raising an overflow while running it.
+
 ## [0.1.0a1] - 2026-07-18
 
 ### Added

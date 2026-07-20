@@ -498,6 +498,15 @@ def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
 MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
+def is_filter_id(value: object) -> bool:
+    """Whether value is an exact integer id SQLite can bind safely.
+
+    ``bool`` is deliberately excluded even though it subclasses ``int``: filter
+    callers must not let ``True`` silently mean row id 1.
+    """
+    return type(value) is int and 0 <= value <= MAX_SQLITE_INTEGER
+
+
 def parse_filter_id(value: str | None) -> int | None:
     """Parse a non-negative, SQLite-bindable decimal id from a filter value."""
     if value is None:
@@ -510,7 +519,7 @@ def parse_filter_id(value: str | None) -> int | None:
     except ValueError:
         # Python rejects extremely long decimal strings before conversion.
         return None
-    return parsed if parsed <= MAX_SQLITE_INTEGER else None
+    return parsed if is_filter_id(parsed) else None
 
 
 def parse_project_filter(project: str | None) -> tuple[int | None, bool] | None:
@@ -589,6 +598,15 @@ def list_issues(
     Column names below are hardcoded literals; all values stay parameterized."""
     if offset < 0 or offset > MAX_OFFSET:
         raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
+    # This function also serves direct internal callers, outside FastAPI's bounded
+    # query models. Invalid ids are a real filter that matches nothing — never an
+    # omitted filter (which would widen the result), and never an oversized value
+    # handed to sqlite3 (which would raise OverflowError).
+    if any(
+        value is not None and not is_filter_id(value)
+        for value in (assignee_id, project_id, sprint_id)
+    ):
+        return []
     if ids is not None and not ids:
         return []  # an empty id set can't match — and "IN ()" isn't valid SQL
     clauses: list[str] = []

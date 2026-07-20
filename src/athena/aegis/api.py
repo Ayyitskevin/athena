@@ -484,7 +484,7 @@ def search_issues_endpoint(
     q: str,
     status: str | None = None,
     priority: str | None = None,
-    assignee: int | None = None,
+    assignee: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
     label: str | None = None,
     project: str | None = None,
     limit: int = Query(20, ge=1, le=100),

@@ -40,14 +40,20 @@ from athena.core import labels
 _STRING_KEYS = ("status", "priority", "label", "project", "search")
 
 
+class InvalidFilterCriteria(ValueError):
+    """A supplied saved-filter criterion cannot be represented safely."""
+
+
 def normalize_criteria(raw: dict | None) -> dict:
     """Clean a raw criteria mapping into the canonical stored form.
 
-    Keeps only known keys; strips strings and drops empty ones; coerces
-    assignee_id to an int and drops it if it isn't one. The result is what we
-    persist and what run_filter consumes, so the web form (all values arrive as
-    strings) and the JSON API (typed) both land on the SAME shape. An empty result
-    is legal — it means "every issue"."""
+    Keeps only known keys; strips strings and drops empty ones; canonicalizes a
+    valid assignee_id to an int. A supplied assignee that is not an exact integer
+    (or an ASCII-decimal web-form string) in SQLite's id range is rejected rather
+    than dropped: silently dropping it would widen the saved query to every
+    assignee. The result is what we persist and what run_filter consumes, so the
+    web form and JSON API land on the SAME shape. An empty result is legal — it
+    means "every issue"."""
     raw = raw or {}
     out: dict = {}
     for key in _STRING_KEYS:
@@ -59,10 +65,15 @@ def normalize_criteria(raw: dict | None) -> dict:
             out[key] = text
     assignee = raw.get("assignee_id")
     if assignee is not None and str(assignee).strip() != "":
-        try:
-            out["assignee_id"] = int(assignee)
-        except (TypeError, ValueError):
-            pass  # a non-numeric assignee is no filter at all, not an error here
+        if type(assignee) is int:
+            parsed_assignee = assignee
+        elif isinstance(assignee, str):
+            parsed_assignee = issues.parse_filter_id(assignee)
+        else:
+            parsed_assignee = None
+        if not issues.is_filter_id(parsed_assignee):
+            raise InvalidFilterCriteria("invalid assignee filter")
+        out["assignee_id"] = parsed_assignee
     return out
 
 
@@ -73,8 +84,8 @@ def validate_criteria(criteria: dict) -> str | None:
     Only the closed-set dimensions are validated: priority must be a real priority,
     and project must be a parseable project filter ("none" or a numeric id). The
     open dimensions (status, label, assignee_id) are deliberately NOT existence-
-    checked — a filter is a query, not state, so it stays resilient to a renamed
-    status or a departed user and simply matches nothing rather than erroring."""
+    checked — assignee type/range is enforced during normalization, but an unknown
+    in-range user id remains a valid query that simply matches nothing."""
     priority = criteria.get("priority")
     if priority is not None and priority not in issues.PRIORITIES:
         return "no such priority"
@@ -82,6 +93,21 @@ def validate_criteria(criteria: dict) -> str | None:
     if project is not None and issues.parse_project_filter(project) is None:
         return "invalid project filter"
     return None
+
+
+def normalized_valid_criteria(raw: dict | None) -> dict | None:
+    """Return canonical criteria for a read, or None when the row is invalid.
+
+    Writers surface precise validation errors before persistence. Readers need a
+    fail-closed form instead: a malformed stored row must match nothing, while a
+    valid empty mapping must remain distinguishable as the intentional
+    "all issues" filter.
+    """
+    try:
+        criteria = normalize_criteria(raw)
+    except InvalidFilterCriteria:
+        return None
+    return criteria if validate_criteria(criteria) is None else None
 
 
 def run_filter(
@@ -100,7 +126,11 @@ def run_filter(
     admin or an internal caller); the callers get it from
     access.visible_project_filter, so a saved filter never surfaces an issue in a
     project the runner can't see."""
-    crit = normalize_criteria(criteria)
+    crit = normalized_valid_criteria(criteria)
+    if crit is None:
+        # Dropping a malformed dimension would turn a narrow query into a broad
+        # one; passing an oversized id through could overflow sqlite3.
+        return []
     project_id: int | None = None
     backlog = False
     if "project" in crit:

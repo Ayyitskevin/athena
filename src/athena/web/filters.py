@@ -25,7 +25,7 @@ router = APIRouter()
 
 
 def _describe_criteria(conn, criteria: dict, actor: dict | None) -> str:
-    """A short human description of a filter's criteria for the list/detail views,
+    """Describe canonical, validated criteria for the list/detail views,
     resolving ids to names (assignee → display name, project id → project name).
     Empty criteria reads as "all issues" — an unconstrained filter is still a view.
 
@@ -77,7 +77,12 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
         )
     my_filters = saved_filters.list_filters(conn, user["id"])
     for flt in my_filters:
-        flt["summary"] = _describe_criteria(conn, flt["criteria"], user)
+        criteria = saved_filters.normalized_valid_criteria(flt["criteria"])
+        flt["summary"] = (
+            _describe_criteria(conn, criteria, user)
+            if criteria is not None
+            else "invalid filter"
+        )
     # Pre-fill values for the create form, taken from the query string (all blank by
     # default). project/label/assignee dropdowns echo the chosen option as selected.
     prefill = {
@@ -129,16 +134,21 @@ def create_filter(
     name = name.strip()
     if not name:
         return HTMLResponse('<div class="error">Filter name is required.</div>', status_code=400)
-    criteria = saved_filters.normalize_criteria(
-        {
-            "status": status,
-            "priority": priority,
-            "assignee_id": assignee_id,
-            "label": label,
-            "project": project,
-            "search": search,
-        }
-    )
+    try:
+        criteria = saved_filters.normalize_criteria(
+            {
+                "status": status,
+                "priority": priority,
+                "assignee_id": assignee_id,
+                "label": label,
+                "project": project,
+                "search": search,
+            }
+        )
+    except saved_filters.InvalidFilterCriteria as exc:
+        return HTMLResponse(
+            f'<div class="error">{html.escape(str(exc))}.</div>', status_code=400
+        )
     reason = saved_filters.validate_criteria(criteria)
     if reason is not None:
         return HTMLResponse(f'<div class="error">{html.escape(reason)}.</div>', status_code=400)
@@ -178,30 +188,42 @@ def filter_detail(
     flt = saved_filters.get_filter(conn, filter_id)
     if flt is None or flt["owner_id"] != user["id"]:
         return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
-    flt["summary"] = _describe_criteria(conn, flt["criteria"], user)
-    crit = flt["criteria"]
+    crit = saved_filters.normalized_valid_criteria(flt["criteria"])
+    flt["summary"] = (
+        _describe_criteria(conn, crit, user) if crit is not None else "invalid filter"
+    )
     q = (request.query_params.get("q") or "").strip()
     context: dict = {"filter": flt, "q": q, "searching": bool(q)}
     if q:
         # Search within the filter: text query intersected with the filter's criteria.
-        hits = issue_search.search_issues(
-            conn,
-            q,
-            status=crit.get("status"),
-            priority=crit.get("priority"),
-            assignee_id=crit.get("assignee_id"),
-            label=crit.get("label"),
-            project=crit.get("project"),
-            limit=_FILTER_SEARCH_LIMIT,
-            actor=user,
+        hits = (
+            issue_search.search_issues(
+                conn,
+                q,
+                status=crit.get("status"),
+                priority=crit.get("priority"),
+                assignee_id=crit.get("assignee_id"),
+                label=crit.get("label"),
+                project=crit.get("project"),
+                limit=_FILTER_SEARCH_LIMIT,
+                actor=user,
+            )
+            if crit is not None
+            else []
         )
         for h in hits:
             h["snippet_html"] = render_snippet(h.get("snippet"))
             h["href"] = f"/aegis/issues/{h['source_id']}"
         context.update(hits=hits, total=len(hits))
     else:
-        matches = saved_filters.run_filter(
-            conn, flt["criteria"], visible_project_ids=access.visible_project_filter(conn, user)
+        matches = (
+            saved_filters.run_filter(
+                conn,
+                crit,
+                visible_project_ids=access.visible_project_filter(conn, user),
+            )
+            if crit is not None
+            else []
         )
         _attach_labels(conn, matches)
         context.update(issues=matches, total=len(matches))

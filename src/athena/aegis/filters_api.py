@@ -13,16 +13,22 @@ ad-hoc one are indistinguishable to the client.
 from __future__ import annotations
 
 import sqlite3
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from athena.aegis import api, saved_filters
+from athena.aegis import api, issues, saved_filters
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 
 router = APIRouter(prefix="/filters", tags=["aegis"])
+
+SavedAssigneeId = Annotated[
+    int,
+    Field(strict=True, ge=0, le=issues.MAX_SQLITE_INTEGER),
+]
 
 
 class FilterCriteria(BaseModel):
@@ -32,7 +38,7 @@ class FilterCriteria(BaseModel):
     # values the same way; the rest are free-form (an unknown value matches none).
     status: str | None = None
     priority: str | None = None
-    assignee_id: int | None = None
+    assignee_id: SavedAssigneeId | None = None
     label: str | None = None
     project: str | None = None
     search: str | None = None
@@ -63,7 +69,10 @@ def _clean_criteria(payload: FilterCriteria) -> dict:
     """Normalize a submitted criteria model and validate it, or raise 422. Returns
     the canonical stored form — the one place the JSON API turns criteria input
     into something safe to persist and run."""
-    criteria = saved_filters.normalize_criteria(payload.model_dump(exclude_none=True))
+    try:
+        criteria = saved_filters.normalize_criteria(payload.model_dump(exclude_none=True))
+    except saved_filters.InvalidFilterCriteria as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     reason = saved_filters.validate_criteria(criteria)
     if reason is not None:
         raise HTTPException(status_code=422, detail=reason)

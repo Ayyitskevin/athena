@@ -62,6 +62,8 @@ def search_issues(
         else {"visible_project_ids": access.visible_project_filter(conn, actor)}
     )
 
+    if project is not None and not isinstance(project, str):
+        return []
     project_filter = project is not None and project.strip() != ""
     has_filter = (
         status is not None
@@ -80,8 +82,11 @@ def search_issues(
     backlog = False
     if project_filter:
         parsed = issues.parse_project_filter(project)
-        if parsed is not None:  # invalid is rejected at the boundary; ignore here
-            project_id, backlog = parsed
+        if parsed is None:
+            # HTTP rejects this at its boundary; a direct caller or malformed
+            # legacy saved row must fail closed rather than omit the constraint.
+            return []
+        project_id, backlog = parsed
     label_ids = labels.issue_ids_for_label(conn, label) if (label and label.strip()) else None
     filtered = issues.list_issues(
         conn,
