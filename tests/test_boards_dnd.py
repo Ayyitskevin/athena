@@ -8,6 +8,8 @@ these tests pin down is the contract the gesture rides on:
     makes cards draggable for a signed-in user;
   * the move endpoint applies a status change and records it on the activity trail,
     then re-renders the board so the card lands in its new column;
+  * every move carries the card's canonical issue ETag, so a stale board cannot
+    overwrite a newer status and both HTMX and native users see a conflict notice;
   * it is a write: logged-out is 401, a missing CSRF token is 403, and a move by
     someone who isn't the issue's creator/assignee (or to a status the issue's
     project doesn't have) is refused by re-rendering UNCHANGED — the card snaps back;
@@ -17,6 +19,8 @@ these tests pin down is the contract the gesture rides on:
     board's current view away.
 """
 
+import html
+import re
 from urllib.parse import parse_qs, urlparse
 
 from athena.core import db
@@ -53,6 +57,20 @@ def _lane(body: str, key: str) -> str:
     return body[start : body.index("</section>", start)]
 
 
+def _board_etag(body: str, issue_id: int) -> str:
+    """Return the browser-decoded validator from one card's move form."""
+    form = re.search(
+        rf'<form class="board-move"[^>]+'
+        rf'action="/aegis/boards/move/{issue_id}">(.*?)</form>',
+        body,
+        re.DOTALL,
+    )
+    assert form is not None
+    match = re.search(r'name="if_match" value="([^"]+)"', form.group(1))
+    assert match is not None
+    return html.unescape(match.group(1))
+
+
 # --- markup: the hooks the drag script needs --------------------------------
 
 
@@ -60,6 +78,14 @@ def test_board_renders_drag_hooks_for_signed_in_user(tmp_path):
     with TestClient(create_app(tmp_path / "m.db")) as client:
         _admin(client)
         iss = _issue(client, "draggable card")
+        label = client.post(
+            "/labels", json={"name": "guarded", "color": "#336699"}, headers=H1
+        ).json()
+        client.post(
+            f"/issues/{iss['id']}/labels",
+            json={"label_id": label["id"]},
+            headers=H1,
+        )
         csrf = _login(client)
         body = client.get("/aegis/boards").text
         assert f'data-issue-id="{iss["id"]}"' in body
@@ -67,6 +93,9 @@ def test_board_renders_drag_hooks_for_signed_in_user(tmp_path):
         assert 'data-status="open"' in body
         assert csrf in body  # the native move form carries the session CSRF
         assert "/static/board-dnd.js" in body
+        assert _board_etag(body, iss["id"]) == client.get(
+            f"/issues/{iss['id']}", headers=H1
+        ).headers["etag"]
 
 
 def test_board_cards_not_draggable_when_logged_out(tmp_path):
@@ -342,9 +371,14 @@ def test_move_changes_status_and_records(tmp_path):
         _admin(client)
         iss = _issue(client, "shipit")
         csrf = _login(client)
+        before_tag = _board_etag(client.get("/aegis/boards").text, iss["id"])
         r = client.post(
             f"/aegis/boards/move/{iss['id']}",
-            data={"new_status": "in_progress", "csrf_token": csrf},
+            data={
+                "new_status": "in_progress",
+                "if_match": before_tag,
+                "csrf_token": csrf,
+            },
             headers=HX,
         )
         assert r.status_code == 200
@@ -357,6 +391,83 @@ def test_move_changes_status_and_records(tmp_path):
             f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
         ).json()
         assert any(a["verb"] == "changed_status" for a in acts)
+        assert _board_etag(r.text, iss["id"]) != before_tag
+
+
+def test_stale_htmx_move_fails_closed_and_refreshes_board(tmp_path):
+    # WHY: a board left open in one tab must not overwrite a newer status from
+    # another writer. HTMX follows the explicit conflict redirect to fresh state.
+    with TestClient(create_app(tmp_path / "stale-hx.db")) as client:
+        _admin(client)
+        iss = _issue(client, "concurrent card")
+        csrf = _login(client)
+        active_filters = {"search": "concurrent"}
+        stale_tag = _board_etag(
+            client.get("/aegis/boards", params=active_filters).text, iss["id"]
+        )
+
+        newer = client.patch(
+            f"/issues/{iss['id']}",
+            json={"status": "done"},
+            headers={**H1, "If-Match": stale_tag},
+        )
+        assert newer.status_code == 200
+        events_after_newer_write = client.get(
+            f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+        ).json()
+
+        stale_move = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={
+                "new_status": "in_progress",
+                "if_match": stale_tag,
+                "csrf_token": csrf,
+                **active_filters,
+            },
+            headers=HX,
+        )
+        assert stale_move.status_code == 412
+        assert stale_move.headers["etag"] == newer.headers["etag"]
+        redirect = urlparse(stale_move.headers["hx-redirect"])
+        assert redirect.path == "/aegis/boards"
+        assert parse_qs(redirect.query, keep_blank_values=True) == {
+            "search": ["concurrent"],
+            "status": [""],
+            "project": [""],
+            "sprint": [""],
+            "move_conflict": ["stale"],
+        }
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "done"
+        assert (
+            client.get(
+                f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+            ).json()
+            == events_after_newer_write
+        )
+
+        refreshed = client.get(stale_move.headers["hx-redirect"])
+        assert refreshed.status_code == 200
+        assert 'role="alert"' in refreshed.text
+        assert "Athena refreshed the board" in refreshed.text
+        assert _board_etag(refreshed.text, iss["id"]) == newer.headers["etag"]
+
+
+def test_move_without_validator_cannot_write(tmp_path):
+    # WHY: omission must not silently restore the former last-write-wins path.
+    with TestClient(create_app(tmp_path / "missing-etag.db")) as client:
+        _admin(client)
+        iss = _issue(client, "guarded card")
+        csrf = _login(client)
+
+        response = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={"new_status": "done", "csrf_token": csrf},
+            headers=HX,
+        )
+
+        assert response.status_code == 412
+        assert "move_conflict=stale" in response.headers["hx-redirect"]
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "open"
 
 
 def test_move_requires_login(tmp_path):
@@ -553,14 +664,21 @@ def test_move_preserves_active_filter(tmp_path):
         _issue(client, "keepme other project", project_id=other_project["id"])
         _issue(client, "other search term", project_id=project["id"])
         csrf = _login(client)
+        active_filters = {
+            "search": "keepme",
+            "project": str(project["id"]),
+            "sprint": str(sprint["id"]),
+        }
+        board_tag = _board_etag(
+            client.get("/aegis/boards", params=active_filters).text, keep["id"]
+        )
         r = client.post(
             f"/aegis/boards/move/{keep['id']}",
             data={
                 "new_status": "in_progress",
+                "if_match": board_tag,
                 "csrf_token": csrf,
-                "search": "keepme",
-                "project": str(project["id"]),
-                "sprint": str(sprint["id"]),
+                **active_filters,
             },
             headers=HX,
         )
@@ -610,9 +728,14 @@ def test_keyboard_move_via_form_redirects_and_applies(tmp_path):
         _admin(client)
         iss = _issue(client, "shipit")
         csrf = _login(client)
+        board_tag = _board_etag(client.get("/aegis/boards").text, iss["id"])
         r = client.post(
             f"/aegis/boards/move/{iss['id']}",
-            data={"new_status": "in_progress", "csrf_token": csrf},
+            data={
+                "new_status": "in_progress",
+                "if_match": board_tag,
+                "csrf_token": csrf,
+            },
             follow_redirects=False,
         )
         assert r.status_code == 303
@@ -622,6 +745,55 @@ def test_keyboard_move_via_form_redirects_and_applies(tmp_path):
             f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
         ).json()
         assert any(a["verb"] == "changed_status" for a in acts)
+
+
+def test_stale_keyboard_move_redirects_to_fresh_conflict_notice(tmp_path):
+    # WHY: the no-JS form keeps POST/redirect/GET semantics while making a stale
+    # rejection visible and preserving the newer writer's status.
+    with TestClient(create_app(tmp_path / "stale-native.db")) as client:
+        _admin(client)
+        iss = _issue(client, "native concurrent card")
+        csrf = _login(client)
+        stale_tag = _board_etag(client.get("/aegis/boards").text, iss["id"])
+        newer = client.patch(
+            f"/issues/{iss['id']}",
+            json={"status": "done"},
+            headers={**H1, "If-Match": stale_tag},
+        )
+        assert newer.status_code == 200
+        events_after_newer_write = client.get(
+            f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+        ).json()
+
+        response = client.post(
+            f"/aegis/boards/move/{iss['id']}",
+            data={
+                "new_status": "in_progress",
+                "if_match": stale_tag,
+                "csrf_token": csrf,
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        location = urlparse(response.headers["location"])
+        assert location.path == "/aegis/boards"
+        assert parse_qs(location.query, keep_blank_values=True)[
+            "move_conflict"
+        ] == ["stale"]
+        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "done"
+        assert (
+            client.get(
+                f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
+            ).json()
+            == events_after_newer_write
+        )
+
+        refreshed = client.get(response.headers["location"])
+        assert refreshed.status_code == 200
+        assert "<title>Boards — Aegis</title>" in refreshed.text
+        assert 'data-board-conflict' in refreshed.text
+        assert _board_etag(refreshed.text, iss["id"]) == newer.headers["etag"]
 
 
 def test_keyboard_move_redirect_preserves_filter(tmp_path):
@@ -642,15 +814,22 @@ def test_keyboard_move_redirect_preserves_filter(tmp_path):
             headers=H1,
         )
         csrf = _login(client)
+        active_filters = {
+            "search": "card",
+            "status": "open",
+            "project": str(project["id"]),
+            "sprint": str(sprint["id"]),
+        }
+        board_tag = _board_etag(
+            client.get("/aegis/boards", params=active_filters).text, iss["id"]
+        )
         r = client.post(
             f"/aegis/boards/move/{iss['id']}",
             data={
                 "new_status": "done",
+                "if_match": board_tag,
                 "csrf_token": csrf,
-                "search": "card",
-                "status": "open",
-                "project": str(project["id"]),
-                "sprint": str(sprint["id"]),
+                **active_filters,
             },
             follow_redirects=False,
         )

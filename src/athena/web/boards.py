@@ -15,7 +15,14 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from athena.aegis import issue_commands, issues, projects, sprints, statuses
+from athena.aegis import (
+    issue_commands,
+    issue_etags,
+    issues,
+    projects,
+    sprints,
+    statuses,
+)
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
@@ -47,6 +54,26 @@ def _board_scope(
     return project_id, backlog, sprint_id
 
 
+def _board_url(
+    *,
+    search: str,
+    status: str,
+    project: str,
+    sprint: str,
+    move_conflict: bool = False,
+) -> str:
+    """Build the board URL shared by successful and stale native moves."""
+    query = {
+        "search": search,
+        "status": status,
+        "project": project,
+        "sprint": sprint,
+    }
+    if move_conflict:
+        query["move_conflict"] = "stale"
+    return f"/aegis/boards?{urlencode(query)}"
+
+
 def _render_board(
     request: Request,
     conn: sqlite3.Connection,
@@ -55,6 +82,7 @@ def _render_board(
     status_filter: str,
     project_filter: str,
     sprint_filter: str,
+    move_conflict: bool = False,
 ):
     """Render one visibility-safe, placement-filtered fleet board.
 
@@ -83,6 +111,11 @@ def _render_board(
         visible_project_ids=visible_project_ids,
     )
     _attach_labels(conn, filtered)
+    if user is not None:
+        for issue in filtered:
+            issue["etag"] = issue_etags.representation_and_etag(
+                issue, issue["labels"]
+            )[1]
 
     # Each card carries its OWN project's status menu, so the keyboard "Move" control
     # offers exactly the valid targets for that issue (the backlog uses the default
@@ -183,6 +216,7 @@ def _render_board(
             "project_filter": project_filter,
             "all_sprints": all_sprints,
             "sprint_filter": sprint_filter,
+            "move_conflict": move_conflict,
         },
     )
 
@@ -194,6 +228,7 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     status_filter = (request.query_params.get("status") or "").strip()
     project_filter = (request.query_params.get("project") or "").strip()
     sprint_filter = (request.query_params.get("sprint") or "").strip()
+    move_conflict = request.query_params.get("move_conflict") == "stale"
     return _render_board(
         request,
         conn,
@@ -201,6 +236,7 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         status_filter=status_filter,
         project_filter=project_filter,
         sprint_filter=sprint_filter,
+        move_conflict=move_conflict,
     )
 
 
@@ -213,6 +249,7 @@ def board_move_issue(
     request: Request,
     issue_id: int,
     new_status: str = Form(...),
+    if_match: str = Form(""),
     search: str = Form(""),
     status: str = Form(""),
     project: str = Form(""),
@@ -235,9 +272,11 @@ def board_move_issue(
     A move that isn't allowed or doesn't apply — the actor can't write this issue, or
     the target status isn't valid for the issue's project (boards can mix projects
     with different status sets) — leaves the board UNCHANGED, so the card simply snaps
-    back. This quick-move path deliberately skips the open-blockers advisory nudge the
-    detail page shows: dependencies are advisory, and that warning belongs on the
-    focused view, not a quick board move."""
+    back. A stale move is different: it fails closed and refreshes the board with an
+    explicit conflict notice instead of overwriting the newer issue state. This
+    quick-move path deliberately skips the open-blockers advisory nudge the detail
+    page shows: dependencies are advisory, and that warning belongs on the focused
+    view, not a quick board move."""
     search, status = search.strip(), status.strip()
     project, sprint = project.strip(), sprint.strip()
     # Validate before the write: a forged, malformed filter must not mutate an issue
@@ -251,16 +290,38 @@ def board_move_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to move cards.</div>',
             status_code=401,
         )
-    # The board deliberately snaps back on a rejected move. The shared command is
-    # still the one owner of visibility, role/scope, can-act-on policy,
-    # status validation, write, and audit; this adapter only chooses not to render
-    # its domain error inline on a drag surface.
+    # The board deliberately snaps back on ordinary rejected moves. The shared
+    # command is still the one owner of visibility, role/scope, can-act-on policy,
+    # status validation, precondition comparison, write, and audit. This adapter
+    # makes only a stale precondition visible because silently snapping back would
+    # hide a lost-update hazard from the operator.
     try:
         issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, status=new_status
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            status=new_status,
+            if_match=[if_match],
         )
-    except issue_commands.IssueCommandError:
-        pass
+    except issue_commands.IssueCommandError as exc:
+        if exc.kind == "precondition_failed":
+            conflict_url = _board_url(
+                search=search,
+                status=status,
+                project=project,
+                sprint=sprint,
+                move_conflict=True,
+            )
+            if request.headers.get("HX-Request"):
+                response_headers = {"HX-Redirect": conflict_url}
+                if exc.current_etag is not None:
+                    response_headers["ETag"] = exc.current_etag
+                return HTMLResponse(
+                    "",
+                    status_code=412,
+                    headers=response_headers,
+                )
+            return RedirectResponse(conflict_url, status_code=303)
     if request.headers.get("HX-Request"):
         return _render_board(
             request,
@@ -273,14 +334,11 @@ def board_move_issue(
     # No-JS keyboard form: redirect to the board (preserving filters) so the URL is a
     # GET and a refresh re-reads rather than re-submitting the move.
     return RedirectResponse(
-        "/aegis/boards?"
-        + urlencode(
-            {
-                "search": search,
-                "status": status,
-                "project": project,
-                "sprint": sprint,
-            }
+        _board_url(
+            search=search,
+            status=status,
+            project=project,
+            sprint=sprint,
         ),
         status_code=303,
     )

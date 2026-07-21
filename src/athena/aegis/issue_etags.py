@@ -47,12 +47,25 @@ def resource(conn: sqlite3.Connection, issue: dict) -> dict[str, Any]:
     return representation(issue, labels.labels_for_issue(conn, issue["id"]))
 
 
+def representation_and_etag(
+    issue: dict, label_rows: list[dict]
+) -> tuple[dict[str, Any], str]:
+    """Build one public representation and its strong validator.
+
+    List-style surfaces that already loaded labels in bulk use this helper to avoid
+    an N+1 query while keeping the canonical fields and ETag namespace here.
+    """
+    public = representation(issue, label_rows)
+    return public, etag.strong_etag("issue-v1", public)
+
+
 def resource_and_etag(
     conn: sqlite3.Connection, issue: dict
 ) -> tuple[dict[str, Any], str]:
     """Build one representation once, then derive its strong validator."""
-    public = resource(conn, issue)
-    return public, etag.strong_etag("issue-v1", public)
+    return representation_and_etag(
+        issue, labels.labels_for_issue(conn, issue["id"])
+    )
 
 
 def current_etag(conn: sqlite3.Connection, issue: dict) -> str:
