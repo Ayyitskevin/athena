@@ -30,6 +30,9 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Fixed
 
+- Fleet-board moves now submit the card's canonical issue ETag and fail closed
+  when the board is stale, preserving the newer status and showing an explicit
+  refreshed-board conflict notice in both HTMX and no-JS flows.
 - Saved-filter assignee ids now reject invalid types and values outside SQLite's
   integer range before persistence; malformed JSON, non-object JSON, unknown keys,
   and invalid stored criteria fail closed instead of widening the query or raising
