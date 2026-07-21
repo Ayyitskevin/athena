@@ -205,6 +205,7 @@ def filter_detail(
                 assignee_id=crit.get("assignee_id"),
                 label=crit.get("label"),
                 project=crit.get("project"),
+                text_filter=crit.get("search"),
                 limit=_FILTER_SEARCH_LIMIT,
                 actor=user,
             )

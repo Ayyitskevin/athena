@@ -36,6 +36,7 @@ def search_issues(
     assignee_id: int | None = None,
     label: str | None = None,
     project: str | None = None,
+    text_filter: str | None = None,
     limit: int = 20,
     offset: int = 0,
     actor: dict | None | object = _UNGATED,
@@ -71,6 +72,7 @@ def search_issues(
         or assignee_id is not None
         or (label is not None and label.strip() != "")
         or project_filter
+        or (text_filter is not None and text_filter.strip() != "")
     )
     if not has_filter:
         # No structured constraint — a plain issue-scoped search.
@@ -95,6 +97,7 @@ def search_issues(
         assignee_id=assignee_id,
         project_id=project_id,
         backlog=backlog,
+        search=text_filter,
         ids=label_ids,
         **list_gate,
     )

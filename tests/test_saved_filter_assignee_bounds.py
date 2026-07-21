@@ -87,6 +87,13 @@ def test_direct_filter_writes_reject_invalid_criteria_before_sql(tmp_path):
                 name="overflow",
                 criteria={"assignee_id": issues.MAX_SQLITE_INTEGER + 1},
             )
+        with pytest.raises(saved_filters.InvalidFilterCriteria):
+            saved_filters.create_filter(
+                conn,
+                owner_id=1,
+                name="unknown",
+                criteria={"sprint_id": 1},
+            )
         assert saved_filters.list_filters(conn, 1) == []
 
         created = saved_filters.create_filter(
@@ -126,6 +133,14 @@ def test_api_rejects_non_integer_and_unbindable_assignees_without_persisting(tmp
                 headers=H1,
             )
             assert response.status_code == 422, (value, response.text)
+        response = client.post(
+            "/filters",
+            json={"name": "unknown", "criteria": {"sprint_id": 1}},
+            headers=H1,
+        )
+        assert response.status_code == 422
+        assert "extra_forbidden" in response.text
+
         assert client.get("/filters", headers=H1).json() == []
 
 
@@ -207,8 +222,10 @@ def test_web_canonicalizes_ascii_decimal_assignee_ids(tmp_path):
 
 def test_legacy_invalid_rows_remain_readable_and_fail_closed(tmp_path):
     # WHY: older Athena versions could persist an oversized integer that later
-    # raised OverflowError. Nonnumeric/project rows model malformed imported or
-    # manually corrupted state. Plain run and search-within must agree on no match.
+    # raised OverflowError. Nonnumeric/project rows plus malformed, non-object, and
+    # unknown-key JSON model imported or manually corrupted state. Plain run and
+    # search-within must agree on no match; corrupt JSON must never decode as the
+    # valid empty "all issues" filter.
     db_file = tmp_path / "legacy.db"
     with TestClient(create_app(db_file)) as client:
         _admin(client)
@@ -225,15 +242,21 @@ def test_legacy_invalid_rows_remain_readable_and_fail_closed(tmp_path):
         conn = db.connect(db_file)
         try:
             filter_ids = []
-            legacy_criteria = (
-                {"assignee_id": issues.MAX_SQLITE_INTEGER + 1},
-                {"assignee_id": "abc"},
-                {"project": "bogus"},
+            legacy_payloads = (
+                json.dumps({"assignee_id": issues.MAX_SQLITE_INTEGER + 1}),
+                json.dumps({"assignee_id": "abc"}),
+                json.dumps({"project": "bogus"}),
+                "{",
+                json.dumps([{"assignee_id": 1}]),
+                json.dumps(None),
+                json.dumps(1),
+                json.dumps("legacy scalar"),
+                json.dumps({"assigneee_id": 1}),
             )
-            for index, criteria in enumerate(legacy_criteria):
+            for index, payload in enumerate(legacy_payloads):
                 cur = conn.execute(
                     "INSERT INTO saved_filters (owner_id, name, criteria) VALUES (?, ?, ?)",
-                    (1, f"legacy-{index}", json.dumps(criteria)),
+                    (1, f"legacy-{index}", payload),
                 )
                 filter_ids.append(cur.lastrowid)
             canonical = conn.execute(
@@ -246,7 +269,13 @@ def test_legacy_invalid_rows_remain_readable_and_fail_closed(tmp_path):
 
         listing = client.get("/aegis/filters")
         assert listing.status_code == 200
-        assert listing.text.count("invalid filter") == 3
+        assert listing.text.count("invalid filter") == len(filter_ids)
+
+        api_listing = client.get("/filters", headers=H1)
+        assert api_listing.status_code == 200
+        by_name = {row["name"]: row for row in api_listing.json()}
+        assert by_name["legacy-3"]["criteria"] is None
+        assert by_name["legacy-4"]["criteria"] is None
 
         for filter_id in filter_ids:
             run = client.get(f"/filters/{filter_id}/issues", headers=H1)

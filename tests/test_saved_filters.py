@@ -389,6 +389,24 @@ def test_search_within_filter_intersects_text_and_criteria(tmp_path):
         assert "result" in page and "within this filter" in page
 
 
+def test_search_within_filter_keeps_saved_text_constraint(tmp_path):
+    """The ad-hoc query narrows the saved result; it never replaces the filter's
+    existing title/body substring constraint."""
+    with TestClient(create_app(tmp_path / "swt.db")) as client:
+        _admin(client)
+        _login(client)
+        _issue(client, "alpha common")
+        _issue(client, "beta common")
+        fid = client.post(
+            "/filters",
+            json={"name": "alphas", "criteria": {"search": "alpha"}},
+            headers=H1,
+        ).json()["id"]
+        page = client.get(f"/aegis/filters/{fid}?q=common").text
+        assert "alpha common" in page
+        assert "beta common" not in page
+
+
 def test_search_within_filter_blank_q_shows_full_run(tmp_path):
     """No query → the plain filter run (every matching issue), with the search box
     still offered."""

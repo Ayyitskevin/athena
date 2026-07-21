@@ -16,7 +16,7 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import api, issues, saved_filters
 from athena.core import access
@@ -32,6 +32,8 @@ SavedAssigneeId = Annotated[
 
 
 class FilterCriteria(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # Every dimension optional; an all-unset object is a legal "match everything"
     # filter. priority/project are semantically validated in the handler (via
     # saved_filters.validate_criteria) so the API and the web form reject the same
@@ -60,7 +62,8 @@ class FilterOut(BaseModel):
     id: int
     owner_id: int
     name: str
-    criteria: dict
+    # None distinguishes a malformed/non-object stored payload from valid {}.
+    criteria: dict | None
     created_at: str
     updated_at: str
 
