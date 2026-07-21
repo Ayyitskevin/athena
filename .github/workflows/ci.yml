@@ -30,10 +30,18 @@ jobs:
         run: .venv/bin/python -m ruff check .
       - name: Check import contracts
         run: .venv/bin/python scripts/check_import_contracts.py
-      - name: Run tests
+      - name: Run tests with full-source branch coverage
         # -n 4: the suite is deterministic (no sleeps, per-test tmp databases) and
         # parallelizes cleanly — this cuts the gate from ~16 min to ~3-4 min.
-        run: .venv/bin/python -m pytest -q -n 4
+        run: timeout 12m scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
+      - name: Upload coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: ${{ runner.temp }}/athena-coverage
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build and install through the source distribution
         run: |
           set -euo pipefail
@@ -52,7 +60,9 @@ jobs:
           fi
           if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" ]] \
             || [[ ! -f "${source_trees[0]}/scripts/smoke_app.py" ]] \
-            || [[ ! -f "${source_trees[0]}/scripts/check_import_contracts.py" ]]; then
+            || [[ ! -f "${source_trees[0]}/scripts/check_import_contracts.py" ]] \
+            || [[ ! -f "${source_trees[0]}/scripts/check_coverage.py" ]] \
+            || [[ ! -f "${source_trees[0]}/scripts/coverage.sh" ]]; then
             echo "source distribution is missing its verification helpers" >&2
             exit 1
           fi

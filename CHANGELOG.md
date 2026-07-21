@@ -20,6 +20,9 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Changed
 
+- The complete test gate now measures branch coverage across every runtime
+  Python file, rejects new narrowing/exclusion rules, and enforces separately
+  calibrated line, branch, and combined floors from retained JSON evidence.
 - The test gate runs in parallel (`pytest -n 4` via pytest-xdist), cutting the
   suite from ~16 minutes to ~3 — the suite was already deterministic
   (no sleeps, per-test databases), so no test changed.

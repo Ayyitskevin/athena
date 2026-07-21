@@ -41,6 +41,7 @@ dependencies = [
 dev = [
     "build>=1.5,<2",
     "pytest",
+    "pytest-cov>=7.1,<8",
     "pytest-xdist>=3.5,<4",
     "httpx",
     "httpx2>=2,<3",
@@ -96,3 +97,19 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["src/athena"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = false
+
+[tool.athena.coverage]
+line_floor = 92.10
+branch_floor = 81.04
+combined_floor = 89.54
+excluded_line_count = 2

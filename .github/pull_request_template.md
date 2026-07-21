@@ -13,7 +13,8 @@
 ## Verification
 
 - [ ] `ruff check .`
-- [ ] `pytest -q` with no skipped tests presented as passing
+- [ ] `python scripts/check_import_contracts.py`
+- [ ] `scripts/coverage.sh` with no skipped tests presented as passing
 - [ ] `python scripts/smoke_app.py`
 - [ ] Relevant artifact, security, migration, or UI checks
 

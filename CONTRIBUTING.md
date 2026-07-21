@@ -18,13 +18,18 @@ python -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
 .venv/bin/python -m ruff check .
-.venv/bin/python -m pytest -q -n 4
+.venv/bin/python scripts/check_import_contracts.py
+scripts/coverage.sh
 .venv/bin/python scripts/smoke_app.py
 ```
 
 The constraints file reproduces the supported Linux/Python 3.12 CI graph. It
 is a CI snapshot, not a promise that every supported platform uses identical
 wheels.
+
+The line, branch, and combined coverage floors are ratchets: they may hold or
+increase as code changes. Never lower a floor to make a branch pass; any
+justified recalibration is a separate, explicitly reviewed policy change.
 
 To inspect a populated local instance without inventing data in the web layer:
 
@@ -41,7 +46,8 @@ login, and starts Athena. It refuses to overwrite an existing path.
    `claude/<topic>`, or `grok/<topic>`.
 2. Keep one logical change in the branch.
 3. Add tests that explain the invariant being protected.
-4. Run Ruff, the complete test suite, and the real-process smoke test.
+4. Run Ruff, import contracts, the full-source branch-coverage gate, and the
+   real-process smoke test.
 5. Open a pull request using the repository template. State the user-visible
    outcome, boundaries, verification, and any AI assistance.
 
