@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 import json
 import sqlite3
 
@@ -13,6 +14,7 @@ from athena.aegis import (
     automation,
     automation_commands,
     delegations,
+    fleet_work,
     projects,
     statuses,
 )
@@ -38,6 +40,11 @@ from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 router = APIRouter()
+
+_ACTIVE_WORK_PRIVATE_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Vary": "Cookie",
+}
 
 
 def _signin_required(verb: str) -> HTMLResponse:
@@ -563,20 +570,43 @@ def offboard_agent(
 @router.get("/admin/agents/runs", response_class=HTMLResponse)
 def agent_runs_admin(
     request: Request,
-    agent_id: int | None = Query(None, description="filter to one agent user id"),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
+        err.headers.update(_ACTIVE_WORK_PRIVATE_HEADERS)
         return err
+    try:
+        query_pairs = list(request.query_params.multi_items())
+        agent_values = [value for key, value in query_pairs if key == "agent_id"]
+        # The no-JS "All agents" option submits one empty select value. Treat that
+        # exact form shape as absence; repeated keys and empty REST criteria remain
+        # strict errors rather than silently widening a request.
+        if agent_values == [""]:
+            query_pairs = [
+                (key, value) for key, value in query_pairs if key != "agent_id"
+            ]
+        agent_id, work_limit = fleet_work.parse_query_pairs(
+            query_pairs
+        )
+    except fleet_work.ActiveWorkQueryError as exc:
+        return HTMLResponse(
+            f"<h1>Invalid active-work request</h1><p>{escape(exc.detail)}</p>",
+            status_code=400,
+            headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        )
     context = agents.agent_run_health(conn, agent_id=agent_id)
+    context["active_work"] = fleet_work.build_active_work(
+        conn, agent_id=agent_id, limit=work_limit
+    )
     context["automation_failures"] = automation.list_rules(conn, failing_only=True)
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
         context=context,
+        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
     )
 
 

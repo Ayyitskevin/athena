@@ -26,7 +26,7 @@ from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
-from athena.aegis import delegations, fleet_metrics, issues
+from athena.aegis import delegations, fleet_metrics, fleet_work, issues
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -61,6 +61,12 @@ FleetActorLimit = Annotated[
 ]
 FleetMetricDate = Annotated[
     str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+]
+FleetWorkLimit = Annotated[
+    int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)
+]
+FleetAgentId = Annotated[
+    int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)
 ]
 
 
@@ -145,6 +151,17 @@ def build_server(client: AthenaClient) -> FastMCP:
             limit=limit,
             offset=offset,
         )
+
+    @mcp.tool()
+    def get_fleet_active_work(
+        agent_id: FleetAgentId | None = None,
+        limit: FleetWorkLimit = fleet_work.DEFAULT_LIMIT,
+    ) -> dict:
+        """Admin-only view of agent-held issue claims. Joins each lease to its
+        exact tagged claim run, cooperative check-in, visible blockers, and replay
+        readiness. Reporting is an observation, never proof that a process is alive
+        or executing work; use attention_reasons to steer by exception."""
+        return client.get_fleet_active_work(agent_id=agent_id, limit=limit)
 
     @mcp.tool()
     def get_issue(ref: str) -> dict:

@@ -66,6 +66,18 @@ agent's full retained history. Older and parallel run ids stay in the bounded re
 history but do not each add another stale headline signal. Timestamp ties resolve by
 run id, so REST, MCP, and web select the same deterministic latest report.
 
+## Active claimed work
+
+Mission Control also joins each agent-held issue lease to the exact tagged claim
+event, cooperative check-in, current holder controls and eligibility, visible open
+blockers, and replay readiness. The same admin-only projection is available at
+`GET /fleet/active-work` and through `get_fleet_active_work`. It uses one server-time
+snapshot and reports explicit attention reasons; it never treats a claim or
+heartbeat as proof that work is executing.
+
+See [ACTIVE_WORK.md](ACTIVE_WORK.md) for the complete operator workflow, retry and
+restart behavior, privacy contract, bounds, and limitations.
+
 ## Replay And Lineage
 
 - `GET /activity?run_id=...` returns one run's activity newest-first.

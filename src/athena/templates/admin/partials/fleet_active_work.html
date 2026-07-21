@@ -1,0 +1,134 @@
+<section class="dashboard-card" aria-labelledby="fleet-active-work-heading">
+    <h2 id="fleet-active-work-heading">Active claimed work</h2>
+    <p class="subtitle">
+        Durable issue leases joined to the exact tagged claim run, its cooperative
+        check-in, current blockers, and replay evidence. Reporting is not proof that
+        an external process is alive or executing the issue.
+    </p>
+    <div class="agent-health-summary">
+        <div class="agent-health-stat">
+            <strong>{{ active_work.summary.active_claim_count }}</strong>
+            <span>active claims shown</span>
+        </div>
+        <div class="agent-health-stat">
+            <strong>{{ active_work.summary.expired_claim_count }}</strong>
+            <span>expired claims shown</span>
+        </div>
+        <div class="agent-health-stat">
+            <strong>{{ active_work.summary.needs_attention_count }}</strong>
+            <span>need attention shown</span>
+        </div>
+    </div>
+    {% if active_work.clipped %}
+    <p class="blocked">
+        Showing {{ active_work["items"]|length }} of {{ active_work.visible_total }} claims.
+        {% if selected_agent_id %}
+        This operational window is not paginated; use issue activity for older claim history.
+        {% else %}
+        Filter to one agent or request a larger limit ({{ active_work.limit }} currently shown;
+        200 maximum) before treating this as a complete fleet view.
+        {% endif %}
+    </p>
+    {% endif %}
+    {% if active_work["items"] %}
+    <div class="agent-checkin-table-region"
+         role="region"
+         aria-label="Active claimed work table"
+         tabindex="0">
+        <table class="issues-table agent-health-table">
+            <thead>
+                <tr>
+                    <th>Issue</th>
+                    <th>Holder</th>
+                    <th>Lease</th>
+                    <th>Exact run report</th>
+                    <th>Blockers / attention</th>
+                    <th>Evidence</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for work in active_work["items"] %}
+                <tr>
+                    <td>
+                        <a href="/aegis/issues/{{ work.issue.id }}">
+                            <strong>{{ work.issue.key or ("#" ~ work.issue.id) }}</strong>
+                            {{ work.issue.title }}
+                        </a>
+                        <div class="muted">{{ work.issue.status }} · {{ work.issue.priority }}</div>
+                    </td>
+                    <td>
+                        <strong>{{ work.holder.name }}</strong>
+                        <span class="agent-badge">agent</span>
+                        <div class="muted">{{ work.holder.email }}</div>
+                        <div class="muted">
+                            {{ work.holder.role }} ·
+                            {{ work.holder.live_issue_write_token_count }} live
+                            issue-write bearer token{{ "s" if work.holder.live_issue_write_token_count != 1 }}
+                        </div>
+                        {% if work.holder.paused_at %}<div class="blocked">paused {{ work.holder.paused_at }} UTC</div>{% endif %}
+                    </td>
+                    <td>
+                        <span class="agent-checkin-state {{ work.lease.claim_state }}">
+                            {{ work.lease.claim_state }}
+                        </span>
+                        <div class="muted">until {{ work.lease.expires_at }} UTC</div>
+                    </td>
+                    <td>
+                        {% if work.run.run_id %}
+                        <code class="checkin-run-id">{{ work.run.run_id }}</code>
+                        <div>{{ work.run.reporting_state|replace("_", " ") }}</div>
+                        {% if work.run.last_seen_at %}
+                        <div class="muted">{{ work.run.last_seen_at }} UTC · {{ work.run.age_seconds }}s ago</div>
+                        {% endif %}
+                        {% else %}
+                        <span class="muted">Claim was not tagged with a run.</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if work.open_blockers["items"] %}
+                        <ul class="compact-list">
+                            {% for blocker in work.open_blockers["items"] %}
+                            <li>
+                                <a href="/aegis/issues/{{ blocker.id }}">{{ blocker.key or ("#" ~ blocker.id) }}</a>
+                                {{ blocker.title }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% if work.open_blockers.clipped %}
+                        <div class="muted">
+                            Showing {{ work.open_blockers["items"]|length }} of
+                            {{ work.open_blockers.visible_total }} visible blockers.
+                        </div>
+                        {% endif %}
+                        {% endif %}
+                        {% if work.attention_reasons %}
+                        <span class="badge">needs attention</span>
+                        <div class="muted">{{ work.attention_reasons|join(", ")|replace("_", " ") }}</div>
+                        {% else %}
+                        <span class="muted">No current attention reason.</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if work.run.evidence_links_available %}
+                        <a href="/admin/agents/runs/{{ work.run.run_id }}/replay.json">replay.json</a>
+                        <div><a href="/aegis/activity/runs/{{ work.run.run_id }}/lineage">lineage</a></div>
+                        {% elif work.run.replay_ready %}
+                        <span class="muted">Evidence exists, but current path routes cannot address this run ID.</span>
+                        {% else %}
+                        <span class="muted">No tagged replay evidence.</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No agent-held issue claims match this filter.</p>
+    {% endif %}
+    <p class="note-small">
+        Observed {{ active_work.observed_at }} UTC. An expired lease, stale/missing
+        check-in, or visible blocker is an operator signal only; this view never
+        revokes credentials, transfers work, or approves an action.
+    </p>
+</section>
