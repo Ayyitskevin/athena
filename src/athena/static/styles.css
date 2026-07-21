@@ -715,6 +715,16 @@ footer {
     color: #92400e;
 }
 
+.agent-checkin-state.active {
+    background: #e0f2fe;
+    color: #075985;
+}
+
+.agent-checkin-state.expired {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 .agent-health-run-row td {
     padding-top: 0;
     background: #fafafa;

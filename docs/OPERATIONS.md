@@ -414,6 +414,18 @@ curl -fsS 'http://127.0.0.1:8000/activity/agent-runs?agent_id=2' \
   -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 ```
 
+The cockpit's **Active claimed work** section uses a separate read model for the
+operator question "what is claimed and what needs attention?":
+
+```bash
+curl -fsS 'http://127.0.0.1:8000/fleet/active-work?agent_id=2' \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
+```
+
+Use `get_fleet_active_work` over MCP for the same lease/run/check-in/blocker
+projection. See [ACTIVE_WORK.md](ACTIVE_WORK.md) before interpreting `observed`,
+credential posture, or heartbeat freshness as availability.
+
 Use the MCP tools `get_agent_run_health` and `list_automation_failures` for the
 same read-only supervision flow. Both require an admin-role user acting through an
 `admin`-scoped token. Failure counts are cumulative, not acknowledged incidents.

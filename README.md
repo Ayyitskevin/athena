@@ -83,8 +83,9 @@ shared command transaction.
 Agent identities, role-plus-token-scope authorization, MCP access, request
 idempotency, rate limits, run correlation and lineage, cooperative check-ins,
 delegation, replay artifacts, webhooks, an audited kill switch, and bounded
-[fleet throughput metrics](docs/FLEET_METRICS.md) whose aggregates obey the same
-event visibility rules as the activity trail.
+[active-work supervision](docs/ACTIVE_WORK.md) that keeps leases distinct from
+cooperative reports, plus [fleet throughput metrics](docs/FLEET_METRICS.md) whose
+aggregates obey the same event visibility rules as the activity trail.
 
 ## Architecture reviewers can challenge
 
@@ -178,6 +179,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — where this is going, phase by phase
 - [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md) — transparent AI-assisted workflow
 - [docs/RUNS.md](docs/RUNS.md) — run replay, lineage, and forking
+- [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors
 

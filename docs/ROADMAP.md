@@ -117,6 +117,9 @@ agents that contribute here.
 
 - [x] Delegation claim/lease protocol (accept / decline / complete) so two
       agents cannot silently pull the same issue.
+- [x] Admin active-work supervision joining each lease to its exact claim run,
+      cooperative check-in, current holder controls and eligibility, visible
+      blockers, and replay evidence across web, REST, and MCP.
 - [x] Project- and sprint-scoped boards with agent-vs-human swimlanes.
 - [x] Visibility-safe fleet throughput metrics derived from typed append-only
       lifecycle facts: created-vs-completed flow, trustworthy completion-cycle

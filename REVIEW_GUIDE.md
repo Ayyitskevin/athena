@@ -62,7 +62,19 @@ actor-visible; missing warnings do not assert readiness.
 Review question: **Can hidden nested data leak through items, counts, clipping,
 warnings, ETags, or timing-dependent composition?**
 
-### 4. Historical throughput evidence
+### 4. Active-work supervision
+
+Read [`docs/ACTIVE_WORK.md`](docs/ACTIVE_WORK.md),
+`src/athena/aegis/fleet_work.py`, and `tests/test_fleet_active_work.py`. Trace one
+claim through its exact run event, cooperative check-in, current holder controls,
+blockers, and replay evidence. Force project access or credentials to drift after
+the claim and confirm the view reports attention without claiming process health.
+
+Review question: **Can any mutable holder, lease, visibility, blocker, or reporting
+fact make Athena say an agent is eligible, healthy, running, or unblocked when the
+underlying command boundary would disagree?**
+
+### 5. Historical throughput evidence
 
 Read [`docs/FLEET_METRICS.md`](docs/FLEET_METRICS.md),
 `src/athena/aegis/fleet_metrics.py`, migration `0055_issue_lifecycle_facts.sql`,
@@ -75,7 +87,7 @@ Review question: **Can mutable status/actor state, imported history, a hidden
 project, an orphan target, or an evidence cap silently change a headline,
 median, actor row, coverage signal, or no-data state?**
 
-### 5. Adversarial outbound networking
+### 6. Adversarial outbound networking
 
 Read `src/athena/core/webhooks.py` and `tests/test_webhook_ssrf.py`. Focus on
 redirect refusal, DNS pinning, split answers, embedded IPv4 forms, TLS hostname
@@ -84,7 +96,7 @@ verification, and failure isolation.
 Review question: **Can registration-time validation and connection-time behavior
 disagree in a way that reaches an internal address?**
 
-### 6. Distribution evidence
+### 7. Distribution evidence
 
 Read [`.github/workflows/ci.yml`](.github/workflows/ci.yml),
 `scripts/verify_wheel.py`, and `scripts/smoke_app.py`. CI builds through an

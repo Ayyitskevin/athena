@@ -240,6 +240,20 @@ class AthenaClient:
             params["include_closed"] = True
         return self._result(self._client.get("/delegations/me", params=params))
 
+    def get_fleet_active_work(
+        self,
+        *,
+        agent_id: int | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """Read the admin-only active claimed-work projection."""
+        return self._result(
+            self._client.get(
+                "/fleet/active-work",
+                params=self._params(agent_id=agent_id, limit=limit),
+            )
+        )
+
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 

@@ -28,6 +28,7 @@ from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
+from athena.aegis import fleet_work_api as aegis_fleet_work_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
@@ -1184,6 +1185,7 @@ def create_app(
     app.include_router(aegis_api.projects_router)
     app.include_router(aegis_delegations_api.router)
     app.include_router(aegis_filters_api.router)
+    app.include_router(aegis_fleet_work_api.router)
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
     app.include_router(aegis_work_context_api.router)

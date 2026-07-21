@@ -7,7 +7,7 @@
     <div>
         <a href="/admin/agents" class="muted">Back to agents</a>
         <h1>Agent Mission Control</h1>
-        <p class="subtitle">Cooperative check-ins, bounded recent activity, replay readiness, lineage, and failures.</p>
+        <p class="subtitle">Active claims, cooperative check-ins, bounded recent activity, replay readiness, lineage, and failures.</p>
     </div>
     <div class="page-header-actions">
         <a href="/aegis/fleet-metrics" class="button secondary">Fleet throughput</a>
@@ -52,6 +52,8 @@
     {% endif %}
 </form>
 {% endif %}
+
+{% include "admin/partials/fleet_active_work.html" %}
 
 <section class="dashboard-card agent-checkins">
     <h2>Agent check-ins</h2>
