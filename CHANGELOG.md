@@ -602,6 +602,8 @@ like the two below it.
   page with no trail entry. REST and the browser call the same command; MCP
   reaches it through REST. This was the last Mentor write listed as
   command-migration debt.
+- Supplied MCP issue-list sprint IDs now accept only JSON integers within
+  SQLite's bounds; booleans, numeric strings, and floats fail before REST dispatch.
 - Fleet-board moves now submit the card's canonical issue ETag and fail closed
   when the board is stale, preserving the newer status and showing an explicit
   refreshed-board conflict notice in both HTMX and no-JS flows.

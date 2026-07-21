@@ -1459,7 +1459,11 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
     assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
 
 
-def test_list_issues_mcp_tool_forwards_sprint():
+@pytest.mark.parametrize(
+    "sprint",
+    [None, 0, 7, issues.MAX_SQLITE_INTEGER],
+)
+def test_list_issues_mcp_tool_forwards_strict_sprint_ids(sprint):
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1467,12 +1471,43 @@ def test_list_issues_mcp_tool_forwards_sprint():
     client = _MCPRecordingAthenaClient()
     server = build_server(client)
 
-    asyncio.run(server.call_tool("list_issues", {"sprint": 7}))
+    asyncio.run(server.call_tool("list_issues", {"sprint": sprint}))
 
     called_name, args, kwargs = client.calls.pop()
     assert called_name == "list_issues"
     assert args == ()
-    assert kwargs["sprint"] == 7
+    assert kwargs["sprint"] == sprint
+
+
+@pytest.mark.parametrize(
+    "invalid_sprint",
+    [
+        True,
+        False,
+        "7",
+        7.0,
+        -1,
+        issues.MAX_SQLITE_INTEGER + 1,
+    ],
+)
+def test_list_issues_mcp_rejects_invalid_sprint_before_dispatch(invalid_sprint):
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    with pytest.raises(ToolError):
+        asyncio.run(
+            server.call_tool(
+                "list_issues",
+                {"sprint": invalid_sprint},
+            )
+        )
+    assert client.calls == []
 
 
 def test_create_automation_rule_mcp_tool_forwards_schedule_contract():
