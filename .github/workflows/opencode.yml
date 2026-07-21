@@ -6,28 +6,80 @@ on:
   pull_request_review_comment:
     types: [created]
 
+concurrency:
+  group: opencode-${{ github.repository }}
+  cancel-in-progress: true
+
 jobs:
   opencode:
     if: |
-      contains(github.event.comment.body, ' /oc') ||
-      startsWith(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, ' /opencode') ||
-      startsWith(github.event.comment.body, '/opencode')
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) && (
+        contains(github.event.comment.body, ' /oc') ||
+        startsWith(github.event.comment.body, '/oc') ||
+        contains(github.event.comment.body, ' /opencode') ||
+        startsWith(github.event.comment.body, '/opencode')
+      )
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
+      # Required by the fixed CLI's GitHub App token exchange.
       id-token: write
       contents: read
-      pull-requests: read
-      issues: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
+      - name: Install verified OpenCode CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          readonly archive="${RUNNER_TEMP}/opencode-linux-x64-v1.18.4.tar.gz"
+          readonly install_dir="${RUNNER_TEMP}/opencode-v1.18.4"
+
+          curl \
+            --fail \
+            --show-error \
+            --silent \
+            --location \
+            --retry 3 \
+            --retry-all-errors \
+            --connect-timeout 30 \
+            --max-time 300 \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --tlsv1.2 \
+            --output "${archive}" \
+            "https://github.com/anomalyco/opencode/releases/download/v1.18.4/opencode-linux-x64.tar.gz"
+
+          printf '%s  %s\n' \
+            'bab463c3fb3224d388bb7cfad63f38703df9cf0be2cfd2ce8cb49d886b53a174' \
+            "${archive}" | sha256sum --check --strict
+
+          mkdir -p "${install_dir}"
+          tar \
+            --extract \
+            --gzip \
+            --file "${archive}" \
+            --directory "${install_dir}" \
+            --no-same-owner
+
+          test -x "${install_dir}/opencode"
+          readonly installed_version="$("${install_dir}/opencode" --version)"
+          test "${installed_version}" = "1.18.4"
+          printf '%s\n' "${install_dir}" >> "${GITHUB_PATH}"
+
       - name: Run opencode
-        uses: anomalyco/opencode/github@latest
+        shell: bash
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        with:
-          model: opencode/claude-sonnet-4-6
+          MODEL: opencode/claude-sonnet-4-6
+          USE_GITHUB_TOKEN: "false"
+          SHARE: "false"
+        run: opencode github run
