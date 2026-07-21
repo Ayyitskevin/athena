@@ -27,7 +27,7 @@ from athena.aegis import issues
 from athena.core import labels
 
 # The legal criteria dimensions — anything else in a submitted criteria object is
-# dropped by normalize_criteria, so a stored filter can only constrain what the
+# rejected by normalize_criteria, so a stored filter can only constrain what the
 # issue list actually supports and can always be run. The string-valued keys live
 # in _STRING_KEYS; assignee_id (the one int-valued key) is normalized separately
 # in normalize_criteria.
@@ -38,6 +38,7 @@ from athena.core import labels
 #   project     — "none" (backlog) or a project id, via issues.parse_project_filter
 #   search      — case-insensitive substring in title/body
 _STRING_KEYS = ("status", "priority", "label", "project", "search")
+_CRITERIA_KEYS = frozenset((*_STRING_KEYS, "assignee_id"))
 
 
 class InvalidFilterCriteria(ValueError):
@@ -47,14 +48,19 @@ class InvalidFilterCriteria(ValueError):
 def normalize_criteria(raw: dict | None) -> dict:
     """Clean a raw criteria mapping into the canonical stored form.
 
-    Keeps only known keys; strips strings and drops empty ones; canonicalizes a
+    Rejects unknown keys; strips strings and drops empty ones; canonicalizes a
     valid assignee_id to an int. A supplied assignee that is not an exact integer
     (or an ASCII-decimal web-form string) in SQLite's id range is rejected rather
     than dropped: silently dropping it would widen the saved query to every
     assignee. The result is what we persist and what run_filter consumes, so the
     web form and JSON API land on the SAME shape. An empty result is legal — it
     means "every issue"."""
-    raw = raw or {}
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise InvalidFilterCriteria("filter criteria must be an object")
+    if not set(raw).issubset(_CRITERIA_KEYS):
+        raise InvalidFilterCriteria("unknown filter criterion")
     out: dict = {}
     for key in _STRING_KEYS:
         value = raw.get(key)
@@ -103,6 +109,12 @@ def normalized_valid_criteria(raw: dict | None) -> dict | None:
     valid empty mapping must remain distinguishable as the intentional
     "all issues" filter.
     """
+    # Damaged/imported storage may hold malformed JSON, a non-object, or a key this
+    # version does not understand. None of those may collapse to the valid empty
+    # mapping: that would turn an unknown constraint into "all issues".
+    if not isinstance(raw, dict) or not set(raw).issubset(_CRITERIA_KEYS):
+        return None
+
     try:
         criteria = normalize_criteria(raw)
     except InvalidFilterCriteria:
@@ -112,7 +124,7 @@ def normalized_valid_criteria(raw: dict | None) -> dict | None:
 
 def run_filter(
     conn: sqlite3.Connection,
-    criteria: dict,
+    criteria: dict | None,
     *,
     visible_project_ids: set[int] | None = None,
 ) -> list[dict]:
@@ -156,12 +168,13 @@ def run_filter(
 
 def _to_filter(row: sqlite3.Row) -> dict:
     """Turn a saved_filters row into a dict, decoding criteria JSON back to a
-    mapping so every caller works with the structured form, never the raw text."""
+    mapping when it is an object, or None for malformed/non-object JSON."""
     out = dict(row)
     try:
-        out["criteria"] = json.loads(out["criteria"]) if out["criteria"] else {}
+        decoded = json.loads(out["criteria"]) if out["criteria"] else None
     except (TypeError, ValueError):
-        out["criteria"] = {}
+        decoded = None
+    out["criteria"] = decoded if isinstance(decoded, dict) else None
     return out
 
 

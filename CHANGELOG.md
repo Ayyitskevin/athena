@@ -31,8 +31,11 @@ follow semantic versioning while the project remains pre-1.0.
 ### Fixed
 
 - Saved-filter assignee ids now reject invalid types and values outside SQLite's
-  integer range before persistence; malformed stored criteria fail closed instead
-  of widening the query or raising an overflow while running it.
+  integer range before persistence; malformed JSON, non-object JSON, unknown keys,
+  and invalid stored criteria fail closed instead of widening the query or raising
+  an overflow while running it.
+- Searching within a saved filter now preserves the filter's own title/body text
+  constraint instead of replacing it with the ad-hoc query.
 
 ## [0.1.0a1] - 2026-07-18
 
