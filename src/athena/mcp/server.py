@@ -26,7 +26,7 @@ from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
-from athena.aegis import delegations, issues
+from athena.aegis import delegations, fleet_metrics, issues
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -53,6 +53,15 @@ RunId = Annotated[
 DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
 DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
 IssueFilterId = Annotated[int, Field(ge=0, le=issues.MAX_SQLITE_INTEGER)]
+FleetMetricId = Annotated[
+    int, Field(strict=True, ge=1, le=fleet_metrics.MAX_SQLITE_INTEGER)
+]
+FleetActorLimit = Annotated[
+    int, Field(strict=True, ge=1, le=fleet_metrics.MAX_ACTOR_LIMIT)
+]
+FleetMetricDate = Annotated[
+    str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
@@ -151,6 +160,27 @@ def build_server(client: AthenaClient) -> FastMCP:
         and does not guarantee readiness, unblocked status, agent liveness, or
         replayability."""
         return client.get_issue_work_context(ref)
+
+    @mcp.tool()
+    def get_fleet_metrics(
+        start: FleetMetricDate | None = None,
+        end: FleetMetricDate | None = None,
+        project_id: FleetMetricId | None = None,
+        actor_id: FleetMetricId | None = None,
+        actor_limit: FleetActorLimit = fleet_metrics.DEFAULT_ACTOR_LIMIT,
+    ) -> dict:
+        """Read bounded issue throughput for this token's visible scope. Dates are
+        UTC YYYY-MM-DD bounds in [start,end); provide both or neither. Created and
+        completed are typed event flow, and completion attribution belongs to the
+        event performer. Cycle timing requires a full-visibility admin token;
+        partial-visibility responses mark it unavailable."""
+        return client.get_fleet_metrics(
+            start=start,
+            end=end,
+            project_id=project_id,
+            actor_id=actor_id,
+            actor_limit=actor_limit,
+        )
 
     @mcp.tool()
     def list_issue_comments(issue_id: int) -> list:

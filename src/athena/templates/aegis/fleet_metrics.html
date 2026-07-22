@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+
+{% block title %}Fleet Throughput — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Fleet throughput</h1>
+        <p class="subtitle">
+            Visible issue flow and full-visibility completion cycles in
+            <abbr title="Coordinated Universal Time">UTC</abbr>.
+        </p>
+    </div>
+</div>
+
+<section class="dashboard-card" aria-labelledby="metrics-filter-heading">
+    <h2 id="metrics-filter-heading">Period and filters</h2>
+    <form method="get" action="/aegis/fleet-metrics" class="fleet-metrics-filter">
+        <div class="form-group">
+            <label for="metrics-start">Start date (UTC, included)</label>
+            <input id="metrics-start" name="start" type="date" required
+                   value="{{ metrics.period.start }}">
+        </div>
+        <div class="form-group">
+            <label for="metrics-end">End date (UTC, excluded)</label>
+            <input id="metrics-end" name="end" type="date" required
+                   value="{{ metrics.period.end_exclusive }}">
+        </div>
+        <div class="form-group">
+            <label for="metrics-project">Project ID <span class="muted">(optional)</span></label>
+            <input id="metrics-project" name="project_id" type="number" min="1"
+                   max="9223372036854775807"
+                   value="{{ metrics.filters.project_id or '' }}">
+        </div>
+        <div class="form-group">
+            <label for="metrics-actor">Event actor ID <span class="muted">(optional)</span></label>
+            <input id="metrics-actor" name="actor_id" type="number" min="1"
+                   max="9223372036854775807"
+                   value="{{ metrics.filters.actor_id or '' }}">
+        </div>
+        <div class="form-group">
+            <label for="metrics-actor-limit">Actor rows</label>
+            <input id="metrics-actor-limit" name="actor_limit" type="number"
+                   min="1" max="100" value="{{ metrics.limits.actor_limit }}">
+        </div>
+        <div class="form-actions">
+            <button type="submit">Apply</button>
+            <a href="/aegis/fleet-metrics" class="button secondary">Reset</a>
+        </div>
+    </form>
+    <p class="note-small">
+        Presets:
+        {% for preset in preset_links %}
+        <a href="{{ preset.href }}">{{ preset.days }} days</a>{% if not loop.last %} · {% endif %}
+        {% endfor %}
+        · bounds are <code>[start, end)</code>, maximum 90 days.
+    </p>
+</section>
+
+<section aria-labelledby="flow-heading">
+    <h2 id="flow-heading">Flow</h2>
+    <div class="stat-row">
+        <div class="stat-card">
+            <span class="stat-number">{{ metrics.flow.created }}</span>
+            <span class="stat-label">Issues created</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-number">{{ metrics.flow.completed }}</span>
+            <span class="stat-label">Completion events</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-number">{% if metrics.flow.net > 0 %}+{% endif %}{{ metrics.flow.net }}</span>
+            <span class="stat-label">Net flow (created − completed)</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-number">
+                {% if metrics.cycle_time.median_seconds is none %}
+                Unavailable
+                {% else %}
+                {{ metrics.cycle_time.median_seconds | round(1) }}s
+                {% endif %}
+            </span>
+            <span class="stat-label">Median completion cycle</span>
+        </div>
+    </div>
+    {% if metrics.flow.created == 0 and metrics.flow.completed == 0 %}
+    <p class="empty-state">No visible qualifying creation or completion events in this period.</p>
+    {% endif %}
+    <p class="note-small">
+        {% if metrics.cycle_time.visibility_complete %}
+        Cycle median uses {{ metrics.cycle_time.sample_count }} trustworthy sample{% if metrics.cycle_time.sample_count != 1 %}s{% endif %}.
+        {% if metrics.cycle_time.excluded_completions %}
+        {{ metrics.cycle_time.excluded_completions }} completion{% if metrics.cycle_time.excluded_completions != 1 %}s were{% else %} was{% endif %}
+        excluded because a complete typed start was unavailable.
+        {% endif %}
+        {% else %}
+        Cycle timing is withheld on partial-visibility views so hidden projects
+        cannot influence timing or coverage. Use a full-visibility admin view.
+        {% endif %}
+    </p>
+</section>
+
+<div class="dashboard-grid">
+    <section class="dashboard-card">
+        <h2>Who completed work</h2>
+        <dl class="fleet-metrics-breakdown">
+            <div><dt>Human events</dt><dd>{{ metrics.completion_by_actor_type.human }}</dd></div>
+            <div><dt>Agent events</dt><dd>{{ metrics.completion_by_actor_type.agent }}</dd></div>
+            <div><dt>Unknown type</dt><dd>{{ metrics.completion_by_actor_type.unknown }}</dd></div>
+        </dl>
+        <p class="note-small">Type is snapped at event time; attribution is to the performer, not the assignee.</p>
+    </section>
+
+    <section class="dashboard-card">
+        <h2>Evidence coverage</h2>
+        <p>
+            {% if metrics.coverage.complete %}
+            Complete for visible typed evidence.
+            {% else %}
+            Some visible evidence was excluded; inspect the details below.
+            {% endif %}
+        </p>
+        <details>
+            <summary>Coverage details</summary>
+            <dl class="fleet-metrics-breakdown">
+                <div><dt>Visible candidates</dt><dd>{{ metrics.coverage.visible_candidate_events }}</dd></div>
+                <div><dt>Included typed events</dt><dd>{{ metrics.coverage.included_typed_events }}</dd></div>
+                <div><dt>Legacy untyped</dt><dd>{{ metrics.coverage.excluded_legacy_events }}</dd></div>
+                <div><dt>Imported</dt><dd>{{ metrics.coverage.excluded_imported_events }}</dd></div>
+                <div><dt>Restricted legacy</dt><dd>{{ metrics.coverage.excluded_restricted_events }}</dd></div>
+                <div><dt>Orphan targets</dt><dd>{{ metrics.coverage.excluded_orphan_events }}</dd></div>
+                <div><dt>Malformed/unsupported</dt><dd>{{ metrics.coverage.excluded_malformed_events }}</dd></div>
+                <div><dt>Cycle samples excluded</dt><dd>{{ metrics.coverage.cycle_samples_excluded }}</dd></div>
+            </dl>
+        </details>
+    </section>
+</div>
+
+<section class="dashboard-card" aria-labelledby="actor-table-heading">
+    <h2 id="actor-table-heading">Completion events by actor</h2>
+    {% if metrics.actors %}
+    <div class="agent-checkin-table-region"
+         role="region"
+         aria-label="Completion events by visible actor"
+         tabindex="0">
+        <table class="issues-table">
+            <caption>Visible completion event performers for the selected period</caption>
+            <thead>
+                <tr>
+                    <th scope="col">Actor</th>
+                    <th scope="col">Event-time type</th>
+                    <th scope="col">Completions</th>
+                    <th scope="col">Human</th>
+                    <th scope="col">Agent</th>
+                    <th scope="col">Unknown</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for actor in metrics.actors %}
+                <tr>
+                    <th scope="row">{{ actor.actor_name }} <span class="muted">#{{ actor.actor_id }}</span></th>
+                    <td>{{ actor.actor_type }}</td>
+                    <td>{{ actor.completions }}</td>
+                    <td>{{ actor.human_completions }}</td>
+                    <td>{{ actor.agent_completions }}</td>
+                    <td>{{ actor.unknown_completions }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No visible completion actors in this period.</p>
+    {% endif %}
+    {% if metrics.limits.actor_rows_truncated %}
+    <p class="note-small">
+        Showing {{ metrics.actors | length }} of {{ metrics.limits.actor_rows_available }}
+        actor rows. Totals above remain complete.
+    </p>
+    {% endif %}
+</section>
+
+<section class="dashboard-card" aria-labelledby="definitions-heading">
+    <h2 id="definitions-heading">Definitions and limits</h2>
+    <dl class="fleet-metrics-definitions">
+        <dt>Created</dt><dd>{{ metrics.definitions.created }}</dd>
+        <dt>Completed</dt><dd>{{ metrics.definitions.completed }}</dd>
+        <dt>Net flow</dt><dd>{{ metrics.definitions.net_flow }}</dd>
+        <dt>Cycle time</dt><dd>{{ metrics.definitions.cycle_time }}</dd>
+        <dt>Attribution</dt><dd>{{ metrics.definitions.attribution }}</dd>
+    </dl>
+    <p class="note-small">
+        Archived issues remain eligible. Imported, legacy-untyped, orphaned, and
+        incomplete lifecycle evidence is never guessed into the metrics.
+    </p>
+</section>
+{% endblock %}

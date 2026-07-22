@@ -455,6 +455,8 @@ def _update_issue(
                 after=updated["status"],
                 commit=False,
                 issue_project_ids=transition_project_ids,
+                before_project_id=before["project_id"],
+                after_project_id=updated["project_id"],
             )
         if "priority" in provided:
             issue_activity.record_priority_change(

@@ -113,6 +113,12 @@ def main() -> int:
                     css_type, css = _read_asset(
                         f"http://127.0.0.1:{port}/static/styles.css"
                     )
+                    metrics = _read_json(
+                        f"http://127.0.0.1:{port}/fleet/metrics"
+                    )
+                    metrics_type, metrics_page = _read_asset(
+                        f"http://127.0.0.1:{port}/aegis/fleet-metrics"
+                    )
                 except (OSError, URLError, json.JSONDecodeError) as exc:
                     last_error = str(exc)
                     time.sleep(0.1)
@@ -128,6 +134,23 @@ def main() -> int:
                     break
                 if css_type != "text/css" or not css.strip():
                     last_error = "packaged stylesheet was missing or empty"
+                    break
+                if (
+                    metrics.get("schema") != "athena.fleet_metrics.v1"
+                    or metrics.get("flow")
+                    != {"created": 0, "completed": 0, "net": 0}
+                    or metrics.get("cycle_time", {}).get("median_seconds")
+                    is not None
+                ):
+                    last_error = (
+                        "fresh database metrics did not return the exact no-data contract"
+                    )
+                    break
+                if (
+                    metrics_type != "text/html"
+                    or b"<title>Fleet Throughput" not in metrics_page
+                ):
+                    last_error = "fleet metrics page did not render from packaged assets"
                     break
                 success = True
                 break
@@ -145,8 +168,8 @@ def main() -> int:
             raise RuntimeError(f"Athena process smoke failed: {details}")
 
         print(
-            "Athena process smoke passed: fresh database ready, web assets served, "
-            "and bounded stop"
+            "Athena process smoke passed: fresh database and no-data metrics ready, "
+            "web assets served, and bounded stop"
         )
         return 0
 

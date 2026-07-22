@@ -62,7 +62,20 @@ actor-visible; missing warnings do not assert readiness.
 Review question: **Can hidden nested data leak through items, counts, clipping,
 warnings, ETags, or timing-dependent composition?**
 
-### 4. Adversarial outbound networking
+### 4. Historical throughput evidence
+
+Read [`docs/FLEET_METRICS.md`](docs/FLEET_METRICS.md),
+`src/athena/aegis/fleet_metrics.py`, migration `0055_issue_lifecycle_facts.sql`,
+and `tests/test_fleet_metrics.py`. Trace a create, completion, reopen, and
+reclosure from the issue command into its typed activity fact, then through the
+shared visibility predicate and bounded admin cycle projection. Confirm partial-
+visibility roles never inspect hidden predecessor availability.
+
+Review question: **Can mutable status/actor state, imported history, a hidden
+project, an orphan target, or an evidence cap silently change a headline,
+median, actor row, coverage signal, or no-data state?**
+
+### 5. Adversarial outbound networking
 
 Read `src/athena/core/webhooks.py` and `tests/test_webhook_ssrf.py`. Focus on
 redirect refusal, DNS pinning, split answers, embedded IPv4 forms, TLS hostname
@@ -71,7 +84,7 @@ verification, and failure isolation.
 Review question: **Can registration-time validation and connection-time behavior
 disagree in a way that reaches an internal address?**
 
-### 5. Distribution evidence
+### 6. Distribution evidence
 
 Read [`.github/workflows/ci.yml`](.github/workflows/ci.yml),
 `scripts/verify_wheel.py`, and `scripts/smoke_app.py`. CI builds through an

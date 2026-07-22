@@ -27,6 +27,7 @@ from athena.aegis import automation as aegis_automation
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import filters_api as aegis_filters_api
+from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
 from athena.core import (
@@ -58,6 +59,7 @@ from athena.web import admin as web_admin
 from athena.web import auth as web_auth
 from athena.web import boards as web_boards
 from athena.web import filters as web_filters
+from athena.web import fleet_metrics as web_fleet_metrics
 from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
 from athena.web import projects as web_projects
@@ -1069,7 +1071,11 @@ def create_app(
                     conn.close()
             except Exception:  # noqa: BLE001 — the 403 must go out regardless
                 _logger.exception("could not record scope denial")
-        return JSONResponse(status_code=403, content={"detail": exc.detail})
+        return JSONResponse(
+            status_code=403,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
 
     app.add_exception_handler(identity.ScopeDenied, _record_scope_denial)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
@@ -1159,6 +1165,7 @@ def create_app(
     app.include_router(web_labels.router)
     app.include_router(web_admin.router)
     app.include_router(web_work_context.router)
+    app.include_router(web_fleet_metrics.router)
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
@@ -1180,6 +1187,7 @@ def create_app(
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
     app.include_router(aegis_work_context_api.router)
+    app.include_router(aegis_fleet_metrics_api.router)
 
     # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)

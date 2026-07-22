@@ -166,6 +166,14 @@ def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
     deleted = projects.create_project(
         target, name="Deleted", key="DEL", created_by=extra
     )
+    deleted_issue = issues.create_issue(
+        target,
+        title="Deleted highest issue",
+        body="",
+        created_by=extra,
+    )
+    target.execute("DELETE FROM issues WHERE id = ?", (deleted_issue["id"],))
+    target.commit()
     assert projects.delete_project(target, deleted["id"])
 
     owner = _user(target, "owner@example.com", "Owner", role="admin")
@@ -180,6 +188,11 @@ def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
         "SELECT id FROM projects WHERE key = 'RPL'"
     ).fetchone()
     assert result["status"] == "imported"
+    imported_issue_ids = {
+        row["target_id"] for row in result["id_map"]["issues"]
+    }
+    assert min(imported_issue_ids) > deleted_issue["id"]
+    assert deleted_issue["id"] not in imported_issue_ids
     assert imported["id"] > deleted["id"]
     assert result["reused"]["users"] == 3
     assert {owner, member, bot} == {

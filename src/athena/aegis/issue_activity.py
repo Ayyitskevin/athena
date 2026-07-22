@@ -16,7 +16,77 @@ from collections.abc import Collection
 import sqlite3
 
 from athena.aegis import issues, projects, sprints
-from athena.core import activity, labels, notifications, users
+from athena.core import activity, db, labels, notifications, users
+_INFER_PROJECT = object()
+
+
+def _project_scope_key(
+    conn: sqlite3.Connection, project_id: int | None
+) -> str | None:
+    if project_id is None:
+        return None
+    row = conn.execute(
+        "SELECT activity_scope_key FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if row is None or row["activity_scope_key"] is None:
+        raise ValueError("project activity scope is unavailable")
+    return str(row["activity_scope_key"])
+
+
+def _status_category(
+    conn: sqlite3.Connection, project_id: int | None, status: str
+) -> str:
+    from athena.aegis import statuses
+
+    category = statuses.category_of(conn, project_id, status)
+    if category is None:
+        raise ValueError("issue status category is unavailable")
+    return category
+
+
+def _actor_kind(conn: sqlite3.Connection, actor_id: int) -> str:
+    actor = users.get_user(conn, actor_id)
+    if actor is None:
+        raise ValueError("issue lifecycle actor is unavailable")
+    return "agent" if actor["is_agent"] else "human"
+
+
+def _record_lifecycle_fact(
+    conn: sqlite3.Connection,
+    *,
+    event_id: int,
+    issue_id: int,
+    previous_event_id: int | None,
+    event_kind: str,
+    before_status: str | None,
+    before_category: str | None,
+    after_status: str,
+    after_category: str,
+    before_project_scope_key: str | None,
+    after_project_scope_key: str | None,
+    actor_kind: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO issue_lifecycle_facts "
+        "(event_id, issue_id, previous_event_id, event_kind, before_status, "
+        "before_category, after_status, after_category, "
+        "before_project_scope_key, after_project_scope_key, actor_kind) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            event_id,
+            issue_id,
+            previous_event_id,
+            event_kind,
+            before_status,
+            before_category,
+            after_status,
+            after_category,
+            before_project_scope_key,
+            after_project_scope_key,
+            actor_kind,
+        ),
+    )
+
 
 
 def _scope_kwargs(
@@ -50,6 +120,9 @@ def record_created(
     watching it, so they hear about later activity without opting in; anyone named
     by [[user:N]] in the body is mentioned (notified + auto-watched)."""
     try:
+        issue = issues.get_issue(conn, issue_id)
+        if issue is None:
+            raise ValueError("issue lifecycle target is unavailable")
         event = activity.record(
             conn,
             actor_id=actor_id,
@@ -57,6 +130,24 @@ def record_created(
             target_kind="issue",
             target_id=issue_id,
             commit=False,
+        )
+        _record_lifecycle_fact(
+            conn,
+            event_id=event["id"],
+            issue_id=issue_id,
+            previous_event_id=None,
+            event_kind="created",
+            before_status=None,
+            before_category=None,
+            after_status=issue["status"],
+            after_category=_status_category(
+                conn, issue["project_id"], issue["status"]
+            ),
+            before_project_scope_key=None,
+            after_project_scope_key=_project_scope_key(
+                conn, issue["project_id"]
+            ),
+            actor_kind=_actor_kind(conn, actor_id),
         )
         notifications.watch(
             conn, actor_id, "issue", issue_id, commit=False
@@ -128,21 +219,86 @@ def record_status_change(
     after: str,
     commit: bool = True,
     issue_project_ids: Collection[int | None] | None = None,
+    before_project_id: int | None | object = _INFER_PROJECT,
+    after_project_id: int | None | object = _INFER_PROJECT,
 ) -> None:
-    """Record a status transition as "before → after". No-op if unchanged — the
-    lifecycle moment only matters when the status actually moved."""
-    if before == after:
+    """Record a status/category transition as ``before → after``.
+
+    A project move can change the meaning of the same status name, so category
+    changes are lifecycle moments even when the text is unchanged.
+    """
+    if commit:
+        with db.transaction(conn, immediate=True):
+            record_status_change(
+                conn,
+                actor_id=actor_id,
+                issue_id=issue_id,
+                before=before,
+                after=after,
+                commit=False,
+                issue_project_ids=issue_project_ids,
+                before_project_id=before_project_id,
+                after_project_id=after_project_id,
+            )
         return
-    activity.record(
-        conn,
-        actor_id=actor_id,
-        verb="changed_status",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=f"{before} → {after}",
-        commit=commit,
-        **_scope_kwargs(issue_project_ids),
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None:
+        raise ValueError("issue lifecycle target is unavailable")
+    resolved_before_project_id = (
+        issue["project_id"]
+        if before_project_id is _INFER_PROJECT
+        else before_project_id
     )
+    resolved_after_project_id = (
+        issue["project_id"]
+        if after_project_id is _INFER_PROJECT
+        else after_project_id
+    )
+    before_category = _status_category(
+        conn, resolved_before_project_id, before
+    )
+    after_category = _status_category(conn, resolved_after_project_id, after)
+    if before == after and before_category == after_category:
+        return
+    before_scope_key = _project_scope_key(conn, resolved_before_project_id)
+    after_scope_key = _project_scope_key(conn, resolved_after_project_id)
+    try:
+        previous = conn.execute(
+            "SELECT event_id FROM issue_lifecycle_facts "
+            "WHERE issue_id = ? ORDER BY event_id DESC LIMIT 1",
+            (issue_id,),
+        ).fetchone()
+        previous_event_id = previous["event_id"] if previous else None
+        event = activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="changed_status",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=f"{before} → {after}",
+            commit=False,
+            **_scope_kwargs(issue_project_ids),
+        )
+        _record_lifecycle_fact(
+            conn,
+            event_id=event["id"],
+            issue_id=issue_id,
+            previous_event_id=previous_event_id,
+            event_kind="status_transition",
+            before_status=before,
+            before_category=before_category,
+            after_status=after,
+            after_category=after_category,
+            before_project_scope_key=before_scope_key,
+            after_project_scope_key=after_scope_key,
+            actor_kind=_actor_kind(conn, actor_id),
+        )
+        if commit:
+            conn.commit()
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
 
 
 def record_priority_change(

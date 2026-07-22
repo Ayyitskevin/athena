@@ -9,7 +9,7 @@ import re
 import sqlite3
 
 from athena.aegis import projects, statuses
-from athena.core import links, search, users
+from athena.core import issue_identity, links, search, users
 
 # The DEFAULT lifecycle for issues without a project. Since migration 0024,
 # statuses are per-project (aegis/statuses.py owns those sets and their board
@@ -83,30 +83,40 @@ def create_issue(
     matching project (the foreign keys refuse the orphan). project_id is
     optional — None means the issue starts with no project (and so has no key
     until it's moved into one)."""
-    # If the issue is born into a project, allocate its per-project number from
-    # that project's counter. next_seq doesn't commit, so the counter bump and the
-    # INSERT below land together under the single commit (or roll back together).
+    # The lifecycle trail outlives hard-deleted issue rows, so allocate through
+    # the shared monotonic identity owner used by native and portability writes.
     try:
+        issue_id = issue_identity.allocate_issue_id(conn)
         project_seq = (
             projects.next_seq(conn, project_id) if project_id is not None else None
         )
         cur = conn.execute(
             "INSERT INTO issues "
-            "(title, body, status, priority, created_by, project_id, project_seq) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (title, body, status, priority, created_by, project_id, project_seq),
+            "(id, title, body, status, priority, created_by, project_id, project_seq) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                issue_id,
+                title,
+                body,
+                status,
+                priority,
+                created_by,
+                project_id,
+                project_seq,
+            ),
         )
+        issue_id = int(cur.lastrowid)
         # Derived rows belong to the same unit as their source. The command layer
         # may keep all three uncommitted until it appends the required audit event.
         links.sync_links(
             conn,
             source_kind="issue",
-            source_id=cur.lastrowid,
+            source_id=issue_id,
             body=body,
             commit=False,
         )
         search.index_document(
-            conn, kind="issue", source_id=cur.lastrowid, commit=False
+            conn, kind="issue", source_id=issue_id, commit=False
         )
     except BaseException:
         if commit:
@@ -114,7 +124,7 @@ def create_issue(
         raise
     if commit:
         conn.commit()
-    return get_issue(conn, cur.lastrowid)
+    return get_issue(conn, issue_id)
 
 
 def update_issue(
