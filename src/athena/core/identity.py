@@ -243,9 +243,17 @@ class ScopeDenied(HTTPException):
     exactly the same response a plain HTTPException produced. An agent that
     keeps walking into its scope wall is a story the operator should see."""
 
-    def __init__(self, actor: dict | None, scope: str) -> None:
+    def __init__(
+        self,
+        actor: dict | None,
+        scope: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(
-            status_code=403, detail=f"token scope required: {scope}"
+            status_code=403,
+            detail=f"token scope required: {scope}",
+            headers=headers,
         )
         self.actor_id = actor.get("id") if actor else None
         self.scope = scope

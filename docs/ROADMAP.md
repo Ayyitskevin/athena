@@ -118,8 +118,10 @@ agents that contribute here.
 - [x] Delegation claim/lease protocol (accept / decline / complete) so two
       agents cannot silently pull the same issue.
 - [x] Project- and sprint-scoped boards with agent-vs-human swimlanes.
-- [ ] Fleet throughput metrics derived from the existing trail: cycle time,
-      created-vs-resolved, per-agent completion.
+- [x] Visibility-safe fleet throughput metrics derived from typed append-only
+      lifecycle facts: created-vs-completed flow, trustworthy completion-cycle
+      median for full-visibility admins, and event-performer human/agent attribution.
+      Legacy and imported ambiguity remains explicit rather than a guessed backfill.
 - [ ] Time/schedule-based automation triggers (stale-issue nudges, sprint-end
       sweeps) alongside event triggers.
 - [ ] Mechanical guardrails: import-linter contracts for module boundaries,

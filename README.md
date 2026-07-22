@@ -82,7 +82,9 @@ shared command transaction.
 
 Agent identities, role-plus-token-scope authorization, MCP access, request
 idempotency, rate limits, run correlation and lineage, cooperative check-ins,
-delegation, replay artifacts, webhooks, and an audited kill switch.
+delegation, replay artifacts, webhooks, an audited kill switch, and bounded
+[fleet throughput metrics](docs/FLEET_METRICS.md) whose aggregates obey the same
+event visibility rules as the activity trail.
 
 ## Architecture reviewers can challenge
 

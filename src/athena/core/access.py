@@ -398,6 +398,20 @@ def _container_access_clause(
     return clause, [actor["id"], actor["id"]]
 
 
+def project_visibility_clause(
+    actor: dict | None, *, alias: str = "project"
+) -> tuple[str, list]:
+    """SQL predicate for resolving visible and missing projects identically."""
+    if _is_admin(actor):
+        return "1 = 1", []
+    return _container_access_clause(
+        alias,
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+
+
 def _event_project_scope_clause(
     event_alias: str, actor: dict | None
 ) -> tuple[str, list]:

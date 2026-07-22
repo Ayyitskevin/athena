@@ -8,6 +8,14 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Added
 
+- A visibility-safe Fleet Throughput page, strict REST endpoint, and MCP tool
+  backed by one bounded snapshot service. New append-only lifecycle facts preserve
+  event-time terminal categories, project scope, predecessor chains, and actor type;
+  monotonic issue identities prevent deleted-target rebinding, legacy/imported
+  ambiguity is reported as coverage, valid typed history survives manual target
+  deletion for full-visibility admins, partial-visibility cycle timing is withheld,
+  hidden work affects no aggregate,
+  and query-plan tests pin the targeted time-window index.
 - Project- and sprint-scoped fleet boards with explicit agent, human, and
   unassigned swimlanes; filter state survives HTMX, drag, and no-JS moves while
   private project and sprint names remain visibility-gated.

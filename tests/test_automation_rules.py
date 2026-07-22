@@ -99,6 +99,61 @@ def test_process_pending_fires_matches_and_advances_cursor(tmp_path):
         assert len(calls) == 1
 
 
+def test_same_status_project_move_does_not_fire_status_rule(tmp_path):
+    db_file = tmp_path / "project-move-trigger.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        source = client.post(
+            "/projects",
+            json={"name": "Source", "key": "SRC"},
+            headers=H1,
+        ).json()
+        destination = client.post(
+            "/projects",
+            json={"name": "Destination", "key": "DST"},
+            headers=H1,
+        ).json()
+        issue = client.post(
+            "/issues",
+            json={
+                "title": "Move without status change",
+                "project_id": source["id"],
+            },
+            headers=H1,
+        ).json()
+        conn = db.connect(db_file)
+        automation.create_rule(
+            conn,
+            name="status-only",
+            trigger_verb="changed_status",
+            action_type="comment",
+            action_params={"body": "status fired"},
+            created_by=1,
+        )
+        assert automation.process_pending(
+            conn, executor=lambda *_args: None
+        ) == 0
+
+        moved = client.put(
+            f"/issues/{issue['id']}/project",
+            json={"project_id": destination["id"]},
+            headers=H1,
+        )
+        assert moved.status_code == 200
+        calls: list[str] = []
+        assert (
+            automation.process_pending(
+                conn,
+                executor=lambda _conn, _rule, event: calls.append(
+                    event["verb"]
+                ),
+            )
+            == 0
+        )
+        assert calls == []
+        conn.close()
+
+
 def test_disabled_rule_and_loop_guard(tmp_path):
     db_file = tmp_path / "guard.db"
     with TestClient(create_app(db_file)) as client:

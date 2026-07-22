@@ -247,6 +247,29 @@ class AthenaClient:
         """Get the bounded work-context packet for one visible issue."""
         return self._result(self._client.get(f"/issues/{ref}/work-context"))
 
+    def get_fleet_metrics(
+        self,
+        *,
+        start: str | None = None,
+        end: str | None = None,
+        project_id: int | None = None,
+        actor_id: int | None = None,
+        actor_limit: int | None = None,
+    ) -> Any:
+        """Read the exact visibility-safe REST metrics contract."""
+        return self._result(
+            self._client.get(
+                "/fleet/metrics",
+                params=self._params(
+                    start=start,
+                    end=end,
+                    project_id=project_id,
+                    actor_id=actor_id,
+                    actor_limit=actor_limit,
+                ),
+            )
+        )
+
     def get_issue_state(
         self, issue_id: int, *, as_of_event_id: int | None = None
     ) -> Any:

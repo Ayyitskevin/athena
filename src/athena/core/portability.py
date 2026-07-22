@@ -15,7 +15,7 @@ import secrets
 import sqlite3
 from typing import Any, Iterable
 
-from athena.core import links
+from athena.core import issue_identity, links
 from athena.core._util import atomic_write_json, utc_now_iso
 
 SCHEMA = "athena.portability.v1"
@@ -668,12 +668,15 @@ def _replay_project_import(
 
     issue_map: dict[int, int] = {}
     for issue in bundle["issues"]:
+        issue_id = issue_identity.allocate_issue_id(conn)
         cur = conn.execute(
             "INSERT INTO issues "
-            "(title, body, status, priority, created_by, created_at, assignee_id, "
-            "project_id, project_seq, parent_id, sprint_id, archived_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(id, title, body, status, priority, created_by, created_at, "
+            "assignee_id, project_id, project_seq, parent_id, sprint_id, "
+            "archived_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                issue_id,
                 issue["title"],
                 issue.get("body", ""),
                 issue["status"],
@@ -688,7 +691,8 @@ def _replay_project_import(
                 issue.get("archived_at"),
             ),
         )
-        issue_map[issue["id"]] = cur.lastrowid
+        issue_id = int(cur.lastrowid)
+        issue_map[issue["id"]] = issue_id
 
     for issue in bundle["issues"]:
         body = _rewrite_body_refs(issue.get("body", ""), {"issue": issue_map})
