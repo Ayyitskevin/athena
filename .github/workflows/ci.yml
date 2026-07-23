@@ -53,16 +53,28 @@ jobs:
         run: |
           set -euo pipefail
           dist_root="$(mktemp -d "$RUNNER_TEMP/athena-dist.XXXXXX")"
-          .venv/bin/python -m build \
-            --outdir "$dist_root/artifacts" \
-            --sdist-extract-dir "$dist_root/source" \
-            .
+          .venv/bin/python -m build --sdist --outdir "$dist_root/artifacts" .
           shopt -s nullglob
           sdists=("$dist_root"/artifacts/*.tar.gz)
-          wheels=("$dist_root"/artifacts/*.whl)
+          if (( ${#sdists[@]} != 1 )); then
+            echo "expected exactly one source distribution" >&2
+            exit 1
+          fi
+          mkdir -p "$dist_root/source"
+          .venv/bin/python -c \
+            'import pathlib, sys, tarfile; tarfile.open(sys.argv[1]).extractall(pathlib.Path(sys.argv[2]), filter="data")' \
+            "${sdists[0]}" "$dist_root/source"
           source_trees=("$dist_root"/source/athena-*)
-          if (( ${#sdists[@]} != 1 || ${#wheels[@]} != 1 || ${#source_trees[@]} != 1 )); then
-            echo "expected exactly one sdist, wheel, and extracted source tree" >&2
+          if (( ${#source_trees[@]} != 1 )); then
+            echo "expected exactly one extracted source tree" >&2
+            exit 1
+          fi
+          .venv/bin/python -m build --wheel \
+            --outdir "$dist_root/artifacts" \
+            "${source_trees[0]}"
+          wheels=("$dist_root"/artifacts/*.whl)
+          if (( ${#wheels[@]} != 1 )); then
+            echo "expected exactly one wheel built from the source distribution" >&2
             exit 1
           fi
           if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" ]] \
