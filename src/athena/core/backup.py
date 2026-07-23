@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from contextlib import closing
 from fnmatch import fnmatch
+import os
 from pathlib import Path
 import sqlite3
+import tempfile
 
 _SIDECAR_SUFFIXES = ("-wal", "-shm")
 
@@ -28,8 +30,12 @@ def backup_database(
     if destination.exists() and not overwrite:
         raise FileExistsError(f"backup path already exists: {destination}")
 
-    _copy_sqlite_database(source, destination)
-    _remove_sqlite_sidecars(destination)
+    staged = _stage_sqlite_database(source, destination)
+    try:
+        _remove_sqlite_sidecars(destination)
+        _replace_staged_database(staged, destination)
+    finally:
+        staged.unlink(missing_ok=True)
     return destination
 
 
@@ -93,9 +99,10 @@ def restore_database(
 ) -> Path:
     """Restore ``backup_path`` into ``target_path``.
 
-    Restores should be run while Athena is stopped. If ``force`` is true and the
-    target exists, stale WAL/shm sidecars for the target are removed and then the
-    main database file is replaced.
+    Athena must be stopped for the entire restore. The backup is staged and
+    integrity-checked before the target is touched. When ``force`` replaces an
+    existing target, a consistent recovery snapshot is retained until the new
+    database has been swapped into place durably.
     """
     source = Path(backup_path)
     target = Path(target_path)
@@ -104,14 +111,31 @@ def restore_database(
     if target.exists() and not force:
         raise FileExistsError(f"target database already exists: {target}")
 
-    # Drop the target's stale -wal/-shm BEFORE swapping in the new main file, not after.
-    # The sidecars belong to the OLD database; if they outlived the atomic replace even
-    # briefly, a reader opening the freshly-restored file in that window would replay the
-    # old WAL onto the new database and corrupt it. Removing them first means the
-    # dangerous "new main file + old WAL" state never exists. (The restored copy is made
-    # in the default rollback journal mode, so it lands with no sidecars of its own.)
-    _remove_sqlite_sidecars(target)
-    _copy_sqlite_database(source, target)
+    staged = _stage_sqlite_database(source, target)
+    recovery = _stage_sqlite_database(target, target) if target.exists() else None
+    preserve_recovery = False
+    try:
+        _remove_sqlite_sidecars(target)
+        try:
+            _replace_staged_database(staged, target)
+        except Exception:
+            if recovery is None:
+                raise
+            try:
+                _remove_sqlite_sidecars(target)
+                _restore_recovery_database(recovery, target)
+                recovery = None
+            except Exception as recovery_error:
+                preserve_recovery = True
+                raise RuntimeError(
+                    "restore failed and automatic recovery also failed; "
+                    f"a consistent recovery copy remains at {recovery}"
+                ) from recovery_error
+            raise
+    finally:
+        staged.unlink(missing_ok=True)
+        if recovery is not None and not preserve_recovery:
+            recovery.unlink(missing_ok=True)
     return target
 
 
@@ -121,23 +145,63 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _copy_sqlite_database(source: Path, destination: Path) -> None:
+def _stage_sqlite_database(source: Path, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = _temporary_path(destination)
-    temporary.unlink(missing_ok=True)
 
     try:
         with closing(_connect(source)) as source_conn:
             with closing(_connect(temporary)) as destination_conn:
                 source_conn.backup(destination_conn)
-        temporary.replace(destination)
+                result = [
+                    row[0] for row in destination_conn.execute("PRAGMA quick_check")
+                ]
+                if result != ["ok"]:
+                    raise sqlite3.DatabaseError(
+                        "staged database failed SQLite quick_check"
+                    )
+        _fsync_file(temporary)
+        return temporary
     except Exception:
         temporary.unlink(missing_ok=True)
         raise
 
 
 def _temporary_path(path: Path) -> Path:
-    return path.with_name(f".{path.name}.tmp")
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    os.close(descriptor)
+    return Path(name)
+
+
+def _replace_staged_database(staged: Path, destination: Path) -> None:
+    staged.replace(destination)
+    _fsync_directory(destination.parent)
+
+
+def _restore_recovery_database(recovery: Path, destination: Path) -> None:
+    staged = _stage_sqlite_database(recovery, destination)
+    try:
+        _replace_staged_database(staged, destination)
+    finally:
+        staged.unlink(missing_ok=True)
+    recovery.unlink()
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _require_existing_source(path: Path) -> None:

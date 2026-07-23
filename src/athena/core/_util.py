@@ -8,26 +8,49 @@ webhooks). One definition here, imported everywhere, so the copies can't silentl
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def atomic_write_json(destination: Path, data: dict) -> None:
-    """Write `data` as pretty, key-sorted JSON to `destination` atomically: serialize to a
-    sibling temp file, then replace it into place, so a reader never sees a half-written
-    file and a crash mid-write leaves the original intact. Was `_write_json_file`, defined
-    identically in portability / source_import / run_replay."""
+    """Durably replace ``destination`` with private, deterministic JSON.
+
+    Serialization finishes before a private unique sibling file is created. The
+    staged bytes and containing directory are synced so a crash cannot expose a
+    partial file or silently discard the rename.
+    """
+    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(f".{destination.name}.tmp")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+    )
+    temporary = Path(temporary_name)
     try:
-        temporary.write_text(
-            json.dumps(data, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        handle = os.fdopen(descriptor, "wb")
+        descriptor = -1
+        with handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
         temporary.replace(destination)
+        _fsync_directory(destination.parent)
     except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)
         raise
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def utc_now() -> datetime:
