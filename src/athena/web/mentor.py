@@ -24,6 +24,7 @@ from athena import config
 from athena.core import (
     access,
     activity,
+    attachment_commands,
     attachments,
     identity,
     labels,
@@ -866,24 +867,22 @@ def add_page_attachment(
         return HTMLResponse(
             '<div class="error">File is too large.</div>', status_code=413
         )
-    att = attachments.store(
-        conn,
-        target_kind="page",
-        target_id=page_id,
-        filename=file.filename,
-        content_type=file.content_type,
-        data=data,
-        uploaded_by=user["id"],
-        attach_dir=config.ATTACH_DIR,
-    )
-    activity.record(
-        conn,
-        actor_id=user["id"],
-        verb="added_attachment",
-        target_kind="page",
-        target_id=page_id,
-        detail=att["filename"],
-    )
+    try:
+        attachment_commands.create_attachment(
+            conn,
+            actor=user,
+            target_kind="page",
+            target_id=page_id,
+            filename=file.filename,
+            content_type=file.content_type,
+            data=data,
+            attach_dir=config.ATTACH_DIR,
+        )
+    except attachment_commands.AttachmentCommandError as exc:
+        return HTMLResponse(
+            f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
+            status_code=exc.status_code,
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -916,15 +915,18 @@ def remove_page_attachment(
             '<div class="error">Only the uploader may remove this file.</div>',
             status_code=403,
         )
-    attachments.delete(conn, attachment_id, config.ATTACH_DIR)
-    activity.record(
-        conn,
-        actor_id=user["id"],
-        verb="removed_attachment",
-        target_kind="page",
-        target_id=page_id,
-        detail=att["filename"],
-    )
+    try:
+        attachment_commands.remove_attachment(
+            conn,
+            actor=user,
+            attachment_id=attachment_id,
+            attach_dir=config.ATTACH_DIR,
+        )
+    except attachment_commands.AttachmentCommandError as exc:
+        return HTMLResponse(
+            f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
+            status_code=exc.status_code,
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

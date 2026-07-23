@@ -13,14 +13,17 @@ that matches the attachment's kind.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import sqlite3
+from typing import BinaryIO
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import access, activity, attachments, tokens
+from athena.core import access, attachment_commands, attachments, tokens
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor, require_token_scope, write_actor
 
@@ -38,6 +41,14 @@ def _can_see_attachment(
     if att["target_kind"] == "issue":
         return access.can_see_issue(conn, actor, att["target_id"])
     return access.can_see_page(conn, actor, att["target_id"])
+
+
+def _stream_blob(handle: BinaryIO) -> Iterator[bytes]:
+    try:
+        while chunk := handle.read(1024 * 1024):
+            yield chunk
+    finally:
+        handle.close()
 
 
 class AttachmentOut(BaseModel):
@@ -67,16 +78,28 @@ def download(
         raise HTTPException(status_code=404, detail="no such attachment")
     stored = attachments.get_stored_name(conn, attachment_id)
     assert stored is not None
-    path = attachments.disk_path(config.ATTACH_DIR, stored)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="attachment file is missing")
-    # filename= makes FastAPI emit Content-Disposition: attachment (download, not
-    # inline) with RFC 5987 encoding, so the client filename can't inject headers.
-    return FileResponse(
-        path,
+    try:
+        handle = attachments.open_blob(
+            config.ATTACH_DIR, stored, expected_size=att["byte_size"]
+        )
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=404, detail="attachment file is missing"
+        ) from exc
+    # Open by descriptor before constructing the response. A symlink or pathname
+    # swap can no longer redirect the download after the visibility check.
+    encoded_filename = quote(att["filename"])
+    if encoded_filename == att["filename"]:
+        disposition = f'attachment; filename="{att["filename"]}"'
+    else:
+        disposition = f"attachment; filename*=utf-8''{encoded_filename}"
+    return StreamingResponse(
+        _stream_blob(handle),
         media_type=att["content_type"],
-        filename=att["filename"],
-        content_disposition_type="attachment",
+        headers={
+            "content-disposition": disposition,
+            "content-length": str(att["byte_size"]),
+        },
     )
 
 
@@ -102,12 +125,12 @@ def remove(
     # Only the uploader may remove their attachment (mirrors comment ownership).
     if att["uploaded_by"] != actor["id"]:
         raise HTTPException(status_code=403, detail="not the uploader")
-    attachments.delete(conn, attachment_id, config.ATTACH_DIR)
-    activity.record(
-        conn,
-        actor_id=actor["id"],
-        verb="removed_attachment",
-        target_kind=att["target_kind"],
-        target_id=att["target_id"],
-        detail=att["filename"],
-    )
+    try:
+        attachment_commands.remove_attachment(
+            conn,
+            actor=actor,
+            attachment_id=attachment_id,
+            attach_dir=config.ATTACH_DIR,
+        )
+    except attachment_commands.AttachmentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

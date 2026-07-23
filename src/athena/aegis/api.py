@@ -42,7 +42,7 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access, activity, attachments, labels, links, users
+from athena.core import access, attachment_commands, attachments, labels, links, users
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
@@ -1035,25 +1035,19 @@ def upload_issue_attachment(
         raise HTTPException(status_code=422, detail="empty file")
     if len(data) > config.ATTACH_MAX_BYTES:
         raise HTTPException(status_code=413, detail="attachment too large")
-    att = attachments.store(
-        conn,
-        target_kind="issue",
-        target_id=issue_id,
-        filename=file.filename,
-        content_type=file.content_type,
-        data=data,
-        uploaded_by=actor["id"],
-        attach_dir=config.ATTACH_DIR,
-    )
-    activity.record(
-        conn,
-        actor_id=actor["id"],
-        verb="added_attachment",
-        target_kind="issue",
-        target_id=issue_id,
-        detail=att["filename"],
-    )
-    return att
+    try:
+        return attachment_commands.create_attachment(
+            conn,
+            actor=actor,
+            target_kind="issue",
+            target_id=issue_id,
+            filename=file.filename,
+            content_type=file.content_type,
+            data=data,
+            attach_dir=config.ATTACH_DIR,
+        )
+    except attachment_commands.AttachmentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])

@@ -15,7 +15,8 @@ import stat
 import pytest
 
 from athena import config
-from athena.core import attachments, db
+from athena.core import attachment_commands, attachments, db
+from athena.mentor import pages, spaces
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -134,6 +135,21 @@ def test_store_uses_private_atomic_stage_and_syncs_file_and_directory(
     assert blob.read_bytes() == b"atomic bytes"
     assert list(attach_dir.glob(".*.tmp")) == []
     assert attachments.reconcile_storage(conn, attach_dir).ok is True
+    conn.close()
+
+
+def test_store_rejects_symlinked_storage_root_before_writing(tmp_path):
+    conn = _storage_conn(tmp_path)
+    outside = tmp_path / "outside-storage"
+    outside.mkdir()
+    attach_dir = tmp_path / "linked-storage"
+    attach_dir.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(NotADirectoryError, match="attachment path is not a directory"):
+        _store_blob(conn, attach_dir)
+
+    assert conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    assert list(outside.iterdir()) == []
     conn.close()
 
 
@@ -414,6 +430,149 @@ def test_delete_is_uploader_only_and_audited(tmp_path):
 
         verbs = [e["verb"] for e in client.get("/activity", headers=H1).json()]
         assert "added_attachment" in verbs and "removed_attachment" in verbs
+
+
+def test_cross_actor_run_binding_upload_rolls_back_row_and_blob(tmp_path):
+    app, _ = _app(tmp_path, "upload-run-binding.db")
+    with TestClient(app) as client:
+        _admin(client)
+        client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)
+        foreign_run = {"X-Athena-Actor": "2", "X-Athena-Run": "foreign-run"}
+        issue = client.post(
+            "/issues", json={"title": "owned by B"}, headers=foreign_run
+        ).json()
+
+        refused = client.post(
+            f"/issues/{issue['id']}/attachments",
+            files=_file(data=b"must roll back"),
+            headers={**H1, "X-Athena-Run": "foreign-run"},
+        )
+
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == "run 'foreign-run' is bound to another actor"
+        assert client.get(f"/issues/{issue['id']}/attachments", headers=H1).json() == []
+        assert config.ATTACH_DIR.is_dir()
+        assert list(config.ATTACH_DIR.iterdir()) == []
+        events = client.get("/activity?run_id=foreign-run", headers=H1).json()
+        assert [event["actor_id"] for event in events] == [2]
+        assert all(event["verb"] != "added_attachment" for event in events)
+
+
+def test_cross_actor_run_binding_delete_rolls_back_row_blob_and_audit(tmp_path):
+    app, db_file = _app(tmp_path, "delete-run-binding.db")
+    with TestClient(app) as client:
+        _admin(client)
+        client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)
+        issue = client.post("/issues", json={"title": "kept"}, headers=H1).json()
+        attachment = client.post(
+            f"/issues/{issue['id']}/attachments", files=_file(), headers=H1
+        ).json()
+        conn = db.connect(db_file)
+        blob = _blob_path(conn, config.ATTACH_DIR, attachment["id"])
+        conn.close()
+        foreign_run = {"X-Athena-Actor": "2", "X-Athena-Run": "foreign-run"}
+        client.post("/issues", json={"title": "binder"}, headers=foreign_run)
+
+        refused = client.delete(
+            f"/attachments/{attachment['id']}",
+            headers={**H1, "X-Athena-Run": "foreign-run"},
+        )
+
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == "run 'foreign-run' is bound to another actor"
+        assert client.get(f"/attachments/{attachment['id']}").content == b"hello world"
+        assert blob.read_bytes() == b"hello world"
+        listed = client.get(f"/issues/{issue['id']}/attachments", headers=H1).json()
+        assert [item["id"] for item in listed] == [attachment["id"]]
+        events = client.get("/activity?run_id=foreign-run", headers=H1).json()
+        assert [event["actor_id"] for event in events] == [2]
+        assert all(event["verb"] != "removed_attachment" for event in events)
+
+
+def test_command_commit_failure_rolls_back_row_and_published_blob(tmp_path):
+    conn = _storage_conn(tmp_path)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    page = pages.create_page(
+        conn, space_id=space["id"], title="Doc", body="", created_by=1
+    )
+    attach_dir = tmp_path / "command-commit-failure"
+    conn.fail_commit = True
+
+    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+        attachment_commands.create_attachment(
+            conn,
+            actor={"id": 1, "role": "admin"},
+            target_kind="page",
+            target_id=page["id"],
+            filename="failed.bin",
+            content_type="application/octet-stream",
+            data=b"must not survive",
+            attach_dir=attach_dir,
+        )
+
+    assert conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    assert list(attach_dir.iterdir()) == []
+    conn.close()
+
+
+def test_delete_unlink_failure_keeps_committed_audit(tmp_path, monkeypatch):
+    app, db_file = _app(tmp_path, "delete-unlink-audit.db")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        _admin(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        attachment = client.post(
+            f"/issues/{issue['id']}/attachments", files=_file(), headers=H1
+        ).json()
+        conn = db.connect(db_file)
+        blob = _blob_path(conn, config.ATTACH_DIR, attachment["id"])
+        conn.close()
+        real_unlink = Path.unlink
+
+        def fail_blob_unlink(path: Path, *args, **kwargs) -> None:
+            if path == blob:
+                raise PermissionError("injected unlink failure")
+            real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", fail_blob_unlink)
+        response = client.delete(f"/attachments/{attachment['id']}", headers=H1)
+
+        assert response.status_code == 500
+        assert client.get(f"/attachments/{attachment['id']}").status_code == 404
+        assert client.get(f"/issues/{issue['id']}/attachments", headers=H1).json() == []
+        assert blob.read_bytes() == b"hello world"
+        removed = [
+            event
+            for event in client.get("/activity", headers=H1).json()
+            if event["verb"] == "removed_attachment"
+        ]
+        assert len(removed) == 1
+        assert removed[0]["actor_id"] == 1
+        assert removed[0]["target_kind"] == "issue"
+        assert removed[0]["target_id"] == issue["id"]
+        assert removed[0]["detail"] == "notes.txt"
+
+
+def test_download_rejects_symlinked_blob(tmp_path):
+    app, db_file = _app(tmp_path, "symlink-download.db")
+    with TestClient(app) as client:
+        _admin(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        attachment = client.post(
+            f"/issues/{issue['id']}/attachments", files=_file(), headers=H1
+        ).json()
+        conn = db.connect(db_file)
+        blob = _blob_path(conn, config.ATTACH_DIR, attachment["id"])
+        conn.close()
+        outside = tmp_path / "outside-secret"
+        outside.write_bytes(b"do not disclose")
+        blob.unlink()
+        blob.symlink_to(outside)
+
+        response = client.get(f"/attachments/{attachment['id']}")
+
+        assert response.status_code == 404
+        assert b"do not disclose" not in response.content
+        assert outside.read_bytes() == b"do not disclose"
 
 
 def test_viewer_cannot_upload(tmp_path):
