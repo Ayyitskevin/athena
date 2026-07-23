@@ -868,6 +868,76 @@ class AthenaClient:
             )
         )
 
+    # --- automation rules (admin) -------------------------------------------
+
+    def list_automation_rules(self) -> Any:
+        """List every automation rule, including schedule state and health."""
+        return self._result(self._client.get("/automation/rules"))
+
+    def get_automation_rule(self, rule_id: int) -> Any:
+        """Get one automation rule, including schedule state and health."""
+        return self._result(self._client.get(f"/automation/rules/{rule_id}"))
+
+    def create_automation_rule(
+        self,
+        *,
+        name: str,
+        trigger_verb: str,
+        action_type: str,
+        conditions: dict | None = None,
+        action_params: dict | None = None,
+        target_kind: str = "issue",
+        trigger_type: str = "event",
+        schedule_at: str | None = None,
+        schedule_every_seconds: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Create an event- or schedule-triggered automation rule."""
+        payload: dict[str, Any] = {
+            "name": name,
+            "trigger_verb": trigger_verb,
+            "action_type": action_type,
+            "conditions": conditions if conditions is not None else {},
+            "action_params": action_params if action_params is not None else {},
+            "target_kind": target_kind,
+            "trigger_type": trigger_type,
+        }
+        if schedule_at is not None:
+            payload["schedule_at"] = schedule_at
+        if schedule_every_seconds is not None:
+            payload["schedule_every_seconds"] = schedule_every_seconds
+        return self._mutate(
+            self._client.post,
+            "/automation/rules",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
+
+    def set_automation_rule_enabled(
+        self,
+        rule_id: int,
+        enabled: bool,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Arm or disarm an automation rule without deleting it."""
+        return self._mutate(
+            self._client.patch,
+            f"/automation/rules/{rule_id}",
+            json={"enabled": enabled},
+            idempotency_key=idempotency_key,
+        )
+
+    def delete_automation_rule(
+        self, rule_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Delete an automation rule."""
+        return self._mutate(
+            self._client.delete,
+            f"/automation/rules/{rule_id}",
+            idempotency_key=idempotency_key,
+        )
+
     def list_automation_failures(self) -> Any:
         """List only automation rules with recorded action failures (admin only)."""
         return self._result(

@@ -1,9 +1,10 @@
-"""The automation-rules REST API — manage "when event X, do Y" rules.
+"""The automation-rules REST API — manage event- and UTC-scheduled rules.
 
-A rule reacts to any activity event across the instance (it isn't scoped to one project:
-a rule with no project_id condition fires on every issue), and its action writes to the
-data layer as a privileged system actor. That makes rule management an OPERATOR action,
-gated like webhooks and user administration: every route requires an admin actor.
+An event rule reacts to activity; a schedule rule snapshots matching issues at a bounded
+fixed UTC slot. A rule without a project condition spans every visible active issue, and
+its action writes as the privileged Automation system actor. Rule management is therefore
+an OPERATOR action, gated like webhooks and user administration: every route requires an
+admin actor.
 
 The boundary validates the rule spec (automation.validate_rule) before persisting, so a
 typo'd verb/condition key or a malformed action is a 422 here, never a row that silently
@@ -16,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 
 from athena.aegis import automation, automation_commands
 from athena.core.deps import get_conn
@@ -29,6 +30,7 @@ class RuleOut(BaseModel):
     id: int
     name: str
     enabled: bool
+    trigger_type: str
     trigger_verb: str
     target_kind: str
     conditions: dict
@@ -42,12 +44,27 @@ class RuleOut(BaseModel):
     failure_count: int
     last_error: str | None
     last_error_at: str | None
+    schedule_at: str | None
+    schedule_every_seconds: int | None
+    next_scheduled_at: str | None
+    last_scheduled_for: str | None
+    schedule_missed_count: int
+    last_schedule_target_count: int | None
+    last_schedule_overflow_count: int
+    configuration_error: str | None
+    schedule_pending_count: int
+    schedule_failed_count: int
+    last_schedule_state: str | None
+    schedule_status: str
 
 
 class RuleCreate(BaseModel):
     name: str
     trigger_verb: str
     action_type: str
+    trigger_type: str = "event"
+    schedule_at: str | None = None
+    schedule_every_seconds: StrictInt | None = None
     # JSON objects; defaulted empty. conditions narrow the trigger by issue fields,
     # action_params carry the action's arguments. Both are validated against the rule
     # contract (automation.validate_rule) before the row is written.
@@ -80,30 +97,22 @@ def create(
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="rule name is required")
-    error = automation.validate_rule(
-        trigger_verb=payload.trigger_verb,
-        action_type=payload.action_type,
-        conditions=payload.conditions,
-        action_params=payload.action_params,
-        target_kind=payload.target_kind,
-    )
-    if error is not None:
-        raise HTTPException(status_code=422, detail=error)
-    # The command owns the insert AND its atomic 'created_automation_rule' audit event,
-    # so standing up an instance-wide automated writer is never a silent act.
-    return automation_commands.create_rule(
-        conn,
-        actor_id=actor["id"],
-        name=name,
-        trigger_verb=payload.trigger_verb,
-        action_type=payload.action_type,
-        conditions=payload.conditions,
-        action_params=payload.action_params,
-        target_kind=payload.target_kind,
-    )
+    try:
+        return automation_commands.create_rule(
+            conn,
+            actor_id=actor["id"],
+            name=payload.name,
+            trigger_verb=payload.trigger_verb,
+            action_type=payload.action_type,
+            conditions=payload.conditions,
+            action_params=payload.action_params,
+            target_kind=payload.target_kind,
+            trigger_type=payload.trigger_type,
+            schedule_at=payload.schedule_at,
+            schedule_every_seconds=payload.schedule_every_seconds,
+        )
+    except automation_commands.AutomationCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("/rules/{rule_id}", response_model=RuleOut)

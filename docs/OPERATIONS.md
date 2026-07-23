@@ -99,7 +99,9 @@ not inspect attachment blobs; use `athena-doctor` for those checks.
 
 Athena runs two in-process background loops: webhook delivery (pushes new
 events to registered webhooks) and the automation rules engine (drains new
-activity events and fires matching rules' actions). Both default on.
+activity events, claims bounded UTC schedule slots, and fires matching rules'
+actions). Both default on. Scheduled-rule configuration and recovery semantics are
+documented in [AUTOMATION_SCHEDULES.md](AUTOMATION_SCHEDULES.md).
 
 Each loop must run in exactly one process per deployment. Athena's supported shape
 is one process and one worker. If an operator deliberately starts multiple
@@ -114,9 +116,11 @@ FastAPI shutdown path cancels both background tasks together and awaits them.
 Only after the process has exited should you replace the database or attachment
 directory. Do not use an abrupt kill as the normal backup/restore procedure.
 
-A rule's action runs best-effort (at-most-once): a failing action never wedges the
-engine, but it is no longer silent. Each failure is logged at `WARNING` and recorded
-on the rule (`failure_count`, `last_error`, `last_error_at`), shown as a red badge in
+Event-rule actions remain best-effort and at-most-once. Scheduled target actions use
+durable per-target receipts with at most three attempts and action-run deduplication;
+catch-up and target/action budgets prevent unbounded restart bursts. A failing action
+never wedges the engine, but it is no longer silent. Each failure is logged at `WARNING`
+and recorded on the rule (`failure_count`, `last_error`, `last_error_at`), shown as a red badge in
 **Admin → Automation** and returned by `GET /automation/rules`, so a misbehaving rule
 is visible rather than quietly dropping events.
 
@@ -711,8 +715,10 @@ Use `get_fleet_active_work` over MCP for the same lease/run/check-in/blocker
 projection. See [ACTIVE_WORK.md](ACTIVE_WORK.md) before interpreting `observed`,
 credential posture, or heartbeat freshness as availability.
 
-Use the MCP tools `get_agent_run_health` and `list_automation_failures` for the
-same read-only supervision flow. Both require an admin-role user acting through an
+Use the MCP tools `get_agent_run_health`, `list_automation_rules`,
+`get_automation_rule`, and `list_automation_failures` for the same read-only
+supervision flow. Admins can also create, pause/resume, and delete automation rules
+over MCP. Every automation tool requires an admin-role user acting through an
 `admin`-scoped token. Failure counts are cumulative, not acknowledged incidents.
 Run summaries are bounded recent history: an event proves that an agent acted, not
 that its external process is still running.
@@ -929,9 +935,10 @@ bot gets `read`, `issue:write`); the MCP server never widens what the token allo
 
 It exposes tools for searching, reading and writing issues (create/update/assign/
 comment), reading and writing Mentor pages, listing projects/users/spaces, and
-reading the event feed. Admin-scoped tools also expose fleet run health and recorded
-automation failures. The `mcp` extra is kept out of the base install, so the core app
-and its tests do not depend on it.
+reading the event feed. Admin-scoped tools also expose fleet run health plus complete
+event/schedule automation-rule lifecycle management and recorded failure health. The
+`mcp` extra is kept out of the base install, so the core app and its tests do not depend
+on it.
 
 Every mutation tool exposes the optional `idempotency_key` field. A caller that
 may retry must create and retain a stable key before its first invocation; use the

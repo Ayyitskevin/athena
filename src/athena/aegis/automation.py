@@ -19,11 +19,13 @@ testable without performing real writes.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 import json
 import logging
 from pathlib import Path
+import re
 import sqlite3
-from collections.abc import Callable
 
 from athena import config
 from athena.aegis import (
@@ -49,6 +51,7 @@ ACTION_TYPES = ("assign", "add_label", "set_status", "comment", "add_contributor
 # time. Keeping the set explicit means a typo'd condition key is a boundary error, never
 # a silent match-everything.
 CONDITION_FIELDS = ("project_id", "status", "priority", "assignee_id", "sprint_id")
+SCHEDULE_CONDITION_FIELDS = (*CONDITION_FIELDS, "inactive_for_seconds")
 
 # The activity verbs a rule may TRIGGER on, for target_kind="issue" — every verb the
 # issue lifecycle emits (see aegis/issue_activity.py), plus "*" for "any issue event".
@@ -77,6 +80,46 @@ TRIGGER_VERBS = (
     "unarchived",
 )
 TARGET_KINDS = ("issue",)
+TRIGGER_TYPES = ("event", "schedule")
+SCHEDULE_TRIGGER_VERB = "scheduled"
+
+# Schedules intentionally stay small and single-process. Each pass claims only a
+# bounded number of rules and executes only a bounded number of durable target
+# occurrences. A target overflow fails the whole slot closed rather than performing a
+# surprising partial sweep.
+MIN_SCHEDULE_INTERVAL_SECONDS = 60
+MAX_SCHEDULE_INTERVAL_SECONDS = 31_536_000
+MAX_SCHEDULE_RULES_PER_PASS = 10
+MAX_SCHEDULE_RULE_SCAN = 100
+MAX_SCHEDULE_TARGETS_PER_FIRING = 50
+MAX_SCHEDULE_ACTIONS_PER_PASS = 50
+MAX_SCHEDULE_ATTEMPTS = 3
+ONE_SHOT_CATCH_UP_SECONDS = 86_400
+
+_UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+_UTC_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    """Parse only Athena's canonical, second-precision UTC representation.
+
+    Local, naive, offset, and fractional timestamps are deliberately rejected. Fixed
+    UTC instants keep interval grids deterministic and avoid DST-dependent behavior.
+    """
+    if not isinstance(value, str) or _UTC_TIMESTAMP_RE.fullmatch(value) is None:
+        return None
+    try:
+        return datetime.strptime(value, _UTC_TIMESTAMP_FORMAT).replace(tzinfo=UTC)
+    except ValueError:
+        return None
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).strftime(_UTC_TIMESTAMP_FORMAT)
 
 
 def _validate_action_params(action_type: str, params: dict) -> str | None:
@@ -109,6 +152,9 @@ def validate_rule(
     conditions: dict,
     action_params: dict,
     target_kind: str = "issue",
+    trigger_type: str = "event",
+    schedule_at: str | None = None,
+    schedule_every_seconds: int | None = None,
 ) -> str | None:
     """Whether a rule spec is well-formed: return a human error string, or None if valid.
     The ONE validator both write surfaces share — the REST API (slice 3) and the web form
@@ -117,22 +163,78 @@ def validate_rule(
     (missing param). The data layer itself only persists; this is the boundary contract."""
     if target_kind not in TARGET_KINDS:
         return f"target_kind must be one of: {', '.join(TARGET_KINDS)}"
-    if trigger_verb != "*" and trigger_verb not in TRIGGER_VERBS:
-        return f"trigger_verb must be '*' or one of: {', '.join(TRIGGER_VERBS)}"
+    if trigger_type not in TRIGGER_TYPES:
+        return f"trigger_type must be one of: {', '.join(TRIGGER_TYPES)}"
+    allowed_conditions: tuple[str, ...]
+    if trigger_type == "event":
+        if trigger_verb != "*" and trigger_verb not in TRIGGER_VERBS:
+            return f"trigger_verb must be '*' or one of: {', '.join(TRIGGER_VERBS)}"
+        if schedule_at is not None or schedule_every_seconds is not None:
+            return "event rules cannot include schedule fields"
+        allowed_conditions = CONDITION_FIELDS
+    else:
+        if trigger_verb != SCHEDULE_TRIGGER_VERB:
+            return f"schedule rules must use trigger_verb '{SCHEDULE_TRIGGER_VERB}'"
+        if _parse_utc_timestamp(schedule_at) is None:
+            return "schedule_at must be canonical UTC (YYYY-MM-DDTHH:MM:SSZ)"
+        if schedule_every_seconds is not None and (
+            not isinstance(schedule_every_seconds, int)
+            or isinstance(schedule_every_seconds, bool)
+            or not (
+                MIN_SCHEDULE_INTERVAL_SECONDS
+                <= schedule_every_seconds
+                <= MAX_SCHEDULE_INTERVAL_SECONDS
+            )
+        ):
+            return (
+                "schedule_every_seconds must be null or an integer between "
+                f"{MIN_SCHEDULE_INTERVAL_SECONDS} and "
+                f"{MAX_SCHEDULE_INTERVAL_SECONDS}"
+            )
+        inactive_for = conditions.get("inactive_for_seconds")
+        if inactive_for is not None and (
+            not isinstance(inactive_for, int)
+            or isinstance(inactive_for, bool)
+            or not (
+                MIN_SCHEDULE_INTERVAL_SECONDS
+                <= inactive_for
+                <= MAX_SCHEDULE_INTERVAL_SECONDS
+            )
+        ):
+            return (
+                "inactive_for_seconds must be an integer between "
+                f"{MIN_SCHEDULE_INTERVAL_SECONDS} and "
+                f"{MAX_SCHEDULE_INTERVAL_SECONDS}"
+            )
+        for field, value in conditions.items():
+            if field in ("project_id", "assignee_id", "sprint_id") and (
+                value is not None
+                and (not isinstance(value, int) or isinstance(value, bool))
+            ):
+                return f"{field} must be an integer or null"
+            if field in ("status", "priority") and (
+                value is not None and not isinstance(value, str)
+            ):
+                return f"{field} must be a string or null"
+
+        allowed_conditions = SCHEDULE_CONDITION_FIELDS
     if action_type not in ACTION_TYPES:
         return f"action_type must be one of: {', '.join(ACTION_TYPES)}"
     for key in conditions:
-        if key not in CONDITION_FIELDS:
+        if key not in allowed_conditions:
             return (
                 f"unknown condition field '{key}'; "
-                f"allowed: {', '.join(CONDITION_FIELDS)}"
+                f"allowed: {', '.join(allowed_conditions)}"
             )
     return _validate_action_params(action_type, action_params)
 
 
 _COLS = (
     "id, name, enabled, trigger_verb, target_kind, conditions, action_type, "
-    "action_params, created_by, created_at, failure_count, last_error, last_error_at"
+    "action_params, created_by, created_at, failure_count, last_error, last_error_at, "
+    "trigger_type, schedule_at, schedule_every_seconds, next_scheduled_at, "
+    "last_scheduled_for, schedule_missed_count, last_schedule_target_count, "
+    "last_schedule_overflow_count"
 )
 
 
@@ -141,9 +243,105 @@ def _row(row: sqlite3.Row) -> dict:
     work with a plain dict (the saved_filters criteria pattern)."""
     d = dict(row)
     d["enabled"] = bool(d["enabled"])
-    d["conditions"] = json.loads(d["conditions"])
-    d["action_params"] = json.loads(d["action_params"])
+    json_errors: list[str] = []
+    for field in ("conditions", "action_params"):
+        try:
+            parsed = json.loads(d[field])
+        except (TypeError, json.JSONDecodeError):
+            parsed = {}
+            json_errors.append(f"{field} is not valid JSON")
+        if not isinstance(parsed, dict):
+            parsed = {}
+            json_errors.append(f"{field} must be a JSON object")
+        d[field] = parsed
+    d["_json_errors"] = json_errors
     return d
+
+
+def _configuration_error(rule: dict) -> str | None:
+    errors = list(rule.get("_json_errors", []))
+    if rule["trigger_type"] == "schedule":
+        error = validate_rule(
+            trigger_verb=rule["trigger_verb"],
+            action_type=rule["action_type"],
+            conditions=rule["conditions"],
+            action_params=rule["action_params"],
+            target_kind=rule["target_kind"],
+            trigger_type=rule["trigger_type"],
+            schedule_at=rule["schedule_at"],
+            schedule_every_seconds=rule["schedule_every_seconds"],
+        )
+        if error is not None:
+            errors.append(error)
+        if rule["next_scheduled_at"] is not None and (
+            _parse_utc_timestamp(rule["next_scheduled_at"]) is None
+        ):
+            errors.append(
+                "next_scheduled_at must be canonical UTC (YYYY-MM-DDTHH:MM:SSZ)"
+            )
+    return "; ".join(errors) if errors else None
+
+
+def _decorate_rule(
+    conn: sqlite3.Connection, rule: dict, *, now: datetime | None = None
+) -> dict:
+    """Add bounded schedule progress/health without letting malformed rows crash reads."""
+    rule["configuration_error"] = _configuration_error(rule)
+    rule.pop("_json_errors", None)
+    rule["schedule_pending_count"] = 0
+    rule["schedule_failed_count"] = 0
+    rule["last_schedule_state"] = None
+    if rule["trigger_type"] != "schedule":
+        rule["schedule_status"] = "event"
+        return rule
+
+    progress = conn.execute(
+        "SELECT "
+        "COALESCE(SUM(CASE WHEN o.state = 'pending' THEN 1 ELSE 0 END), 0) "
+        "AS pending_count, "
+        "COALESCE(SUM(CASE WHEN o.state = 'failed' THEN 1 ELSE 0 END), 0) "
+        "AS failed_count "
+        "FROM automation_schedule_occurrences o "
+        "JOIN automation_schedule_firings f ON f.id = o.firing_id "
+        "WHERE f.rule_id = ?",
+        (rule["id"],),
+    ).fetchone()
+    latest = conn.execute(
+        "SELECT state FROM automation_schedule_firings WHERE rule_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (rule["id"],),
+    ).fetchone()
+    rule["schedule_pending_count"] = int(progress["pending_count"])
+    rule["schedule_failed_count"] = int(progress["failed_count"])
+    rule["last_schedule_state"] = latest["state"] if latest else None
+
+    if rule["configuration_error"] is not None:
+        rule["schedule_status"] = "malformed"
+    elif not rule["enabled"]:
+        rule["schedule_status"] = "disabled"
+    elif (
+        rule["schedule_failed_count"] > 0
+        or rule["last_schedule_state"] == "failed"
+        or (rule["schedule_pending_count"] > 0 and rule["failure_count"] > 0)
+    ):
+        rule["schedule_status"] = "failing"
+    elif rule["schedule_pending_count"] > 0:
+        rule["schedule_status"] = "processing"
+    elif rule["next_scheduled_at"] is None:
+        rule["schedule_status"] = (
+            "completed" if rule["last_scheduled_for"] is not None else "malformed"
+        )
+    else:
+        current = now or _utc_now()
+        due = _parse_utc_timestamp(rule["next_scheduled_at"])
+        assert due is not None
+        if due > current:
+            rule["schedule_status"] = "scheduled"
+        elif due == current:
+            rule["schedule_status"] = "due"
+        else:
+            rule["schedule_status"] = "overdue"
+    return rule
 
 
 # --- data access ------------------------------------------------------------
@@ -159,6 +357,9 @@ def create_rule(
     conditions: dict | None = None,
     action_params: dict | None = None,
     target_kind: str = "issue",
+    trigger_type: str = "event",
+    schedule_at: str | None = None,
+    schedule_every_seconds: int | None = None,
     commit: bool = True,
 ) -> dict:
     """Insert a rule and return it. conditions/action_params are stored as JSON text.
@@ -168,7 +369,8 @@ def create_rule(
     cur = conn.execute(
         "INSERT INTO automation_rules "
         "(name, trigger_verb, target_kind, conditions, action_type, action_params, "
-        "created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "created_by, trigger_type, schedule_at, schedule_every_seconds, "
+        "next_scheduled_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             name,
             trigger_verb,
@@ -177,6 +379,10 @@ def create_rule(
             action_type,
             json.dumps(action_params or {}),
             created_by,
+            trigger_type,
+            schedule_at,
+            schedule_every_seconds,
+            schedule_at if trigger_type == "schedule" else None,
         ),
     )
     rule_id = cur.lastrowid
@@ -192,7 +398,7 @@ def get_rule(conn: sqlite3.Connection, rule_id: int) -> dict | None:
     row = conn.execute(
         f"SELECT {_COLS} FROM automation_rules WHERE id = ?", (rule_id,)
     ).fetchone()
-    return _row(row) if row else None
+    return _decorate_rule(conn, _row(row)) if row else None
 
 
 def list_rules(
@@ -211,7 +417,7 @@ def list_rules(
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id"
-    return [_row(r) for r in conn.execute(sql).fetchall()]
+    return [_decorate_rule(conn, _row(r)) for r in conn.execute(sql).fetchall()]
 
 
 def set_enabled(
@@ -235,6 +441,18 @@ def delete_rule(conn: sqlite3.Connection, rule_id: int, *, commit: bool = True) 
     """Delete a rule. Returns True if one was removed, False if there was no such row.
     ``commit=False`` lets an audited command fold the delete and its activity event
     into one transaction."""
+    conn.execute(
+        "UPDATE automation_schedule_occurrences SET state = 'cancelled' "
+        "WHERE state = 'pending' AND firing_id IN "
+        "(SELECT id FROM automation_schedule_firings WHERE rule_id = ?)",
+        (rule_id,),
+    )
+    conn.execute(
+        "UPDATE automation_schedule_firings "
+        "SET state = 'cancelled', completed_at = datetime('now') "
+        "WHERE rule_id = ? AND state = 'pending'",
+        (rule_id,),
+    )
     cur = conn.execute("DELETE FROM automation_rules WHERE id = ?", (rule_id,))
     if commit:
         conn.commit()
@@ -276,7 +494,9 @@ def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
     conn.commit()
 
 
-def record_rule_failure(conn: sqlite3.Connection, rule_id: int, error: str) -> None:
+def record_rule_failure(
+    conn: sqlite3.Connection, rule_id: int, error: str, *, commit: bool = True
+) -> None:
     """Note that a rule's action raised: bump its failure_count and stamp the error text
     and time. The engine still advances its cursor past the event (at-most-once, by
     design — see process_pending), so a bad rule never wedges the loop; this just makes
@@ -288,7 +508,8 @@ def record_rule_failure(conn: sqlite3.Connection, rule_id: int, error: str) -> N
         "last_error_at = datetime('now') WHERE id = ?",
         (error, rule_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # An Executor performs one rule's action for one event. Injected so process_pending is
@@ -319,7 +540,11 @@ def process_pending(
     events = activity.list_events(conn, after_id=cursor, limit=max_batch)
     if not events:
         return 0
-    enabled = list_rules(conn, enabled_only=True)
+    enabled = [
+        rule
+        for rule in list_rules(conn, enabled_only=True)
+        if rule["trigger_type"] == "event"
+    ]
     fired = 0
     last_id = cursor
     for event in events:
@@ -398,7 +623,12 @@ def _already_fired(conn: sqlite3.Connection, firing_run_id: str) -> bool:
 
 
 def execute_action(
-    conn: sqlite3.Connection, rule: dict, event: dict, *, actor_id: int
+    conn: sqlite3.Connection,
+    rule: dict,
+    event: dict,
+    *,
+    actor_id: int,
+    fail_closed: bool = False,
 ) -> bool:
     """Perform one rule's ACTION for one matched event, attributed to `actor_id` (the
     system automation actor), and record the matching activity event so the trail shows
@@ -414,7 +644,11 @@ def execute_action(
     (automation:rule-<id>:event-<id>), the triggering event as its fork point, and
     the triggering event's own run as parent — so an automated change on the trail
     answers "which rule, fired by which event, in which run" without a schema change.
-    That same run id makes the firing idempotent across a crashed pass."""
+    That same run id makes the firing idempotent across a crashed pass.
+
+    Event rules preserve their historical fail-soft command behavior. Scheduled target
+    receipts pass ``fail_closed=True`` so a semantic command rejection is retried and
+    remains visible instead of being mistaken for a completed no-op."""
     issue = issues.get_issue(conn, event["target_id"])
     if issue is None:
         return False
@@ -425,7 +659,14 @@ def execute_action(
     parent_token = run_context.set_parent_run_id(event.get("run_id"))
     fork_token = run_context.set_forked_from_event_id(event["id"])
     try:
-        return _perform_action(conn, rule, event, issue, actor_id=actor_id)
+        return _perform_action(
+            conn,
+            rule,
+            event,
+            issue,
+            actor_id=actor_id,
+            fail_closed=fail_closed,
+        )
     finally:
         run_context.reset_forked_from_event_id(fork_token)
         run_context.reset_parent_run_id(parent_token)
@@ -433,7 +674,13 @@ def execute_action(
 
 
 def _perform_action(
-    conn: sqlite3.Connection, rule: dict, event: dict, issue: dict, *, actor_id: int
+    conn: sqlite3.Connection,
+    rule: dict,
+    event: dict,
+    issue: dict,
+    *,
+    actor_id: int,
+    fail_closed: bool,
 ) -> bool:
     """The action if-chain, run inside execute_action's lineage context."""
     params = rule["action_params"]
@@ -452,6 +699,8 @@ def _perform_action(
                 assignee_id=user_id,
             )
         except issue_commands.IssueCommandError:
+            if fail_closed:
+                raise
             return False
         return True
 
@@ -469,6 +718,8 @@ def _perform_action(
                 status=status,
             )
         except issue_commands.IssueCommandError:
+            if fail_closed:
+                raise
             return False
         return True
 
@@ -477,12 +728,22 @@ def _perform_action(
         if not name:
             return False
         label = labels.get_or_create_label(conn, name=name)
-        if labels.add_label_to_issue(conn, issue["id"], label["id"]):
+        with db.transaction(conn, immediate=True):
+            if not labels.add_label_to_issue(
+                conn,
+                issue["id"],
+                label["id"],
+                commit=False,
+            ):
+                return False
             issue_activity.record_label_added(
-                conn, actor_id=actor_id, issue_id=issue["id"], label_id=label["id"]
+                conn,
+                actor_id=actor_id,
+                issue_id=issue["id"],
+                label_id=label["id"],
+                commit=False,
             )
             return True
-        return False
 
     if rule["action_type"] == "comment":
         body = (params.get("body") or "").strip()
@@ -498,16 +759,457 @@ def _perform_action(
 
     if rule["action_type"] == "add_contributor":
         user_id = params.get("user_id")
-        if not isinstance(user_id, int) or users.get_user(conn, user_id) is None:
+        if not isinstance(user_id, int):
             return False
-        if contributors.add_contributor(conn, issue["id"], user_id, added_by=actor_id):
+        if users.get_user(conn, user_id) is None:
+            if fail_closed:
+                raise ValueError("configured contributor user does not exist")
+            return False
+        with db.transaction(conn, immediate=True):
+            if not contributors.add_contributor(
+                conn,
+                issue["id"],
+                user_id,
+                added_by=actor_id,
+                commit=False,
+            ):
+                return False
             issue_activity.record_contributor_added(
-                conn, actor_id=actor_id, issue_id=issue["id"], user_id=user_id
+                conn,
+                actor_id=actor_id,
+                issue_id=issue["id"],
+                user_id=user_id,
+                commit=False,
             )
             return True
-        return False
 
     return False
+
+
+# --- bounded UTC schedule triggers ------------------------------------------
+
+
+def schedule_trigger_run_id(rule_id: int, scheduled_for: str, issue_id: int) -> str:
+    """The deterministic root run for one scheduled target occurrence."""
+    return f"automation:schedule:rule-{rule_id}:slot-{scheduled_for}:issue-{issue_id}"
+
+
+def _schedule_target_query(rule: dict, scheduled_for: datetime) -> tuple[str, list]:
+    clauses = ["i.archived_at IS NULL"]
+    params: list = []
+    for field, value in rule["conditions"].items():
+        if field == "inactive_for_seconds":
+            continue
+        if field not in CONDITION_FIELDS:
+            raise ValueError(f"unsupported schedule condition: {field}")
+        clauses.append(f"i.{field} IS ?")
+        params.append(value)
+    inactive_for = rule["conditions"].get("inactive_for_seconds")
+    if inactive_for is not None:
+        cutoff = (scheduled_for - timedelta(seconds=inactive_for)).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        clauses.append(
+            "COALESCE((SELECT MAX(a.created_at) FROM activity a "
+            "WHERE a.target_kind = 'issue' AND a.target_id = i.id), i.created_at) "
+            "<= ?"
+        )
+        params.append(cutoff)
+    return " AND ".join(clauses), params
+
+
+def _schedule_targets(
+    conn: sqlite3.Connection,
+    rule: dict,
+    scheduled_for: datetime,
+    *,
+    max_targets: int,
+) -> tuple[list[int], int]:
+    """Return a deterministic bounded issue snapshot and the exact match count."""
+    where, params = _schedule_target_query(rule, scheduled_for)
+    rows = conn.execute(
+        f"SELECT i.id FROM issues i WHERE {where} ORDER BY i.id LIMIT ?",
+        (*params, max_targets + 1),
+    ).fetchall()
+    if len(rows) <= max_targets:
+        ids = [int(row["id"]) for row in rows]
+        return ids, len(ids)
+    total = conn.execute(
+        f"SELECT COUNT(*) AS count FROM issues i WHERE {where}", params
+    ).fetchone()["count"]
+    return [], int(total)
+
+
+def _get_schedule_scan_cursor(conn: sqlite3.Connection) -> int:
+    return int(
+        conn.execute(
+            "SELECT scan_cursor FROM automation_schedule_state WHERE id = 1"
+        ).fetchone()["scan_cursor"]
+    )
+
+
+def _set_schedule_scan_cursor(conn: sqlite3.Connection, value: int) -> None:
+    conn.execute(
+        "UPDATE automation_schedule_state SET scan_cursor = ? WHERE id = 1",
+        (value,),
+    )
+    conn.commit()
+
+
+def _due_schedule_rule_ids(
+    conn: sqlite3.Connection,
+    now: datetime,
+    *,
+    scan_limit: int,
+    after_id: int,
+) -> list[int]:
+    """A bounded cyclic rule-id scan over canonical, non-expired due rows."""
+    now_text = _format_utc_timestamp(now)
+    one_shot_cutoff = _format_utc_timestamp(
+        now - timedelta(seconds=ONE_SHOT_CATCH_UP_SECONDS)
+    )
+    rows = conn.execute(
+        "SELECT id FROM automation_rules "
+        "WHERE enabled = 1 AND trigger_type = 'schedule' "
+        "AND next_scheduled_at IS NOT NULL "
+        "AND strftime('%Y-%m-%dT%H:%M:%SZ', next_scheduled_at) = "
+        "next_scheduled_at "
+        "AND next_scheduled_at <= ? "
+        "AND (schedule_every_seconds IS NOT NULL OR next_scheduled_at >= ?) "
+        "ORDER BY CASE WHEN id > ? THEN 0 ELSE 1 END, id LIMIT ?",
+        (now_text, one_shot_cutoff, after_id, scan_limit),
+    ).fetchall()
+    return [int(row["id"]) for row in rows]
+
+
+def _claim_schedule(
+    conn: sqlite3.Connection,
+    rule: dict,
+    *,
+    now: datetime,
+    actor_id: int,
+    max_targets: int,
+) -> int | None:
+    """Atomically claim one due slot and persist its complete target snapshot.
+
+    Returns the target count, zero for an empty/overflow slot, or None if another
+    pass changed the rule before this claim. The runner is intentionally single-
+    process, but the immediate transaction and unique slot key make the receipt safe
+    if an operator accidentally overlaps two ticks.
+    """
+    due = _parse_utc_timestamp(rule["next_scheduled_at"])
+    if due is None or due > now:
+        return None
+    repeat = rule["schedule_every_seconds"]
+    if repeat is None:
+        if (now - due).total_seconds() > ONE_SHOT_CATCH_UP_SECONDS:
+            return None
+        scheduled_for = due
+        missed_slots = 0
+        next_scheduled_at = None
+    else:
+        missed_slots = int((now - due).total_seconds()) // repeat
+        scheduled_for = due + timedelta(seconds=repeat * missed_slots)
+        next_scheduled_at = _format_utc_timestamp(
+            scheduled_for + timedelta(seconds=repeat)
+        )
+    scheduled_text = _format_utc_timestamp(scheduled_for)
+
+    with db.transaction(conn, immediate=True):
+        fresh = get_rule(conn, rule["id"])
+        if (
+            fresh is None
+            or not fresh["enabled"]
+            or fresh["trigger_type"] != "schedule"
+            or fresh["configuration_error"] is not None
+            or fresh["next_scheduled_at"] != rule["next_scheduled_at"]
+        ):
+            return None
+        target_ids, total_targets = _schedule_targets(
+            conn, fresh, scheduled_for, max_targets=max_targets
+        )
+        overflow_count = max(0, total_targets - max_targets)
+        if overflow_count:
+            error = (
+                f"schedule target limit exceeded: {total_targets} matches "
+                f"(limit {max_targets})"
+            )
+            conn.execute(
+                "INSERT INTO automation_schedule_firings "
+                "(rule_id, scheduled_for, trigger_count, overflow_count, "
+                "missed_slots, state, last_error, completed_at) "
+                "VALUES (?, ?, 0, ?, ?, 'failed', ?, datetime('now'))",
+                (
+                    fresh["id"],
+                    scheduled_text,
+                    overflow_count,
+                    missed_slots,
+                    error,
+                ),
+            )
+            conn.execute(
+                "UPDATE automation_rules SET next_scheduled_at = ?, "
+                "last_scheduled_for = ?, "
+                "schedule_missed_count = schedule_missed_count + ?, "
+                "last_schedule_target_count = ?, last_schedule_overflow_count = ? "
+                "WHERE id = ?",
+                (
+                    next_scheduled_at,
+                    scheduled_text,
+                    missed_slots,
+                    total_targets,
+                    overflow_count,
+                    fresh["id"],
+                ),
+            )
+            record_rule_failure(conn, fresh["id"], error, commit=False)
+            return 0
+
+        state = "pending" if target_ids else "completed"
+        completed_at_sql = "NULL" if target_ids else "datetime('now')"
+        cur = conn.execute(
+            "INSERT INTO automation_schedule_firings "
+            "(rule_id, scheduled_for, trigger_count, overflow_count, missed_slots, "
+            f"state, completed_at) VALUES (?, ?, ?, 0, ?, ?, {completed_at_sql})",
+            (fresh["id"], scheduled_text, len(target_ids), missed_slots, state),
+        )
+        firing_id = cur.lastrowid
+        assert firing_id is not None
+        conn.execute(
+            "UPDATE automation_rules SET next_scheduled_at = ?, "
+            "last_scheduled_for = ?, "
+            "schedule_missed_count = schedule_missed_count + ?, "
+            "last_schedule_target_count = ?, last_schedule_overflow_count = 0 "
+            "WHERE id = ?",
+            (
+                next_scheduled_at,
+                scheduled_text,
+                missed_slots,
+                len(target_ids),
+                fresh["id"],
+            ),
+        )
+        for issue_id in target_ids:
+            trigger_run = schedule_trigger_run_id(fresh["id"], scheduled_text, issue_id)
+            run_token = run_context.set_run_id(trigger_run)
+            parent_token = run_context.set_parent_run_id(None)
+            fork_token = run_context.set_forked_from_event_id(None)
+            try:
+                trigger = activity.record(
+                    conn,
+                    actor_id=actor_id,
+                    verb=SCHEDULE_TRIGGER_VERB,
+                    target_kind="issue",
+                    target_id=issue_id,
+                    detail=f"automation rule {fresh['id']} scheduled for {scheduled_text}",
+                    commit=False,
+                )
+            finally:
+                run_context.reset_forked_from_event_id(fork_token)
+                run_context.reset_parent_run_id(parent_token)
+                run_context.reset_run_id(run_token)
+            conn.execute(
+                "INSERT INTO automation_schedule_occurrences "
+                "(firing_id, issue_id, trigger_event_id) VALUES (?, ?, ?)",
+                (firing_id, issue_id, trigger["id"]),
+            )
+        return len(target_ids)
+
+
+def _claim_due_schedules(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime,
+    actor_id: int,
+    max_rules: int,
+    max_targets: int,
+) -> int:
+    claimed = 0
+    scan_cursor = _get_schedule_scan_cursor(conn)
+    last_scanned_id: int | None = None
+    rule_ids = _due_schedule_rule_ids(
+        conn,
+        now,
+        scan_limit=MAX_SCHEDULE_RULE_SCAN,
+        after_id=scan_cursor,
+    )
+    for rule_id in rule_ids:
+        if claimed >= max_rules:
+            break
+        last_scanned_id = rule_id
+        rule = get_rule(conn, rule_id)
+        if rule is None or rule["configuration_error"] is not None:
+            continue
+        result = _claim_schedule(
+            conn, rule, now=now, actor_id=actor_id, max_targets=max_targets
+        )
+        if result is not None:
+            claimed += 1
+    if last_scanned_id is not None:
+        _set_schedule_scan_cursor(conn, last_scanned_id)
+    return claimed
+
+
+def _finalize_schedule_firing(conn: sqlite3.Connection, firing_id: int) -> None:
+    summary = conn.execute(
+        "SELECT "
+        "SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END) AS pending_count, "
+        "SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed_count "
+        "FROM automation_schedule_occurrences WHERE firing_id = ?",
+        (firing_id,),
+    ).fetchone()
+    if int(summary["pending_count"] or 0) > 0:
+        return
+    failed = int(summary["failed_count"] or 0) > 0
+    latest_error = None
+    if failed:
+        row = conn.execute(
+            "SELECT last_error FROM automation_schedule_occurrences "
+            "WHERE firing_id = ? AND state = 'failed' ORDER BY issue_id LIMIT 1",
+            (firing_id,),
+        ).fetchone()
+        latest_error = row["last_error"] if row else "scheduled action failed"
+    conn.execute(
+        "UPDATE automation_schedule_firings "
+        "SET state = ?, last_error = ?, completed_at = datetime('now') "
+        "WHERE id = ? AND state = 'pending'",
+        ("failed" if failed else "completed", latest_error, firing_id),
+    )
+
+
+def _record_schedule_attempt(
+    conn: sqlite3.Connection,
+    *,
+    firing_id: int,
+    issue_id: int,
+    rule_id: int,
+    error: str | None,
+) -> None:
+    with db.transaction(conn, immediate=True):
+        occurrence = conn.execute(
+            "SELECT attempt_count, state FROM automation_schedule_occurrences "
+            "WHERE firing_id = ? AND issue_id = ?",
+            (firing_id, issue_id),
+        ).fetchone()
+        if occurrence is None or occurrence["state"] != "pending":
+            return
+        attempts = int(occurrence["attempt_count"]) + 1
+        if error is None:
+            state = "completed"
+            completed_at_sql = "datetime('now')"
+        else:
+            state = "failed" if attempts >= MAX_SCHEDULE_ATTEMPTS else "pending"
+            completed_at_sql = "datetime('now')" if state == "failed" else "NULL"
+        conn.execute(
+            "UPDATE automation_schedule_occurrences "
+            "SET state = ?, attempt_count = ?, last_error = ?, "
+            "last_attempt_at = datetime('now'), "
+            f"completed_at = {completed_at_sql} "
+            "WHERE firing_id = ? AND issue_id = ?",
+            (state, attempts, error, firing_id, issue_id),
+        )
+        if error is not None:
+            record_rule_failure(conn, rule_id, error, commit=False)
+        _finalize_schedule_firing(conn, firing_id)
+
+
+def _process_schedule_occurrences(
+    conn: sqlite3.Connection, *, executor: Executor, max_actions: int
+) -> int:
+    rows = conn.execute(
+        "SELECT o.firing_id, o.issue_id, o.trigger_event_id, f.rule_id "
+        "FROM automation_schedule_occurrences o "
+        "JOIN automation_schedule_firings f ON f.id = o.firing_id "
+        "JOIN automation_rules r ON r.id = f.rule_id "
+        "WHERE o.state = 'pending' AND f.state = 'pending' "
+        "AND r.enabled = 1 AND r.trigger_type = 'schedule' "
+        "ORDER BY o.firing_id, o.issue_id LIMIT ?",
+        (max_actions,),
+    ).fetchall()
+    processed = 0
+    for occurrence in rows:
+        rule = get_rule(conn, occurrence["rule_id"])
+        event = activity.get_activity(conn, occurrence["trigger_event_id"])
+        error: str | None = None
+        if rule is None:
+            continue
+        if rule["configuration_error"] is not None:
+            error = f"malformed schedule: {rule['configuration_error']}"
+        elif event is None:
+            error = "scheduled trigger activity is missing"
+        else:
+            try:
+                executor(conn, rule, event)
+            except Exception as exc:  # noqa: BLE001 - retry one target without wedging others
+                error = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "scheduled automation rule %s failed for issue %s: %s",
+                    rule["id"],
+                    occurrence["issue_id"],
+                    exc,
+                    exc_info=True,
+                )
+            else:
+                processed += 1
+        _record_schedule_attempt(
+            conn,
+            firing_id=occurrence["firing_id"],
+            issue_id=occurrence["issue_id"],
+            rule_id=rule["id"],
+            error=error,
+        )
+    return processed
+
+
+def process_schedules(
+    conn: sqlite3.Connection,
+    *,
+    executor: Executor,
+    actor_id: int,
+    now: datetime | None = None,
+    max_rules: int = MAX_SCHEDULE_RULES_PER_PASS,
+    max_targets: int = MAX_SCHEDULE_TARGETS_PER_FIRING,
+    max_actions: int = MAX_SCHEDULE_ACTIONS_PER_PASS,
+) -> int:
+    """Claim due UTC slots, then resume a bounded batch of durable target receipts."""
+    current = now or _utc_now()
+    if current.tzinfo is None or current.utcoffset() != timedelta(0):
+        raise ValueError("schedule runner now must be timezone-aware UTC")
+    current = current.astimezone(UTC).replace(microsecond=0)
+    _claim_due_schedules(
+        conn,
+        now=current,
+        actor_id=actor_id,
+        max_rules=max_rules,
+        max_targets=max_targets,
+    )
+    return _process_schedule_occurrences(
+        conn, executor=executor, max_actions=max_actions
+    )
+
+
+def _has_schedule_work(conn: sqlite3.Connection, now: datetime) -> bool:
+    now_text = _format_utc_timestamp(now)
+    one_shot_cutoff = _format_utc_timestamp(
+        now - timedelta(seconds=ONE_SHOT_CATCH_UP_SECONDS)
+    )
+    return (
+        conn.execute(
+            "SELECT 1 FROM automation_rules r "
+            "WHERE r.enabled = 1 AND r.trigger_type = 'schedule' AND ("
+            "EXISTS (SELECT 1 FROM automation_schedule_firings f "
+            "JOIN automation_schedule_occurrences o ON o.firing_id = f.id "
+            "WHERE f.rule_id = r.id AND f.state = 'pending' "
+            "AND o.state = 'pending') OR ("
+            "r.next_scheduled_at IS NOT NULL "
+            "AND strftime('%Y-%m-%dT%H:%M:%SZ', r.next_scheduled_at) = "
+            "r.next_scheduled_at AND r.next_scheduled_at <= ? "
+            "AND (r.schedule_every_seconds IS NOT NULL "
+            "OR r.next_scheduled_at >= ?))) LIMIT 1",
+            (now_text, one_shot_cutoff),
+        ).fetchone()
+        is not None
+    )
 
 
 # --- background loop (wired into main.lifespan) -----------------------------
@@ -537,9 +1239,28 @@ def run_pass(db_path: str | Path) -> int:
                 actor["id"] = system_actor_id(c)
             actor_id = actor["id"]
             assert actor_id is not None
-            execute_action(c, rule, event, actor_id=actor_id)
+            execute_action(
+                c,
+                rule,
+                event,
+                actor_id=actor_id,
+                fail_closed=rule["trigger_type"] == "schedule",
+            )
 
-        return process_pending(conn, executor=executor, skip_actor_id=actor["id"])
+        event_actions = process_pending(
+            conn, executor=executor, skip_actor_id=actor["id"]
+        )
+        schedule_actions = 0
+        now = _utc_now()
+        if _has_schedule_work(conn, now):
+            if actor["id"] is None:
+                actor["id"] = system_actor_id(conn)
+            actor_id = actor["id"]
+            assert actor_id is not None
+            schedule_actions = process_schedules(
+                conn, executor=executor, actor_id=actor_id, now=now
+            )
+        return event_actions + schedule_actions
     finally:
         conn.close()
 

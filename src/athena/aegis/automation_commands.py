@@ -9,9 +9,9 @@ append-only log. These commands own that write: the row change and its audit eve
 in one db.transaction, so a rule can never appear, flip, or vanish without its record.
 
 The direct twin of core/webhook_commands.py (automation's own set_enabled docstring calls
-it "the pause twin of a webhook's active flag"). Authorization (admin-only) and rule-spec
-validation stay at the transport boundary, as they do for webhooks; the command owns the
-write and the audit emission.
+it "the pause twin of a webhook's active flag"). Authorization stays at the transport
+boundary; the command owns normalization, rule-spec validation, persistence, and audit
+emission.
 """
 
 from __future__ import annotations
@@ -40,6 +40,16 @@ class AutomationCommandError(Exception):
 def _detail(rule: dict) -> str:
     """A human-readable summary of what the rule does — its name and its when->do shape —
     so the trail shows WHICH automated writer changed, not just an opaque id."""
+    if rule["trigger_type"] == "schedule":
+        cadence = (
+            f", every {rule['schedule_every_seconds']} seconds"
+            if rule["schedule_every_seconds"] is not None
+            else ""
+        )
+        return (
+            f"{rule['name']} (at {rule['schedule_at']}{cadence} "
+            f"{rule['target_kind']} → {rule['action_type']})"
+        )
     return (
         f"{rule['name']} (on {rule['trigger_verb']} {rule['target_kind']} "
         f"→ {rule['action_type']})"
@@ -56,21 +66,49 @@ def create_rule(
     conditions: dict | None = None,
     action_params: dict | None = None,
     target_kind: str = "issue",
+    trigger_type: str = "event",
+    schedule_at: str | None = None,
+    schedule_every_seconds: int | None = None,
 ) -> dict:
-    """Create an automation rule and record a 'created_automation_rule' event atomically.
-    The detail records the rule's name and its when->do shape. Rule-spec validity is the
-    caller's guard, applied before this runs; sqlite3.IntegrityError (an unreal created_by)
-    propagates unchanged."""
+    """Validate and create a rule with its lifecycle activity in one transaction.
+    The detail records the rule's normalized name and when-to-action shape.
+    ``sqlite3.IntegrityError`` for an unreal creator propagates unchanged.
+    """
+    normalized_name = name.strip()
+    if not normalized_name:
+        raise AutomationCommandError("rule name is required", status_code=422)
+    if conditions is not None and not isinstance(conditions, dict):
+        raise AutomationCommandError("conditions must be an object", status_code=422)
+    if action_params is not None and not isinstance(action_params, dict):
+        raise AutomationCommandError("action_params must be an object", status_code=422)
+    normalized_conditions = conditions or {}
+    normalized_action_params = action_params or {}
+    error = automation.validate_rule(
+        trigger_verb=trigger_verb,
+        action_type=action_type,
+        conditions=normalized_conditions,
+        action_params=normalized_action_params,
+        target_kind=target_kind,
+        trigger_type=trigger_type,
+        schedule_at=schedule_at,
+        schedule_every_seconds=schedule_every_seconds,
+    )
+    if error is not None:
+        raise AutomationCommandError(error, status_code=422)
+
     with db.transaction(conn, immediate=True):
         rule = automation.create_rule(
             conn,
-            name=name,
+            name=normalized_name,
             trigger_verb=trigger_verb,
             action_type=action_type,
             created_by=actor_id,
-            conditions=conditions,
-            action_params=action_params,
+            conditions=normalized_conditions,
+            action_params=normalized_action_params,
             target_kind=target_kind,
+            trigger_type=trigger_type,
+            schedule_at=schedule_at,
+            schedule_every_seconds=schedule_every_seconds,
             commit=False,
         )
         activity.record(

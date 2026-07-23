@@ -256,6 +256,29 @@ MUTATION_CASES = [
         "/pages/4/versions/2/restore",
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
+    (
+        "create_automation_rule",
+        "POST",
+        "/automation/rules",
+        lambda c, k: c.create_automation_rule(
+            name="rule",
+            trigger_verb="created",
+            action_type="comment",
+            idempotency_key=k,
+        ),
+    ),
+    (
+        "set_automation_rule_enabled",
+        "PATCH",
+        "/automation/rules/7",
+        lambda c, k: c.set_automation_rule_enabled(7, False, idempotency_key=k),
+    ),
+    (
+        "delete_automation_rule",
+        "DELETE",
+        "/automation/rules/7",
+        lambda c, k: c.delete_automation_rule(7, idempotency_key=k),
+    ),
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
@@ -320,6 +343,15 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    (
+        "create_automation_rule",
+        {"name": "rule", "trigger_verb": "created", "action_type": "comment"},
+    ),
+    (
+        "set_automation_rule_enabled",
+        {"rule_id": 7, "enabled": False},
+    ),
+    ("delete_automation_rule", {"rule_id": 7}),
 ]
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES
@@ -379,6 +411,73 @@ def test_every_client_mutation_forwards_only_explicit_idempotency_keys(
             assert kwargs["headers"] == expected, name
         else:
             assert "headers" not in kwargs, name
+
+
+def test_automation_rule_client_matches_rest_contract_and_schedule_fields():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.list_automation_rules()
+    assert transport.calls.pop() == ("GET", "/automation/rules", {})
+
+    client.get_automation_rule(7)
+    assert transport.calls.pop() == ("GET", "/automation/rules/7", {})
+
+    client.create_automation_rule(
+        name="stale work",
+        trigger_verb="scheduled",
+        action_type="comment",
+        conditions={"inactive_for_seconds": 3600},
+        action_params={"body": "check in"},
+        trigger_type="schedule",
+        schedule_at="2030-01-02T03:04:05Z",
+        schedule_every_seconds=3600,
+    )
+    method, path, kwargs = transport.calls.pop()
+    assert (method, path) == ("POST", "/automation/rules")
+    assert kwargs["json"] == {
+        "name": "stale work",
+        "trigger_verb": "scheduled",
+        "action_type": "comment",
+        "conditions": {"inactive_for_seconds": 3600},
+        "action_params": {"body": "check in"},
+        "target_kind": "issue",
+        "trigger_type": "schedule",
+        "schedule_at": "2030-01-02T03:04:05Z",
+        "schedule_every_seconds": 3600,
+    }
+
+    client.set_automation_rule_enabled(7, False)
+    assert transport.calls.pop() == (
+        "PATCH",
+        "/automation/rules/7",
+        {"json": {"enabled": False}},
+    )
+
+    client.delete_automation_rule(7)
+    assert transport.calls.pop() == ("DELETE", "/automation/rules/7", {})
+
+    client.list_automation_failures()
+    assert transport.calls.pop() == (
+        "GET",
+        "/automation/rules",
+        {"params": {"failing_only": True}},
+    )
+
+
+def test_automation_rule_client_omits_unused_schedule_fields_for_event_rule():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.create_automation_rule(
+        name="new work",
+        trigger_verb="created",
+        action_type="comment",
+    )
+    _, _, kwargs = transport.calls.pop()
+    assert kwargs["json"]["trigger_type"] == "event"
+    assert "schedule_at" not in kwargs["json"]
+    assert "schedule_every_seconds" not in kwargs["json"]
 
 
 def test_yield_client_forwards_reason_and_note():
@@ -705,6 +804,62 @@ def test_mission_control_observation_through_client(tmp_path):
         failures = ath.list_automation_failures()
         assert [item["id"] for item in failures] == [rule["id"]]
         assert failures[0]["last_error"] == "RuntimeError: operator-visible"
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_automation_rule_lifecycle_through_client(tmp_path):
+    tc, ath = _client(tmp_path, "automation-rule-client.db")
+    try:
+        created = ath.create_automation_rule(
+            name="stale open work",
+            trigger_verb="scheduled",
+            action_type="comment",
+            action_params={"body": "please check in"},
+            trigger_type="schedule",
+            schedule_at="2030-01-02T03:04:05Z",
+            schedule_every_seconds=3600,
+            idempotency_key="create-scheduled-rule",
+        )
+
+        assert {
+            "trigger_type",
+            "schedule_at",
+            "schedule_every_seconds",
+            "next_scheduled_at",
+            "schedule_status",
+        } <= set(created)
+        assert created["trigger_type"] == "schedule"
+        assert created["schedule_at"] == "2030-01-02T03:04:05Z"
+        assert created["schedule_every_seconds"] == 3600
+        assert [rule["id"] for rule in ath.list_automation_rules()] == [created["id"]]
+        assert ath.get_automation_rule(created["id"])["id"] == created["id"]
+
+        disabled = ath.set_automation_rule_enabled(
+            created["id"],
+            False,
+            idempotency_key="disable-scheduled-rule",
+        )
+        assert disabled["enabled"] is False
+        assert disabled["schedule_status"] == "disabled"
+        assert (
+            ath.set_automation_rule_enabled(
+                created["id"],
+                False,
+                idempotency_key="disable-scheduled-rule",
+            )
+            == disabled
+        )
+
+        assert (
+            ath.delete_automation_rule(
+                created["id"], idempotency_key="delete-scheduled-rule"
+            )
+            is None
+        )
+        with pytest.raises(AthenaError) as missing:
+            ath.get_automation_rule(created["id"])
+        assert missing.value.status_code == 404
     finally:
         tc.__exit__(None, None, None)
 
@@ -1225,6 +1380,52 @@ def test_list_issues_mcp_tool_forwards_sprint():
     assert kwargs["sprint"] == 7
 
 
+def test_create_automation_rule_mcp_tool_forwards_schedule_contract():
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    arguments = {
+        "name": "stale work",
+        "trigger_verb": "scheduled",
+        "action_type": "comment",
+        "conditions": {"inactive_for_seconds": 3600},
+        "action_params": {"body": "check in"},
+        "trigger_type": "schedule",
+        "schedule_at": "2030-01-02T03:04:05Z",
+        "schedule_every_seconds": 3600,
+        "idempotency_key": "scheduled-rule",
+    }
+    asyncio.run(
+        server.call_tool(
+            "create_automation_rule",
+            arguments,
+        )
+    )
+
+    assert client.calls == [
+        (
+            "create_automation_rule",
+            (),
+            {
+                "name": "stale work",
+                "trigger_verb": "scheduled",
+                "action_type": "comment",
+                "conditions": {"inactive_for_seconds": 3600},
+                "action_params": {"body": "check in"},
+                "target_kind": "issue",
+                "trigger_type": "schedule",
+                "schedule_at": "2030-01-02T03:04:05Z",
+                "schedule_every_seconds": 3600,
+                "idempotency_key": "scheduled-rule",
+            },
+        )
+    ]
+
+
 def test_mcp_server_registers_tools_and_calls_through(tmp_path):
     import asyncio
 
@@ -1264,6 +1465,11 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_run_fork_contract",
             "list_projects",
             "get_agent_run_health",
+            "list_automation_rules",
+            "get_automation_rule",
+            "create_automation_rule",
+            "set_automation_rule_enabled",
+            "delete_automation_rule",
             "list_automation_failures",
             "list_users",
             "list_spaces",
@@ -1344,6 +1550,38 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             r"[^\s\x00-\x1F\x7F]"
             r"[^\x00-\x1F\x7F]*$"
         )
+        automation_schema = tools["create_automation_rule"].inputSchema
+        assert {
+            "name",
+            "trigger_verb",
+            "action_type",
+        } <= set(automation_schema["required"])
+        assert {
+            "trigger_type",
+            "schedule_at",
+            "schedule_every_seconds",
+        } <= set(automation_schema["properties"])
+        assert set(automation_schema["properties"]["trigger_type"]["enum"]) == {
+            "event",
+            "schedule",
+        }
+        schedule_at_schema = next(
+            option
+            for option in automation_schema["properties"]["schedule_at"]["anyOf"]
+            if option["type"] == "string"
+        )
+        assert (
+            schedule_at_schema["pattern"] == r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$"
+        )
+        interval_schema = next(
+            option
+            for option in automation_schema["properties"]["schedule_every_seconds"][
+                "anyOf"
+            ]
+            if option["type"] == "integer"
+        )
+        assert interval_schema["minimum"] == automation.MIN_SCHEDULE_INTERVAL_SECONDS
+        assert interval_schema["maximum"] == automation.MAX_SCHEDULE_INTERVAL_SECONDS
         for tool_name in MUTATION_TOOL_NAMES:
             schema = tools[tool_name].inputSchema
             assert "idempotency_key" in schema["properties"]

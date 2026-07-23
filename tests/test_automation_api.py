@@ -37,6 +37,19 @@ def _valid_rule():
     }
 
 
+def _valid_schedule_rule():
+    return {
+        "name": "scheduled-triage",
+        "trigger_type": "schedule",
+        "trigger_verb": "scheduled",
+        "schedule_at": "2099-01-02T03:04:05Z",
+        "schedule_every_seconds": 3600,
+        "conditions": {"inactive_for_seconds": 7200},
+        "action_type": "comment",
+        "action_params": {"body": "scheduled nudge"},
+    }
+
+
 def test_create_list_show_rule(tmp_path):
     with _client(tmp_path) as client:
         _two_users(client)
@@ -47,6 +60,21 @@ def test_create_list_show_rule(tmp_path):
         assert rule["trigger_verb"] == "created" and rule["action_type"] == "comment"
         assert rule["action_params"] == {"body": "thanks for filing"}
         assert rule["created_by"] == 1
+        # Legacy event rules retain their request defaults and expose neutral schedule
+        # health, so adding the scheduled trigger is backward compatible.
+        assert rule["trigger_type"] == "event"
+        assert rule["schedule_at"] is None
+        assert rule["schedule_every_seconds"] is None
+        assert rule["next_scheduled_at"] is None
+        assert rule["last_scheduled_for"] is None
+        assert rule["schedule_missed_count"] == 0
+        assert rule["last_schedule_target_count"] is None
+        assert rule["last_schedule_overflow_count"] == 0
+        assert rule["configuration_error"] is None
+        assert rule["schedule_pending_count"] == 0
+        assert rule["schedule_failed_count"] == 0
+        assert rule["last_schedule_state"] is None
+        assert rule["schedule_status"] == "event"
 
         listed = client.get("/automation/rules", headers=H1).json()
         assert [r["id"] for r in listed] == [rule["id"]]
@@ -77,6 +105,74 @@ def test_create_rejects_malformed_specs(tmp_path):
         # target_kind other than issue isn't supported yet.
         assert post(target_kind="page").status_code == 422
         # None of the rejects persisted a row.
+        assert client.get("/automation/rules", headers=H1).json() == []
+
+
+def test_create_list_show_schedule_rule(tmp_path):
+    with _client(tmp_path) as client:
+        _two_users(client)
+        created = client.post(
+            "/automation/rules", json=_valid_schedule_rule(), headers=H1
+        )
+        assert created.status_code == 201, created.text
+        rule = created.json()
+        assert rule["trigger_type"] == "schedule"
+        assert rule["trigger_verb"] == "scheduled"
+        assert rule["schedule_at"] == "2099-01-02T03:04:05Z"
+        assert rule["schedule_every_seconds"] == 3600
+        assert rule["next_scheduled_at"] == "2099-01-02T03:04:05Z"
+        assert rule["conditions"] == {"inactive_for_seconds": 7200}
+        assert rule["schedule_status"] == "scheduled"
+        assert rule["configuration_error"] is None
+        assert rule["schedule_pending_count"] == 0
+        assert rule["schedule_failed_count"] == 0
+
+        listed = client.get("/automation/rules", headers=H1).json()
+        assert listed == [rule]
+        shown = client.get(f"/automation/rules/{rule['id']}", headers=H1)
+        assert shown.status_code == 200 and shown.json() == rule
+
+
+def test_create_rejects_malformed_schedule_specs_strictly(tmp_path):
+    with _client(tmp_path) as client:
+        _two_users(client)
+
+        def post(**overrides):
+            payload = _valid_schedule_rule() | overrides
+            return client.post("/automation/rules", json=payload, headers=H1)
+
+        assert post(trigger_type="timer").status_code == 422
+        assert post(trigger_verb="created").status_code == 422
+        assert post(schedule_at=None).status_code == 422
+        for timestamp in (
+            "2099-01-02T03:04:05+00:00",
+            "2099-01-02 03:04:05Z",
+            "2099-01-02T03:04:05.000Z",
+            "2099-02-30T03:04:05Z",
+        ):
+            assert post(schedule_at=timestamp).status_code == 422
+        for interval in (False, "3600", 59, 31_536_001):
+            assert post(schedule_every_seconds=interval).status_code == 422
+        assert post(conditions={"inactive_for_seconds": 59}).status_code == 422
+        assert post(conditions={"project_id": []}).status_code == 422
+
+        # Schedule-only fields and conditions fail closed on event rules.
+        event_with_time = _valid_rule() | {"schedule_at": "2099-01-02T03:04:05Z"}
+        assert (
+            client.post(
+                "/automation/rules", json=event_with_time, headers=H1
+            ).status_code
+            == 422
+        )
+        event_with_inactivity = _valid_rule() | {
+            "conditions": {"inactive_for_seconds": 7200}
+        }
+        assert (
+            client.post(
+                "/automation/rules", json=event_with_inactivity, headers=H1
+            ).status_code
+            == 422
+        )
         assert client.get("/automation/rules", headers=H1).json() == []
 
 
