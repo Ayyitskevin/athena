@@ -8,7 +8,7 @@ No global app state, no surprises.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 import hashlib
 import json
 import logging
@@ -17,7 +17,7 @@ import sqlite3
 from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -648,9 +648,13 @@ class IdempotencyMiddleware:
                 return
 
             if claim.kind == "owner":
+                if claim.record is None:
+                    raise RuntimeError("idempotency owner claim is missing its record")
                 owner_token = claim.record["owner_token"]
                 break
             if claim.kind == "replay":
+                if claim.record is None:
+                    raise RuntimeError("idempotency replay claim is missing its record")
                 await self._replay(send, claim.record)
                 return
             if claim.kind == "mismatch":
@@ -907,7 +911,79 @@ async def _send_json_response(
     await send({"type": "http.response.body", "body": payload})
 
 
-def _attach_security_headers(response, *, is_https: bool = False):
+_CACHEABLE_REQUEST_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_SESSION_SENSITIVE_PATH_ROOTS = ("/auth", "/login", "/logout", "/settings")
+
+
+def _path_matches_root(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + "/")
+
+
+def _append_vary(response: Response, *dimensions: str) -> None:
+    """Add cache-key dimensions while preserving every existing Vary value."""
+    existing = [
+        dimension.strip()
+        for value in response.headers.getlist("vary")
+        for dimension in value.split(",")
+        if dimension.strip()
+    ]
+    seen = {dimension.casefold() for dimension in existing}
+    if "*" in seen:
+        return
+    for dimension in dimensions:
+        folded = dimension.casefold()
+        if folded not in seen:
+            existing.append(dimension)
+            seen.add(folded)
+    if existing:
+        response.headers["Vary"] = ", ".join(existing)
+
+
+def _apply_private_cache_policy(request: Request, response: Response) -> None:
+    """Prevent shared or browser caches from retaining sensitive responses."""
+    request_has_cookie = "cookie" in request.headers
+    response_sets_cookie = "set-cookie" in response.headers
+    session_path = any(
+        _path_matches_root(request.url.path, root)
+        for root in _SESSION_SENSITIVE_PATH_ROOTS
+    )
+    identity_request = any(
+        header in request.headers for header in ("authorization", "x-athena-actor")
+    )
+    attachment_request = _path_matches_root(request.url.path, "/attachments")
+    content_disposition = response.headers.get("content-disposition", "")
+    download_response = (
+        content_disposition.partition(";")[0].strip().casefold() == "attachment"
+    )
+    mutating_request = request.method not in _CACHEABLE_REQUEST_METHODS
+
+    if not (
+        request_has_cookie
+        or response_sets_cookie
+        or session_path
+        or identity_request
+        or attachment_request
+        or download_response
+        or mutating_request
+    ):
+        return
+
+    vary: list[str] = []
+    if request_has_cookie or response_sets_cookie or session_path:
+        vary.append("Cookie")
+    if identity_request or attachment_request:
+        vary.extend(
+            (
+                "Authorization",
+                "X-Athena-Actor",
+            )
+        )
+
+    response.headers["Cache-Control"] = "private, no-store"
+    _append_vary(response, *vary)
+
+
+def _attach_security_headers(response: Response, *, is_https: bool = False) -> Response:
     for name, value in SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
     # Emit HSTS when the operator declared HTTPS (COOKIE_SECURE) OR the request actually
@@ -994,8 +1070,10 @@ def create_app(
         # Startup: bring the schema up to date before serving any request,
         # so the database is always the right shape. Stash the path for handlers.
         conn = db.connect(resolved_db)
-        applied = db.migrate(conn)
-        conn.close()
+        try:
+            applied = db.migrate(conn)
+        finally:
+            conn.close()
         # Log what startup actually did, so an operator watching stdout can see the
         # schema was brought current (or was already so) instead of guessing.
         if applied:
@@ -1029,18 +1107,26 @@ def create_app(
             yield
         finally:
             # Shutdown: stop the background loops cleanly.
-            for task in (delivery_task, automation_task):
-                if task is not None:
-                    task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await task
+            tasks = tuple(
+                task for task in (delivery_task, automation_task) if task is not None
+            )
+            for task in tasks:
+                task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not isinstance(
+                    result, asyncio.CancelledError
+                ):
+                    raise result
 
     app = FastAPI(title="Athena", lifespan=lifespan)
 
     # A tagged write that tries to continue ANOTHER actor's run is refused deep
     # in activity.record (transport-neutral, transaction-rolled-back); this maps
     # the refusal to the same 403 shape every authorization failure uses.
-    def _run_binding_conflict(request, exc: activity.RunBindingError):
+    def _run_binding_conflict(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, activity.RunBindingError):
+            raise exc
         return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     app.add_exception_handler(activity.RunBindingError, _run_binding_conflict)
@@ -1049,7 +1135,9 @@ def create_app(
     # connection — the request's is dependency-scoped), then answer exactly as
     # the plain 403 always did. Registered on the subclass, so every other
     # HTTPException keeps FastAPI's default handling.
-    def _record_scope_denial(request, exc: identity.ScopeDenied):
+    def _record_scope_denial(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, identity.ScopeDenied):
+            raise exc
         # Best-effort in full: opening the connection is INSIDE the guard too, so
         # a connect failure can never turn this deliberate 403 into a 500.
         if exc.actor_id is not None:
@@ -1135,6 +1223,7 @@ def create_app(
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
         response = await call_next(request)
+        _apply_private_cache_policy(request, response)
         return _attach_security_headers(
             response, is_https=request.url.scheme == "https"
         )
@@ -1202,15 +1291,10 @@ def create_app(
         try:
             conn = db.connect(request.app.state.db_path)
             try:
-                conn.execute("SELECT 1").fetchone()
-                migrated = conn.execute(
-                    "SELECT version FROM schema_migrations LIMIT 1"
-                ).fetchone()
-                if migrated is None:
-                    raise sqlite3.DatabaseError("no migrations have run")
+                db.migration_status(conn)
             finally:
                 conn.close()
-        except sqlite3.Error:
+        except (OSError, sqlite3.Error, db.MigrationIntegrityError):
             return JSONResponse(
                 {"status": "error", "database": "unavailable"}, status_code=503
             )

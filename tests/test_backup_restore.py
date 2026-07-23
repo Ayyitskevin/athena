@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from athena import ops
-from athena.core import backup, db
+from athena.core import attachments, backup, db
 
 
 def _seed_database(path, *, email="admin@example.com", issue="Saved issue"):
@@ -287,6 +287,58 @@ def test_doctor_cli_checks_database_and_attachment_dir(tmp_path, capsys):
     assert "database: ok" in out.out
     assert "attachments: ok" in out.out
     assert "athena-doctor: ok" in out.out
+
+
+def test_doctor_reconciles_attachment_rows_and_blobs(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    attach_dir = tmp_path / "attachments"
+    conn = db.connect(source)
+    stored = attachments.store(
+        conn,
+        target_kind="issue",
+        target_id=1,
+        filename="evidence.txt",
+        content_type="text/plain",
+        data=b"evidence",
+        uploaded_by=1,
+        attach_dir=attach_dir,
+    )
+    conn.close()
+
+    assert stored["sha256"]
+    assert ops.doctor_main([str(source), "--attach-dir", str(attach_dir)]) == 0
+
+    out = capsys.readouterr()
+    assert "attachments: ok (1 blobs reconciled" in out.out
+
+
+def test_doctor_fails_on_tampered_and_orphan_attachment_blobs(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    attach_dir = tmp_path / "attachments"
+    conn = db.connect(source)
+    stored = attachments.store(
+        conn,
+        target_kind="issue",
+        target_id=1,
+        filename="evidence.txt",
+        content_type="text/plain",
+        data=b"evidence",
+        uploaded_by=1,
+        attach_dir=attach_dir,
+    )
+    stored_name = attachments.get_stored_name(conn, stored["id"])
+    assert stored_name is not None
+    attachments.disk_path(attach_dir, stored_name).write_bytes(b"tampered")
+    (attach_dir / "orphan.bin").write_bytes(b"orphan")
+    conn.close()
+
+    assert ops.doctor_main([str(source), "--attach-dir", str(attach_dir)]) == 1
+
+    out = capsys.readouterr()
+    assert "attachment integrity check failed" in out.err
+    assert "tampered=1" in out.err
+    assert "orphan_files=1" in out.err
+    assert stored_name not in out.err
 
 
 def test_doctor_cli_refuses_unmigrated_database(tmp_path, capsys):

@@ -9,7 +9,7 @@ import sqlite3
 import sys
 import tempfile
 
-from athena.core import db
+from athena.core import attachments, db
 from athena.core.backup import (
     backup_database,
     prune_backup_directory,
@@ -27,27 +27,6 @@ from athena.core.run_replay import export_run_replay_database
 from athena.core.source_import import SOURCE_KINDS, write_source_bundle
 
 
-def _required_migrations() -> list[str]:
-    return [path.name for path in sorted(db.MIGRATIONS_DIR.glob("*.sql"))]
-
-
-def _applied_migrations(conn: sqlite3.Connection) -> set[str]:
-    try:
-        rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
-    except sqlite3.Error as exc:
-        raise ValueError(
-            "database is not migrated: schema_migrations is missing"
-        ) from exc
-    return {row["version"] for row in rows}
-
-
-def _format_missing_migrations(missing: list[str]) -> str:
-    shown = ", ".join(missing[:5])
-    if len(missing) > 5:
-        shown = f"{shown}, ... ({len(missing)} total)"
-    return shown
-
-
 def _check_integrity(conn: sqlite3.Connection) -> None:
     result = conn.execute("PRAGMA integrity_check").fetchone()
     if result is None or result[0] != "ok":
@@ -56,16 +35,12 @@ def _check_integrity(conn: sqlite3.Connection) -> None:
 
 
 def _check_database(db_path: Path, *, migrate: bool) -> str:
-    required = _required_migrations()
-    if not required:
-        raise ValueError("no Athena migrations were found")
-
     if migrate:
         conn = db.connect(db_path)
         try:
             applied_now = db.migrate(conn)
             _check_integrity(conn)
-            applied = _applied_migrations(conn)
+            status = db.migration_status(conn)
         finally:
             conn.close()
     else:
@@ -78,24 +53,21 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             _check_integrity(conn)
-            applied = _applied_migrations(conn)
+            status = db.migration_status(conn)
         finally:
             conn.close()
         applied_now = []
 
-    missing = [version for version in required if version not in applied]
-    if missing:
-        raise ValueError(
-            f"database is missing migrations: {_format_missing_migrations(missing)}"
-        )
-
     action = (
         f"applied {len(applied_now)} migrations" if applied_now else "already current"
     )
-    return f"database: ok ({len(applied)} migrations, latest {required[-1]}, {action})"
+    return (
+        f"database: ok ({len(status.applied)} migrations, "
+        f"latest {status.latest}, {action})"
+    )
 
 
-def _check_attachment_dir(attach_dir: Path) -> str:
+def _check_attachment_dir(db_path: Path, attach_dir: Path) -> str:
     if not attach_dir.exists():
         raise FileNotFoundError(f"attachment directory does not exist: {attach_dir}")
     if not attach_dir.is_dir():
@@ -109,7 +81,33 @@ def _check_attachment_dir(attach_dir: Path) -> str:
         probe.write(b"ok")
         probe.flush()
 
-    return f"attachments: ok ({attach_dir})"
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        blob_count = int(conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0])
+        report = attachments.reconcile_storage(conn, attach_dir)
+    finally:
+        conn.close()
+
+    if not report.ok:
+        findings = {
+            "missing": len(report.missing),
+            "tampered": len(report.tampered),
+            "size_mismatched": len(report.size_mismatched),
+            "non_regular": len(report.non_regular),
+            "unreadable": len(report.unreadable),
+            "orphan_files": len(report.orphan_files),
+        }
+        detail = ", ".join(
+            f"{name}={count}" for name, count in findings.items() if count
+        )
+        if report.storage_root_problem is not None:
+            detail = (
+                f"{detail}, " if detail else ""
+            ) + f"storage_root={report.storage_root_problem}"
+        raise ValueError(f"attachment integrity check failed: {detail}")
+
+    return f"attachments: ok ({blob_count} blobs reconciled; {attach_dir})"
 
 
 def doctor_main(argv: list[str] | None = None) -> int:
@@ -133,7 +131,7 @@ def doctor_main(argv: list[str] | None = None) -> int:
     try:
         checks = [_check_database(args.db_path, migrate=args.migrate)]
         if args.attach_dir is not None:
-            checks.append(_check_attachment_dir(args.attach_dir))
+            checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
     except (
         FileNotFoundError,
         NotADirectoryError,
