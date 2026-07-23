@@ -13,7 +13,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena import config
-from athena.core import attachments, links, notifications, run_context, search
+from athena.core import attachments, db, links, notifications, run_context, search
 
 
 def create_page(
@@ -348,15 +348,39 @@ def purge_page(conn: sqlite3.Connection, page_id: int) -> list[str]:
 def finalize_page_deletion(
     conn: sqlite3.Connection, page_id: int, stored_names: list[str]
 ) -> None:
-    """The post-commit, non-transactional side effects of a page delete: unlink the
-    now-orphaned blob files (best-effort), then maintain the derived indexes — an empty
-    body clears this page's outgoing links, and re-indexing a now-missing row removes its
-    search entry. Runs AFTER the delete transaction commits, so the indexes never reflect
-    a rolled-back delete. (Inbound links from OTHER pages are left dangling on purpose —
-    they resolve as 'broken', the lazy-resolve contract a not-yet-created target gets.)"""
-    attachments.unlink_blobs(config.ATTACH_DIR, stored_names)
-    links.sync_links(conn, source_kind="page", source_id=page_id, body="")
-    search.index_document(conn, kind="page", source_id=page_id)
+    """Attempt every post-commit side effect and report all failures.
+
+    Blob cleanup and the two derived indexes cannot join the page-delete transaction.
+    A failure in one must not suppress the others: deleted content must leave search and
+    outgoing links even when a blob remains for reconciliation. Inbound links from other
+    pages intentionally remain as broken references.
+    """
+
+    def sync_outgoing_links() -> None:
+        with db.transaction(conn, immediate=True):
+            links.sync_links(
+                conn, source_kind="page", source_id=page_id, body="", commit=False
+            )
+
+    def remove_search_entry() -> None:
+        with db.transaction(conn, immediate=True):
+            search.index_document(conn, kind="page", source_id=page_id, commit=False)
+
+    failures: list[Exception] = []
+    operations = (
+        lambda: attachments.unlink_blobs(config.ATTACH_DIR, stored_names),
+        sync_outgoing_links,
+        remove_search_entry,
+    )
+    for operation in operations:
+        try:
+            operation()
+        except Exception as exc:
+            failures.append(exc)
+    if len(failures) == 1:
+        raise failures[0]
+    if failures:
+        raise ExceptionGroup("page deletion post-commit cleanup failed", failures)
 
 
 def validate_move(

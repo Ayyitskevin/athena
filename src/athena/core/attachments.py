@@ -25,6 +25,7 @@ import secrets
 import sqlite3
 import stat
 import tempfile
+from typing import BinaryIO, cast
 
 # Columns safe to return to a caller — never `stored_name` (an internal disk
 # detail; the download route resolves it from the id).
@@ -43,6 +44,14 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 class AttachmentBlobReference:
     attachment_id: int
     stored_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class PendingAttachment:
+    """An uncommitted metadata row and its already-published blob."""
+
+    attachment: dict
+    blob_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +173,14 @@ def _unlink_blob_path(path: Path) -> None:
     _fsync_directory(path.parent)
 
 
+def _prepare_storage_directory(directory: Path) -> None:
+    """Create the configured root if needed and reject a final-component symlink."""
+    directory.mkdir(parents=True, exist_ok=True)
+    metadata = directory.lstat()
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise NotADirectoryError(f"attachment path is not a directory: {directory}")
+
+
 def _publish_blob(directory: Path, stored_name: str, data: bytes) -> Path:
     """Durably publish bytes through a private, unique sibling staging file."""
     destination = disk_path(directory, stored_name)
@@ -238,10 +255,52 @@ def store(
     removed before the error escapes. The caller validates size/emptiness at the
     boundary. Raises sqlite3.IntegrityError if uploaded_by is not a real user.
     """
+    published: Path | None = None
+    try:
+        pending = insert_and_publish(
+            conn,
+            target_kind=target_kind,
+            target_id=target_id,
+            filename=filename,
+            content_type=content_type,
+            data=data,
+            uploaded_by=uploaded_by,
+            attach_dir=attach_dir,
+        )
+        published = pending.blob_path
+        conn.commit()
+    except BaseException:
+        try:
+            conn.rollback()
+        finally:
+            if published is not None:
+                _unlink_blob_path(published)
+        raise
+    return pending.attachment
+
+
+def insert_and_publish(
+    conn: sqlite3.Connection,
+    *,
+    target_kind: str,
+    target_id: int,
+    filename: str | None,
+    content_type: str | None,
+    data: bytes,
+    uploaded_by: int,
+    attach_dir: str | Path,
+) -> PendingAttachment:
+    """Insert metadata and publish its blob without committing.
+
+    The caller owns the surrounding database transaction and must unlink
+    ``blob_path`` if anything after this function fails. The private publication
+    helper still removes a partial stage or publication when publication itself
+    fails.
+    """
     display = _display_name(filename)
     stored = _stored_name(display)
     directory = Path(attach_dir)
-    directory.mkdir(parents=True, exist_ok=True)
+    _prepare_storage_directory(directory)
     published: Path | None = None
     try:
         cur = conn.execute(
@@ -260,19 +319,15 @@ def store(
             ),
         )
         published = _publish_blob(directory, stored, data)
-        conn.commit()
+        attachment_id = cur.lastrowid
+        assert attachment_id is not None
+        attachment = get(conn, attachment_id)
+        assert attachment is not None
+        return PendingAttachment(attachment=attachment, blob_path=published)
     except BaseException:
-        try:
-            conn.rollback()
-        finally:
-            if published is not None:
-                _unlink_blob_path(published)
+        if published is not None:
+            _unlink_blob_path(published)
         raise
-    attachment_id = cur.lastrowid
-    assert attachment_id is not None
-    attachment = get(conn, attachment_id)
-    assert attachment is not None
-    return attachment
 
 
 def delete(
@@ -284,17 +339,70 @@ def delete(
     already the desired end state. Any other unlink/fsync failure propagates so the
     caller cannot claim full cleanup; reconciliation will report the leftover orphan.
     """
-    stored = get_stored_name(conn, attachment_id)
-    if stored is None:
+    deleted = delete_row(conn, attachment_id)
+    if deleted is None:
         return False
+    _, stored = deleted
     try:
-        conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
     _unlink_blob_path(disk_path(attach_dir, stored))
     return True
+
+
+def delete_row(conn: sqlite3.Connection, attachment_id: int) -> tuple[dict, str] | None:
+    """Delete one metadata row without committing or touching the filesystem."""
+    attachment = get(conn, attachment_id)
+    if attachment is None:
+        return None
+    stored = get_stored_name(conn, attachment_id)
+    assert stored is not None
+    conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+    return attachment, stored
+
+
+def open_blob(
+    attach_dir: str | Path, stored_name: str, *, expected_size: int
+) -> BinaryIO:
+    """Open a regular blob by descriptor without following either final symlink.
+
+    The descriptor is acquired before the response is created, eliminating the
+    pathname check/open race. The caller owns and must close the returned handle.
+    """
+    # Validate the database-held component before passing it to openat(); a corrupt
+    # row must not turn the directory descriptor into a traversal primitive.
+    disk_path(attach_dir, stored_name)
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_only = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_only is None:
+        raise OSError("this platform cannot open attachment blobs without symlinks")
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    directory_descriptor = os.open(
+        Path(attach_dir), os.O_RDONLY | directory_only | no_follow | close_on_exec
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(
+            stored_name,
+            os.O_RDONLY | no_follow | close_on_exec,
+            dir_fd=directory_descriptor,
+        )
+    finally:
+        os.close(directory_descriptor)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError("attachment blob is not a regular file")
+        if metadata.st_size != expected_size:
+            raise OSError("attachment blob size does not match metadata")
+        handle = os.fdopen(descriptor, "rb")
+        descriptor = -1
+        return cast(BinaryIO, handle)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def purge_target(

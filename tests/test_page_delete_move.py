@@ -14,6 +14,7 @@ The contract these encode — why each rule earns its place:
   * both are writes: gated on a real actor (401 anon) against a real page (404).
 """
 
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -146,6 +147,87 @@ def test_delete_purges_orphan_attachments_and_watches_but_keeps_notifications(tm
     assert [
         n["event_id"] for n in notifications.list_notifications(conn, 2)
     ] == events_before
+    conn.close()
+
+
+def test_delete_attempts_index_cleanup_when_blob_unlink_fails(tmp_path, monkeypatch):
+    from athena import config
+    from athena.core import attachments
+
+    conn = _migrated_conn(tmp_path / "unlink-index-cleanup.db")
+    _seed_user(conn)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    page = pages.create_page(
+        conn,
+        space_id=space["id"],
+        title="Residual zebra",
+        body="see [[issue:1]] residual zebra",
+        created_by=1,
+    )
+    attachment = attachments.store(
+        conn,
+        target_kind="page",
+        target_id=page["id"],
+        filename="evidence.txt",
+        content_type="text/plain",
+        data=b"evidence",
+        uploaded_by=1,
+        attach_dir=config.ATTACH_DIR,
+    )
+    stored_name = attachments.get_stored_name(conn, attachment["id"])
+    assert stored_name is not None
+    blob = attachments.disk_path(config.ATTACH_DIR, stored_name)
+    real_unlink = Path.unlink
+
+    def fail_blob_unlink(path: Path, *args, **kwargs) -> None:
+        if path == blob:
+            raise PermissionError("injected page blob cleanup failure")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_blob_unlink)
+    with pytest.raises(attachments.BlobCleanupError):
+        pages.delete_page(conn, page["id"])
+
+    assert pages.get_page(conn, page["id"]) is None
+    assert search.search(conn, "residual zebra") == []
+    assert links.outgoing_links(conn, source_kind="page", source_id=page["id"]) == []
+    assert blob.read_bytes() == b"evidence"
+    report = attachments.reconcile_storage(conn, config.ATTACH_DIR)
+    assert report.orphan_files == (blob.name,)
+    conn.close()
+
+
+def test_delete_isolates_failed_link_cleanup_before_search_cleanup(
+    tmp_path, monkeypatch
+):
+    conn = _migrated_conn(tmp_path / "projection-isolation.db")
+    _seed_user(conn)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    page = pages.create_page(
+        conn,
+        space_id=space["id"],
+        title="Isolated zebra",
+        body="see [[issue:1]] isolated zebra",
+        created_by=1,
+    )
+
+    def fail_after_partial_link_cleanup(
+        target_conn, *, source_kind, source_id, body, commit=False
+    ):
+        assert commit is False
+        target_conn.execute(
+            "DELETE FROM links WHERE source_kind = ? AND source_id = ?",
+            (source_kind, source_id),
+        )
+        raise sqlite3.OperationalError("injected link cleanup failure")
+
+    monkeypatch.setattr(links, "sync_links", fail_after_partial_link_cleanup)
+    with pytest.raises(sqlite3.OperationalError, match="injected link cleanup failure"):
+        pages.delete_page(conn, page["id"])
+
+    assert search.search(conn, "isolated zebra") == []
+    assert links.outgoing_links(conn, source_kind="page", source_id=page["id"]) != []
+    assert conn.in_transaction is False
     conn.close()
 
 
