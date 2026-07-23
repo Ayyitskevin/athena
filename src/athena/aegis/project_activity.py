@@ -121,3 +121,31 @@ def record_project_member_removed(
         target_id=project_id,
         detail=member_name,
     )
+
+
+def record_project_blocked_close_policy_changed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    enabled: bool,
+    commit: bool = True,
+) -> None:
+    """Record a human governance change without naming any blocked issue.
+
+    The command passes commit=False so the durable flag, access envelope,
+    notifications, run lineage, and audit fact share one transaction.
+    """
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="project_blocked_close_policy_changed",
+        target_kind="project",
+        target_id=project_id,
+        detail=(
+            "agent blocked-issue close policy enabled"
+            if enabled
+            else "agent blocked-issue close policy disabled"
+        ),
+        commit=commit,
+    )

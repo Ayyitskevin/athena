@@ -21,6 +21,16 @@ from athena.aegis import statuses
 _KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,9}$")
 
 
+def _row_to_project(row: sqlite3.Row) -> dict:
+    """Return public project values with SQLite's policy bit as a real boolean."""
+    project = dict(row)
+    if "block_agent_closes_when_blocked" in project:
+        project["block_agent_closes_when_blocked"] = bool(
+            project["block_agent_closes_when_blocked"]
+        )
+    return project
+
+
 def normalize_key(key: str) -> str | None:
     """Return the canonical (uppercased) form of a project key, or None if it's not
     a valid key. Callers (the REST API, the web form) turn None into their own
@@ -70,13 +80,13 @@ def create_project(
 
 def get_project(conn: sqlite3.Connection, project_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
-    return dict(row) if row else None
+    return _row_to_project(row) if row else None
 
 
 def get_project_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
     """Look a project up by name (case-insensitive — the column is COLLATE NOCASE)."""
     row = conn.execute("SELECT * FROM projects WHERE name = ?", (name,)).fetchone()
-    return dict(row) if row else None
+    return _row_to_project(row) if row else None
 
 
 def get_project_by_key(conn: sqlite3.Connection, key: str) -> dict | None:
@@ -84,7 +94,7 @@ def get_project_by_key(conn: sqlite3.Connection, key: str) -> dict | None:
     COLLATE NOCASE). Used to resolve an issue ref like "ATH-12" and to detect a
     duplicate key before create returns a 409."""
     row = conn.execute("SELECT * FROM projects WHERE key = ?", (key,)).fetchone()
-    return dict(row) if row else None
+    return _row_to_project(row) if row else None
 
 
 def list_projects(
@@ -107,7 +117,31 @@ def list_projects(
             "ORDER BY name COLLATE NOCASE",
             list(visible_project_ids),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_row_to_project(row) for row in rows]
+
+
+def set_blocked_close_policy(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    enabled: bool,
+    commit: bool = True,
+) -> dict | None:
+    """Set the optional agent blocked-close policy and return the project.
+
+    commit=False lets the governance command fold the flag and its audit event into
+    one transaction. The migration's CHECK constraint remains the storage backstop
+    even though callers pass a real boolean.
+    """
+    cur = conn.execute(
+        "UPDATE projects SET block_agent_closes_when_blocked = ? WHERE id = ?",
+        (1 if enabled else 0, project_id),
+    )
+    if commit:
+        conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_project(conn, project_id)
 
 
 def update_project(

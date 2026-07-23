@@ -193,6 +193,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md) — transparent AI-assisted workflow
 - [docs/RUNS.md](docs/RUNS.md) — run replay, lineage, and forking
 - [docs/AUTOMATION_SCHEDULES.md](docs/AUTOMATION_SCHEDULES.md) — bounded UTC schedules and recovery
+- [docs/WORKFLOW_GATES.md](docs/WORKFLOW_GATES.md) — optional project blocked-close governance
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors

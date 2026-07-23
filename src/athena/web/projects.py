@@ -20,6 +20,7 @@ from athena.aegis import (
     issues,
     project_activity,
     project_commands,
+    project_etags,
     projects,
     sprints,
     statuses,
@@ -337,7 +338,13 @@ def project_access(
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/project_access.html",
-        context={"project": project, "members": members, "addable": addable},
+        context={
+            "project": project,
+            "members": members,
+            "addable": addable,
+            "project_etag": project_etags.current_etag(project),
+            "can_configure_policy": not user.get("is_agent", False),
+        },
     )
 
 
@@ -380,6 +387,60 @@ def project_set_visibility(
             project_id=project_id,
             name=project["name"],
             visibility=visibility,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
+
+
+_PROJECT_POLICY_WEB_STATUS = {
+    "not_found": 404,
+    "forbidden": 403,
+    "precondition_required": 428,
+    "invalid_precondition": 400,
+    "precondition_too_large": 431,
+    "precondition_failed": 412,
+}
+
+
+@router.post("/aegis/projects/{project_id}/policy", dependencies=[Depends(verify_csrf)])
+def project_set_policy(
+    request: Request,
+    project_id: int,
+    block_agent_closes_when_blocked: str = Form(""),
+    if_match: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Configure blocked-close governance through the shared project command."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    value = block_agent_closes_when_blocked.strip().lower()
+    if value not in ("true", "false"):
+        return HTMLResponse(
+            '<div class="error">Policy value must be true or false.</div>',
+            status_code=400,
+        )
+    try:
+        project_commands.set_blocked_close_policy(
+            conn,
+            actor=user,
+            project_id=project_id,
+            enabled=value == "true",
+            if_match=[if_match] if if_match else None,
+        )
+    except project_commands.ProjectPolicyCommandError as exc:
+        detail = exc.detail
+        if exc.kind == "not_found":
+            detail = "No such project."
+        elif exc.kind == "precondition_failed":
+            detail = "Project settings changed. Reload and try again."
+        headers = {"ETag": exc.current_etag} if exc.current_etag is not None else None
+        return HTMLResponse(
+            f'<div class="error">{html.escape(detail)}</div>',
+            status_code=_PROJECT_POLICY_WEB_STATUS[exc.kind],
+            headers=headers,
         )
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 

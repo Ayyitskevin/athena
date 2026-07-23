@@ -37,6 +37,36 @@
 </div>
 
 <div class="form-container">
+    <h3>Agent close policy</h3>
+    <p class="note-small">
+        When enabled, agents cannot close an issue while its canonical blockers remain
+        open. An eligible human issue writer can still make an explicit, audited
+        override. This policy is disabled by default.
+    </p>
+    {% if project.block_agent_closes_when_blocked %}
+    <p><strong>Enabled</strong> — blocked issues are protected from agent closes.</p>
+    {% else %}
+    <p><strong>Disabled</strong> — existing project close behavior is unchanged.</p>
+    {% endif %}
+    {% if can_configure_policy %}
+    <form method="post" action="/aegis/projects/{{ project.id }}/policy"
+          {% if not project.block_agent_closes_when_blocked %}
+          data-confirm="Enable the blocked-issue close policy for {{ project.name }}?"
+          {% endif %}>
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="if_match" value="{{ project_etag }}">
+        <input type="hidden" name="block_agent_closes_when_blocked"
+               value="{{ 'false' if project.block_agent_closes_when_blocked else 'true' }}">
+        <button type="submit" class="button secondary">
+            {{ "Disable policy" if project.block_agent_closes_when_blocked else "Enable policy" }}
+        </button>
+    </form>
+    {% else %}
+    <p class="note-small">Agent identities cannot configure governance policy.</p>
+    {% endif %}
+</div>
+
+<div class="form-container">
     <h3>Members</h3>
     {% if project.visibility == "public" %}
     <p class="note-small">Membership takes effect once the project is private. You can

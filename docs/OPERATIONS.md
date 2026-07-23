@@ -124,6 +124,27 @@ and recorded on the rule (`failure_count`, `last_error`, `last_error_at`), shown
 **Admin → Automation** and returned by `GET /automation/rules`, so a misbehaving rule
 is visible rather than quietly dropping events.
 
+
+## Project Blocked-Close Policy
+
+Migration 0060 adds an optional project policy, disabled by default, that refuses
+agent closes while canonical dependency blockers remain unresolved. Configure it
+from **Project → Access** or with the exact-ETag REST workflow documented in
+[WORKFLOW_GATES.md](WORKFLOW_GATES.md). Only a human project creator/admin can
+change the flag.
+
+Refusals are HTTP 409 with code `blocked_issue_close_policy`; they never include
+blocker identities. Event and scheduled automation preserve the refusal as visible
+rule failure state. An eligible human issue writer can override only through the
+focused issue PATCH/browser confirmation, and the exception is audited in the same
+transaction as the status transition.
+
+Operational recovery is to resolve the blocker, remove an incorrect dependency,
+use the explicit human override, or disable the project policy from a fresh project
+ETag. Before upgrading a material database across 0060, take the normal matched
+database and attachment snapshot. Athena migrations are forward-only; application
+rollback requires restoring the pre-upgrade database with the older build.
+
 ## Single Sign-On (OIDC)
 
 SSO is off only when all four connection settings are unset; in that state the

@@ -646,9 +646,11 @@ def execute_action(
     answers "which rule, fired by which event, in which run" without a schema change.
     That same run id makes the firing idempotent across a crashed pass.
 
-    Event rules preserve their historical fail-soft command behavior. Scheduled target
-    receipts pass ``fail_closed=True`` so a semantic command rejection is retried and
-    remains visible instead of being mistaken for a completed no-op."""
+    Event rules preserve their historical fail-soft behavior for ordinary command
+    errors, but a hard workflow-policy refusal always fails closed and becomes visible
+    rule failure state. Scheduled target receipts pass ``fail_closed=True`` so every
+    semantic command rejection is retried and remains visible instead of being mistaken
+    for a completed no-op."""
     issue = issues.get_issue(conn, event["target_id"])
     if issue is None:
         return False
@@ -717,8 +719,11 @@ def _perform_action(
                 issue_id=issue["id"],
                 status=status,
             )
-        except issue_commands.IssueCommandError:
-            if fail_closed:
+        except issue_commands.IssueCommandError as exc:
+            if (
+                fail_closed
+                or exc.code == issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE
+            ):
                 raise
             return False
         return True

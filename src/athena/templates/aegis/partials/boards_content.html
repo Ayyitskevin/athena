@@ -1,9 +1,14 @@
 <div class="board" aria-live="polite">
-    {% if move_conflict %}
+    {% if move_conflict == "stale" %}
     <div class="error board-conflict" role="alert" tabindex="-1" data-board-conflict>
         <strong>Move not applied.</strong>
         This issue changed after the board loaded. Athena refreshed the board;
         it may no longer match the active filters. Review the current state and try again.
+    </div>
+    {% elif move_conflict == "policy" %}
+    <div class="error board-conflict" role="alert" tabindex="-1" data-board-policy>
+        <strong>Move not applied.</strong>
+        Project workflow policy prevents closing this issue while blockers remain.
     </div>
     {% endif %}
     {% if board_total %}

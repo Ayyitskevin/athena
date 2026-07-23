@@ -68,6 +68,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         description="Export me",
         created_by=owner,
     )
+    projects.set_blocked_close_policy(conn, project["id"], enabled=True)
     access.add_project_member(conn, project["id"], member, owner)
     conn.execute(
         "INSERT INTO sprints (project_id, name, goal, state) VALUES (?, ?, ?, ?)",
@@ -135,6 +136,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
     assert bundle["schema_version"] == 1
     assert bundle["kind"] == "project"
     assert bundle["project"]["key"] == "PORT"
+    assert bundle["project"]["block_agent_closes_when_blocked"] is True
     assert _ids(bundle["issues"]) == [issue_a["id"], issue_b["id"]]
     assert bundle["comments"][0]["body"] == "comment"
     assert bundle["contributors"] == [
