@@ -1,8 +1,25 @@
 # Athena Operations
 
 This is the operator runbook for a local or tailnet Athena deployment. Athena is
-still local-alpha software, so public internet exposure should be a separate,
-deliberate hardening decision.
+still local-alpha software. The checks in this runbook improve failure detection;
+they do not make Athena ready for direct public-internet exposure.
+
+## Supported Runtime and Deployment Shape
+
+Athena currently supports Python 3.12 only: package metadata requires
+`>=3.12,<3.13`, and CI runs on Python 3.12. Do not deploy it under Python 3.11,
+3.13, or an untested alternate interpreter.
+
+The supported deployment is one Athena application process with one uvicorn
+worker, one SQLite database on local storage, and one attachment directory on the
+same host. Access is expected from that trusted machine or a tailnet, optionally
+through an HTTPS reverse proxy. Athena does not currently claim public-internet,
+hostile multi-tenant, multi-process, or high-availability safety.
+
+Exactly one process may own the webhook-delivery and automation runners. There is
+no leader election between processes, and request/login/token rate limiters are
+in-process. A multi-worker experiment must nominate one runner and disable both
+loops everywhere else, but that remains outside the supported deployment shape.
 
 ## Runtime Configuration
 
@@ -30,8 +47,15 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_WEBHOOK_TIMEOUT` | `5` | Cap in seconds on each outbound webhook POST, so one slow receiver cannot stall the loop. |
 | `ATHENA_AUTOMATION` | `true` | Run the in-process automation rules loop. Same single-runner rule as webhook delivery. |
 | `ATHENA_AUTOMATION_INTERVAL` | `5` | Seconds between automation passes. |
-| `ATHENA_ATTACH_DIR` | `attachments` | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are only reachable via the authenticated download route). |
+| `ATHENA_ATTACH_DIR` | `attachments` | Directory for uploaded attachment blobs. Use an absolute path owned by the service user; keep it outside any web-served directory (files are reachable only through the target-visibility-gated download route). |
 | `ATHENA_ATTACH_MAX_BYTES` | `10485760` | Per-attachment size cap (bounded by `ATHENA_MAX_REQUEST_BODY_BYTES`). |
+
+Typed configuration fails closed at import/startup. Boolean settings accept only
+`1`, `true`, `yes`, `on`, `0`, `false`, `no`, or `off` (case-insensitive).
+Integer and floating-point settings must parse, meet their documented minimum,
+and, for floats, be finite. `ATHENA_LOG_LEVEL` must be exactly one of
+`CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG` after case normalization. A
+typo or out-of-range value aborts startup instead of silently selecting a default.
 
 A typical local run:
 
@@ -54,7 +78,10 @@ will refuse to send the login cookie back over HTTP.
 ## Health Checks
 
 - `GET /healthz` is a cheap liveness check and does not touch SQLite.
-- `GET /readyz` opens SQLite and verifies the schema is migrated.
+- `GET /readyz` opens SQLite and requires the database migration ledger to match
+  the exact packaged migration inventory, with no missing, unknown, future, or
+  unpackaged entry and with every applied migration checksum matching its packaged
+  file.
 
 Example:
 
@@ -63,9 +90,10 @@ curl -fsS http://127.0.0.1:8000/healthz
 curl -fsS http://127.0.0.1:8000/readyz
 ```
 
-Migrations run automatically during app startup. A failing `/readyz` usually
-means the app cannot open the configured `ATHENA_DB` path or the schema did not
-finish migrating.
+Migrations run automatically during app startup. A failing `/readyz` means the
+app cannot safely use the configured `ATHENA_DB` path or its migration ledger does
+not match this build. `/readyz` does not run SQLite's full integrity check and does
+not inspect attachment blobs; use `athena-doctor` for those checks.
 
 ## Background Loops (Webhooks and Automation)
 
@@ -73,10 +101,18 @@ Athena runs two in-process background loops: webhook delivery (pushes new
 events to registered webhooks) and the automation rules engine (drains new
 activity events and fires matching rules' actions). Both default on.
 
-Each loop must run in exactly one process per deployment. If you run multiple
-uvicorn workers, keep the loops enabled in one worker and start the others with
-`ATHENA_WEBHOOK_DELIVERY=0` and `ATHENA_AUTOMATION=0` — otherwise webhooks
-double-deliver and rules fire twice.
+Each loop must run in exactly one process per deployment. Athena's supported shape
+is one process and one worker. If an operator deliberately starts multiple
+independent processes, exactly one may retain the default loop settings and every
+other process must start with `ATHENA_WEBHOOK_DELIVERY=0` and
+`ATHENA_AUTOMATION=0`; otherwise webhooks double-deliver and rules fire twice.
+That arrangement remains an operator-managed experiment, not a supported HA mode.
+
+For maintenance, first remove or drain inbound traffic, then ask the process
+manager for a normal graceful stop and wait for the Athena process to exit. The
+FastAPI shutdown path cancels both background tasks together and awaits them.
+Only after the process has exited should you replace the database or attachment
+directory. Do not use an abrupt kill as the normal backup/restore procedure.
 
 A rule's action runs best-effort (at-most-once): a failing action never wedges the
 engine, but it is no longer silent. Each failure is logged at `WARNING` and recorded
@@ -86,9 +122,11 @@ is visible rather than quietly dropping events.
 
 ## Single Sign-On (OIDC)
 
-SSO is off unless all four connection settings are present; until then the SSO
-routes 404 and the login page shows no SSO button. Local email+password login
-keeps working either way — SSO is an additional way to authenticate.
+SSO is off only when all four connection settings are unset; in that state the
+SSO routes 404 and the login page shows no SSO button. Supplying only some of the
+four settings is rejected at startup with the missing variable names. Supplying
+all four enables SSO. Local email+password login remains available — SSO is an
+additional authentication path.
 
 | Variable | Use |
 |----------|-----|
@@ -107,10 +145,18 @@ athena-doctor /var/lib/athena/athena.db \
   --attach-dir /var/lib/athena/attachments
 ```
 
-The command opens the database the same way the app needs to use it, verifies
-SQLite integrity, confirms every packaged migration has been applied, and checks
-that the attachment directory exists and can accept writes. It does not apply
-migrations unless `--migrate` is passed.
+The command runs SQLite's full `PRAGMA integrity_check` and requires the applied
+migration ledger to match the exact packaged inventory and checksums. With
+`--attach-dir`, it also checks that the directory exists, is writable, and
+reconciles its direct entries against the selected database. It fails on missing,
+tampered, size-mismatched, unreadable, or non-regular blobs; orphan files; and an
+unsafe storage root. Symlinks, FIFOs, devices, sockets, and directories are not
+followed or hashed. Findings are reported as category counts, not blob names or
+content.
+
+`athena-doctor` detects but does not repair attachment divergence. Omitting
+`--attach-dir` omits all attachment checks. It does not apply migrations unless
+`--migrate` is passed.
 
 For first install or an intentional offline upgrade:
 
@@ -121,17 +167,50 @@ athena-doctor /var/lib/athena/athena.db --migrate \
 
 Follow the preflight with the service-level `/readyz` check after startup.
 
+## Attachment Storage Integrity
+
+New uploads are written to a private, unique sibling staging file, flushed and
+fsynced, then atomically replaced into their random server-owned name. The
+containing directory is fsynced before the metadata-and-activity transaction
+commits, so a reader that can resolve the committed row never receives a partially
+written blob. Audit, notification, run-binding, insert, write, publication, and
+commit failures roll back SQLite state and synchronously attempt to remove the new
+blob. If that rollback cleanup also fails, both errors surface together and
+reconciliation can detect the residual orphan. Downloads open the
+server-generated name through a descriptor-anchored, no-follow regular-file check
+rather than a pathname check followed by a second open.
+
+SQLite and the filesystem are still separate durability domains. An abrupt
+process or host failure in the narrow publication/commit window can leave an
+orphan file, and external filesystem damage can leave a missing, size-mismatched,
+or checksum-mismatched row. The deterministic reconciliation used by
+`athena-doctor --attach-dir` reports those states and fails closed on symlinks and
+other non-regular entries instead of following or hashing them.
+
+Attachment deletion commits the metadata removal and its activity/notification
+facts together before the filesystem unlink. If unlink or directory sync fails, the
+operation raises rather than silently claiming complete cleanup; the audit event still
+records the committed removal. An unlink failure can leave an orphan for doctor to
+detect; a directory-sync failure after removal still raises because durability is
+uncertain. Hard page deletion attempts blob, outgoing-link, and search cleanup
+independently and reports every failure. Do not manually delete or merge files solely
+from a category count.
+Keep the service stopped, preserve a recovery copy, and reconcile the database
+with the intended attachment snapshot first.
+
 ## Backup and Restore
 
-Use the packaged commands for SQLite snapshots:
+`athena-backup` snapshots only the SQLite database. It does **not** include any
+blob under `ATHENA_ATTACH_DIR`. A database-only snapshot can be taken online:
 
 ```bash
-athena-backup /var/lib/athena/athena.db /backups/athena-$(date +%F).db
+athena-backup /var/lib/athena/athena.db /backups/athena-$(date -u +%F).db
 ```
 
 `athena-backup` uses SQLite's online backup API, so Athena may stay running
-while the backup is taken. It refuses to overwrite an existing backup unless
-`--overwrite` is passed.
+while that database-only backup is taken. It refuses to overwrite an existing
+backup unless `--overwrite` is passed. Such a snapshot is not a complete recovery
+point for an instance that has attachments.
 
 For local retention, keep the newest matching snapshots in the destination
 directory:
@@ -145,16 +224,117 @@ With `--keep`, the default retention glob is `<source-db-stem>-*.db`
 file-name pattern. Retention never walks directories; it only deletes older
 matching sibling files after the new backup succeeds.
 
-Restore while Athena is stopped:
+### Create a complete recovery pair
+
+A complete recovery point is one SQLite snapshot plus the matching attachment
+directory snapshot. To prevent uploads or deletes between the two, drain traffic,
+gracefully stop Athena, and wait for its process and background runners to exit.
+Then capture both under one identifier. For example, with GNU `tar`:
 
 ```bash
-athena-restore /backups/athena-YYYY-MM-DD.db /var/lib/athena/athena.db
+SNAPSHOT_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+SNAPSHOT_DIR="/backups/athena-${SNAPSHOT_ID}"
+mkdir -m 0700 -- "$SNAPSHOT_DIR"
+athena-backup /var/lib/athena/athena.db "$SNAPSHOT_DIR/athena.db"
+tar --create --file "$SNAPSHOT_DIR/attachments.tar" \
+  --directory /var/lib/athena attachments
 ```
 
-`athena-restore` refuses to overwrite an existing database unless `--force` is
-passed. When forcing a restore, it removes stale `-wal` and `-shm` sidecar
-files for the target database before replacing the main file, so a reader can
-never replay the old write-ahead log on top of the restored database.
+An equivalent filesystem snapshot is fine if it preserves the directory tree,
+random stored names, and file bytes. Keep the pair together, record its identifier,
+and store a copy away from the service host. Restart Athena only after the pair is
+complete.
+
+### Restore a matched pair
+
+Restoration is an offline operation. Drain traffic, gracefully stop Athena, and
+wait for the process to exit. Before changing either target, create a separate
+pre-restore recovery pair of the current database and attachment directory. Keep
+that pair until the restored instance has passed operator acceptance.
+
+Select the exact matched snapshot directory first. Set `BACKUP_DIR` in the
+operator shell to that directory; each snippet below refuses to run if it is unset.
+Extract the candidate attachment archive into a new private sibling directory;
+do not merge it into the live directory:
+
+```bash
+: "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
+RESTORE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+RESTORE_STAGE="/var/lib/athena/attachments.restore-${RESTORE_ID}"
+mkdir -m 0700 -- "$RESTORE_STAGE"
+tar --extract --file "$BACKUP_DIR/attachments.tar" \
+  --directory "$RESTORE_STAGE" --strip-components=1
+```
+
+Restore the matching database while Athena remains stopped. An existing target
+requires `--force`:
+
+```bash
+: "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
+athena-restore "$BACKUP_DIR/athena.db" /var/lib/athena/athena.db --force
+```
+
+`athena-restore` first copies the candidate into a private sibling stage, runs
+SQLite `quick_check`, and fsyncs it before touching the target. For a forced
+restore it also takes a consistent recovery snapshot of the current target and
+directory-syncs that recovery name before destructive work. It then removes stale
+`-wal` and `-shm` sidecars, atomically replaces the database, and fsyncs the parent
+directory. If sidecar cleanup or replacement fails, it automatically restores that
+recovery snapshot. The command still exits with the original failure, so do not
+proceed merely because automatic rollback succeeded.
+
+Before swapping attachment directories, reconcile the restored database against
+the candidate stage:
+
+```bash
+athena-doctor /var/lib/athena/athena.db --attach-dir "$RESTORE_STAGE"
+```
+
+If doctor fails, leave the service stopped and restore the explicit pre-restore
+recovery pair. If it passes, rename the old directory aside and move the staged
+directory into place on the same filesystem:
+
+```bash
+CURRENT_ATTACH_DIR=/var/lib/athena/attachments
+PREVIOUS_ATTACH_DIR="/var/lib/athena/attachments.pre-restore-${RESTORE_ID}"
+mv -- "$CURRENT_ATTACH_DIR" "$PREVIOUS_ATTACH_DIR"
+mv -- "$RESTORE_STAGE" "$CURRENT_ATTACH_DIR"
+athena-doctor /var/lib/athena/athena.db --attach-dir "$CURRENT_ATTACH_DIR"
+```
+
+Keep `PREVIOUS_ATTACH_DIR` and the pre-restore database snapshot until acceptance.
+After the final doctor passes, start the single Athena process, wait for startup,
+and then check readiness before restoring traffic:
+
+```bash
+curl -fsS http://127.0.0.1:8000/readyz
+```
+
+### Recover from an interrupted restore
+
+Do not start Athena while the database/attachment pair is uncertain. Preserve all
+candidate, pre-restore, and dot-prefixed recovery files; do not choose one by
+mtime and do not merge attachment trees.
+
+- If `athena-restore` reports an ordinary sidecar-cleanup or replacement failure,
+  it attempted to restore its consistent recovery snapshot. Keep the service stopped and run
+  doctor against the intended original pair before doing anything else.
+- If it says automatic recovery also failed, the error names the consistent
+  recovery copy that was deliberately retained. Do not move or delete it. Prefer
+  restoring the explicit pre-restore database snapshot, then reconcile it against
+  the matching pre-restore attachment directory.
+- If interruption happened after the database restore but before the attachment
+  swap, either complete the staged-pair workflow after doctor passes or roll the
+  database back to the explicit pre-restore snapshot. Never start with the new
+  database and old attachments by accident.
+- If interruption happened between the two attachment renames, the explicit
+  `attachments.pre-restore-*` and `attachments.restore-*` names show both sides.
+  Move the old directory back or finish the candidate move only after selecting
+  the matching database and passing doctor.
+
+The recovery gate remains: stopped service, one known matched pair, doctor against
+the final paths, normal startup, then `/readyz`. A successful check supports this
+local/tailnet recovery procedure; it is not a claim of public deployment readiness.
 
 ## First User Bootstrap
 
@@ -765,17 +945,22 @@ procedure above.
 
 Before leaving laptop-only development:
 
+- Use Python 3.12 and one Athena process/uvicorn worker.
 - Set `ATHENA_DB` to an absolute path owned by the service user.
+- Set `ATHENA_ATTACH_DIR` to an absolute local-storage path owned by the service
+  user and keep it outside every statically served directory.
 - Keep the bind address private: `127.0.0.1` behind a reverse proxy, or a tailnet
   address for tailnet-only use.
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
 - Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads are
   reachable from an untrusted network.
-- If you run multiple worker processes, disable the webhook and automation
-  loops in all but one (see Background Loops).
+- Keep exactly one webhook/automation runner; the supported shape is the single
+  process above (see Background Loops).
 - Keep `/readyz` in the service or reverse-proxy health check.
 - Run `athena-doctor` against the configured database and attachment directory
-  before exposing a restored, moved, or upgraded instance.
-- Run `athena-backup` on the configured SQLite database path and store the
-  snapshot somewhere outside the service host.
+  before returning local/tailnet traffic to a restored, moved, or upgraded
+  instance.
+- Store a matched SQLite snapshot and attachment-directory snapshot away from the
+  service host; `athena-backup` alone does not include attachment blobs.
+- Do not treat this checklist as approval for direct public-internet exposure.

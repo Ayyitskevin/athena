@@ -1,8 +1,10 @@
 # Changelog
 
 Notable changes to Athena are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and release versions
-follow semantic versioning while the project remains pre-1.0.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and package version
+markers follow semantic versioning while the project remains pre-1.0. As of
+2026-07-23, Athena has no tags or GitHub releases: version-like headings below are
+untagged package/development milestones, not published releases.
 
 ## [Unreleased]
 
@@ -37,6 +39,11 @@ follow semantic versioning while the project remains pre-1.0.
 - A public roadmap (`docs/ROADMAP.md`) grounded in a full-codebase review:
   phased plans for the agent loop, run integrity, docs-as-agent-memory, and
   fleet operations.
+- Deterministic attachment reconciliation for local/tailnet operations, reporting
+  missing, checksum-tampered, size-mismatched, unreadable, non-regular, and orphan
+  storage without following symlinks or hashing FIFOs/devices/sockets. Doctor can
+  run the reconciliation against a selected database and attachment directory and
+  reports bounded category counts rather than blob names or content.
 
 ### Changed
 
@@ -50,6 +57,21 @@ follow semantic versioning while the project remains pre-1.0.
   (issue status "canonical set", webhook payload/event parity, JWKS caching,
   comment cross-link rendering), and removed operator-environment references
   from the contributor docs. Research planning notes moved to `docs/research/`.
+- Made Python 3.12 the only supported runtime and changed boolean, numeric,
+  floating-point, log-level, and partial OIDC configuration errors to abort startup
+  instead of silently accepting an unsafe value or incomplete identity setup.
+- Hardened `/readyz` and `athena-doctor` to validate the exact packaged migration
+  inventory and applied checksums. Doctor additionally runs SQLite integrity and,
+  when `--attach-dir` is supplied, attachment reconciliation.
+- Staged database restore candidates through SQLite `quick_check`, durable atomic
+  replacement, and automatic recovery of an existing target after sidecar cleanup or
+  swap failure. Recovery names are directory-synced before destructive work and all
+  candidate stages are cleaned on failure. Operations guidance now treats SQLite plus
+  its matched attachment-directory snapshot as the complete stopped-service recovery
+  unit.
+- Graceful application shutdown now cancels both in-process background runners,
+  awaits both, and surfaces non-cancellation failures. The supported deployment
+  remains one process/runner on a trusted local machine or tailnet.
 
 ### Fixed
 
@@ -62,8 +84,16 @@ follow semantic versioning while the project remains pre-1.0.
   an overflow while running it.
 - Searching within a saved filter now preserves the filter's own title/body text
   constraint instead of replacing it with the ad-hoc query.
+- Attachment publication now uses a private same-directory stage, file and
+  directory fsync, and atomic replacement before one metadata-plus-audit commit.
+  Audit, notification, run-binding, write, and commit failures roll back and
+  attempt blob cleanup; a cleanup failure is surfaced alongside the primary error
+  for reconciliation. Deletion commits metadata plus audit before observable
+  post-commit unlink. Downloads open regular blobs through descriptor-anchored,
+  no-follow paths, and hard page delete
+  attempts each blob/link/search cleanup independently.
 
-## [0.1.0a1] - 2026-07-18
+## 0.1.0a1 development milestone (untagged) — 2026-07-18
 
 ### Added
 
@@ -88,7 +118,7 @@ follow semantic versioning while the project remains pre-1.0.
   depth; REST and web adapters remain early gates.
 - Advanced package metadata to the `0.1.0a1` review-candidate line.
 
-## [0.0.1]
+## 0.0.1 development milestone (untagged)
 
 Initial local-alpha development line: Aegis issues, Mentor documentation,
 cross-links, scoped agent access, MCP, activity/run lineage, portability,

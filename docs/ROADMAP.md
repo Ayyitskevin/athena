@@ -16,21 +16,24 @@ fleet coordination last.
 
 ## Where the loop stands
 
-The operator loop is **Assign → Work → Observe → Intervene**. Today:
+The operator loop is **Assign → Work → Observe → Intervene**. Current state:
 
-- **Observe** is the strongest leg: an append-only activity trail with run ids,
-  parent runs, fork lineage, run reconstruction, replay export, webhooks, and a
-  Mission Control view.
-- **Intervene** has the nuclear levers (token kill switch, one-command
-  offboard) but nothing softer.
-- **Assign** works (delegation inbox with machine-readable warnings) but the
-  loop breaks at the last step: permissions don't yet let a delegated agent
-  *finish* the work it was handed.
-- **Work** over MCP functions, but writes arrive untagged: the MCP transport
-  does not yet send run headers, so the lineage machinery cannot see the
-  primary agent path.
+- **Assign** spans the delegation inbox, durable claim/lease ownership,
+  possession-generation fencing, and typed blocker handoffs. The current holder
+  can complete, yield, or decline work without a human performing every final
+  transition.
+- **Work** over MCP carries run and parent/fork identity on writes. Agents can
+  inspect effective identity and scopes, delegation context, replay artifacts,
+  active-work supervision, and visibility-safe fleet metrics through MCP.
+- **Observe** combines the append-only activity trail with bound run identity,
+  parent/fork lineage, run reconstruction, replay export, webhooks, Mission
+  Control, active-work state, and throughput metrics.
+- **Intervene** includes token revocation, one-command offboard, audited
+  per-agent pause, and holder/admin claim controls. Durable budgets, approvals,
+  and optional project-specific hard workflow gates remain outside that claim.
 
-Phase 1 exists to close exactly those breaks.
+Phase 1 closed the original attribution and delegated-completion breaks. Items
+that remain intentionally open are still unchecked below.
 
 ## Phase 1 — Close the loop (agents become first-class, attributed workers)
 
@@ -41,15 +44,15 @@ operator can replay the run.
 - [x] Thread run identity through the MCP transport: a per-session run id
       (environment) plus optional per-call override, mapped to the
       `X-Athena-Run` / `X-Athena-Parent-Run` / `X-Athena-Fork-From-Event`
-      headers the API already honors. *(The single highest-leverage change in
-      the repo: today MCP writes are invisible to run lineage and replay.)*
+      headers the API already honors, so MCP writes participate in the same run
+      lineage and replay path as direct REST writes.
 - [x] Fix the delegation dead-end: allow a delegated contributor to transition
       the issue delegated to it (with an admin override), so the flagship
       Assign → Work flow completes without a human performing every status
       change.
-- [x] Require explicit scopes when minting tokens (today an omitted `scopes`
-      silently mints **admin** — a fail-open default in an agent-credential
-      product). Legacy stored tokens keep their meaning.
+- [x] Require explicit scopes when minting tokens, eliminating the former
+      fail-open **admin** default in an agent-credential product. Legacy stored
+      tokens keep their meaning.
 - [x] Audited agent onboarding: one atomic admin command that mints a scoped
       token for an agent user, surfaced in the admin cockpit — provisioning
       should be as one-click and audited as revocation already is.
@@ -68,16 +71,16 @@ success) is observable, and the operator gets levers between "watch" and
 "revoke everything".
 
 - [x] Bind a run id to the first identity that uses it; reject writes that try
-      to stamp into another identity's run. *(Run ids are honor-system today —
-      replay artifacts should be evidence, not convention.)*
+      to stamp into another identity's run. Replay artifacts are therefore
+      evidence tied to an identity, not an honor-system convention.
 - [x] Per-agent **pause** (checked at identity resolution, audited, toggleable
       in the cockpit) — the lever an operator reaches for before the kill
       switch.
 - [x] Audit authentication/authorization *failures*: failed logins,
-      revoked-token use, and scope denials become activity events. An agent
-      probing its boundary currently leaves no trace.
-- [x] Audit the project lifecycle (create/edit/delete) — today a workspace
-      container can appear or vanish with no record of who did it.
+      revoked-token use, and scope denials are recorded as activity events,
+      including rejected boundary probes.
+- [x] Audit the project lifecycle (create/edit/delete), recording who created,
+      changed, or removed each workspace container.
 - [x] Give automation lineage: stamp rule-driven writes with the triggering
       event and rule, and make the comment action idempotent across a crashed
       pass.
@@ -96,13 +99,12 @@ knowledge graph the database already stores.
 - [x] Page optimistic concurrency: ETag / `If-Match` parity with issues on page
       edits (REST + MCP), so two agents editing shared memory get a clean 412
       instead of silent last-write-wins.
-- [x] Page soft-delete (`archived_at`, matching issues) — today one call
-      permanently destroys a page, its versions, and its comments.
+- [x] Page soft-delete (`archived_at`, matching issues), preserving page
+      versions and comments for restore instead of destroying them.
 - [x] Complete the Mentor command migration: atomic mutation + audit for page
       create/edit/move/delete/restore and space lifecycle.
-- [x] Knowledge-graph MCP tools: backlinks, outgoing links, page versions and
-      restore, space-scoped search — the graph exists; agents can't walk it
-      yet.
+- [x] Knowledge-graph MCP tools: backlinks, outgoing links, page-version
+      history/restore, and space-scoped search, so agents can traverse the graph.
 - [x] Title-based addressing: `[[Page Title]]` resolution and a
       fetch-by-title API/tool. Numeric ids are exactly the lookup agents are
       worst at.
@@ -131,10 +133,15 @@ agents that contribute here.
       Legacy and imported ambiguity remains explicit rather than a guessed backfill.
 - [ ] Time/schedule-based automation triggers (stale-issue nudges, sprint-end
       sweeps) alongside event triggers.
-- [ ] Mechanical guardrails: import-linter contracts for module boundaries,
-      mypy on `src/`, and a coverage gate in CI.
+- [x] Mechanical guardrails: Ruff lint and formatting checks, static import
+      contracts, mypy across every runtime module in `src/athena`, and a
+      full-source coverage gate with configured line and branch floors.
 - [ ] Optional per-project hard workflow gates for agent actors (block closing
       blocked issues at the command layer, not just as web advisory).
+
+Checked boxes record repository implementation, not release status. They do not
+assert a successful hosted-CI run for the current production-readiness changes
+or that Athena is production-ready; deployment and release sign-off are separate.
 
 ## Out of scope (for now)
 

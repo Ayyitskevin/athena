@@ -11,20 +11,96 @@ contract, product north star, and design of record.
 
 ## Development setup
 
-Athena requires Python 3.12 or newer. From a clean checkout:
+Athena supports Python 3.12 (`>=3.12,<3.13`). It is the only Python version
+verified in CI. From a clean checkout, run the required gate:
 
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
+.venv/bin/python -m pip check
+.venv/bin/python -m pip freeze --exclude-editable \
+  | diff -u constraints/ci-py312.txt -
 .venv/bin/python -m ruff check .
-.venv/bin/python -m pytest -q -n 4
-.venv/bin/python scripts/smoke_app.py
+.venv/bin/python -m ruff format --check .
+.venv/bin/python -m mypy src/athena
+.venv/bin/python scripts/check_import_contracts.py
+scripts/coverage.sh
 ```
 
-The constraints file reproduces the supported Linux/Python 3.12 CI graph. It
-is a CI snapshot, not a promise that every supported platform uses identical
-wheels.
+The constraints file is the exact verified Linux/Python 3.12 CI graph. The
+freeze diff rejects dependency drift; `pip check` rejects incompatible
+installed metadata. `scripts/coverage.sh` runs the complete test suite with
+full-source branch coverage, writes evidence outside the checkout, and enforces
+the floors configured in `pyproject.toml`.
+
+### Packaging and outside-checkout smoke
+
+CI's final gate validates distribution artifacts instead of importing Athena
+from the checkout. Run this Bash recipe from the repository root after the gate
+above:
+
+```bash
+set -euo pipefail
+repo_root="$(pwd -P)"
+dist_root="$(mktemp -d "${TMPDIR:-/tmp}/athena-dist.XXXXXX")"
+
+.venv/bin/python -m build --sdist --outdir "$dist_root/artifacts" .
+
+shopt -s nullglob
+sdists=("$dist_root"/artifacts/*.tar.gz)
+if (( ${#sdists[@]} != 1 )); then
+  echo "expected exactly one source distribution" >&2
+  exit 1
+fi
+mkdir -p "$dist_root/source"
+.venv/bin/python -c \
+  'import pathlib, sys, tarfile; tarfile.open(sys.argv[1]).extractall(pathlib.Path(sys.argv[2]), filter="data")' \
+  "${sdists[0]}" "$dist_root/source"
+source_trees=("$dist_root"/source/athena-*)
+if (( ${#source_trees[@]} != 1 )); then
+  echo "expected exactly one extracted source tree" >&2
+  exit 1
+fi
+.venv/bin/python -m build --wheel \
+  --outdir "$dist_root/artifacts" \
+  "${source_trees[0]}"
+wheels=("$dist_root"/artifacts/*.whl)
+if (( ${#wheels[@]} != 1 )); then
+  echo "expected exactly one wheel built from the source distribution" >&2
+  exit 1
+fi
+if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" ]] \
+  || [[ ! -f "${source_trees[0]}/scripts/smoke_app.py" ]] \
+  || [[ ! -f "${source_trees[0]}/scripts/check_import_contracts.py" ]]; then
+  echo "source distribution is missing its verification helpers" >&2
+  exit 1
+fi
+
+.venv/bin/python scripts/verify_wheel.py "${wheels[0]}"
+.venv/bin/python \
+  "${source_trees[0]}/scripts/verify_wheel.py" \
+  "${wheels[0]}"
+.venv/bin/python \
+  "${source_trees[0]}/scripts/check_import_contracts.py"
+sha256sum "${sdists[0]}" "${wheels[0]}"
+
+.venv/bin/python -m pip uninstall --yes athena
+.venv/bin/python -m pip install --no-deps "${wheels[0]}"
+.venv/bin/python -m pip check
+(
+  cd /tmp
+  "$repo_root/.venv/bin/python" -c \
+    'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
+  "$repo_root/.venv/bin/python" \
+    "${source_trees[0]}/scripts/smoke_app.py"
+)
+```
+
+This intentionally replaces the editable Athena install in `.venv` with the
+built wheel. Re-run the constrained editable install before continuing normal
+development. The temporary distribution directory remains outside the checkout
+as inspectable evidence.
 
 To inspect a populated local instance without inventing data in the web layer:
 
@@ -41,7 +117,7 @@ login, and starts Athena. It refuses to overwrite an existing path.
    `claude/<topic>`, or `grok/<topic>`.
 2. Keep one logical change in the branch.
 3. Add tests that explain the invariant being protected.
-4. Run Ruff, the complete test suite, and the real-process smoke test.
+4. Run the complete required local gate above.
 5. Open a pull request using the repository template. State the user-visible
    outcome, boundaries, verification, and any AI assistance.
 
