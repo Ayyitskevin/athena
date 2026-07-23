@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
 build/
 dist/
 wheelhouse/

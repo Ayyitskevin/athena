@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,8 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - name: Create isolated test environment
@@ -28,12 +33,22 @@ jobs:
           .venv/bin/python -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
       - name: Lint
         run: .venv/bin/python -m ruff check .
+      - name: Check formatting
+        run: .venv/bin/python -m ruff format --check .
+      - name: Type-check every runtime module
+        run: .venv/bin/python -m mypy src/athena
       - name: Check import contracts
         run: .venv/bin/python scripts/check_import_contracts.py
-      - name: Run tests
-        # -n 4: the suite is deterministic (no sleeps, per-test tmp databases) and
-        # parallelizes cleanly — this cuts the gate from ~16 min to ~3-4 min.
-        run: .venv/bin/python -m pytest -q -n 4
+      - name: Run required tests with full-source branch coverage
+        run: scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
+      - name: Upload coverage evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-python-3.12
+          path: ${{ runner.temp }}/athena-coverage
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
       - name: Build and install through the source distribution
         run: |
           set -euo pipefail

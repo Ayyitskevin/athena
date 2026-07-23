@@ -144,7 +144,6 @@ def test_reads_are_also_stamped_but_recorded_nowhere(tmp_path):
 
 
 def test_server_begin_run_and_current_run_tools(tmp_path):
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -175,7 +174,6 @@ def test_entrypoint_defaults_to_a_fresh_mcp_run_id(monkeypatch):
     # main() must attribute sessions BY DEFAULT: ATHENA_RUN_ID wins when set,
     # otherwise a fresh mcp-<hex> id is minted. Intercept AthenaClient and the
     # server runner so no network or stdio happens.
-    pytest.importorskip("mcp")
     from athena.mcp import server as server_module
 
     captured: dict = {}

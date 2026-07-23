@@ -913,7 +913,6 @@ def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
 def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
     # WHY: the fleet board's actor lanes also need an agent-facing query. Exercise
     # FastMCP -> client -> REST and prove sprint filtering retains True/False/None.
-    pytest.importorskip("mcp")
     import asyncio
     import json
 
@@ -1033,7 +1032,6 @@ def test_error_surfaces_status_and_detail(tmp_path):
     ids=[case[0] for case in MCP_MUTATION_CASES],
 )
 def test_every_mcp_mutation_forwards_the_optional_key(tool_name, arguments):
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1058,7 +1056,6 @@ def test_every_mcp_mutation_forwards_the_optional_key(tool_name, arguments):
     ids=[case[0] for case in MCP_IF_MATCH_CASES],
 )
 def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1099,7 +1096,6 @@ def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
     ],
 )
 def test_mcp_claim_and_yield_schema_rejects_before_dispatch(tool_name, arguments):
-    pytest.importorskip("mcp")
     import asyncio
 
     from mcp.server.fastmcp.exceptions import ToolError
@@ -1118,7 +1114,6 @@ def test_mcp_claim_and_yield_schema_rejects_before_dispatch(tool_name, arguments
     ["", "contains space", "é", "x" * 256],
 )
 def test_mcp_schema_rejects_invalid_idempotency_keys_before_dispatch(invalid_key):
-    pytest.importorskip("mcp")
     import asyncio
 
     from mcp.server.fastmcp.exceptions import ToolError
@@ -1155,7 +1150,6 @@ def test_mcp_schema_rejects_invalid_idempotency_keys_before_dispatch(invalid_key
 def test_mcp_schema_rejects_invalid_heartbeat_run_ids_before_dispatch(
     invalid_run_id,
 ):
-    pytest.importorskip("mcp")
     import asyncio
 
     from mcp.server.fastmcp.exceptions import ToolError
@@ -1176,7 +1170,6 @@ def test_mcp_schema_rejects_invalid_heartbeat_run_ids_before_dispatch(
 
 
 def test_mcp_error_text_preserves_structured_retry_metadata():
-    pytest.importorskip("mcp")
     import asyncio
     import json
 
@@ -1204,7 +1197,6 @@ def test_mcp_error_text_preserves_structured_retry_metadata():
 
 
 def test_work_context_mcp_tool_forwards_only_the_issue_ref():
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1218,7 +1210,6 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
 
 
 def test_list_issues_mcp_tool_forwards_sprint():
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1235,7 +1226,6 @@ def test_list_issues_mcp_tool_forwards_sprint():
 
 
 def test_mcp_server_registers_tools_and_calls_through(tmp_path):
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server
@@ -1496,7 +1486,6 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
 
 
 def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
-    pytest.importorskip("mcp")
     import asyncio
     import json
 

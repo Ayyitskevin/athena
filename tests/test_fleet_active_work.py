@@ -748,7 +748,6 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
 
 
 def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
-    pytest.importorskip("mcp")
     from athena.mcp.server import build_server
 
     db_file = tmp_path / "mcp.db"
