@@ -1066,7 +1066,6 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         )
         assert through_client == rest
 
-        pytest.importorskip("mcp")
         from athena.mcp.server import build_server
 
         server = build_server(AthenaClient(client=client))
@@ -1448,7 +1447,6 @@ def test_history_cap_rejects_instead_of_returning_partial_cycle_time(
 
 
 def test_mcp_metrics_rejects_non_strict_numbers_before_dispatch():
-    pytest.importorskip("mcp")
     from mcp.server.fastmcp.exceptions import ToolError
 
     from athena.mcp.server import build_server

@@ -53,7 +53,6 @@ def test_whoami_reports_identity_scopes_and_active_run(tmp_path):
 
 
 def test_whoami_tool_merges_identity_with_the_current_run(tmp_path):
-    pytest.importorskip("mcp")
     import asyncio
 
     from athena.mcp.server import build_server

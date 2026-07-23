@@ -1,2 +1,2 @@
 # Contributor-facing verification helpers referenced by README and the test suite.
-recursive-include scripts *.py
+recursive-include scripts *.py *.sh

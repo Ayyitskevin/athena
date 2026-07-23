@@ -5,7 +5,7 @@ description = "Self-hosted operator workspace: docs, tasks, and cross-links — 
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
@@ -30,16 +30,18 @@ dependencies = [
 # Starlette's TestClient prefers httpx2. Keep httpx too: Athena's MCP client
 # imports it directly and the MCP SDK requires it.
 # `mcp` is included here (not just in the standalone extra below) on purpose: the
-# suite has tests that exercise the real MCP server wiring, and they pytest.skip
-# when the SDK is absent. AGENTS.md tells every contributor a green local
-# `pytest -q` is the gate — so if `[dev]` didn't pull the SDK, a broken agent
-# interface (the product's differentiator) would pass a local run as skipped-not-run.
-# Installing `[dev]` therefore exercises server.py the same way CI does.
+# suite has tests that exercise the real MCP server wiring. Those tests import the
+# SDK directly, so an incomplete `[dev]` environment fails instead of reporting a
+# green run with the product differentiator skipped. Installing `[dev]` therefore
+# exercises server.py the same way CI does.
 # pytest-xdist: the suite is deterministic (no time.sleep, Barrier-coordinated
 # races, per-test tmp_path databases), so it parallelizes cleanly — `pytest -n 4`
 # cuts the gate from ~16 min to ~3 min. Plain `pytest -q` remains valid.
 dev = [
-    "build>=1.5,<2",
+    "build>=1.5,<1.5.1",
+    "coverage>=7.15,<8",
+    "mypy>=2.3,<3",
+    "pytest-cov>=7.1,<8",
     "pytest",
     "pytest-xdist>=3.5,<4",
     "httpx",
@@ -71,7 +73,7 @@ Repository = "https://github.com/Ayyitskevin/athena"
 Issues = "https://github.com/Ayyitskevin/athena/issues"
 
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
@@ -96,3 +98,28 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/athena"]
+check_untyped_defs = true
+no_implicit_optional = true
+show_error_codes = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = ["src/athena"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = false
+
+[tool.athena.coverage]
+line_floor = 92.37
+branch_floor = 81.15
+combined_floor = 89.81
+excluded_line_count = 2

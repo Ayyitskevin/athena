@@ -546,7 +546,6 @@ def test_mcp_client_is_a_thin_rest_client():
 
 
 def test_fastmcp_delegation_tool_forwards_and_enforces_bounds():
-    pytest.importorskip("mcp")
     from mcp.server.fastmcp.exceptions import ToolError
 
     from athena.mcp.server import build_server
