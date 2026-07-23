@@ -575,6 +575,299 @@ def test_download_rejects_symlinked_blob(tmp_path):
         assert outside.read_bytes() == b"do not disclose"
 
 
+def test_attachment_commands_reject_unsafe_context_and_invisible_targets(tmp_path):
+    conn = _storage_conn(tmp_path)
+    attach_dir = tmp_path / "command-rejections"
+    actor = {"id": 1, "role": "admin"}
+
+    conn.execute("BEGIN")
+    with pytest.raises(RuntimeError, match="require a fresh connection"):
+        attachment_commands.create_attachment(
+            conn,
+            actor=actor,
+            target_kind="issue",
+            target_id=999,
+            filename="nested.bin",
+            content_type="application/octet-stream",
+            data=b"rejected",
+            attach_dir=attach_dir,
+        )
+    conn.rollback()
+
+    with pytest.raises(attachment_commands.AttachmentCommandError) as invalid:
+        attachment_commands.create_attachment(
+            conn,
+            actor=actor,
+            target_kind="unknown",
+            target_id=1,
+            filename="invalid.bin",
+            content_type="application/octet-stream",
+            data=b"rejected",
+            attach_dir=attach_dir,
+        )
+    assert invalid.value.status_code == 422
+
+    with pytest.raises(attachment_commands.AttachmentCommandError) as hidden:
+        attachment_commands.create_attachment(
+            conn,
+            actor=actor,
+            target_kind="issue",
+            target_id=999,
+            filename="hidden.bin",
+            content_type="application/octet-stream",
+            data=b"rejected",
+            attach_dir=attach_dir,
+        )
+    assert hidden.value.status_code == 404
+
+    with pytest.raises(attachment_commands.AttachmentCommandError) as missing:
+        attachment_commands.remove_attachment(
+            conn,
+            actor=actor,
+            attachment_id=999,
+            attach_dir=attach_dir,
+        )
+    assert missing.value.status_code == 404
+
+    issue_id = conn.execute(
+        "INSERT INTO issues (title, created_by) VALUES ('visible', 1)"
+    ).lastrowid
+    assert issue_id is not None
+    conn.execute("INSERT INTO users (email, name) VALUES ('other@e.com', 'Other')")
+    conn.commit()
+    attachment = attachments.store(
+        conn,
+        target_kind="issue",
+        target_id=issue_id,
+        filename="owned.bin",
+        content_type="application/octet-stream",
+        data=b"owned",
+        uploaded_by=1,
+        attach_dir=attach_dir,
+    )
+
+    with pytest.raises(attachment_commands.AttachmentCommandError) as forbidden:
+        attachment_commands.remove_attachment(
+            conn,
+            actor={"id": 2, "role": "member"},
+            attachment_id=attachment["id"],
+            attach_dir=attach_dir,
+        )
+    assert forbidden.value.status_code == 403
+    assert attachments.get(conn, attachment["id"]) is not None
+    conn.close()
+
+
+def test_attachment_command_reports_audit_and_blob_rollback_failures(
+    tmp_path, monkeypatch
+):
+    conn = _storage_conn(tmp_path)
+    issue_id = conn.execute(
+        "INSERT INTO issues (title, created_by) VALUES ('target', 1)"
+    ).lastrowid
+    assert issue_id is not None
+    conn.commit()
+    attach_dir = tmp_path / "double-failure"
+
+    def fail_audit(*args, **kwargs):
+        raise RuntimeError("injected audit failure")
+
+    def fail_cleanup(*args, **kwargs):
+        raise OSError("injected blob rollback failure")
+
+    monkeypatch.setattr(attachment_commands.activity, "record", fail_audit)
+    monkeypatch.setattr(attachments, "unlink_blobs", fail_cleanup)
+
+    with pytest.raises(BaseExceptionGroup) as raised:
+        attachment_commands.create_attachment(
+            conn,
+            actor={"id": 1, "role": "admin"},
+            target_kind="issue",
+            target_id=issue_id,
+            filename="evidence.bin",
+            content_type="application/octet-stream",
+            data=b"evidence",
+            attach_dir=attach_dir,
+        )
+
+    assert [str(error) for error in raised.value.exceptions] == [
+        "injected audit failure",
+        "injected blob rollback failure",
+    ]
+    assert conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    assert len(list(attach_dir.iterdir())) == 1
+    conn.close()
+
+
+def test_insert_and_publish_removes_blob_when_post_publish_lookup_fails(
+    tmp_path, monkeypatch
+):
+    conn = _storage_conn(tmp_path)
+    attach_dir = tmp_path / "post-publish-failure"
+    monkeypatch.setattr(attachments, "get", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(AssertionError):
+        _store_blob(conn, attach_dir, data=b"must not survive")
+
+    assert conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0] == 0
+    assert list(attach_dir.iterdir()) == []
+    conn.close()
+
+
+def test_delete_handles_missing_rows_commit_failure_and_idempotent_unlink(tmp_path):
+    conn = _storage_conn(tmp_path)
+    attach_dir = tmp_path / "delete-boundaries"
+    assert attachments.delete(conn, 999, attach_dir) is False
+
+    stored = _store_blob(conn, attach_dir)
+    stored_name = attachments.get_stored_name(conn, stored["id"])
+    assert stored_name is not None
+    blob = attachments.disk_path(attach_dir, stored_name)
+    conn.fail_commit = True
+    with pytest.raises(sqlite3.OperationalError, match="injected commit failure"):
+        attachments.delete(conn, stored["id"], attach_dir)
+
+    conn.fail_commit = False
+    assert attachments.get(conn, stored["id"]) is not None
+    assert blob.read_bytes() == b"hello"
+    assert attachments.delete(conn, stored["id"], attach_dir) is True
+    assert attachments.get(conn, stored["id"]) is None
+    assert not blob.exists()
+    attachments.unlink_blobs(attach_dir, [stored_name])
+    conn.close()
+
+
+def test_open_blob_rejects_invalid_size_fifo_and_unsupported_platform(
+    tmp_path, monkeypatch
+):
+    conn = _storage_conn(tmp_path)
+    attach_dir = tmp_path / "descriptor-open"
+    stored = _store_blob(conn, attach_dir, data=b"regular")
+    stored_name = attachments.get_stored_name(conn, stored["id"])
+    assert stored_name is not None
+    blob = attachments.disk_path(attach_dir, stored_name)
+
+    with pytest.raises(ValueError, match="invalid attachment stored name"):
+        attachments.open_blob(attach_dir, "../escape", expected_size=1)
+    with pytest.raises(OSError, match="size does not match metadata"):
+        attachments.open_blob(attach_dir, stored_name, expected_size=999)
+
+    blob.unlink()
+    os.mkfifo(blob)
+    with pytest.raises(OSError, match="not a regular file"):
+        attachments.open_blob(attach_dir, stored_name, expected_size=0)
+    blob.unlink()
+
+    monkeypatch.delattr(attachments.os, "O_NOFOLLOW")
+    with pytest.raises(OSError, match="cannot open attachment blobs without symlinks"):
+        attachments.open_blob(attach_dir, stored_name, expected_size=0)
+    conn.close()
+
+
+def test_download_uses_rfc5987_for_non_ascii_filename(tmp_path):
+    app, _ = _app(tmp_path, "unicode-download.db")
+    with TestClient(app) as client:
+        _admin(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        attachment = client.post(
+            f"/issues/{issue['id']}/attachments",
+            files=_file(name="résumé 2026.txt", data=b"cv"),
+            headers=H1,
+        ).json()
+
+        response = client.get(f"/attachments/{attachment['id']}")
+
+        assert response.status_code == 200
+        assert response.headers["content-disposition"] == (
+            "attachment; filename*=utf-8''r%C3%A9sum%C3%A9%202026.txt"
+        )
+
+
+def test_reconcile_storage_reports_corrupt_rows_and_root_types(tmp_path):
+    conn = _storage_conn(tmp_path)
+    conn.execute(
+        "INSERT INTO attachments "
+        "(target_kind, target_id, filename, content_type, byte_size, sha256, "
+        "stored_name, uploaded_by) VALUES ('issue', 1, 'bad', 'text/plain', 0, "
+        "?, '../invalid', 1)",
+        ("0" * 64,),
+    )
+    conn.commit()
+    attach_dir = tmp_path / "missing-root"
+
+    missing_root = attachments.reconcile_storage(conn, attach_dir)
+    assert missing_root.missing == ()
+    assert [(item.stored_name, item.reason) for item in missing_root.unreadable] == [
+        ("../invalid", "invalid_stored_name")
+    ]
+    assert missing_root.storage_root_problem is None
+
+    attach_dir.write_bytes(b"not a directory")
+    wrong_type = attachments.reconcile_storage(conn, attach_dir)
+    assert wrong_type.storage_root_problem == "non_regular"
+    conn.close()
+
+
+def test_reconcile_storage_reports_root_io_and_hash_races(tmp_path, monkeypatch):
+    conn = _storage_conn(tmp_path)
+    attach_dir = tmp_path / "reconcile-races"
+    stored = _store_blob(conn, attach_dir, data=b"stable")
+    stored_name = attachments.get_stored_name(conn, stored["id"])
+    assert stored_name is not None
+
+    real_open = attachments.os.open
+
+    def fail_root_open(path, flags, *args, **kwargs):
+        if Path(path) == attach_dir:
+            raise PermissionError(13, "injected root open failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(attachments.os, "open", fail_root_open)
+    root_failure = attachments.reconcile_storage(conn, attach_dir)
+    assert root_failure.storage_root_problem == "os_error:13"
+    monkeypatch.setattr(attachments.os, "open", real_open)
+
+    real_scandir = attachments.os.scandir
+
+    def fail_scandir(*args, **kwargs):
+        raise PermissionError(13, "injected scandir failure")
+
+    monkeypatch.setattr(attachments.os, "scandir", fail_scandir)
+    scan_failure = attachments.reconcile_storage(conn, attach_dir)
+    assert scan_failure.storage_root_problem == "os_error:13"
+    monkeypatch.setattr(attachments.os, "scandir", real_scandir)
+
+    def vanished(*args, **kwargs):
+        raise FileNotFoundError("injected hash race")
+
+    monkeypatch.setattr(attachments, "_hash_regular_entry", vanished)
+    vanished_report = attachments.reconcile_storage(conn, attach_dir)
+    assert [item.attachment_id for item in vanished_report.missing] == [stored["id"]]
+
+    def unreadable(*args, **kwargs):
+        raise PermissionError(13, "injected hash read failure")
+
+    monkeypatch.setattr(attachments, "_hash_regular_entry", unreadable)
+    unreadable_report = attachments.reconcile_storage(conn, attach_dir)
+    assert [item.reason for item in unreadable_report.unreadable] == ["os_error:13"]
+
+    monkeypatch.setattr(
+        attachments,
+        "_hash_regular_entry",
+        lambda *_args, **_kwargs: attachments.AttachmentNonRegularEntry(
+            attachment_id=None,
+            stored_name=stored_name,
+            file_type="fifo",
+        ),
+    )
+    replaced_report = attachments.reconcile_storage(conn, attach_dir)
+    assert [
+        (item.attachment_id, item.stored_name, item.file_type)
+        for item in replaced_report.non_regular
+    ] == [(stored["id"], stored_name, "fifo")]
+    conn.close()
+
+
 def test_viewer_cannot_upload(tmp_path):
     app, _ = _app(tmp_path, "viewer.db")
     with TestClient(app) as client:
