@@ -123,7 +123,10 @@ def test_mcp_client_sees_a_clean_403(tmp_path):
         tc.__exit__(None, None, None)
 
 
-def test_migration_backfills_each_run_to_its_earliest_actor(tmp_path):
+def test_migration_backfills_each_run_to_its_earliest_actor(
+    tmp_path, migration_inventory_through
+):
+    migration_inventory_through("0048_run_bindings.sql")
     db_file = tmp_path / "backfill.db"
     conn = db.connect(db_file)
     conn.execute(
