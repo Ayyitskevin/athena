@@ -311,3 +311,46 @@ def test_export_rejects_missing_container(tmp_path):
             raise AssertionError("expected missing project to fail")
     finally:
         conn.close()
+
+
+def test_export_bundle_uses_one_read_snapshot(tmp_path, monkeypatch):
+    db_file = tmp_path / "snapshot.db"
+    reader = _connect(db_file)
+    owner = _user(reader, "snapshot@example.com", "Snapshot")
+    project = projects.create_project(
+        reader, name="Snapshot", key="SNP", created_by=owner
+    )
+    before = issues.create_issue(
+        reader,
+        title="Before snapshot",
+        body="before",
+        created_by=owner,
+        project_id=project["id"],
+    )
+    writer = db.connect(db_file)
+    real_rows = portability._rows
+    inserted = False
+
+    def _interleave(conn, sql, params=()):
+        nonlocal inserted
+        if not inserted and "FROM issues WHERE project_id" in sql:
+            inserted = True
+            issues.create_issue(
+                writer,
+                title="After snapshot",
+                body="after",
+                created_by=owner,
+                project_id=project["id"],
+            )
+        return real_rows(conn, sql, params)
+
+    monkeypatch.setattr(portability, "_rows", _interleave)
+    try:
+        bundle = portability.export_bundle(reader, "project", project["id"])
+    finally:
+        writer.close()
+        reader.close()
+
+    assert inserted is True
+    assert [row["id"] for row in bundle["issues"]] == [before["id"]]
+    assert bundle["project"]["issue_counter"] == 1

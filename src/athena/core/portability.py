@@ -8,12 +8,13 @@ webhook configuration, or attachment blob paths.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
 import json
 from pathlib import Path
 import secrets
 import sqlite3
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from athena.core import issue_identity, links
 from athena.core._util import atomic_write_json, utc_now_iso
@@ -28,6 +29,7 @@ ATTACHMENT_POLICIES = ("skip", "require-blobs")
 # an oversized/hostile bundle could exhaust memory or hold the write lock. These caps are
 # generous for a real migration but refuse a pathological input up front.
 _MAX_BUNDLE_BYTES = 64 * 1024 * 1024  # 64 MiB on disk
+_MAX_MANIFEST_BYTES = 64 * 1024 * 1024  # 64 MiB on disk
 _MAX_BUNDLE_ROWS = 500_000  # total rows across every top-level array
 
 # An imported activity row's verb/timestamp come from an untrusted bundle. Bound the
@@ -176,12 +178,13 @@ def import_manifest_database(
 
 
 def export_bundle(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
-    """Return the in-memory export bundle for one project or space."""
-    if kind == "project":
-        return _project_bundle(conn, target_id)
-    if kind == "space":
-        return _space_bundle(conn, target_id)
-    raise ValueError("export kind must be 'project' or 'space'")
+    """Return one project or space from a single SQLite read snapshot."""
+    with _read_snapshot(conn):
+        if kind == "project":
+            return _project_bundle(conn, target_id)
+        if kind == "space":
+            return _space_bundle(conn, target_id)
+        raise ValueError("export kind must be 'project' or 'space'")
 
 
 def build_import_manifest(
@@ -294,12 +297,34 @@ def _load_bundle(path: Path) -> dict:
 
 def _load_manifest(path: Path) -> dict:
     try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"cannot read manifest: {exc}") from exc
+    if size > _MAX_MANIFEST_BYTES:
+        raise ValueError(
+            "manifest is too large "
+            f"({size} bytes > {_MAX_MANIFEST_BYTES}); refusing to load"
+        )
+    try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"manifest is not valid JSON: {exc.msg}") from exc
     if not isinstance(data, dict):
         raise ValueError("manifest must be a JSON object")
     return data
+
+
+@contextmanager
+def _read_snapshot(conn: sqlite3.Connection) -> Iterator[None]:
+    """Keep multi-query reads on one snapshot without owning caller transactions."""
+    started = not conn.in_transaction
+    if started:
+        conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        if started:
+            conn.rollback()
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
@@ -635,6 +660,7 @@ def _replay_project_import(
         ),
     )
     project_id = cur.lastrowid
+    assert project_id is not None
 
     for status in bundle["statuses"]:
         conn.execute(
@@ -664,7 +690,9 @@ def _replay_project_import(
                 sprint["created_at"],
             ),
         )
-        sprint_map[sprint["id"]] = cur.lastrowid
+        sprint_id = cur.lastrowid
+        assert sprint_id is not None
+        sprint_map[sprint["id"]] = sprint_id
 
     issue_map: dict[int, int] = {}
     for issue in bundle["issues"]:
@@ -691,7 +719,9 @@ def _replay_project_import(
                 issue.get("archived_at"),
             ),
         )
-        issue_id = int(cur.lastrowid)
+        inserted_issue_id = cur.lastrowid
+        assert inserted_issue_id is not None
+        issue_id = int(inserted_issue_id)
         issue_map[issue["id"]] = issue_id
 
     for issue in bundle["issues"]:
@@ -830,6 +860,7 @@ def _replay_space_import(
         ),
     )
     space_id = cur.lastrowid
+    assert space_id is not None
 
     page_map: dict[int, int] = {}
     for page in bundle["pages"]:
@@ -849,7 +880,9 @@ def _replay_space_import(
                 page.get("updated_at"),
             ),
         )
-        page_map[page["id"]] = cur.lastrowid
+        page_id = cur.lastrowid
+        assert page_id is not None
+        page_map[page["id"]] = page_id
 
     for page in bundle["pages"]:
         body = _rewrite_body_refs(page.get("body", ""), {"page": page_map})
@@ -1001,7 +1034,9 @@ def _resolve_label_map(
             "INSERT INTO labels (name, color) VALUES (?, ?)",
             (label["name"], label["color"]),
         )
-        label_map[label["id"]] = cur.lastrowid
+        label_id = cur.lastrowid
+        assert label_id is not None
+        label_map[label["id"]] = label_id
         created += 1
     return label_map, created, reused
 
@@ -1114,7 +1149,9 @@ def _insert_activity(
                 imported_at,
             ),
         )
-        activity_map[event["id"]] = cur.lastrowid
+        activity_id = cur.lastrowid
+        assert activity_id is not None
+        activity_map[event["id"]] = activity_id
     return len(activity_map), activity_map
 
 
@@ -1217,7 +1254,7 @@ def _map_rows(rows: list[dict], mapping: dict[int, int]) -> list[dict]:
 
 
 def _import_id_map(conn: sqlite3.Connection, bundle: dict) -> dict:
-    mapped = {
+    mapped: dict[str, dict | list[dict]] = {
         "users": _user_id_map(conn, bundle["users"]),
         "labels": _label_id_map(conn, bundle["labels"]),
         "attachments": _attachment_id_map(bundle["attachments"]),
@@ -2017,7 +2054,7 @@ def _add_conflict(
     value: Any | None = None,
     existing_id: int | None = None,
 ) -> None:
-    item = {"code": code, "message": message}
+    item: dict[str, object] = {"code": code, "message": message}
     if path is not None:
         item["path"] = path
     if value is not None:
@@ -2035,7 +2072,7 @@ def _add_warning(
     path: str | None = None,
     existing_id: int | None = None,
 ) -> None:
-    item = {"code": code, "message": message}
+    item: dict[str, object] = {"code": code, "message": message}
     if path is not None:
         item["path"] = path
     if existing_id is not None:

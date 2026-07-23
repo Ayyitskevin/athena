@@ -79,6 +79,19 @@ def test_backup_database_refuses_to_overwrite_without_flag(tmp_path):
         assert not snapshot.with_name(f"{snapshot.name}{suffix}").exists()
 
 
+def test_backup_uses_private_unique_staging_file(tmp_path):
+    source = _seed_database(tmp_path / "athena.db")
+    snapshot = tmp_path / "athena.snapshot.db"
+    fixed_temp_sentinel = tmp_path / f".{snapshot.name}.tmp"
+    fixed_temp_sentinel.write_bytes(b"unrelated")
+
+    backup.backup_database(source, snapshot)
+
+    assert fixed_temp_sentinel.read_bytes() == b"unrelated"
+    assert snapshot.stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.glob(f".{snapshot.name}.*.tmp"))
+
+
 def test_restore_database_refuses_existing_target_without_force(tmp_path):
     source = _seed_database(
         tmp_path / "source.db",
@@ -107,14 +120,28 @@ def test_restore_database_refuses_existing_target_without_force(tmp_path):
     }
 
 
-def test_restore_removes_stale_sidecars_before_replacing_the_main_file(
-    tmp_path, monkeypatch
-):
-    # WHY: the target's stale -wal/-shm must go BEFORE the new main file is swapped in,
-    # not after. If they outlived the atomic replace even briefly, a reader opening the
-    # freshly-restored db in that window would replay the OLD wal onto the NEW file and
-    # corrupt it. We spy on the copy/replace step and assert the sidecars are ALREADY gone
-    # by the time it runs — a plain "gone afterward" check can't tell the orderings apart.
+def test_restore_validates_backup_before_touching_target(tmp_path):
+    corrupt = tmp_path / "corrupt.db"
+    corrupt.write_bytes(b"not a sqlite database")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    original = target.read_bytes()
+    sidecars = [
+        target.with_name(f"{target.name}{suffix}") for suffix in ("-wal", "-shm")
+    ]
+    for sidecar in sidecars:
+        sidecar.write_bytes(b"must-survive-validation")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        backup.restore_database(corrupt, target, force=True)
+
+    assert target.read_bytes() == original
+    assert [sidecar.read_bytes() for sidecar in sidecars] == [
+        b"must-survive-validation",
+        b"must-survive-validation",
+    ]
+
+
+def test_restore_removes_stale_sidecars_before_atomic_swap(tmp_path, monkeypatch):
     source = _seed_database(tmp_path / "source.db", email="saved@example.com")
     snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
     target = _seed_database(tmp_path / "target.db", email="stale@example.com")
@@ -124,22 +151,62 @@ def test_restore_removes_stale_sidecars_before_replacing_the_main_file(
     shm.write_bytes(b"stale-shm")
 
     seen = {}
-    real_copy = backup._copy_sqlite_database
+    real_replace = backup._replace_staged_database
 
-    def _spy(src, dest):
-        # Capture whether the target's sidecars still exist at the moment of the replace.
+    def _spy(staged, destination):
         seen["wal"] = wal.exists()
         seen["shm"] = shm.exists()
-        return real_copy(src, dest)
+        return real_replace(staged, destination)
 
-    monkeypatch.setattr(backup, "_copy_sqlite_database", _spy)
+    monkeypatch.setattr(backup, "_replace_staged_database", _spy)
     backup.restore_database(snapshot, target, force=True)
 
-    # Gone BEFORE the copy/replace ran (this is what the ordering fix guarantees)...
     assert seen == {"wal": False, "shm": False}
-    # ...and still gone afterward, with the restored content in place.
     assert not wal.exists() and not shm.exists()
     assert _database_summary(target)["email"] == "saved@example.com"
+
+
+def test_restore_recovers_existing_target_when_swap_fails(tmp_path, monkeypatch):
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    original_summary = _database_summary(target)
+    real_replace = backup._replace_staged_database
+    attempts = 0
+
+    def _fail_once(staged, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("injected swap failure")
+        return real_replace(staged, destination)
+
+    monkeypatch.setattr(backup, "_replace_staged_database", _fail_once)
+    with pytest.raises(OSError, match="injected swap failure"):
+        backup.restore_database(snapshot, target, force=True)
+
+    assert attempts == 2
+    assert _database_summary(target) == original_summary
+    assert not list(tmp_path.glob(f".{target.name}.*.tmp"))
+
+
+def test_restore_retains_recovery_copy_when_automatic_recovery_fails(
+    tmp_path, monkeypatch
+):
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+
+    def _always_fail(staged, destination):
+        raise OSError("injected persistent swap failure")
+
+    monkeypatch.setattr(backup, "_replace_staged_database", _always_fail)
+    with pytest.raises(RuntimeError, match="consistent recovery copy remains"):
+        backup.restore_database(snapshot, target, force=True)
+
+    recovery_files = list(tmp_path.glob(f".{target.name}.*.tmp"))
+    assert len(recovery_files) == 1
+    assert _database_summary(recovery_files[0])["email"] == "stale@example.com"
 
 
 def test_backup_and_restore_cli_entry_points(tmp_path, capsys):

@@ -7,15 +7,20 @@ from datetime import timezone
 from athena.core import _util
 
 
-def test_atomic_write_json_round_trips_and_is_pretty_sorted(tmp_path):
-    dest = tmp_path / "nested" / "out.json"  # parent doesn't exist yet
+def test_atomic_write_json_round_trips_privately_without_fixed_temp(tmp_path):
+    dest = tmp_path / "nested" / "out.json"
+    dest.parent.mkdir()
+    fixed_temp_sentinel = dest.parent / f".{dest.name}.tmp"
+    fixed_temp_sentinel.write_bytes(b"unrelated")
+
     _util.atomic_write_json(dest, {"b": 1, "a": 2})
+
     text = dest.read_text(encoding="utf-8")
-    # Keys are sorted and it's indented + newline-terminated (the stable on-disk shape).
-    assert text == '{\n  "a": 2,\n  "b": 1\n}\n'
+    assert text == ('{\n  "a": 2,\n  "b": 1\n}\n')
     assert json.loads(text) == {"a": 2, "b": 1}
-    # No temp file left behind.
-    assert not (dest.parent / f".{dest.name}.tmp").exists()
+    assert dest.stat().st_mode & 0o777 == 0o600
+    assert fixed_temp_sentinel.read_bytes() == b"unrelated"
+    assert not list(dest.parent.glob(f".{dest.name}.*.tmp"))
 
 
 def test_atomic_write_json_leaves_original_on_failure(tmp_path):

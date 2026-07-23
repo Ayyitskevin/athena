@@ -75,3 +75,12 @@ def test_bounded_created_at_keeps_honest_past_and_clamps_the_rest():
     )  # unparseable
     assert portability._bounded_created_at(None, fb, ceiling) == fb  # non-string
     assert portability._bounded_created_at(1234567890, fb, ceiling) == fb  # non-string
+
+
+def test_manifest_loader_refuses_oversized_input(tmp_path, monkeypatch):
+    monkeypatch.setattr(portability, "_MAX_MANIFEST_BYTES", 8)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_bytes(b'{"schema": "too-large"}')
+
+    with pytest.raises(ValueError, match="manifest is too large"):
+        portability._load_manifest(manifest)
