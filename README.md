@@ -1,7 +1,7 @@
 # Athena
 
 [![CI](https://github.com/Ayyitskevin/athena/actions/workflows/ci.yml/badge.svg)](https://github.com/Ayyitskevin/athena/actions/workflows/ci.yml)
-![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-663399.svg)](LICENSE)
 ![Status: local alpha](https://img.shields.io/badge/Status-local_alpha-E6A700)
 
@@ -24,13 +24,14 @@ and an append-only activity trail live in one SQLite-backed FastAPI app.
 
 ## Try it in five minutes
 
-Athena requires Python 3.12 or newer. The demo creates synthetic data in a new
-database, prints a disposable login, and serves only on `127.0.0.1`.
+Athena supports Python 3.12 (`>=3.12,<3.13`), the only version verified in CI.
+The demo creates synthetic data in a new database, prints a disposable login,
+and serves only on `127.0.0.1`.
 
 ```bash
 git clone https://github.com/Ayyitskevin/athena.git
 cd athena
-python -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
 .venv/bin/athena-demo --db /tmp/athena-review.db
@@ -119,20 +120,33 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design of record and
 
 ## Evidence
 
-Every pull request runs the repository's public GitHub Actions workflow on
-Linux/Python 3.12. The gate:
+Every pull request runs the repository's
+[public GitHub Actions workflow](.github/workflows/ci.yml) on Linux/Python
+3.12. From a clean checkout, the local gate through the required full-suite
+coverage run is:
 
 ```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install \
+  -c constraints/ci-py312.txt -e ".[dev,mcp]"
+.venv/bin/python -m pip check
+.venv/bin/python -m pip freeze --exclude-editable \
+  | diff -u constraints/ci-py312.txt -
 .venv/bin/python -m ruff check .
+.venv/bin/python -m ruff format --check .
+.venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
-.venv/bin/python -m pytest -q
-.venv/bin/python scripts/smoke_app.py
+scripts/coverage.sh
 ```
 
-CI also builds the source distribution, builds a wheel from the extracted
-archive, verifies the packaged migrations/templates/static assets against both
-sources, installs that wheel, and boots it outside the checkout. The constrained
-dependency graph lives in
+The coverage script runs the complete test suite with full-source branch
+coverage and enforces the floors in `pyproject.toml`. The current baseline, final
+evidence, explicit non-runs, and release blockers live in
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). CI then builds an sdist
+and its wheel in isolation, verifies the packaged runtime files from both the
+checkout and extracted sdist, installs the wheel, and runs the process smoke
+outside the checkout. The exact local packaging recipe is in
+[CONTRIBUTING.md](CONTRIBUTING.md); the constrained dependency graph is
 [`constraints/ci-py312.txt`](constraints/ci-py312.txt).
 
 ## Status and boundaries
@@ -156,15 +170,14 @@ see [SECURITY.md](SECURITY.md) and
 ## Development
 
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/python -m ruff check .
-.venv/bin/python scripts/check_import_contracts.py
-.venv/bin/python -m pytest -q
-.venv/bin/python scripts/smoke_app.py
 .venv/bin/uvicorn athena.main:app --reload
 ```
+
+Before submitting a change, run the complete local gate documented in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 The app migrates SQLite on startup. Runtime health endpoints are `/healthz`
 and `/readyz`. The first user bootstraps as admin; browser admins manage users

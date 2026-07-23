@@ -30,15 +30,17 @@ one database. That is the whole value of running notes and tasks in one workspac
 
 1. **One integrated service.** Shared auth, DB, search, and cross-link resolver
    in a `core/` package; `aegis/` and `mentor/` are feature modules on top.
-2. **API-first.** Every action is a REST endpoint. The web UI (Jinja + HTMX) is
-   just a thin layer over that API — so the AI fleet (Claude, Grok, Codex,
-   Hermes) can act through the *same* endpoints, with scoped, audited tokens.
-   "Grok closed AEGIS-88" is first-class history, not a mystery. Command-backed
-   writes converge on one framework-neutral application command; that command
-   commits the state change, derived links/search rows, notifications, and audit
-   event atomically, so transports cannot drift or leave unaudited state behind.
-   Issue create/core-edit is the first migrated slice; remaining legacy write
-   pairs should move behind commands incrementally when touched.
+2. **API-first.** Durable capabilities have a REST surface. The web UI (Jinja +
+   HTMX) is a thin transport adapter over the same domain and command owners,
+   while MCP uses REST — so the AI fleet (Claude, Grok, Codex, Hermes) acts with
+   scoped, audited identity instead of through a second data owner. "Grok closed
+   AEGIS-88" is first-class history, not a mystery. Command-backed writes
+   converge on one framework-neutral application command; that command commits
+   the state change, derived links/search rows, notifications, and audit event
+   atomically, so transports cannot drift or leave unaudited state behind.
+   Command migration remains incremental; the current migrated inventory and
+   known debt live in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md), not in a
+   frozen example here.
 3. **Local-first, no premature hosting.** Built and version-controlled as a
    normal software project. Self-hosting on a dedicated home-lab node is a
    *later* decision, not a starting assumption.
@@ -50,8 +52,9 @@ one database. That is the whole value of running notes and tasks in one workspac
 
 ## Stack
 
-- **Python 3.12+**, **FastAPI** (web framework), **Jinja2** (HTML templating),
-  **HTMX** (interactivity without a JS build step).
+- **Python 3.12** (exact supported range `>=3.12,<3.13`), **FastAPI** (web
+  framework), **Jinja2** (HTML templating), **HTMX** (interactivity without a
+  JS build step).
 - **SQLite** in WAL mode — one file, trivially backed up, plenty for one
   operator. Full-text search via SQLite's built-in **FTS5**.
 - Filesystem store for attachments. No external services required to run.
@@ -72,19 +75,35 @@ src/athena/
              over the same data the REST API serves, never a second data owner
   mcp/       optional MCP server — a thin client over the REST API for agents
   config.py  env-driven settings (ATHENA_DB, ...)
-  main.py    app factory: create_app(), middleware, router wiring, /healthz
+  main.py    app factory: create_app(), middleware, lifespan, router wiring,
+             /healthz liveness, /readyz readiness
   ops.py     operator CLIs (athena-backup, athena-doctor, athena-export, ...)
   templates/ Jinja templates packaged and mounted by main.py
   static/    packaged CSS + HTMX + small JS helpers — no build step
 tests/       pytest
-docs/        this file, OPERATIONS.md (the runbook), design notes
+docs/        architecture, operations, release evidence, roadmap, design notes
 ```
 
 Templates, static assets, and `core/migrations/*.sql` are runtime package data.
 Keeping them below `src/athena/` makes editable checkouts and installed wheels use
-the same files from the same owner. CI builds the installable wheel through an
-extracted source distribution and runs the verification helpers retained in that
-archive, so both distribution formats must preserve those runtime owners.
+the same files from the same owner. The repository CI workflow is configured to
+build the installable wheel through an extracted source distribution and run the
+retained verification helpers, so both formats must preserve those runtime owners.
+
+## Runtime health and schema integrity
+
+`GET /healthz` is a cheap liveness signal. It does not open SQLite, so a process
+can be alive even when its database is not ready.
+
+`GET /readyz` is the database-backed readiness signal. It opens the configured
+database and calls the same migration-status validator used by `athena-doctor`.
+The migration runner requires a strictly numbered, contiguous packaged inventory
+and a contiguous applied-ledger prefix; binds each applied migration to its
+immutable, content-derived SHA-256 checksum; and rejects missing, duplicate,
+unknown, future, unpackaged, out-of-order, or checksum-mismatched ledger state.
+Startup applies pending migrations transactionally and then re-runs that
+validator. Readiness checks the validated ledger but does not replace
+`athena-doctor`'s full SQLite and attachment integrity checks.
 
 There is no separate `api/` package: each module owns its REST surface
 (`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves
@@ -167,9 +186,11 @@ check without importing application code.
   and write, preventing two read-modify-write loops from committing the same tag.
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
   user is bootstrapped as admin, and the last admin cannot be demoted.
-- Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`);
-  every write records *who* did it. Scopes narrow bearer tokens but never expand
-  a user's role. Bearer traffic is rate-limited per token
+- Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`).
+  Command-backed durable mutations record *who* did them; the explicit remaining
+  command-migration debt is tracked in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md).
+  Scopes narrow bearer tokens but never expand a user's role. Bearer traffic is
+  rate-limited per token
   (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); anonymous reads can be throttled per
   client IP (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default).
 - Optional OIDC single sign-on activates only when all four `ATHENA_OIDC_*`

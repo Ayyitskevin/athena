@@ -6,33 +6,42 @@ are treated as product issues, not ordinary feature requests.
 
 ## Supported versions
 
-Athena is local-alpha software. Security fixes target current `main` and the
-most recent tagged alpha. Older commits, untagged forks, and modified
-deployments are not maintained as separate support lines.
+Athena is local-alpha software. As verified on 2026-07-23, the repository has no
+tags and no GitHub releases; package version markers in the source and changelog
+are not published release lines. Security fixes target current `main` only. Older
+commits, forks, and modified deployments are not maintained as separate support
+lines.
 
 ## Deployment boundary
 
-The supported shape is one process on a trusted local machine or tailnet,
-normally behind an HTTPS reverse proxy when accessed remotely. Public internet
-exposure, hostile multi-tenancy, and enterprise isolation are not current
-security claims.
+The supported shape is Python 3.12, one Athena process and uvicorn worker, one
+SQLite database and attachment directory on local storage, and clients on a
+trusted local machine or tailnet. Remote browser access should normally pass
+through an HTTPS reverse proxy. Public internet exposure, hostile multi-tenancy,
+multi-process/HA deployment, and enterprise isolation are not current security
+claims.
 
 Before a long-running deployment, follow
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md), including secure cookies, request
-limits, attachment ownership, a single webhook/automation runner, backups, and
-`athena-doctor`.
+limits, attachment ownership and integrity, a single webhook/automation runner,
+matched database-plus-attachment backups, and `athena-doctor`.
 
 ## Reporting a vulnerability
 
-Use the repository's **Security → Report a vulnerability** flow when GitHub
-private vulnerability reporting is available. If that entry point is not
-available, contact the repository owner through GitHub before transmitting
-details. Do not include a live token, password, private database, journal text,
-or customer information in an issue, discussion, pull request, or log paste.
+GitHub private vulnerability reporting is disabled for this repository (verified
+2026-07-23). First contact the repository owner using the contact information on
+their GitHub profile, without vulnerability details, affected endpoints, exploit
+steps, or secrets, and ask to arrange a private channel. If no private contact
+method is available, any public contact must remain a detail-free request to speak
+privately. Do not transmit the report until both sides have agreed on that channel.
+
+Never include a live token, password, private database, attachment, operator note,
+journal text, customer information, or other secret in an issue, discussion, pull
+request, public message, or log paste.
 
 A useful report includes:
 
-- the affected commit or tagged version;
+- the affected current-`main` commit hash;
 - the deployment assumptions required to reproduce it;
 - the smallest safe reproduction;
 - expected versus observed authorization or data behavior;
