@@ -386,7 +386,7 @@ def open_blob(
     try:
         descriptor = os.open(
             stored_name,
-            os.O_RDONLY | no_follow | close_on_exec,
+            os.O_RDONLY | no_follow | close_on_exec | getattr(os, "O_NONBLOCK", 0),
             dir_fd=directory_descriptor,
         )
     finally:

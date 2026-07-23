@@ -209,6 +209,71 @@ def test_restore_retains_recovery_copy_when_automatic_recovery_fails(
     assert _database_summary(recovery_files[0])["email"] == "stale@example.com"
 
 
+def test_backup_rejects_missing_non_file_same_path_and_unsafe_retention(tmp_path):
+    missing = tmp_path / "missing.db"
+    with pytest.raises(FileNotFoundError, match="database path does not exist"):
+        backup.backup_database(missing, tmp_path / "snapshot.db")
+
+    source_directory = tmp_path / "source-directory"
+    source_directory.mkdir()
+    with pytest.raises(FileNotFoundError, match="database path is not a file"):
+        backup.backup_database(source_directory, tmp_path / "snapshot.db")
+
+    source = _seed_database(tmp_path / "source.db")
+    with pytest.raises(ValueError, match="must be different"):
+        backup.backup_database(source, source, overwrite=True)
+
+    with pytest.raises(FileNotFoundError, match="backup directory does not exist"):
+        backup.prune_backup_directory(tmp_path / "no-backups", "*.db", keep=1)
+    not_directory = tmp_path / "not-a-directory"
+    not_directory.write_bytes(b"file")
+    with pytest.raises(NotADirectoryError, match="backup path is not a directory"):
+        backup.prune_backup_directory(not_directory, "*.db", keep=1)
+
+    with pytest.raises(ValueError, match="retention glob must not be empty"):
+        backup.validate_retention_plan(tmp_path / "snapshot.db", "", keep=1)
+    with pytest.raises(ValueError, match="without path separators"):
+        backup.validate_retention_plan(tmp_path / "snapshot.db", "nested/*.db", keep=1)
+    with pytest.raises(ValueError, match="keep must be at least 1"):
+        backup.validate_retention_plan(tmp_path / "snapshot.db", "*.db", keep=0)
+
+
+def test_restore_failure_without_existing_target_leaves_no_database(
+    tmp_path, monkeypatch
+):
+    source = _seed_database(tmp_path / "source.db")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = tmp_path / "new-target.db"
+
+    def fail_swap(staged, destination):
+        raise OSError("injected first-install swap failure")
+
+    monkeypatch.setattr(backup, "_replace_staged_database", fail_swap)
+    with pytest.raises(OSError, match="injected first-install swap failure"):
+        backup.restore_database(snapshot, target)
+
+    assert not target.exists()
+    assert not list(tmp_path.glob(f".{target.name}.*.tmp"))
+
+
+def test_operator_cli_reports_missing_restore_and_attachment_paths(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    missing_attachments = tmp_path / "missing-attachments"
+
+    assert ops.doctor_main([str(source), "--attach-dir", str(missing_attachments)]) == 1
+    doctor_output = capsys.readouterr()
+    assert "attachment directory does not exist" in doctor_output.err
+
+    assert (
+        ops.restore_main(
+            [str(tmp_path / "missing-backup.db"), str(tmp_path / "restored.db")]
+        )
+        == 1
+    )
+    restore_output = capsys.readouterr()
+    assert "database path does not exist" in restore_output.err
+
+
 def test_backup_and_restore_cli_entry_points(tmp_path, capsys):
     source = _seed_database(tmp_path / "athena.db", email="cli@example.com")
     snapshot = tmp_path / "athena.snapshot.db"

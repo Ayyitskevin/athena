@@ -231,6 +231,44 @@ def test_delete_isolates_failed_link_cleanup_before_search_cleanup(
     conn.close()
 
 
+def test_delete_aggregates_cleanup_failures_and_still_clears_search(
+    tmp_path, monkeypatch
+):
+    from athena.core import attachments
+
+    conn = _migrated_conn(tmp_path / "cleanup-group.db")
+    _seed_user(conn)
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    page = pages.create_page(
+        conn,
+        space_id=space["id"],
+        title="Grouped cleanup zebra",
+        body="see [[issue:1]] grouped cleanup zebra",
+        created_by=1,
+    )
+
+    def fail_blob_cleanup(*args, **kwargs):
+        raise PermissionError("injected blob cleanup failure")
+
+    def fail_link_cleanup(*args, **kwargs):
+        raise sqlite3.OperationalError("injected link cleanup failure")
+
+    monkeypatch.setattr(attachments, "unlink_blobs", fail_blob_cleanup)
+    monkeypatch.setattr(links, "sync_links", fail_link_cleanup)
+
+    with pytest.raises(ExceptionGroup) as raised:
+        pages.delete_page(conn, page["id"])
+
+    assert [str(error) for error in raised.value.exceptions] == [
+        "injected blob cleanup failure",
+        "injected link cleanup failure",
+    ]
+    assert pages.get_page(conn, page["id"]) is None
+    assert search.search(conn, "grouped cleanup zebra") == []
+    assert conn.in_transaction is False
+    conn.close()
+
+
 def test_delete_is_atomic_history_survives_a_failed_page_delete(tmp_path):
     # WHY: delete clears history (page_versions) BEFORE the page row, because the
     # FK forces that order. If the page delete then fails — a stray child's
