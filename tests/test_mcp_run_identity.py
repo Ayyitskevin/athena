@@ -15,7 +15,6 @@ contract returned headers no MCP tool could transmit. These tests pin the fix:
     to a fresh mcp-<hex> run id so sessions are attributed BY DEFAULT.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
