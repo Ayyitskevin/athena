@@ -8,6 +8,7 @@ a page_commented / page_comment_edited / page_comment_deleted event in the SAME
 transaction as the change, once per real change; that the edit — previously silent — is
 now on the record; and that author-ownership / admin-moderation authz is preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -24,19 +25,29 @@ def _app(tmp_path, name="page_comments.db"):
 
 def _bootstrap(client):
     client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
-    client.post("/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1
+    )
 
 
 def _space(client, key="ENG", name="Eng"):
-    return client.post("/spaces", json={"key": key, "name": name}, headers=H1).json()["id"]
+    return client.post("/spaces", json={"key": key, "name": name}, headers=H1).json()[
+        "id"
+    ]
 
 
 def _page(client, space_id, title="Doc"):
-    return client.post(f"/spaces/{space_id}/pages", json={"title": title}, headers=H1).json()["id"]
+    return client.post(
+        f"/spaces/{space_id}/pages", json={"title": title}, headers=H1
+    ).json()["id"]
 
 
 def _comment(client, page_id, body="hello", actor="1") -> int:
-    r = client.post(f"/pages/{page_id}/comments", json={"body": body}, headers={"X-Athena-Actor": actor})
+    r = client.post(
+        f"/pages/{page_id}/comments",
+        json={"body": body},
+        headers={"X-Athena-Actor": actor},
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -58,7 +69,11 @@ def test_rest_create_is_audited_and_author_watches(tmp_path):
 
     ev = _events(db_file, "page_commented")
     assert len(ev) == 1
-    assert ev[0]["target_kind"] == "page" and ev[0]["target_id"] == pid and ev[0]["actor_id"] == 2
+    assert (
+        ev[0]["target_kind"] == "page"
+        and ev[0]["target_id"] == pid
+        and ev[0]["actor_id"] == 2
+    )
     # Commenting is participation: the auto-watch landed in the same transaction.
     conn = db.connect(db_file)
     watched = conn.execute(
@@ -81,7 +96,11 @@ def test_rest_edit_is_audited(tmp_path):
 
     ev = _events(db_file, "page_comment_edited")
     assert len(ev) == 1
-    assert ev[0]["target_kind"] == "page" and ev[0]["target_id"] == pid and ev[0]["actor_id"] == 1
+    assert (
+        ev[0]["target_kind"] == "page"
+        and ev[0]["target_id"] == pid
+        and ev[0]["actor_id"] == 1
+    )
 
 
 def test_rest_delete_is_audited(tmp_path):
@@ -103,7 +122,9 @@ def test_edit_is_author_only_even_for_admin(tmp_path):
         _bootstrap(c)
         pid = _page(c, _space(c))
         cid = _comment(c, pid, body="bob's words", actor="2")  # authored by user 2
-        r = c.patch(f"/pages/{pid}/comments/{cid}", json={"body": "hijacked"}, headers=H1)  # admin
+        r = c.patch(
+            f"/pages/{pid}/comments/{cid}", json={"body": "hijacked"}, headers=H1
+        )  # admin
         assert r.status_code == 403
     assert _events(db_file, "page_comment_edited") == []
 
@@ -114,7 +135,9 @@ def test_admin_can_moderate_delete_and_it_is_audited_to_the_admin(tmp_path):
         _bootstrap(c)
         pid = _page(c, _space(c))
         cid = _comment(c, pid, body="spam", actor="2")  # authored by user 2
-        assert c.delete(f"/pages/{pid}/comments/{cid}", headers=H1).status_code == 204  # admin
+        assert (
+            c.delete(f"/pages/{pid}/comments/{cid}", headers=H1).status_code == 204
+        )  # admin
 
     ev = _events(db_file, "page_comment_deleted")
     assert len(ev) == 1 and ev[0]["actor_id"] == 1  # the moderating admin
@@ -129,7 +152,11 @@ def test_web_edit_is_audited(tmp_path):
         _bootstrap(c)  # a@e.com / pw is admin (id 1)
         pid = _page(c, _space(c))
         cid = _comment(c, pid, body="orig", actor="1")
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         r = c.post(
             f"/mentor/pages/{pid}/comments/{cid}/edit",
@@ -158,5 +185,7 @@ def test_command_edit_vanished_comment_rejects_and_records_nothing(tmp_path):
     except page_comment_commands.PageCommentCommandError as exc:
         assert exc.status_code == 404
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "page_comment_edited"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "page_comment_edited"
     ] == []

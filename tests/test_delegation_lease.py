@@ -44,9 +44,15 @@ def _seed(conn):
     conn.execute(
         "INSERT INTO users (email, name, role, is_agent) VALUES ('o@e.com','O','admin',0)"
     )
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('a@e.com','AgentA',1)")
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('b@e.com','AgentB',1)")
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('c@e.com','AgentC',1)")
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('a@e.com','AgentA',1)"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('b@e.com','AgentB',1)"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('c@e.com','AgentC',1)"
+    )
     conn.commit()
 
 
@@ -60,7 +66,11 @@ def _delegated_issue(conn):
     issue = issues.create_issue(conn, title="work", body="do it", created_by=1)
     for agent_id in (2, 3):
         issue_commands.add_contributor(
-            conn, actor=admin, issue_id=issue["id"], user_id=agent_id, require_agent=True
+            conn,
+            actor=admin,
+            issue_id=issue["id"],
+            user_id=agent_id,
+            require_agent=True,
         )
     return issue
 
@@ -195,13 +205,16 @@ def test_holder_reclaim_renews_window(tmp_path):
     _seed(conn)
     issue = _delegated_issue(conn)
     first = _claim(conn, 2, issue["id"])
-    again = _claim(
-        conn, 2, issue["id"], generation=first["generation"]
-    )
+    again = _claim(conn, 2, issue["id"], generation=first["generation"])
     assert again["holder_id"] == 2 and again["active"] is True
     assert again["generation"] == first["generation"]
     # The renewal records a distinct verb so the trail tells taking from extending.
-    verbs = [e["verb"] for e in activity.list_activity(conn, target_kind="issue", target_id=issue["id"])]
+    verbs = [
+        e["verb"]
+        for e in activity.list_activity(
+            conn, target_kind="issue", target_id=issue["id"]
+        )
+    ]
     assert "claimed" in verbs and "lease_renewed" in verbs
 
 
@@ -263,7 +276,12 @@ def test_decline_removes_contributor_and_drops_lease(tmp_path):
     )
     assert [c["user_id"] for c in remaining] == [3]  # AgentA removed, AgentB stays
     assert leases.get_lease(conn, issue["id"]) is None  # its lease was released too
-    verbs = [e["verb"] for e in activity.list_activity(conn, target_kind="issue", target_id=issue["id"])]
+    verbs = [
+        e["verb"]
+        for e in activity.list_activity(
+            conn, target_kind="issue", target_id=issue["id"]
+        )
+    ]
     assert "delegation_declined" in verbs
 
 
@@ -283,7 +301,9 @@ def test_decline_by_non_contributor_is_404(tmp_path):
     _seed(conn)
     issue = _delegated_issue(conn)
     try:
-        lease_commands.decline_delegation(conn, actor=_actor(conn, 4), issue_id=issue["id"])
+        lease_commands.decline_delegation(
+            conn, actor=_actor(conn, 4), issue_id=issue["id"]
+        )
         raise AssertionError("declining work you weren't delegated should 404")
     except issue_commands.IssueCommandError as exc:
         assert exc.kind == "not_found"
@@ -308,13 +328,23 @@ def test_conflict_leaves_holder_and_trail_untouched(tmp_path):
     _seed(conn)
     issue = _delegated_issue(conn)
     _claim(conn, 2, issue["id"])
-    before = [e["verb"] for e in activity.list_activity(conn, target_kind="issue", target_id=issue["id"])]
+    before = [
+        e["verb"]
+        for e in activity.list_activity(
+            conn, target_kind="issue", target_id=issue["id"]
+        )
+    ]
     try:
         _claim(conn, 3, issue["id"])
     except issue_commands.IssueCommandError:
         pass
     assert leases.get_lease(conn, issue["id"])["holder_id"] == 2  # still AgentA
-    after = [e["verb"] for e in activity.list_activity(conn, target_kind="issue", target_id=issue["id"])]
+    after = [
+        e["verb"]
+        for e in activity.list_activity(
+            conn, target_kind="issue", target_id=issue["id"]
+        )
+    ]
     assert after == before  # no event from the rejected claim
 
 
@@ -327,9 +357,7 @@ def test_claim_requires_one_exact_strong_issue_tag(tmp_path):
     )
 
     with pytest.raises(issue_commands.IssueCommandError) as missing:
-        lease_commands.claim_issue(
-            conn, actor=_actor(conn, 2), issue_id=issue["id"]
-        )
+        lease_commands.claim_issue(conn, actor=_actor(conn, 2), issue_id=issue["id"])
     assert missing.value.kind == "precondition_required"
 
     for condition in (
@@ -349,9 +377,10 @@ def test_claim_requires_one_exact_strong_issue_tag(tmp_path):
         assert invalid.value.kind == "invalid_precondition"
 
     assert leases.get_lease(conn, issue["id"]) is None
-    assert activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
-    ) == events_before
+    assert (
+        activity.list_activity(conn, target_kind="issue", target_id=issue["id"])
+        == events_before
+    )
 
 
 def test_stale_claim_returns_current_tag_without_a_lease_or_event(tmp_path):
@@ -382,9 +411,10 @@ def test_stale_claim_returns_current_tag_without_a_lease_or_event(tmp_path):
     assert stale.value.kind == "precondition_failed"
     assert stale.value.current_etag == current_tag
     assert leases.get_lease(conn, issue["id"]) is None
-    assert activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
-    ) == events_before
+    assert (
+        activity.list_activity(conn, target_kind="issue", target_id=issue["id"])
+        == events_before
+    )
 
 
 def test_stale_renewal_does_not_extend_or_record(tmp_path):
@@ -416,9 +446,10 @@ def test_stale_renewal_does_not_extend_or_record(tmp_path):
 
     assert stale.value.kind == "precondition_failed"
     assert leases.get_lease(conn, issue["id"]) == lease_before
-    assert activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
-    ) == events_before
+    assert (
+        activity.list_activity(conn, target_kind="issue", target_id=issue["id"])
+        == events_before
+    )
     renewed = _claim(
         conn,
         2,
@@ -426,9 +457,12 @@ def test_stale_renewal_does_not_extend_or_record(tmp_path):
         generation=lease_before["generation"],
     )
     assert renewed["holder_id"] == 2
-    assert activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
-    )[0]["verb"] == "lease_renewed"
+    assert (
+        activity.list_activity(conn, target_kind="issue", target_id=issue["id"])[0][
+            "verb"
+        ]
+        == "lease_renewed"
+    )
 
 
 @pytest.mark.parametrize(
@@ -445,9 +479,7 @@ def test_holder_yields_with_reason_and_run_stamp(tmp_path, reason, note):
     _seed(conn)
     issue = _delegated_issue(conn)
     issues.set_assignee(conn, issue["id"], 2)
-    blocker = issues.create_issue(
-        conn, title="existing blocker", body="", created_by=1
-    )
+    blocker = issues.create_issue(conn, title="existing blocker", body="", created_by=1)
     reason_text, inserted = dependencies.add_link(
         conn,
         from_id=issue["id"],
@@ -474,24 +506,28 @@ def test_holder_yields_with_reason_and_run_stamp(tmp_path, reason, note):
             conn,
             actor=_actor(conn, 2),
             issue_id=issue["id"],
-            **_handoff_payload(
-                lease["generation"], reason=reason, note=note
-            ),
+            **_handoff_payload(lease["generation"], reason=reason, note=note),
         )
     finally:
         run_context.reset_run_id(token)
 
     assert leases.get_lease(conn, issue["id"]) is None
     assert issues.get_issue(conn, issue["id"]) == issue_before
-    assert conn.execute(
-        "SELECT user_id FROM issue_contributors WHERE issue_id = ? ORDER BY user_id",
-        (issue["id"],),
-    ).fetchall() == contributors_before
-    assert conn.execute(
-        "SELECT from_id, to_id, kind, created_by FROM issue_links "
-        "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
-        (issue["id"], issue["id"]),
-    ).fetchall() == links_before
+    assert (
+        conn.execute(
+            "SELECT user_id FROM issue_contributors WHERE issue_id = ? ORDER BY user_id",
+            (issue["id"],),
+        ).fetchall()
+        == contributors_before
+    )
+    assert (
+        conn.execute(
+            "SELECT from_id, to_id, kind, created_by FROM issue_links "
+            "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+            (issue["id"], issue["id"]),
+        ).fetchall()
+        == links_before
+    )
     event = activity.list_activity(
         conn,
         target_kind="issue",
@@ -524,9 +560,7 @@ def test_current_holder_can_yield_after_eligibility_was_removed(tmp_path):
         conn,
         actor=_actor(conn, 2),
         issue_id=issue["id"],
-        **_handoff_payload(
-            lease["generation"], reason="needs_input"
-        ),
+        **_handoff_payload(lease["generation"], reason="needs_input"),
     )
 
     assert leases.get_lease(conn, issue["id"]) is None
@@ -556,12 +590,15 @@ def test_nonholder_cannot_yield_or_delete_a_replacement_claim(tmp_path):
         assert rejected.value.kind == "conflict"
 
     assert leases.get_lease(conn, issue["id"])["holder_id"] == 3
-    assert activity.list_activity(
-        conn,
-        target_kind="issue",
-        target_id=issue["id"],
-        verb="claim_yielded",
-    ) == []
+    assert (
+        activity.list_activity(
+            conn,
+            target_kind="issue",
+            target_id=issue["id"],
+            verb="claim_yielded",
+        )
+        == []
+    )
 
 
 def test_yield_rejects_absent_expired_and_invalid_requests(tmp_path):
@@ -631,18 +668,19 @@ def test_yield_rolls_back_lease_delete_when_audit_fails(tmp_path, monkeypatch):
             conn,
             actor=_actor(conn, 2),
             issue_id=issue["id"],
-            **_handoff_payload(
-                lease["generation"], reason="capacity"
-            ),
+            **_handoff_payload(lease["generation"], reason="capacity"),
         )
 
     assert leases.get_lease(conn, issue["id"]) == lease_before
-    assert activity.list_activity(
-        conn,
-        target_kind="issue",
-        target_id=issue["id"],
-        verb="claim_yielded",
-    ) == []
+    assert (
+        activity.list_activity(
+            conn,
+            target_kind="issue",
+            target_id=issue["id"],
+            verb="claim_yielded",
+        )
+        == []
+    )
 
 
 # --- REST parity + a hidden-issue read gate ---------------------------------
@@ -653,8 +691,12 @@ def _rest_seed(db_file):
     conn.execute(
         "INSERT INTO users (email, name, role, is_agent) VALUES ('o@e.com','O','admin',0)"
     )
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('a@e.com','AgentA',1)")
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('b@e.com','AgentB',1)")
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('a@e.com','AgentA',1)"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('b@e.com','AgentB',1)"
+    )
     conn.commit()
     conn.close()
 
@@ -687,11 +729,14 @@ def test_rest_claim_conflict_and_lease_read(tmp_path):
         lease = client.get(f"/issues/{issue['id']}/lease").json()
         assert lease["holder_id"] == 2 and lease["active"] is True
         # AgentA completes (204) → free again for AgentB.
-        assert client.post(
-            f"/issues/{issue['id']}/complete",
-            json={"generation": lease["generation"]},
-            headers={"X-Athena-Actor": "2"},
-        ).status_code == 204
+        assert (
+            client.post(
+                f"/issues/{issue['id']}/complete",
+                json={"generation": lease["generation"]},
+                headers={"X-Athena-Actor": "2"},
+            ).status_code
+            == 204
+        )
         again = client.post(
             f"/issues/{issue['id']}/claim",
             headers={"X-Athena-Actor": "3", "If-Match": issue_tag},
@@ -936,6 +981,7 @@ def test_rest_yield_is_run_stamped_and_idempotent_without_reassignment(tmp_path)
             )
             assert invalid.status_code == 422
 
+
 def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(tmp_path):
     db_path = tmp_path / "rest-yield-conflicts.db"
     app = create_app(db_path)
@@ -973,9 +1019,7 @@ def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(tmp_path):
         for nonholder in (agent_b, owner):
             rejected = client.post(
                 f"/issues/{issue['id']}/yield",
-                json=_handoff_payload(
-                    active_generation, reason="capacity"
-                ),
+                json=_handoff_payload(active_generation, reason="capacity"),
                 headers=nonholder,
             )
             assert rejected.status_code == 409
@@ -991,9 +1035,7 @@ def test_rest_yield_conflicts_are_holder_only_and_side_effect_free(tmp_path):
         conn.close()
         expired = client.post(
             f"/issues/{issue['id']}/yield",
-            json=_handoff_payload(
-                active_generation, reason="needs_input"
-            ),
+            json=_handoff_payload(active_generation, reason="needs_input"),
             headers=agent_a,
         )
         assert expired.status_code == 409

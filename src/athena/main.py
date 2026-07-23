@@ -325,9 +325,7 @@ class IdempotencyMiddleware:
     @staticmethod
     def _header_values(scope, wanted: bytes) -> list[bytes]:
         return [
-            value
-            for name, value in scope.get("headers", [])
-            if name.lower() == wanted
+            value for name, value in scope.get("headers", []) if name.lower() == wanted
         ]
 
     @staticmethod
@@ -530,11 +528,7 @@ class IdempotencyMiddleware:
         ):
             await _send_json_response(
                 send,
-                {
-                    "detail": (
-                        "Idempotency-Key must be 1-255 visible ASCII characters"
-                    )
-                },
+                {"detail": ("Idempotency-Key must be 1-255 visible ASCII characters")},
                 status_code=400,
             )
             return
@@ -782,7 +776,9 @@ class IdempotencyMiddleware:
                     ttl_seconds=self.ttl_seconds,
                 )
                 if completion == "lost":
-                    raise RuntimeError("idempotency ownership was lost before completion")
+                    raise RuntimeError(
+                        "idempotency ownership was lost before completion"
+                    )
                 if completion not in {"completed", "authorization_changed"}:
                     raise RuntimeError("invalid idempotency completion state")
             except BaseException:
@@ -853,9 +849,7 @@ class IdempotencyMiddleware:
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
-    async def _replay(
-        send: Callable[[dict], Awaitable[None]], record: dict
-    ) -> None:
+    async def _replay(send: Callable[[dict], Awaitable[None]], record: dict) -> None:
         body = record["response_body"]
         headers = [
             (name.encode("latin-1"), value.encode("latin-1"))
@@ -1005,7 +999,9 @@ def create_app(
         # Log what startup actually did, so an operator watching stdout can see the
         # schema was brought current (or was already so) instead of guessing.
         if applied:
-            _logger.info("applied %d migration(s): %s", len(applied), ", ".join(applied))
+            _logger.info(
+                "applied %d migration(s): %s", len(applied), ", ".join(applied)
+            )
         else:
             _logger.info("schema already current; no migrations to apply")
         app.state.db_path = resolved_db

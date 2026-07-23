@@ -10,6 +10,7 @@ earn their place here:
     destructive and, unlike a page edit, isn't recorded in any history, so only the
     creator may do it (401 anon, 403 non-creator, 404 missing).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -51,14 +52,23 @@ def test_count_pages_in_space_counts_at_any_depth(tmp_path):
     _seed_user(conn)
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     assert pages.count_pages_in_space(conn, sp["id"]) == 0
-    parent = pages.create_page(conn, space_id=sp["id"], title="Parent", body="", created_by=1)
+    parent = pages.create_page(
+        conn, space_id=sp["id"], title="Parent", body="", created_by=1
+    )
     pages.create_page(
-        conn, space_id=sp["id"], title="Child", body="", parent_id=parent["id"], created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Child",
+        body="",
+        parent_id=parent["id"],
+        created_by=1,
     )
     assert pages.count_pages_in_space(conn, sp["id"]) == 2
     # a page in ANOTHER space doesn't count toward this one
     other = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
-    pages.create_page(conn, space_id=other["id"], title="Elsewhere", body="", created_by=1)
+    pages.create_page(
+        conn, space_id=other["id"], title="Elsewhere", body="", created_by=1
+    )
     assert pages.count_pages_in_space(conn, sp["id"]) == 2
 
 
@@ -135,7 +145,9 @@ def test_api_delete_non_creator_is_403(tmp_path):
 
 
 def _login(client, email="a@e.com", name="A"):
-    client.post("/users", json={"email": email, "name": name, "password": "secret"}, headers=_H)
+    client.post(
+        "/users", json={"email": email, "name": name, "password": "secret"}, headers=_H
+    )
     client.post("/login", data={"email": email, "password": "secret"})
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 

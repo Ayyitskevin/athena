@@ -12,6 +12,7 @@ These encode the contract, not just HTTP shapes:
     the Mentor page-delete-on-children rule: a delete must not move data by
     surprise. The project survives the refused delete.
 """
+
 import re
 
 from fastapi.testclient import TestClient
@@ -29,7 +30,9 @@ def _seed_two_users(db_file):
     conn.close()
 
 
-def _make_project(client, actor="1", name="Apollo", description="moon shots", key=None) -> dict:
+def _make_project(
+    client, actor="1", name="Apollo", description="moon shots", key=None
+) -> dict:
     # Default the key off the name so distinct projects get distinct keys (the key
     # is unique, like the name); callers can still pin one explicitly.
     key = key or re.sub(r"[^A-Za-z0-9]", "", name).upper()[:10]
@@ -202,9 +205,7 @@ def test_delete_empty_project(tmp_path):
     with TestClient(app) as client:
         _seed_two_users(db_file)
         proj = _make_project(client)
-        r = client.delete(
-            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
-        )
+        r = client.delete(f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"})
         assert r.status_code == 204
         assert client.get(f"/projects/{proj['id']}").status_code == 404
 
@@ -219,9 +220,7 @@ def test_delete_with_issues_is_409_and_project_survives(tmp_path):
         _seed_two_users(db_file)
         proj = _make_project(client)
         _make_issue(client, proj["id"], actor="1")
-        r = client.delete(
-            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
-        )
+        r = client.delete(f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"})
         assert r.status_code == 409
         assert client.get(f"/projects/{proj['id']}").status_code == 200  # survives
 
@@ -243,16 +242,24 @@ def test_delete_with_sprint_is_409_and_project_survives(tmp_path):
         )
         assert sprint.status_code == 201, sprint.text
 
-        refused = client.delete(f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"})
+        refused = client.delete(
+            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
+        )
         assert refused.status_code == 409
         assert client.get(f"/projects/{proj['id']}").status_code == 200  # survives
 
-        assert client.delete(
-            f"/sprints/{sprint.json()['id']}", headers={"X-Athena-Actor": "1"}
-        ).status_code == 204
-        assert client.delete(
-            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
-        ).status_code == 204
+        assert (
+            client.delete(
+                f"/sprints/{sprint.json()['id']}", headers={"X-Athena-Actor": "1"}
+            ).status_code
+            == 204
+        )
+        assert (
+            client.delete(
+                f"/projects/{proj['id']}", headers={"X-Athena-Actor": "1"}
+            ).status_code
+            == 204
+        )
 
 
 def test_delete_unknown_project_is_404(tmp_path):
@@ -270,9 +277,7 @@ def test_bystander_cannot_delete_project(tmp_path):
     with TestClient(app) as client:
         _seed_two_users(db_file)
         proj = _make_project(client, actor="1")
-        r = client.delete(
-            f"/projects/{proj['id']}", headers={"X-Athena-Actor": "2"}
-        )
+        r = client.delete(f"/projects/{proj['id']}", headers={"X-Athena-Actor": "2"})
         assert r.status_code == 403
         assert client.get(f"/projects/{proj['id']}").status_code == 200
 
@@ -318,7 +323,9 @@ def test_web_edit_form_prefills_and_is_creator_gated(tmp_path):
     app = create_app(db_file)
     with TestClient(app) as client:
         _bootstrap_first_user(client)  # user 1 — creator
-        proj = _make_project(client, actor="1", name="Prefilled", description="desc here")
+        proj = _make_project(
+            client, actor="1", name="Prefilled", description="desc here"
+        )
 
         form = client.get(f"/aegis/projects/{proj['id']}/edit")
         assert form.status_code == 200
@@ -373,9 +380,7 @@ def test_web_delete_empty_project_redirects(tmp_path):
     with TestClient(app) as client:
         _bootstrap_first_user(client)
         proj = _make_project(client, actor="1")
-        r = client.post(
-            f"/aegis/projects/{proj['id']}/delete", follow_redirects=False
-        )
+        r = client.post(f"/aegis/projects/{proj['id']}/delete", follow_redirects=False)
         assert r.status_code == 303
         assert client.get(f"/projects/{proj['id']}").status_code == 404
 
@@ -451,7 +456,9 @@ def test_update_project_partial_leaves_unsent_fields(tmp_path):
         conn = db.connect(db_file)
         conn.execute("INSERT INTO users (email, name) VALUES ('z@e.com', 'Z')")
         conn.commit()
-        proj = projects.create_project(conn, name="Orig", key="ORIG", created_by=1, description="d")
+        proj = projects.create_project(
+            conn, name="Orig", key="ORIG", created_by=1, description="d"
+        )
         updated = projects.update_project(conn, proj["id"], description="d2")
         assert updated["name"] == "Orig"  # untouched
         assert updated["description"] == "d2"

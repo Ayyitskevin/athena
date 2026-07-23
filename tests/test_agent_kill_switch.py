@@ -418,7 +418,9 @@ def test_mcp_client_revoke_agent_tokens(tmp_path):
             headers=H_ADMIN,
         )  # agent id 2
         agent_raw = tc.post(
-            "/tokens", json={"name": "t", "scopes": ["admin"]}, headers={"X-Athena-Actor": "2"}
+            "/tokens",
+            json={"name": "t", "scopes": ["admin"]},
+            headers={"X-Athena-Actor": "2"},
         ).json()["token"]
         admin_raw = tc.post(
             "/tokens", json={"name": "adm", "scopes": ["admin"]}, headers=H_ADMIN
@@ -452,7 +454,9 @@ def test_mcp_client_offboard_requires_admin(tmp_path):
             headers=H_ADMIN,
         )  # member id 2
         member_raw = tc.post(
-            "/tokens", json={"name": "t", "scopes": ["admin"]}, headers={"X-Athena-Actor": "2"}
+            "/tokens",
+            json={"name": "t", "scopes": ["admin"]},
+            headers={"X-Athena-Actor": "2"},
         ).json()["token"]
         tc.headers.update({"Authorization": f"Bearer {member_raw}"})
 

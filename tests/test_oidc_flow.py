@@ -6,6 +6,7 @@ rejection path (bad signature, wrong audience/issuer, expiry, missing sub, nonce
 mismatch, and the HS256 key-confusion forgery). The provision-or-link policy is
 tested against a real DB. Network calls (discovery, token exchange) are stubbed.
 """
+
 import base64
 import hashlib
 import json
@@ -31,8 +32,15 @@ _OMIT = object()
 def _token(key=_KEY, alg="RS256", **overrides):
     now = int(time.time())
     claims = {
-        "iss": ISS, "aud": CLIENT, "sub": "sub-1", "iat": now, "exp": now + 3600,
-        "nonce": "nonce-1", "email": "a@e.com", "email_verified": True, "name": "A",
+        "iss": ISS,
+        "aud": CLIENT,
+        "sub": "sub-1",
+        "iat": now,
+        "exp": now + 3600,
+        "nonce": "nonce-1",
+        "email": "a@e.com",
+        "email_verified": True,
+        "name": "A",
     }
     claims.update(overrides)
     claims = {k: v for k, v in claims.items() if v is not _OMIT}
@@ -104,10 +112,19 @@ def test_hmac_forgery_rejected():
 
     now = int(time.time())
     header = _seg({"alg": "HS256", "typ": "JWT"})
-    payload = _seg({"iss": ISS, "aud": CLIENT, "sub": "x", "exp": now + 60,
-                    "iat": now, "nonce": "nonce-1"})
+    payload = _seg(
+        {
+            "iss": ISS,
+            "aud": CLIENT,
+            "sub": "x",
+            "exp": now + 60,
+            "iat": now,
+            "nonce": "nonce-1",
+        }
+    )
     signing_input = header + b"." + payload
     import hmac
+
     sig = base64.urlsafe_b64encode(
         hmac.new(pub_pem, signing_input, hashlib.sha256).digest()
     ).rstrip(b"=")
@@ -123,10 +140,14 @@ def test_hmac_forgery_rejected():
 def test_authorization_url_carries_the_right_params():
     url = oidc_flow.build_authorization_url(
         "https://idp.example.com/authorize",
-        client_id=CLIENT, redirect_uri="https://app.example.com/cb",
-        state="st-1", nonce="no-1", code_challenge="chal",
+        client_id=CLIENT,
+        redirect_uri="https://app.example.com/cb",
+        state="st-1",
+        nonce="no-1",
+        code_challenge="chal",
     )
     from urllib.parse import parse_qs, urlparse
+
     q = parse_qs(urlparse(url).query)
     assert q["response_type"] == ["code"]
     assert q["client_id"] == [CLIENT]
@@ -138,9 +159,11 @@ def test_authorization_url_carries_the_right_params():
 
 def test_pkce_challenge_is_unpadded_s256():
     verifier = oidc_flow.new_pkce_verifier()
-    expected = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode("ascii")).digest()
-    ).rstrip(b"=").decode("ascii")
+    expected = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
     challenge = oidc_flow.pkce_challenge(verifier)
     assert challenge == expected and "=" not in challenge
 
@@ -163,25 +186,33 @@ class _FakeResp:
 
 
 def _stub_urlopen(monkeypatch, payload):
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda *a, **k: _FakeResp(payload)
-    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResp(payload))
 
 
 def test_discover_returns_endpoints(monkeypatch):
-    _stub_urlopen(monkeypatch, {
-        "issuer": ISS, "authorization_endpoint": "https://idp/auth",
-        "token_endpoint": "https://idp/token", "jwks_uri": "https://idp/jwks",
-    })
+    _stub_urlopen(
+        monkeypatch,
+        {
+            "issuer": ISS,
+            "authorization_endpoint": "https://idp/auth",
+            "token_endpoint": "https://idp/token",
+            "jwks_uri": "https://idp/jwks",
+        },
+    )
     doc = oidc_flow.discover(ISS)
     assert doc["token_endpoint"] == "https://idp/token"
 
 
 def test_discover_rejects_issuer_mismatch(monkeypatch):
-    _stub_urlopen(monkeypatch, {
-        "issuer": "https://evil.example.com", "authorization_endpoint": "a",
-        "token_endpoint": "t", "jwks_uri": "j",
-    })
+    _stub_urlopen(
+        monkeypatch,
+        {
+            "issuer": "https://evil.example.com",
+            "authorization_endpoint": "a",
+            "token_endpoint": "t",
+            "jwks_uri": "j",
+        },
+    )
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.discover(ISS)
 
@@ -190,8 +221,12 @@ def test_exchange_code_requires_id_token(monkeypatch):
     _stub_urlopen(monkeypatch, {"access_token": "x", "token_type": "Bearer"})
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.exchange_code(
-            "https://idp/token", code="c", redirect_uri="r",
-            client_id=CLIENT, client_secret="s", code_verifier="v",
+            "https://idp/token",
+            code="c",
+            redirect_uri="r",
+            client_id=CLIENT,
+            client_secret="s",
+            code_verifier="v",
         )
 
 
@@ -206,7 +241,12 @@ def _conn(tmp_path):
 
 def test_first_login_provisions_a_member(tmp_path):
     conn = _conn(tmp_path)
-    claims = {"sub": "s1", "email": "new@acme.com", "email_verified": True, "name": "New"}
+    claims = {
+        "sub": "s1",
+        "email": "new@acme.com",
+        "email_verified": True,
+        "name": "New",
+    }
     user = oidc_flow.provision_or_link(conn, issuer=ISS, claims=claims)
     assert user["email"] == "new@acme.com" and user["role"] == users.MEMBER_ROLE
     # Idempotent: a second login resolves by sub to the SAME user, no duplicate.
@@ -227,7 +267,8 @@ def test_existing_account_auto_link_requires_a_domain_allow_list(tmp_path):
     )
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.provision_or_link(
-            conn, issuer=ISS,
+            conn,
+            issuer=ISS,
             claims={"sub": "s2", "email": "boss@acme.com", "email_verified": True},
         )
     # No identity was linked, no account created — the admin is untouched.
@@ -237,7 +278,8 @@ def test_existing_account_auto_link_requires_a_domain_allow_list(tmp_path):
     # WITH a domain allow-list the operator has declared this IdP verifies the domain,
     # so the link to the existing admin is trusted and goes through.
     linked = oidc_flow.provision_or_link(
-        conn, issuer=ISS,
+        conn,
+        issuer=ISS,
         claims={"sub": "s2", "email": "boss@acme.com", "email_verified": True},
         allowed_domains=("acme.com",),
     )
@@ -250,7 +292,8 @@ def test_unverified_email_is_refused(tmp_path):
     conn = _conn(tmp_path)
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.provision_or_link(
-            conn, issuer=ISS,
+            conn,
+            issuer=ISS,
             claims={"sub": "s", "email": "x@acme.com", "email_verified": False},
         )
     assert users.count_users(conn) == 0
@@ -261,13 +304,15 @@ def test_disallowed_domain_is_refused(tmp_path):
     conn = _conn(tmp_path)
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.provision_or_link(
-            conn, issuer=ISS,
+            conn,
+            issuer=ISS,
             claims={"sub": "s", "email": "x@evil.com", "email_verified": True},
             allowed_domains=("acme.com",),
         )
     # The allowed domain goes through.
     ok = oidc_flow.provision_or_link(
-        conn, issuer=ISS,
+        conn,
+        issuer=ISS,
         claims={"sub": "s", "email": "x@acme.com", "email_verified": True},
         allowed_domains=("acme.com",),
     )
@@ -279,7 +324,8 @@ def test_missing_sub_is_refused(tmp_path):
     conn = _conn(tmp_path)
     with pytest.raises(oidc_flow.OidcError):
         oidc_flow.provision_or_link(
-            conn, issuer=ISS,
+            conn,
+            issuer=ISS,
             claims={"email": "x@acme.com", "email_verified": True},
         )
     conn.close()
@@ -290,12 +336,14 @@ def test_already_linked_resolves_by_sub_regardless_of_email(tmp_path):
     # domain/verified policy no longer gates an established account.
     conn = _conn(tmp_path)
     first = oidc_flow.provision_or_link(
-        conn, issuer=ISS,
+        conn,
+        issuer=ISS,
         claims={"sub": "s", "email": "x@acme.com", "email_verified": True},
         allowed_domains=("acme.com",),
     )
     again = oidc_flow.provision_or_link(
-        conn, issuer=ISS,
+        conn,
+        issuer=ISS,
         claims={"sub": "s", "email": "changed@other.com", "email_verified": False},
         allowed_domains=("acme.com",),
     )

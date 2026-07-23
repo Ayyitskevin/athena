@@ -10,6 +10,7 @@ surfaces them on the web list. These tests pin the contract:
     (mapped to the saved-filter form's field names), so they aren't lost on the
     next click.
 """
+
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -115,14 +116,18 @@ def test_status_filter_lists_statuses_in_use_including_custom(tmp_path):
     # uses, exactly like the board filter.
     with TestClient(create_app(tmp_path / "st.db")) as client:
         _admin(client)
-        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=H1).json()
+        proj = client.post(
+            "/projects", json={"name": "Web", "key": "WEB"}, headers=H1
+        ).json()
         client.post(
             f"/projects/{proj['id']}/statuses",
             json={"name": "review", "category": "doing"},
             headers=H1,
         )
         reviewing = _issue(client, "in review", project_id=proj["id"])
-        client.patch(f"/issues/{reviewing['id']}", json={"status": "review"}, headers=H1)
+        client.patch(
+            f"/issues/{reviewing['id']}", json={"status": "review"}, headers=H1
+        )
         _issue(client, "still open")  # backlog, status "open"
 
         body = client.get("/aegis/issues").text

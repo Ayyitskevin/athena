@@ -5,6 +5,7 @@ These encode the contract: a comment is stamped to the authenticated author
 commenting needs authentication, empty comments are rejected, listing is
 chronological, and the web form obeys the same actor rule as the API.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -139,9 +140,7 @@ def test_web_comment_is_gated_and_renders(tmp_path):
 
         # Logged out: refused.
         client.cookies.clear()
-        out = client.post(
-            f"/aegis/issues/{issue_id}/comments", data={"body": "nope"}
-        )
+        out = client.post(f"/aegis/issues/{issue_id}/comments", data={"body": "nope"})
         assert out.status_code == 401
         assert "sign in" in out.text.lower()
 

@@ -140,9 +140,7 @@ def test_rest_requires_read_scope_isolates_actor_and_has_no_domain_side_effects(
         read_a = _token(client, agent_a["id"], ["read"], "read-a")
         read_b = _token(client, agent_b["id"], ["read"], "read-b")
         write_a = _token(client, agent_a["id"], ["issue:write"], "write-a")
-        docs_only = _token(
-            client, agent_a["id"], ["docs:write"], "docs-only"
-        )
+        docs_only = _token(client, agent_a["id"], ["docs:write"], "docs-only")
 
         assert client.get("/delegations/me").status_code == 401
         denied = client.get("/delegations/me", headers=docs_only)
@@ -252,9 +250,7 @@ def test_private_assignment_is_hidden_from_self_but_flagged_for_admin_and_web(
         assert all(item["visible_to_subject"] for item in now_visible["items"])
 
 
-def test_self_projection_fails_closed_on_visibility_mismatch(
-    tmp_path, monkeypatch
-):
+def test_self_projection_fails_closed_on_visibility_mismatch(tmp_path, monkeypatch):
     db_path = tmp_path / "privacy_mismatch.db"
     with TestClient(create_app(db_path)) as client:
         _, agent, _ = _bootstrap(client)
@@ -341,9 +337,7 @@ def test_done_archive_order_pagination_bounds_and_legacy_priority(tmp_path):
         finally:
             conn.close()
 
-        first = client.get(
-            "/delegations/me?limit=2&offset=0", headers=bearer
-        ).json()
+        first = client.get("/delegations/me?limit=2&offset=0", headers=bearer).json()
         assert [item["issue"]["title"] for item in first["items"]] == [
             "Urgent old",
             "Urgent new",
@@ -351,9 +345,7 @@ def test_done_archive_order_pagination_bounds_and_legacy_priority(tmp_path):
         assert first["has_more"] is True
         assert first["next_offset"] == 2
 
-        middle = client.get(
-            "/delegations/me?limit=3&offset=2", headers=bearer
-        ).json()
+        middle = client.get("/delegations/me?limit=3&offset=2", headers=bearer).json()
         assert [item["issue"]["title"] for item in middle["items"]] == [
             "High",
             "Medium",
@@ -362,9 +354,7 @@ def test_done_archive_order_pagination_bounds_and_legacy_priority(tmp_path):
         assert middle["has_more"] is True
         assert middle["next_offset"] == 5
 
-        last = client.get(
-            "/delegations/me?limit=3&offset=5", headers=bearer
-        ).json()
+        last = client.get("/delegations/me?limit=3&offset=5", headers=bearer).json()
         assert [item["issue"]["title"] for item in last["items"]] == ["Legacy"]
         assert last["items"][0]["issue"]["priority"] == "custom"
         assert last["has_more"] is False
@@ -422,8 +412,7 @@ def test_payload_batches_labels_and_caps_only_subject_visible_open_blockers(
         assert attached.status_code == 201, attached.text
 
         visible_blockers = [
-            _issue(client, f"Visible blocker {number}")["id"]
-            for number in range(11)
+            _issue(client, f"Visible blocker {number}")["id"] for number in range(11)
         ]
         done_project = client.post(
             "/projects",
@@ -507,9 +496,7 @@ def test_payload_batches_labels_and_caps_only_subject_visible_open_blockers(
 
         conn = db.connect(db_path)
         try:
-            supervised = delegations.list_delegations(
-                conn, agent, viewer=admin
-            )
+            supervised = delegations.list_delegations(conn, agent, viewer=admin)
         finally:
             conn.close()
         supervised_item = supervised["items"][0]
@@ -543,9 +530,9 @@ def test_mcp_client_is_a_thin_rest_client():
         {"params": {"limit": 50, "offset": 0}},
     )
 
-    assert client.list_my_delegated_work(
-        include_closed=True, limit=7, offset=9
-    ) == {"ok": True}
+    assert client.list_my_delegated_work(include_closed=True, limit=7, offset=9) == {
+        "ok": True
+    }
     assert transport.calls.pop() == (
         "/delegations/me",
         {
@@ -587,9 +574,7 @@ def test_fastmcp_delegation_tool_forwards_and_enforces_bounds():
             {"include_closed": True, "limit": 7, "offset": 9},
         )
     )
-    assert client.calls == [
-        {"include_closed": True, "limit": 7, "offset": 9}
-    ]
+    assert client.calls == [{"include_closed": True, "limit": 7, "offset": 9}]
 
     for invalid in (
         {"limit": delegations.MAX_LIMIT + 1},

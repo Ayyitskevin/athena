@@ -15,6 +15,7 @@ These tests encode the contract that matters, not just that the FTS query runs:
   * the REST endpoint requires an authenticated actor (a cross-cutting read over
     every issue and page) and can be narrowed to one kind.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -62,7 +63,11 @@ def test_search_spans_issues_and_pages_in_one_query(tmp_path):
         conn, title="Deploy pipeline", body="the release deploy steps", created_by=1
     )
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="Deploy runbook", body="how we deploy", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Deploy runbook",
+        body="how we deploy",
+        created_by=1,
     )
     hits = search.search(conn, "deploy")
     found = {(h["kind"], h["source_id"]) for h in hits}
@@ -76,7 +81,10 @@ def test_title_hit_outranks_body_only_hit(tmp_path):
     conn = _migrated_conn(tmp_path / "rank.db")
     _seed_user(conn)
     body_only = issues.create_issue(
-        conn, title="random thing", body="we should migrate the database soon", created_by=1
+        conn,
+        title="random thing",
+        body="we should migrate the database soon",
+        created_by=1,
     )
     title_hit = issues.create_issue(
         conn, title="Database migration plan", body="unrelated text", created_by=1
@@ -120,7 +128,11 @@ def test_page_edit_reindexes(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     pg = pages.create_page(
-        conn, space_id=sp["id"], title="Notes", body="initial griffin content", created_by=1
+        conn,
+        space_id=sp["id"],
+        title="Notes",
+        body="initial griffin content",
+        created_by=1,
     )
     assert [h["source_id"] for h in search.search(conn, "griffin")] == [pg["id"]]
     pages.update_page(conn, pg["id"], editor_id=1, body="rewritten phoenix content")
@@ -133,9 +145,15 @@ def test_kind_filter_narrows_to_one_module(tmp_path):
     _seed_user(conn)
     sp = _space(conn)
     iss = issues.create_issue(conn, title="shared word alpha", body="", created_by=1)
-    pg = pages.create_page(conn, space_id=sp["id"], title="shared word alpha", body="", created_by=1)
-    assert [h["source_id"] for h in search.search(conn, "alpha", kind="issue")] == [iss["id"]]
-    assert [h["source_id"] for h in search.search(conn, "alpha", kind="page")] == [pg["id"]]
+    pg = pages.create_page(
+        conn, space_id=sp["id"], title="shared word alpha", body="", created_by=1
+    )
+    assert [h["source_id"] for h in search.search(conn, "alpha", kind="issue")] == [
+        iss["id"]
+    ]
+    assert [h["source_id"] for h in search.search(conn, "alpha", kind="page")] == [
+        pg["id"]
+    ]
 
 
 def test_blank_query_returns_nothing(tmp_path):
@@ -167,9 +185,7 @@ def test_query_operators_are_treated_as_literal_text(tmp_path):
 def test_snippet_highlights_the_match(tmp_path):
     conn = _migrated_conn(tmp_path / "snip.db")
     _seed_user(conn)
-    issues.create_issue(
-        conn, title="t", body="the quick brown fox jumps", created_by=1
-    )
+    issues.create_issue(conn, title="t", body="the quick brown fox jumps", created_by=1)
     hit = search.search(conn, "brown")[0]
     assert "[brown]" in hit["snippet"]
 
@@ -231,7 +247,9 @@ def test_page_hit_carries_space_key(tmp_path):
     conn = _migrated_conn(tmp_path / "pgctx.db")
     _seed_user(conn)
     sp = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
-    pages.create_page(conn, space_id=sp["id"], title="kraken runbook", body="", created_by=1)
+    pages.create_page(
+        conn, space_id=sp["id"], title="kraken runbook", body="", created_by=1
+    )
     hit = search.search(conn, "kraken")[0]
     assert hit["space_key"] == "OPS"
 
@@ -247,8 +265,12 @@ def test_offset_pages_the_ranked_set(tmp_path):
         issues.create_issue(conn, title=f"lantern {i}", body="", created_by=1)["id"]
         for i in range(5)
     ]
-    first_two = [h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=0)]
-    next_two = [h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=2)]
+    first_two = [
+        h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=0)
+    ]
+    next_two = [
+        h["source_id"] for h in search.search(conn, "lantern", limit=2, offset=2)
+    ]
     assert len(first_two) == 2 and len(next_two) == 2
     # The two windows are disjoint and all come from the set we made.
     assert not set(first_two) & set(next_two)
@@ -262,12 +284,15 @@ def test_offset_stays_inside_sqlite_integer_range(tmp_path):
     _seed_user(conn)
     issues.create_issue(conn, title="lantern", body="", created_by=1)
 
-    assert search.search(
-        conn,
-        "lantern",
-        limit=1,
-        offset=search.MAX_OFFSET,
-    ) == []
+    assert (
+        search.search(
+            conn,
+            "lantern",
+            limit=1,
+            offset=search.MAX_OFFSET,
+        )
+        == []
+    )
     for offset in (-1, search.MAX_OFFSET + 1):
         with pytest.raises(ValueError, match="offset must be between"):
             search.search(conn, "lantern", limit=1, offset=offset)
@@ -291,7 +316,9 @@ def test_search_endpoint_returns_ranked_hits_across_kinds(tmp_path):
         iss = client.post(
             "/issues", json={"title": "Telemetry export", "body": "metrics"}, headers=h
         ).json()
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages",
             json={"title": "Telemetry guide", "body": "dashboards"},
@@ -309,8 +336,12 @@ def test_search_endpoint_kind_filter(tmp_path):
         _seed_api_user(tmp_path / "apik.db")
         h = {"X-Athena-Actor": "1"}
         iss = client.post("/issues", json={"title": "widget alpha"}, headers=h).json()
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "widget alpha"}, headers=h)
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "widget alpha"}, headers=h
+        )
         r = client.get("/search", params={"q": "widget", "kind": "issue"}, headers=h)
         assert [x["source_id"] for x in r.json()] == [iss["id"]]
 
@@ -365,21 +396,33 @@ def test_search_endpoint_carries_context_and_pages(tmp_path):
     with TestClient(app) as client:
         _seed_api_user(tmp_path / "apictx.db")
         h = {"X-Athena-Actor": "1"}
-        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=h).json()
+        proj = client.post(
+            "/projects", json={"name": "Web", "key": "WEB"}, headers=h
+        ).json()
         client.post(
             "/issues",
             json={"title": "obelisk alpha", "project_id": proj["id"]},
             headers=h,
         )
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "obelisk beta"}, headers=h)
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "obelisk beta"}, headers=h
+        )
         hits = client.get("/search", params={"q": "obelisk"}, headers=h).json()
         by_kind = {x["kind"]: x for x in hits}
         assert by_kind["issue"]["key"] == "WEB-1"
         assert by_kind["issue"]["status"] == "open"
         assert by_kind["page"]["space_key"] == "ENG"
         # offset paging: limit 1 yields disjoint single-hit windows.
-        p0 = client.get("/search", params={"q": "obelisk", "limit": 1, "offset": 0}, headers=h).json()
-        p1 = client.get("/search", params={"q": "obelisk", "limit": 1, "offset": 1}, headers=h).json()
+        p0 = client.get(
+            "/search", params={"q": "obelisk", "limit": 1, "offset": 0}, headers=h
+        ).json()
+        p1 = client.get(
+            "/search", params={"q": "obelisk", "limit": 1, "offset": 1}, headers=h
+        ).json()
         assert len(p0) == 1 and len(p1) == 1
-        assert p0[0]["source_id"] != p1[0]["source_id"] or p0[0]["kind"] != p1[0]["kind"]
+        assert (
+            p0[0]["source_id"] != p1[0]["source_id"] or p0[0]["kind"] != p1[0]["kind"]
+        )

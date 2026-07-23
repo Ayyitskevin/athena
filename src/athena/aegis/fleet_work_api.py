@@ -22,9 +22,7 @@ _PRIVATE_HEADERS = {
 
 
 class _StrictModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", strict=True, populate_by_name=True
-    )
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
 
 
 class ActiveWorkSemanticsOut(_StrictModel):
@@ -73,9 +71,7 @@ class ActiveWorkLeaseOut(_StrictModel):
 class ActiveWorkRunOut(_StrictModel):
     claim_event_id: int | None
     run_id: str | None
-    reporting_state: Literal[
-        "untagged", "not_reported", "reporting_recently", "stale"
-    ]
+    reporting_state: Literal["untagged", "not_reported", "reporting_recently", "stale"]
     last_seen_at: str | None
     evidence_links_available: bool
     age_seconds: int | None
@@ -170,17 +166,13 @@ class ActiveWorkOut(_StrictModel):
 def _active_work_admin(
     request: Request,
     authorization: str | None = Header(default=None),
-    x_athena_actor: str | None = Header(
-        default=None, alias=identity.ACTOR_HEADER
-    ),
+    x_athena_actor: str | None = Header(default=None, alias=identity.ACTOR_HEADER),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Require an admin while keeping every credential outcome private."""
 
     try:
-        actor = identity.current_actor(
-            request, authorization, x_athena_actor, conn
-        )
+        actor = identity.current_actor(request, authorization, x_athena_actor, conn)
     except HTTPException as exc:
         headers = dict(exc.headers or {})
         headers.update(_PRIVATE_HEADERS)
@@ -206,9 +198,7 @@ def _active_work_admin(
 
 def _query_from_request(request: Request) -> tuple[int | None, int]:
     try:
-        return fleet_work.parse_query_pairs(
-            list(request.query_params.multi_items())
-        )
+        return fleet_work.parse_query_pairs(list(request.query_params.multi_items()))
     except fleet_work.ActiveWorkQueryError as exc:
         raise HTTPException(
             status_code=422,

@@ -12,6 +12,7 @@ matters:
   * the web layer find-or-creates by name (no separate "create label" step) and
     renders chips on list/board/detail — but still owns no data of its own.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db, labels
@@ -54,7 +55,8 @@ def _make_issue(client, actor="1", **body) -> dict:
 
 def _create_label(client, name, actor="1", color="#6b7280") -> dict:
     r = client.post(
-        "/labels", json={"name": name, "color": color},
+        "/labels",
+        json={"name": name, "color": color},
         headers={"X-Athena-Actor": actor},
     )
     assert r.status_code == 201, r.text
@@ -70,9 +72,7 @@ def test_attach_is_idempotent(tmp_path):
     db_file = tmp_path / "u1.db"
     conn = _migrated_conn(db_file)
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
-    conn.execute(
-        "INSERT INTO issues (title, created_by) VALUES ('i', 1)"
-    )
+    conn.execute("INSERT INTO issues (title, created_by) VALUES ('i', 1)")
     conn.commit()
     lab = labels.create_label(conn, name="bug")
     labels.add_label_to_issue(conn, 1, lab["id"])
@@ -227,7 +227,9 @@ def test_label_color_migration_sanitizes_existing_rows(tmp_path):
     )
     for path in db.MIGRATIONS_DIR.glob("*.sql"):
         if path.name != "0018_label_color_safety.sql":
-            conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (path.name,))
+            conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?)", (path.name,)
+            )
     conn.commit()
 
     assert db.migrate(conn) == ["0018_label_color_safety.sql"]
@@ -446,9 +448,7 @@ def test_web_empty_label_name_is_400(tmp_path):
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
         issue = _make_issue(client, actor="1")
-        r = client.post(
-            f"/aegis/issues/{issue['id']}/labels", data={"name": "  "}
-        )
+        r = client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "  "})
         assert r.status_code == 400
 
 
@@ -458,9 +458,7 @@ def test_web_remove_label(tmp_path):
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
         issue = _make_issue(client, actor="1")
-        client.post(
-            f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"}
-        )
+        client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"})
         lab = client.get("/labels").json()[0]
         r = client.post(
             f"/aegis/issues/{issue['id']}/labels/{lab['id']}/delete",
@@ -479,9 +477,7 @@ def test_web_bystander_cannot_label(tmp_path):
         _login(client, "ann@e.com", "Ann")  # user 1 — creator
         _login(client, "bob@e.com", "Bob")  # user 2 — bystander (current session)
         issue = _make_issue(client, actor="1")
-        r = client.post(
-            f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"}
-        )
+        r = client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"})
         assert r.status_code == 403
         assert _get_issue(client, issue["id"])["labels"] == []
 
@@ -493,9 +489,7 @@ def test_web_logged_out_cannot_label(tmp_path):
         _login(client, "ann@e.com", "Ann")
         issue = _make_issue(client, actor="1")
         client.post("/logout")
-        r = client.post(
-            f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"}
-        )
+        r = client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "bug"})
         assert r.status_code == 401
 
 
@@ -512,9 +506,7 @@ def test_web_list_filters_by_label(tmp_path):
         _login(client, "ann@e.com", "Ann")
         bug_issue = _make_issue(client, actor="1", title="alpha-the-bug")
         _make_issue(client, actor="1", title="beta-no-label")
-        client.post(
-            f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"}
-        )
+        client.post(f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"})
         page = client.get("/aegis/issues?label=bug").text
         assert "alpha-the-bug" in page
         assert "beta-no-label" not in page
@@ -529,9 +521,7 @@ def test_web_list_unfiltered_shows_all(tmp_path):
         _login(client, "ann@e.com", "Ann")
         bug_issue = _make_issue(client, actor="1", title="alpha-the-bug")
         _make_issue(client, actor="1", title="beta-no-label")
-        client.post(
-            f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"}
-        )
+        client.post(f"/aegis/issues/{bug_issue['id']}/labels", data={"name": "bug"})
         page = client.get("/aegis/issues").text
         assert "alpha-the-bug" in page
         assert "beta-no-label" in page
@@ -545,9 +535,7 @@ def test_web_list_label_filter_dropdown_lists_labels(tmp_path):
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")
         issue = _make_issue(client, actor="1", title="x")
-        client.post(
-            f"/aegis/issues/{issue['id']}/labels", data={"name": "frontend"}
-        )
+        client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "frontend"})
         page = client.get("/aegis/issues").text
         assert 'name="label"' in page  # the filter select exists
         assert '<option value="frontend"' in page  # populated from vocabulary

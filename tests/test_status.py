@@ -6,6 +6,7 @@ These encode the contract, not just HTTP shapes: only the lifecycle statuses
 moving a missing issue is a 404 (not a silent success), and the web write path
 obeys the same actor rule as the API — logged-out callers cannot change status.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -162,7 +163,9 @@ def test_web_change_status_is_gated_on_login(tmp_path):
         assert ok.headers["location"] == f"/aegis/issues/{issue_id}"
 
         c = db.connect(db_file)
-        row = c.execute("SELECT status FROM issues WHERE id = ?", (issue_id,)).fetchone()
+        row = c.execute(
+            "SELECT status FROM issues WHERE id = ?", (issue_id,)
+        ).fetchone()
         c.close()
         assert row["status"] == "done"
 
@@ -174,7 +177,5 @@ def test_web_change_status_rejects_unknown_status(tmp_path):
     with TestClient(app) as client:
         _login(client, db_file)
         issue_id = _make_issue(client)
-        r = client.post(
-            f"/aegis/issues/{issue_id}/status", data={"status": "banana"}
-        )
+        r = client.post(f"/aegis/issues/{issue_id}/status", data={"status": "banana"})
         assert r.status_code == 400

@@ -61,7 +61,9 @@ def edit_page_comment(
     PageCommentCommandError(404) if the comment vanished between the author check and the
     write (a race)."""
     with db.transaction(conn, immediate=True):
-        updated = page_comments.update_comment(conn, comment_id, body=body, commit=False)
+        updated = page_comments.update_comment(
+            conn, comment_id, body=body, commit=False
+        )
         if updated is None:
             raise PageCommentCommandError("no such comment", status_code=404)
         # Re-index the rewritten body so search reflects the current text, not the old.

@@ -11,6 +11,7 @@ These tests encode the contract:
   * reads are open: list a space's pages (flat, alphabetical, [] when empty) and
     fetch a single page on its own URL (missing -> 404).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db

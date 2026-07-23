@@ -7,6 +7,7 @@ page, surfaced on the page's own Activity section and linked from the global fee
 and that the "record only on real change" rule holds (a save that changes nothing
 writes no row), mirroring the issue trail.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -114,9 +115,7 @@ def test_api_page_delete_records_with_title_preserved(tmp_path):
         _seed_user(db_file)
         space = _make_space(client)
         page = _make_page(client, space["id"], title="Obsolete")
-        r = client.delete(
-            f"/pages/{page['id']}", headers={"X-Athena-Actor": "1"}
-        )
+        r = client.delete(f"/pages/{page['id']}", headers={"X-Athena-Actor": "1"})
         assert r.status_code == 204
     conn = db.connect(db_file)
     row = conn.execute(
@@ -189,9 +188,7 @@ def test_web_page_delete_records(tmp_path):
         _login(client)
         space = _make_space(client)
         page = _make_page(client, space["id"], title="Scratch")
-        r = client.post(
-            f"/mentor/pages/{page['id']}/delete", follow_redirects=False
-        )
+        r = client.post(f"/mentor/pages/{page['id']}/delete", follow_redirects=False)
         assert r.status_code == 303
     conn = db.connect(db_file)
     row = conn.execute(
@@ -242,9 +239,7 @@ def test_api_page_move_to_top_level_records_empty_detail(tmp_path):
         _seed_user(db_file)
         space = _make_space(client)
         parent = _make_page(client, space["id"], title="Parent")
-        child = _make_page(
-            client, space["id"], title="Child", parent_id=parent["id"]
-        )
+        child = _make_page(client, space["id"], title="Child", parent_id=parent["id"])
         r = client.put(
             f"/pages/{child['id']}/move",
             json={"parent_id": None},
@@ -253,8 +248,7 @@ def test_api_page_move_to_top_level_records_empty_detail(tmp_path):
         assert r.status_code == 200
     conn = db.connect(db_file)
     row = conn.execute(
-        "SELECT verb, detail FROM activity "
-        "WHERE verb = 'page_moved' AND target_id = ?",
+        "SELECT verb, detail FROM activity WHERE verb = 'page_moved' AND target_id = ?",
         (child["id"],),
     ).fetchone()
     conn.close()
@@ -271,9 +265,7 @@ def test_api_page_move_noop_is_silent(tmp_path):
         _seed_user(db_file)
         space = _make_space(client)
         parent = _make_page(client, space["id"], title="Parent")
-        child = _make_page(
-            client, space["id"], title="Child", parent_id=parent["id"]
-        )
+        child = _make_page(client, space["id"], title="Child", parent_id=parent["id"])
         # Move under the SAME parent it already has.
         r = client.put(
             f"/pages/{child['id']}/move",
@@ -321,8 +313,7 @@ def test_api_restore_records_and_identical_restore_is_silent(tmp_path):
         )
     conn = db.connect(db_file)
     rows = conn.execute(
-        "SELECT detail FROM activity "
-        "WHERE verb = 'page_restored' AND target_id = ?",
+        "SELECT detail FROM activity WHERE verb = 'page_restored' AND target_id = ?",
         (page["id"],),
     ).fetchall()
     conn.close()

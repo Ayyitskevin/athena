@@ -8,6 +8,7 @@ the authoritative gate (issues.can_act_on): creator, assignee, delegated
 contributor, or admin may act; everyone else stays 403; and the fix holds across
 REST, the command layer, and the MCP client path.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -117,17 +118,16 @@ def test_removing_the_contributor_revokes_the_ability(tmp_path):
         as_agent = {"X-Athena-Actor": str(agent["id"])}
         assert (
             c.patch(
-                f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=as_agent
+                f"/issues/{issue['id']}",
+                json={"status": "in_progress"},
+                headers=as_agent,
             ).status_code
             == 200
         )
         # Un-delegate: the agent loses write access again.
-        assert (
-            c.delete(
-                f"/issues/{issue['id']}/contributors/{agent['id']}", headers=H1
-            ).status_code
-            in (200, 204)
-        )
+        assert c.delete(
+            f"/issues/{issue['id']}/contributors/{agent['id']}", headers=H1
+        ).status_code in (200, 204)
         assert (
             c.patch(
                 f"/issues/{issue['id']}", json={"status": "done"}, headers=as_agent

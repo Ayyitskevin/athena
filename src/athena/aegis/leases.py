@@ -12,6 +12,7 @@ All lease SQL lives here; the conflict/eligibility rules and audit events live i
 aegis/lease_commands.py, the same split every other Aegis write uses (data layer owns the
 row, the command owns the policy + event).
 """
+
 from __future__ import annotations
 
 import secrets
@@ -34,6 +35,7 @@ def is_valid_generation(value: object) -> bool:
         and all(char in "0123456789abcdef" for char in value)
     )
 
+
 _SELECT = (
     "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
     "l.claimed_at, l.expires_at, l.generation, "
@@ -52,9 +54,7 @@ def get_lease(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     """The issue's lease row (with the holder's name and a computed ``active`` flag), or
     None if it was never claimed. A row whose ``active`` is False is an EXPIRED lease —
     still present until the next claim overwrites it, but no longer holding the issue."""
-    row = conn.execute(
-        f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)
-    ).fetchone()
+    row = conn.execute(f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)).fetchone()
     return _row_to_lease(row) if row is not None else None
 
 

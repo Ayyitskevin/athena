@@ -12,6 +12,7 @@ These encode the contract that matters for the body render path:
   * the [[issue:N]]/[[page:N]]/[[KEY-N]] cross-links still resolve, even when a
     token sits inside Markdown markup.
 """
+
 from athena.aegis import issues
 from athena.core import db
 from athena.mentor import spaces

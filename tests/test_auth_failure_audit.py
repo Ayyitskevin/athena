@@ -8,6 +8,7 @@ the account involved, that responses stay byte-identical (no oracle changes),
 that unknown principals record NOTHING (no existence probes via the trail), and
 that invalid-bearer hammering is now rate-limited before it can flood the log.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -70,8 +71,9 @@ def test_revoked_token_use_is_attributed_to_its_owner(tmp_path):
         assert denied.json()["detail"] == "invalid or revoked token"
         # Garbage that never was a token records nothing.
         assert (
-            c.get("/users/me", headers={"Authorization": "Bearer ath_nonsense"})
-            .status_code
+            c.get(
+                "/users/me", headers={"Authorization": "Bearer ath_nonsense"}
+            ).status_code
             == 401
         )
 
@@ -111,9 +113,7 @@ def test_paused_account_attempts_are_recorded_per_try(tmp_path):
             json={"email": "sol@e.com", "name": "Sol", "scopes": ["read"]},
             headers=H1,
         ).json()
-        c.put(
-            f"/users/{agent['user']['id']}/paused", json={"paused": True}, headers=H1
-        )
+        c.put(f"/users/{agent['user']['id']}/paused", json={"paused": True}, headers=H1)
         bearer = {"Authorization": f"Bearer {agent['token']['token']}"}
         for _ in range(2):
             assert c.get("/issues", headers=bearer).status_code == 403

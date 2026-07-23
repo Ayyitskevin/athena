@@ -7,6 +7,7 @@ issue, exactly like the single-issue writes), reporting the per-issue outcome â€
 so one issue's 403/404/422 never sinks the rest. These pin: the multi-field apply, the per-item failures, set-null
 clearing, the request-level guards, and that the audit trail records each change.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -18,11 +19,15 @@ H2 = {"X-Athena-Actor": "2"}  # a second member
 
 def _bootstrap(client):
     client.post("/users", json={"email": "a@e.com", "name": "A"})
-    client.post("/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1
+    )
 
 
 def _project(client, name="Ops", key="OPS"):
-    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()["id"]
+    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()[
+        "id"
+    ]
 
 
 def _issue(client, pid, title="x", headers=H1):
@@ -41,9 +46,14 @@ def test_best_effort_multi_field_with_per_item_outcomes(tmp_path):
     with TestClient(create_app(tmp_path / "bulk.db")) as client:
         _bootstrap(client)
         pid = _project(client)
-        a, b = _issue(client, pid, "a", headers=H2), _issue(client, pid, "b", headers=H2)
+        a, b = (
+            _issue(client, pid, "a", headers=H2),
+            _issue(client, pid, "b", headers=H2),
+        )
         theirs = _issue(client, pid, "theirs")  # owned by the admin, not the member
-        sprint = client.post(f"/projects/{pid}/sprints", json={"name": "S1"}, headers=H1).json()["id"]
+        sprint = client.post(
+            f"/projects/{pid}/sprints", json={"name": "S1"}, headers=H1
+        ).json()["id"]
 
         r = client.post(
             "/issues/bulk",
@@ -61,12 +71,21 @@ def test_best_effort_multi_field_with_per_item_outcomes(tmp_path):
         outcomes = {res["id"]: res for res in body["results"]}
         assert outcomes[a]["ok"] and outcomes[b]["ok"]
         # The two we don't own / that don't exist are reported, not fatal.
-        assert not outcomes[theirs]["ok"] and "delegated contributor" in outcomes[theirs]["error"]
+        assert (
+            not outcomes[theirs]["ok"]
+            and "delegated contributor" in outcomes[theirs]["error"]
+        )
         assert not outcomes[9999]["ok"] and outcomes[9999]["error"] == "no such issue"
 
         # The owned issues actually moved on all three fields; the others didn't.
-        assert (_get(client, a, "status"), _get(client, a, "assignee_id"), _get(client, a, "sprint_id")) == (
-            "in_progress", 2, sprint,
+        assert (
+            _get(client, a, "status"),
+            _get(client, a, "assignee_id"),
+            _get(client, a, "sprint_id"),
+        ) == (
+            "in_progress",
+            2,
+            sprint,
         )
         assert _get(client, theirs, "status") == "open"
 
@@ -76,16 +95,30 @@ def test_set_null_clears_assignee_and_sprint(tmp_path):
         _bootstrap(client)
         pid = _project(client)
         iid = _issue(client, pid)
-        sprint = client.post(f"/projects/{pid}/sprints", json={"name": "S1"}, headers=H1).json()["id"]
-        client.post("/issues/bulk", json={"ids": [iid], "assignee_id": 1, "sprint_id": sprint}, headers=H1)
-        assert _get(client, iid, "assignee_id") == 1 and _get(client, iid, "sprint_id") == sprint
+        sprint = client.post(
+            f"/projects/{pid}/sprints", json={"name": "S1"}, headers=H1
+        ).json()["id"]
+        client.post(
+            "/issues/bulk",
+            json={"ids": [iid], "assignee_id": 1, "sprint_id": sprint},
+            headers=H1,
+        )
+        assert (
+            _get(client, iid, "assignee_id") == 1
+            and _get(client, iid, "sprint_id") == sprint
+        )
 
         # An explicit null unassigns / moves to the backlog (distinct from omitting).
         r = client.post(
-            "/issues/bulk", json={"ids": [iid], "assignee_id": None, "sprint_id": None}, headers=H1
+            "/issues/bulk",
+            json={"ids": [iid], "assignee_id": None, "sprint_id": None},
+            headers=H1,
         )
         assert r.json()["updated"] == 1
-        assert _get(client, iid, "assignee_id") is None and _get(client, iid, "sprint_id") is None
+        assert (
+            _get(client, iid, "assignee_id") is None
+            and _get(client, iid, "sprint_id") is None
+        )
 
 
 def test_cross_project_sprint_is_atomic_per_item_and_batch_continues(tmp_path):
@@ -147,13 +180,16 @@ def test_cross_project_sprint_is_atomic_per_item_and_batch_continues(tmp_path):
             (issue_a,),
         )
     ] == ["created"]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM issues AS i "
-        "LEFT JOIN sprints AS s ON s.id = i.sprint_id "
-        "WHERE i.sprint_id IS NOT NULL "
-        "AND (s.id IS NULL OR i.project_id IS NULL "
-        "OR s.project_id <> i.project_id)"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM issues AS i "
+            "LEFT JOIN sprints AS s ON s.id = i.sprint_id "
+            "WHERE i.sprint_id IS NOT NULL "
+            "AND (s.id IS NULL OR i.project_id IS NULL "
+            "OR s.project_id <> i.project_id)"
+        ).fetchone()[0]
+        == 0
+    )
     conn.close()
 
 
@@ -167,7 +203,9 @@ def test_bad_status_is_per_item_not_fatal(tmp_path):
             "/issues/bulk", json={"ids": [good], "status": "done"}, headers=H1
         )
         assert r.json()["updated"] == 1 and _get(client, good, "status") == "done"
-        bad = client.post("/issues/bulk", json={"ids": [bad_target], "status": "bogus"}, headers=H1)
+        bad = client.post(
+            "/issues/bulk", json={"ids": [bad_target], "status": "bogus"}, headers=H1
+        )
         assert bad.json()["results"][0]["error"] == "no such status for this project"
 
 
@@ -176,11 +214,29 @@ def test_request_level_guards(tmp_path):
         _bootstrap(client)
         pid = _project(client)
         iid = _issue(client, pid)
-        assert client.post("/issues/bulk", json={"ids": [], "status": "open"}, headers=H1).status_code == 422
-        assert client.post("/issues/bulk", json={"ids": [iid]}, headers=H1).status_code == 422
-        assert client.post("/issues/bulk", json={"ids": [iid], "status": None}, headers=H1).status_code == 422
+        assert (
+            client.post(
+                "/issues/bulk", json={"ids": [], "status": "open"}, headers=H1
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post("/issues/bulk", json={"ids": [iid]}, headers=H1).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/issues/bulk", json={"ids": [iid], "status": None}, headers=H1
+            ).status_code
+            == 422
+        )
         big = list(range(1, 502))  # over the 500 cap
-        assert client.post("/issues/bulk", json={"ids": big, "status": "open"}, headers=H1).status_code == 422
+        assert (
+            client.post(
+                "/issues/bulk", json={"ids": big, "status": "open"}, headers=H1
+            ).status_code
+            == 422
+        )
 
 
 def test_duplicate_ids_collapse_and_activity_recorded(tmp_path):
@@ -189,7 +245,9 @@ def test_duplicate_ids_collapse_and_activity_recorded(tmp_path):
         _bootstrap(client)
         pid = _project(client)
         iid = _issue(client, pid)
-        r = client.post("/issues/bulk", json={"ids": [iid, iid, iid], "status": "done"}, headers=H1)
+        r = client.post(
+            "/issues/bulk", json={"ids": [iid, iid, iid], "status": "done"}, headers=H1
+        )
         # Deduped: one result row, one update.
         assert [res["id"] for res in r.json()["results"]] == [iid]
     conn = db.connect(db_file)

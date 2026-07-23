@@ -7,6 +7,7 @@ which is exactly what lets the engine skip its OWN events (the loop guard) so a 
 whose action emits a new event can't run away. Driven through run_pass (the background
 loop itself is disabled in tests by conftest).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import automation, comments, contributors, issues, statuses
@@ -17,8 +18,12 @@ H1 = {"X-Athena-Actor": "1"}
 
 
 def _setup(client):
-    client.post("/users", json={"email": "a@e.com", "name": "Alice", "password": "pw"})  # user 1 admin
-    client.post("/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1)  # user 2
+    client.post(
+        "/users", json={"email": "a@e.com", "name": "Alice", "password": "pw"}
+    )  # user 1 admin
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1
+    )  # user 2
 
 
 def test_system_actor_get_or_create(tmp_path):
@@ -36,18 +41,64 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
     db_file = tmp_path / "act.db"
     with TestClient(create_app(db_file)) as client:
         _setup(client)
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H1).json()["id"]
-        iid = client.post("/issues", json={"title": "x", "project_id": pid}, headers=H1).json()["id"]
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H1
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "x", "project_id": pid}, headers=H1
+        ).json()["id"]
 
         conn = db.connect(db_file)
         start = issues.get_issue(conn, iid)
-        target_status = next(n for n in statuses.status_names(conn, pid) if n != start["status"])
+        target_status = next(
+            n for n in statuses.status_names(conn, pid) if n != start["status"]
+        )
         cond = {"project_id": pid}
-        automation.create_rule(conn, name="assign", trigger_verb="created", action_type="assign", conditions=cond, action_params={"user_id": 2}, created_by=1)
-        automation.create_rule(conn, name="status", trigger_verb="created", action_type="set_status", conditions=cond, action_params={"status": target_status}, created_by=1)
-        automation.create_rule(conn, name="label", trigger_verb="created", action_type="add_label", conditions=cond, action_params={"label": "auto"}, created_by=1)
-        automation.create_rule(conn, name="comment", trigger_verb="created", action_type="comment", conditions=cond, action_params={"body": "triaged"}, created_by=1)
-        automation.create_rule(conn, name="contrib", trigger_verb="created", action_type="add_contributor", conditions=cond, action_params={"user_id": 2}, created_by=1)
+        automation.create_rule(
+            conn,
+            name="assign",
+            trigger_verb="created",
+            action_type="assign",
+            conditions=cond,
+            action_params={"user_id": 2},
+            created_by=1,
+        )
+        automation.create_rule(
+            conn,
+            name="status",
+            trigger_verb="created",
+            action_type="set_status",
+            conditions=cond,
+            action_params={"status": target_status},
+            created_by=1,
+        )
+        automation.create_rule(
+            conn,
+            name="label",
+            trigger_verb="created",
+            action_type="add_label",
+            conditions=cond,
+            action_params={"label": "auto"},
+            created_by=1,
+        )
+        automation.create_rule(
+            conn,
+            name="comment",
+            trigger_verb="created",
+            action_type="comment",
+            conditions=cond,
+            action_params={"body": "triaged"},
+            created_by=1,
+        )
+        automation.create_rule(
+            conn,
+            name="contrib",
+            trigger_verb="created",
+            action_type="add_contributor",
+            conditions=cond,
+            action_params={"user_id": 2},
+            created_by=1,
+        )
 
         # One 'created' event fires all five rules.
         assert automation.run_pass(db_file) == 5
@@ -58,7 +109,9 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
         assert issue["assignee_id"] == 2 and issue["status"] == target_status
         assert [lbl["name"] for lbl in labels.labels_for_issue(c, iid)] == ["auto"]
         cs = comments.list_comments(c, iid)
-        assert len(cs) == 1 and cs[0]["body"] == "triaged" and cs[0]["author_id"] == sysid
+        assert (
+            len(cs) == 1 and cs[0]["body"] == "triaged" and cs[0]["author_id"] == sysid
+        )
         assert any(m["user_id"] == 2 for m in contributors.list_contributors(c, iid))
         # Every change is attributed to the Automation actor in the audit trail.
         verbs = {
@@ -66,7 +119,13 @@ def test_all_action_types_apply_and_are_attributed(tmp_path):
             for e in activity.list_activity(c, target_kind="issue", target_id=iid)
             if e["actor_id"] == sysid
         }
-        assert {"assigned", "changed_status", "labeled", "commented", "added_contributor"} <= verbs
+        assert {
+            "assigned",
+            "changed_status",
+            "labeled",
+            "commented",
+            "added_contributor",
+        } <= verbs
 
         # A second pass changes nothing: the engine skips its own events (loop guard) and
         # the actions are already in their desired state.
@@ -80,7 +139,14 @@ def test_loop_guard_prevents_runaway(tmp_path):
         conn = db.connect(db_file)
         # A '*' rule whose action emits a new event (a comment) would re-trigger on its
         # OWN 'commented' event forever without the guard.
-        automation.create_rule(conn, name="tick", trigger_verb="*", action_type="comment", action_params={"body": "tick"}, created_by=1)
+        automation.create_rule(
+            conn,
+            name="tick",
+            trigger_verb="*",
+            action_type="comment",
+            action_params={"body": "tick"},
+            created_by=1,
+        )
         iid = client.post("/issues", json={"title": "x"}, headers=H1).json()["id"]
 
         automation.run_pass(db_file)
@@ -104,7 +170,9 @@ def test_idle_pass_does_not_consume_admin_bootstrap(tmp_path):
         conn = db.connect(db_file)
         assert users.count_users(conn) == 0
         # The bootstrap is intact: the first human created (unauthenticated) is admin.
-        first = client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        first = client.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}
+        )
         assert first.status_code == 201 and first.json()["role"] == "admin"
 
 
@@ -115,8 +183,22 @@ def test_invalid_action_params_fail_soft(tmp_path):
         conn = db.connect(db_file)
         # A rule pointing at a nonexistent user / invalid status makes no change and
         # doesn't strand the engine — the event is still consumed (cursor advances).
-        automation.create_rule(conn, name="bad-assign", trigger_verb="created", action_type="assign", action_params={"user_id": 9999}, created_by=1)
-        automation.create_rule(conn, name="bad-status", trigger_verb="created", action_type="set_status", action_params={"status": "nope"}, created_by=1)
+        automation.create_rule(
+            conn,
+            name="bad-assign",
+            trigger_verb="created",
+            action_type="assign",
+            action_params={"user_id": 9999},
+            created_by=1,
+        )
+        automation.create_rule(
+            conn,
+            name="bad-status",
+            trigger_verb="created",
+            action_type="set_status",
+            action_params={"status": "nope"},
+            created_by=1,
+        )
         iid = client.post("/issues", json={"title": "x"}, headers=H1).json()["id"]
         before = issues.get_issue(conn, iid)["status"]
         # The pass completes without raising; the no-op actions make NO change to the

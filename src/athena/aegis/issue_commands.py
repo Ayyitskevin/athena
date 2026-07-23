@@ -10,6 +10,7 @@ The migration is intentionally vertical. Create, the editable core fields
 (title/body/status/priority), assignee, project, and sprint now live here; the
 remaining issue mutations can move command-by-command without a flag day.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -86,9 +87,7 @@ def _require_issue_writer(actor: dict | None) -> dict:
     return actor
 
 
-def _visible_issue(
-    conn: sqlite3.Connection, actor: dict, issue_id: int
-) -> dict:
+def _visible_issue(conn: sqlite3.Connection, actor: dict, issue_id: int) -> dict:
     issue = issues.get_issue(conn, issue_id)
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
@@ -107,9 +106,7 @@ def _modifiable_issue(conn: sqlite3.Connection, issue: dict, actor: dict) -> dic
     return issue
 
 
-def _writable_issue(
-    conn: sqlite3.Connection, actor: dict, issue_id: int
-) -> dict:
+def _writable_issue(conn: sqlite3.Connection, actor: dict, issue_id: int) -> dict:
     return _modifiable_issue(conn, _visible_issue(conn, actor, issue_id), actor)
 
 
@@ -221,9 +218,7 @@ def create_issue(
         if status is None:
             status = statuses.first_status(conn, project_id)
         elif not statuses.is_valid(conn, project_id, status):
-            raise IssueCommandError(
-                "invalid", "no such status for this project"
-            )
+            raise IssueCommandError("invalid", "no such status for this project")
         issue = issues.create_issue(
             conn,
             title=title,
@@ -325,14 +320,10 @@ def _string_value(name: str, value: str | None | _UnsetType) -> str | None:
     return value
 
 
-def _nullable_int_value(
-    name: str, value: int | None | _UnsetType
-) -> int | None:
+def _nullable_int_value(name: str, value: int | None | _UnsetType) -> int | None:
     if value is UNSET:
         return None
-    if value is not None and (
-        not isinstance(value, int) or isinstance(value, bool)
-    ):
+    if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
         raise IssueCommandError("invalid", f"{name} must be an integer or null")
     return value
 
@@ -424,9 +415,7 @@ def _update_issue(
         if status_value is not None and not statuses.is_valid(
             conn, final_project_id, status_value
         ):
-            raise IssueCommandError(
-                "invalid", "no such status for this project"
-            )
+            raise IssueCommandError("invalid", "no such status for this project")
         # Authorization and ordinary payload validation intentionally happen
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
@@ -476,9 +465,7 @@ def _update_issue(
                 raise IssueCommandError("not_found", "no such issue")
 
         transition_project_ids = (
-            {before["project_id"], updated["project_id"]}
-            if project_changed
-            else None
+            {before["project_id"], updated["project_id"]} if project_changed else None
         )
         if "status" in provided or project_changed:
             issue_activity.record_status_change(
@@ -569,7 +556,11 @@ def set_issue_archived(
 
 
 def set_issue_parent(
-    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, parent_id: int | None
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    parent_id: int | None,
 ) -> dict:
     """Nest an issue under a parent (parent_id=None clears it) and record the
     'set_parent'/'removed_parent' event atomically. The parent must be one the
@@ -662,9 +653,7 @@ def add_contributor(
         if target is None:
             raise IssueCommandError("invalid", "no such user")
         if require_agent and not target["is_agent"]:
-            raise IssueCommandError(
-                "invalid", "delegation target must be an agent"
-            )
+            raise IssueCommandError("invalid", "delegation target must be an agent")
         if contributors_data.add_contributor(
             conn, issue_id, user_id, actor["id"], commit=False
         ):
@@ -695,9 +684,7 @@ def remove_contributor(
         if not contributors_data.remove_contributor(
             conn, issue_id, user_id, commit=False
         ):
-            raise IssueCommandError(
-                "not_found", "not a contributor on this issue"
-            )
+            raise IssueCommandError("not_found", "not a contributor on this issue")
         issue_activity.record_contributor_removed(
             conn,
             actor_id=actor["id"],

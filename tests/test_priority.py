@@ -7,6 +7,7 @@ list/board views. These tests encode the contract that matters: the default is
 and never reach the column, and changing priority is a WRITE — so it obeys the
 same creator-or-assignee authorization as status and assignment.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues

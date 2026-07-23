@@ -15,6 +15,7 @@ Activity section and the global feed links back to it. A page_deleted row outliv
 the page it names — the trail is append-only and the activity table holds no FK to
 the (now gone) page.
 """
+
 from __future__ import annotations
 
 import sqlite3

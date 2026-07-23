@@ -11,6 +11,7 @@ write path (edit, status, assign) at both the REST API and the web layer, not
 merely advertised in a predicate. Reads and commenting stay open to all and are
 verified to NOT 403.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues
@@ -21,9 +22,9 @@ from athena.main import create_app
 def _seed_three_users(db_file):
     conn = db.connect(db_file)
     for email, name in (
-        ("ann@e.com", "Ann"),    # user 1 — creator
-        ("bob@e.com", "Bob"),    # user 2 — assignee
-        ("cy@e.com", "Cy"),      # user 3 — bystander
+        ("ann@e.com", "Ann"),  # user 1 — creator
+        ("bob@e.com", "Bob"),  # user 2 — assignee
+        ("cy@e.com", "Cy"),  # user 3 — bystander
     ):
         conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", (email, name))
     conn.commit()
@@ -246,7 +247,7 @@ def test_web_bystander_cannot_change_status_or_edit(tmp_path):
     with TestClient(app) as client:
         _login(client, "ann@e.com", "Ann")  # user 1 — creator
         _login(client, "bob@e.com", "Bob")  # user 2
-        _login(client, "cy@e.com", "Cy")    # user 3 — bystander (current session)
+        _login(client, "cy@e.com", "Cy")  # user 3 — bystander (current session)
         # Ann creates the issue via the API as actor 1.
         issue_id = _make_issue(client, actor="1")
 

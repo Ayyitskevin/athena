@@ -4,6 +4,7 @@ One SQLite file, opened in WAL mode, with a tiny forward-only migration runner.
 Every other part of the app gets its connection from here, so the connection
 settings (and the schema) live in exactly one place.
 """
+
 from __future__ import annotations
 
 from contextlib import contextmanager, suppress
@@ -22,9 +23,9 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     # but SQLite's default creator-thread affinity would turn that legitimate handoff
     # into a production-only 500 (TestClient does not reproduce the scheduler hop).
     conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row              # rows act like dicts: row["email"]
-    conn.execute("PRAGMA journal_mode = WAL")   # readers don't block the writer
-    conn.execute("PRAGMA foreign_keys = ON")    # actually enforce REFERENCES
+    conn.row_factory = sqlite3.Row  # rows act like dicts: row["email"]
+    conn.execute("PRAGMA journal_mode = WAL")  # readers don't block the writer
+    conn.execute("PRAGMA foreign_keys = ON")  # actually enforce REFERENCES
     # WAL lets readers and ONE writer coexist, but a second writer still needs the
     # write lock — and without a busy timeout SQLite gives up instantly with
     # "database is locked" (a 500) instead of waiting its turn. Wait up to 5s so
@@ -34,9 +35,7 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 
 @contextmanager
-def transaction(
-    conn: sqlite3.Connection, *, immediate: bool = False
-) -> Iterator[None]:
+def transaction(conn: sqlite3.Connection, *, immediate: bool = False) -> Iterator[None]:
     """Run a group of writes as one atomic unit.
 
     Request handlers normally arrive with a fresh connection, so the outer form
@@ -98,7 +97,9 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
     )
     conn.commit()
 
-    already = {row["version"] for row in conn.execute("SELECT version FROM schema_migrations")}
+    already = {
+        row["version"] for row in conn.execute("SELECT version FROM schema_migrations")
+    }
 
     applied: list[str] = []
     for path in sorted(MIGRATIONS_DIR.glob("*.sql")):

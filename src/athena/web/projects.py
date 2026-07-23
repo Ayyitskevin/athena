@@ -7,6 +7,7 @@ over the projects/sprints data layers, gated on the browser session — it owns 
 The template and read-only-response helpers are the shared ones from web.router
 (get_templates reads the Jinja instance main.py injects at startup).
 """
+
 from __future__ import annotations
 
 import html
@@ -38,13 +39,14 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     user = getattr(request.state, "user", None)
     # Only the projects this viewer may see (public + their own private ones; admins
     # all). A private project never appears here to someone outside it.
-    all_projects = projects.list_projects(conn, access.visible_project_filter(conn, user))
+    all_projects = projects.list_projects(
+        conn, access.visible_project_filter(conn, user)
+    )
     # One count per project, cheap on the small lists we have. NULL-project issues
     # (the backlog) are simply not counted under any project. Every listed project is
     # visible to the viewer, so its issue count is theirs to see in full.
     counts = {
-        p["id"]: len(issues.list_issues(conn, project_id=p["id"]))
-        for p in all_projects
+        p["id"]: len(issues.list_issues(conn, project_id=p["id"])) for p in all_projects
     }
     can_write = user is not None and identity.can_write(user)
     return get_templates().TemplateResponse(
@@ -61,7 +63,9 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     )
 
 
-@router.post("/aegis/projects", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)]
+)
 def create_project(
     request: Request,
     name: str = Form(""),
@@ -82,7 +86,9 @@ def create_project(
         return _readonly_response()
     name = name.strip()
     if not name:
-        return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Project name is required.</div>', status_code=400
+        )
     normalized_key = projects.normalize_key(key)
     if normalized_key is None:
         return HTMLResponse(
@@ -90,9 +96,15 @@ def create_project(
             status_code=400,
         )
     if projects.get_project_by_name(conn, name) is not None:
-        return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+        return HTMLResponse(
+            '<div class="error">A project with that name already exists.</div>',
+            status_code=409,
+        )
     if projects.get_project_by_key(conn, normalized_key) is not None:
-        return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
+        return HTMLResponse(
+            '<div class="error">That project key is already in use.</div>',
+            status_code=409,
+        )
     project_commands.create_project(
         conn,
         actor_id=user["id"],
@@ -118,7 +130,10 @@ def _authorize_project_write(conn, project_id: int, user: dict):
     # Mentor space twins) via access.container_write_reason, so a private project the
     # user can't see reads as 404 — a non-member never learns it exists via a 403.
     reason = access.container_write_reason(
-        conn, user, kind="project", container_id=project_id,
+        conn,
+        user,
+        kind="project",
+        container_id=project_id,
         created_by=project["created_by"],
     )
     if reason == "not_visible":
@@ -174,7 +189,11 @@ def project_edit_form(
     )
 
 
-@router.post("/aegis/projects/{project_id}/edit", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects/{project_id}/edit",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
 def project_edit_save(
     request: Request,
     project_id: int,
@@ -197,7 +216,9 @@ def project_edit_save(
         return err
     name = name.strip()
     if not name:
-        return HTMLResponse('<div class="error">Project name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Project name is required.</div>', status_code=400
+        )
     normalized_key = projects.normalize_key(key)
     if normalized_key is None:
         return HTMLResponse(
@@ -206,10 +227,16 @@ def project_edit_save(
         )
     clash = projects.get_project_by_name(conn, name)
     if clash is not None and clash["id"] != project_id:
-        return HTMLResponse('<div class="error">A project with that name already exists.</div>', status_code=409)
+        return HTMLResponse(
+            '<div class="error">A project with that name already exists.</div>',
+            status_code=409,
+        )
     key_clash = projects.get_project_by_key(conn, normalized_key)
     if key_clash is not None and key_clash["id"] != project_id:
-        return HTMLResponse('<div class="error">That project key is already in use.</div>', status_code=409)
+        return HTMLResponse(
+            '<div class="error">That project key is already in use.</div>',
+            status_code=409,
+        )
     project_commands.update_project(
         conn,
         actor_id=user["id"],
@@ -221,7 +248,11 @@ def project_edit_save(
     return RedirectResponse("/aegis/projects", status_code=303)
 
 
-@router.post("/aegis/projects/{project_id}/delete", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects/{project_id}/delete",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
 def project_delete(
     request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
@@ -310,7 +341,9 @@ def project_access(
     )
 
 
-@router.post("/aegis/projects/{project_id}/visibility", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects/{project_id}/visibility", dependencies=[Depends(verify_csrf)]
+)
 def project_set_visibility(
     request: Request,
     project_id: int,
@@ -342,13 +375,18 @@ def project_set_visibility(
                 conn, project_id, project["created_by"], added_by=user["id"]
             )
         project_activity.record_project_visibility_changed(
-            conn, actor_id=user["id"], project_id=project_id,
-            name=project["name"], visibility=visibility,
+            conn,
+            actor_id=user["id"],
+            project_id=project_id,
+            name=project["name"],
+            visibility=visibility,
         )
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
 
-@router.post("/aegis/projects/{project_id}/members", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects/{project_id}/members", dependencies=[Depends(verify_csrf)]
+)
 def project_add_member(
     request: Request,
     project_id: int,
@@ -400,7 +438,9 @@ def project_remove_member(
     member = users.get_user(conn, member_id)
     if access.remove_project_member(conn, project_id, member_id):
         project_activity.record_project_member_removed(
-            conn, actor_id=user["id"], project_id=project_id,
+            conn,
+            actor_id=user["id"],
+            project_id=project_id,
             member_name=member["name"] if member else str(member_id),
         )
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
@@ -441,9 +481,13 @@ def project_sprints(
     project = projects.get_project(conn, project_id)
     # A private project the viewer can't see is a 404, like a missing one.
     if project is None or not access.can_see_project(conn, user, project_id):
-        return HTMLResponse('<div class="error">No such project.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
     sprint_list = sprints.list_sprints(conn, project_id=project_id)
-    counts = {s["id"]: sprints.count_issues_in_sprint(conn, s["id"]) for s in sprint_list}
+    counts = {
+        s["id"]: sprints.count_issues_in_sprint(conn, s["id"]) for s in sprint_list
+    }
     can_manage = (
         user is not None
         and identity.can_write(user)
@@ -554,7 +598,9 @@ def delete_sprint_web(
     )
 
 
-@router.post("/aegis/projects/{project_id}/statuses", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/projects/{project_id}/statuses", dependencies=[Depends(verify_csrf)]
+)
 def add_project_status_web(
     request: Request,
     project_id: int,
@@ -575,7 +621,9 @@ def add_project_status_web(
         return err
     reason = statuses.add_status(conn, project_id, name, category)
     if reason is not None:
-        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(reason)}</div>', status_code=400
+        )
     return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)
 
 
@@ -602,5 +650,7 @@ def remove_project_status_web(
         return err
     reason = statuses.remove_status(conn, project_id, name)
     if reason is not None:
-        return HTMLResponse(f'<div class="error">{html.escape(reason)}</div>', status_code=400)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(reason)}</div>', status_code=400
+        )
     return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)

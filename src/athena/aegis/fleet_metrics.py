@@ -32,12 +32,8 @@ _DEFINITIONS = {
     "created": (
         "Visible native typed issue creation events in the half-open UTC period."
     ),
-    "completed": (
-        "Visible typed entries into status category done; reclosures count."
-    ),
-    "net_flow": (
-        "Created minus completion events; event flow, not backlog change."
-    ),
+    "completed": ("Visible typed entries into status category done; reclosures count."),
+    "net_flow": ("Created minus completion events; event flow, not backlog change."),
     "cycle_time": (
         "Creation or latest reopen to completion for full-visibility admins, "
         "only with a complete typed lifecycle chain."
@@ -195,8 +191,7 @@ def _parse_bounded_int(
         normalized = value.lstrip("0") or "0"
         maximum_text = str(maximum)
         if len(normalized) > len(maximum_text) or (
-            len(normalized) == len(maximum_text)
-            and normalized > maximum_text
+            len(normalized) == len(maximum_text) and normalized > maximum_text
         ):
             raise _invalid(f"{field} must be between 1 and {maximum}")
         parsed = int(normalized)
@@ -268,9 +263,7 @@ def parse_query_pairs(
     return parse_query(**raw, today=today)
 
 
-def _gate(
-    conn: sqlite3.Connection, actor: dict | None
-) -> tuple[str, list[Any]]:
+def _gate(conn: sqlite3.Connection, actor: dict | None) -> tuple[str, list[Any]]:
     clause, params = access.event_visibility_clause(conn, actor, alias="a")
     return clause or "1 = 1", list(params)
 
@@ -472,9 +465,7 @@ def _actor_rows(
         actor_type = kinds[0] if len(kinds) == 1 else "mixed"
         item["actor_type"] = actor_type
         result.append(item)
-    result.sort(
-        key=lambda item: (-item["completions"], item["actor_id"])
-    )
+    result.sort(key=lambda item: (-item["completions"], item["actor_id"]))
     return result[:actor_limit], type_totals, len(result)
 
 
@@ -489,10 +480,8 @@ def build_fleet_metrics(
     with db.transaction(conn):
         project_scope_key: str | None = None
         if query.project_id is not None:
-            project_gate, project_gate_params = (
-                access.project_visibility_clause(
-                    actor, alias="metric_project"
-                )
+            project_gate, project_gate_params = access.project_visibility_clause(
+                actor, alias="metric_project"
             )
             project = conn.execute(
                 "SELECT activity_scope_key FROM projects AS metric_project "
@@ -513,8 +502,7 @@ def build_fleet_metrics(
         if len(evidence) > EVIDENCE_EVENT_LIMIT:
             raise FleetMetricsError(
                 "too_large",
-                "visible metric evidence exceeds the cap; "
-                "narrow the period or filters",
+                "visible metric evidence exceeds the cap; narrow the period or filters",
             )
 
         coverage: CoveragePayload = {
@@ -593,9 +581,7 @@ def build_fleet_metrics(
         )
         coverage["complete"] = not any(coverage[key] for key in excluded_keys)
         completed = len(completions)
-        cycle_median = (
-            float(median(cycle_samples)) if cycle_samples else None
-        )
+        cycle_median = float(median(cycle_samples)) if cycle_samples else None
         return {
             "schema": SCHEMA,
             "scope": SCOPE,

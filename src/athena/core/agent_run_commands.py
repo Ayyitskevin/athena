@@ -1,4 +1,5 @@
 """Application command for cooperative agent-run heartbeats."""
+
 from __future__ import annotations
 
 import sqlite3

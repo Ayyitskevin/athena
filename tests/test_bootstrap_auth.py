@@ -14,6 +14,7 @@ The contract these encode:
 The suite-wide conftest enables the header by default (it models a trusted local
 box); tests here that assert the locked-down default flip it back OFF explicitly.
 """
+
 from fastapi.testclient import TestClient
 
 from athena import config
@@ -38,7 +39,8 @@ def test_default_rejects_actor_header_spoof(tmp_path, monkeypatch):
     with TestClient(app) as client:
         uid = _bootstrap_user(client)
         spoof = client.post(
-            "/issues", json={"title": "as someone else"},
+            "/issues",
+            json={"title": "as someone else"},
             headers={"X-Athena-Actor": str(uid)},
         )
         assert spoof.status_code == 401
@@ -52,7 +54,8 @@ def test_explicit_enable_allows_actor_header(tmp_path, monkeypatch):
     with TestClient(app) as client:
         uid = _bootstrap_user(client)
         ok = client.post(
-            "/issues", json={"title": "on a trusted box"},
+            "/issues",
+            json={"title": "on a trusted box"},
             headers={"X-Athena-Actor": str(uid)},
         )
         assert ok.status_code == 201
@@ -85,7 +88,9 @@ def test_bootstrap_then_enable_header_to_mint_first_token(tmp_path, monkeypatch)
 
         monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", True)
         minted = client.post(
-            "/tokens", json={"name": "bootstrap", "scopes": ["admin"]}, headers={"X-Athena-Actor": str(uid)}
+            "/tokens",
+            json={"name": "bootstrap", "scopes": ["admin"]},
+            headers={"X-Athena-Actor": str(uid)},
         )
         assert minted.status_code == 201
         raw = minted.json()["token"]

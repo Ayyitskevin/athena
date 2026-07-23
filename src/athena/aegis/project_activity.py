@@ -15,6 +15,7 @@ project and hidden from everyone else, never leaking that a private project exis
 Projects had no activity trail before this (creating one records nothing); these are
 the first project-targeted events, added alongside the feature that needs them.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -68,7 +69,12 @@ def record_project_deleted(
 
 
 def record_project_visibility_changed(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, visibility: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    name: str,
+    visibility: str,
 ) -> None:
     """A project was made private or public. The verb encodes the direction so the
     feed reads at a glance; the detail names the project. The caller only records this

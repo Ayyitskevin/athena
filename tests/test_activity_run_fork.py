@@ -20,7 +20,9 @@ def _migrated_conn(db_file):
 
 
 def _user(conn, name="Human"):
-    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name))
+    conn.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name)
+    )
     conn.commit()
 
 
@@ -70,7 +72,9 @@ def test_run_fork_contract_stamps_child_run_and_lineage(tmp_path):
         first = client.post(
             "/issues", json={"title": "shared prefix"}, headers=parent_headers
         ).json()
-        client.post("/issues", json={"title": "parent after fork"}, headers=parent_headers)
+        client.post(
+            "/issues", json={"title": "parent after fork"}, headers=parent_headers
+        )
 
         parent_events = client.get("/events?run_id=goal", headers=H1).json()["events"]
         fork_from = parent_events[0]
@@ -100,7 +104,9 @@ def test_run_fork_contract_stamps_child_run_and_lineage(tmp_path):
         child_headers = {**H1, **contract["headers"]}
         client.post("/issues", json={"title": "child branch"}, headers=child_headers)
 
-        child_events = client.get("/events?run_id=goal:alt", headers=H1).json()["events"]
+        child_events = client.get("/events?run_id=goal:alt", headers=H1).json()[
+            "events"
+        ]
         assert len(child_events) == 1
         assert child_events[0]["parent_run_id"] == "goal"
         assert child_events[0]["forked_from_event_id"] == fork_from["id"]
@@ -115,8 +121,12 @@ def test_run_fork_contract_stamps_child_run_and_lineage(tmp_path):
 def test_run_fork_contract_rejects_unknown_or_invalid_fork_point(tmp_path):
     with TestClient(create_app(tmp_path / "reject.db")) as client:
         client.post("/users", json={"email": "h@e.com", "name": "Human"})
-        client.post("/issues", json={"title": "parent"}, headers={**H1, "X-Athena-Run": "p"})
-        client.post("/issues", json={"title": "other"}, headers={**H1, "X-Athena-Run": "q"})
+        client.post(
+            "/issues", json={"title": "parent"}, headers={**H1, "X-Athena-Run": "p"}
+        )
+        client.post(
+            "/issues", json={"title": "other"}, headers={**H1, "X-Athena-Run": "q"}
+        )
         other_event = client.get("/events?run_id=q", headers=H1).json()["events"][0]
 
         missing = client.get(

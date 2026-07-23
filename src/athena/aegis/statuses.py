@@ -132,9 +132,7 @@ def add_status(
     return None
 
 
-def remove_status(
-    conn: sqlite3.Connection, project_id: int, name: str
-) -> str | None:
+def remove_status(conn: sqlite3.Connection, project_id: int, name: str) -> str | None:
     """Remove a status from a project. Refuses to remove the last one, or one that
     issues in the project still use (reassign them first). Returns None on success,
     else a human reason."""

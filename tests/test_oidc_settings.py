@@ -5,6 +5,7 @@ account and can unlink one — but never their LAST way to sign in (an SSO-only 
 with one identity is locked to it until they set a password). A user can only unlink
 their OWN identities, and the route is login-gated + CSRF-protected.
 """
+
 from fastapi.testclient import TestClient
 
 from athena import config

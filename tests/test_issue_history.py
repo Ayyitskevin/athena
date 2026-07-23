@@ -9,6 +9,7 @@ any change recovers the CREATION values (status/priority from the first change's
 scope: only diff-logged fields are reconstructed — content (title/body) and project are
 deliberately absent, never guessed.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_activity as ia
@@ -24,7 +25,9 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 def _conn(db_file):
     conn = db.connect(db_file)
     db.migrate(conn)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('a@e.com', 'Alice', 'admin')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('a@e.com', 'Alice', 'admin')"
+    )
     conn.commit()
     return conn
 
@@ -32,7 +35,9 @@ def _conn(db_file):
 def _id_of(conn, issue_id, verb, detail=None):
     """The id of the issue's event matching verb (and detail), oldest match."""
     rows = reversed(
-        activity.list_activity(conn, target_kind="issue", target_id=issue_id, limit=1000)
+        activity.list_activity(
+            conn, target_kind="issue", target_id=issue_id, limit=1000
+        )
     )
     for e in rows:
         if e["verb"] == verb and (detail is None or e["detail"] == detail):
@@ -42,15 +47,23 @@ def _id_of(conn, issue_id, verb, detail=None):
 
 def test_projection_folds_status_priority_assignee_labels(tmp_path):
     conn = _conn(tmp_path / "fold.db")
-    iid = issues.create_issue(conn, title="x", body="", created_by=1)["id"]  # open / medium
+    iid = issues.create_issue(conn, title="x", body="", created_by=1)[
+        "id"
+    ]  # open / medium
     bug = labels.get_or_create_label(conn, name="bug")["id"]
 
-    ia.record_status_change(conn, actor_id=1, issue_id=iid, before="open", after="in_progress")
-    ia.record_priority_change(conn, actor_id=1, issue_id=iid, before="medium", after="high")
+    ia.record_status_change(
+        conn, actor_id=1, issue_id=iid, before="open", after="in_progress"
+    )
+    ia.record_priority_change(
+        conn, actor_id=1, issue_id=iid, before="medium", after="high"
+    )
     ia.record_assignee_change(conn, actor_id=1, issue_id=iid, before=None, after=1)
     ia.record_label_added(conn, actor_id=1, issue_id=iid, label_id=bug)
     checkpoint = _id_of(conn, iid, "labeled", "bug")  # state right after the bug label
-    ia.record_status_change(conn, actor_id=1, issue_id=iid, before="in_progress", after="done")
+    ia.record_status_change(
+        conn, actor_id=1, issue_id=iid, before="in_progress", after="done"
+    )
     ia.record_label_removed(conn, actor_id=1, issue_id=iid, label_id=bug)
 
     # Now: the last value of each field.
@@ -83,7 +96,9 @@ def test_projection_sets_and_clears_parent_and_archive(tmp_path):
     iid = issues.create_issue(conn, title="x", body="", created_by=1)["id"]
 
     ia.record_parent_change(conn, actor_id=1, issue_id=iid, before=None, after=parent)
-    ia.record_archive_change(conn, actor_id=1, issue_id=iid, before=None, after="2026-01-01 00:00:00")
+    ia.record_archive_change(
+        conn, actor_id=1, issue_id=iid, before=None, after="2026-01-01 00:00:00"
+    )
     both = issue_history.project_issue_state(conn, iid)["state"]
     assert both["parent"] == f"#{parent}" and both["archived"] is True
 
@@ -100,7 +115,9 @@ def test_projection_folds_sprint_membership(tmp_path):
     conn = _conn(tmp_path / "sprint.db")
     pid = projects.create_project(conn, name="P", key="P", created_by=1)["id"]
     sid = sprints.create_sprint(conn, project_id=pid, name="Sprint 1")["id"]
-    iid = issues.create_issue(conn, title="x", body="", created_by=1, project_id=pid)["id"]
+    iid = issues.create_issue(conn, title="x", body="", created_by=1, project_id=pid)[
+        "id"
+    ]
 
     ia.record_sprint_change(conn, actor_id=1, issue_id=iid, before=None, after=sid)
     assert issue_history.project_issue_state(conn, iid)["state"]["sprint"] == "Sprint 1"
@@ -120,24 +137,57 @@ def test_unknown_issue_is_none(tmp_path):
 
 def test_state_endpoint_walks_history_and_gates(tmp_path):
     with TestClient(create_app(tmp_path / "api.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
 
-        iid = client.post("/issues", json={"title": "x"}, headers=H_CREATOR).json()["id"]
-        client.patch(f"/issues/{iid}", json={"status": "in_progress"}, headers=H_CREATOR)
+        iid = client.post("/issues", json={"title": "x"}, headers=H_CREATOR).json()[
+            "id"
+        ]
+        client.patch(
+            f"/issues/{iid}", json={"status": "in_progress"}, headers=H_CREATOR
+        )
 
         # Current state.
         now = client.get(f"/issues/{iid}/state", headers=H_CREATOR)
         assert now.status_code == 200
-        assert now.json()["state"]["status"] == "in_progress" and now.json()["is_current"] is True
+        assert (
+            now.json()["state"]["status"] == "in_progress"
+            and now.json()["is_current"] is True
+        )
 
         # As of the created event (the floor): the original status, before the change.
         created_id = min(
             e["id"]
-            for e in client.get(f"/activity?target_kind=issue&target_id={iid}", headers=H_CREATOR).json()
+            for e in client.get(
+                f"/activity?target_kind=issue&target_id={iid}", headers=H_CREATOR
+            ).json()
         )
-        before = client.get(f"/issues/{iid}/state?as_of={created_id}", headers=H_CREATOR).json()
+        before = client.get(
+            f"/issues/{iid}/state?as_of={created_id}", headers=H_CREATOR
+        ).json()
         assert before["state"]["status"] == "open" and before["is_current"] is False
 
         # An out-of-range cutoff (below the first event) is the born/past state — it must
@@ -150,12 +200,42 @@ def test_state_endpoint_walks_history_and_gates(tmp_path):
 
 def test_state_endpoint_is_visibility_gated(tmp_path):
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR).json()["id"]
-        iid = client.post("/issues", json={"title": "y", "project_id": pid}, headers=H_CREATOR).json()["id"]
-        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=H_CREATOR)
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "y", "project_id": pid}, headers=H_CREATOR
+        ).json()["id"]
+        client.put(
+            f"/projects/{pid}/visibility",
+            json={"visibility": "private"},
+            headers=H_CREATOR,
+        )
 
         # A hidden issue's state never leaks — same 404 as a missing one.
         assert client.get(f"/issues/{iid}/state", headers=H_OUTSIDER).status_code == 404
@@ -172,16 +252,22 @@ def test_state_endpoint_rejects_a_truncated_projection(tmp_path, monkeypatch):
         issue_id = client.post(
             "/issues", json={"title": "Too much history"}, headers=H_ADMIN
         ).json()["id"]
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "high"},
-            headers=H_ADMIN,
-        ).status_code == 200
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "low"},
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "high"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "low"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
 
         monkeypatch.setattr(issue_history, "_MAX_EVENTS", 2)
         response = client.get(f"/issues/{issue_id}/state", headers=H_ADMIN)

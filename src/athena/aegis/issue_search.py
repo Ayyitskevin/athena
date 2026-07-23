@@ -15,6 +15,7 @@ matches" is invented here — only the intersection.
 It lives in aegis because it spans aegis concerns (issues, labels) plus core.search;
 core may not import aegis, so the composition belongs on this side of the line.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -76,7 +77,9 @@ def search_issues(
     )
     if not has_filter:
         # No structured constraint — a plain issue-scoped search.
-        return search.search(conn, query, kind="issue", limit=limit, offset=offset, **gate)
+        return search.search(
+            conn, query, kind="issue", limit=limit, offset=offset, **gate
+        )
 
     # Resolve the structured filter to a concrete set of issue ids via the one
     # issue-filtering path, then restrict the ranked FTS hits to that set.
@@ -89,7 +92,9 @@ def search_issues(
             # legacy saved row must fail closed rather than omit the constraint.
             return []
         project_id, backlog = parsed
-    label_ids = labels.issue_ids_for_label(conn, label) if (label and label.strip()) else None
+    label_ids = (
+        labels.issue_ids_for_label(conn, label) if (label and label.strip()) else None
+    )
     filtered = issues.list_issues(
         conn,
         status=status,

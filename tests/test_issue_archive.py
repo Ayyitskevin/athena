@@ -6,6 +6,7 @@ its whole history survive, and it can be restored. These pin the REST archive/
 unarchive (gated, recorded), the default-hide + include_archived list behaviour,
 and the web button + "Show archived" toggle.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -17,7 +18,9 @@ H2 = {"X-Athena-Actor": "2"}  # a second member
 
 def _bootstrap(client):
     client.post("/users", json={"email": "a@e.com", "name": "A"})
-    client.post("/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1
+    )
 
 
 def _issue(client, title="x", headers=H1):
@@ -33,18 +36,25 @@ def test_archive_hides_from_default_list_and_unarchive_restores(tmp_path):
         keep, gone = _issue(client, "keep"), _issue(client, "gone")
 
         archived = client.post(f"/issues/{gone}/archive", headers=H1)
-        assert archived.status_code == 200 and archived.json()["archived_at"] is not None
+        assert (
+            archived.status_code == 200 and archived.json()["archived_at"] is not None
+        )
 
         # Default list/feed hides archived; include_archived reveals it; the single
         # read still resolves it (archival is not deletion).
         assert [i["id"] for i in client.get("/issues", headers=H1).json()] == [keep]
-        both = sorted(i["id"] for i in client.get("/issues?include_archived=true", headers=H1).json())
+        both = sorted(
+            i["id"]
+            for i in client.get("/issues?include_archived=true", headers=H1).json()
+        )
         assert both == sorted([keep, gone])
         assert client.get(f"/issues/{gone}", headers=H1).status_code == 200
 
         restored = client.post(f"/issues/{gone}/unarchive", headers=H1)
         assert restored.json()["archived_at"] is None
-        assert sorted(i["id"] for i in client.get("/issues", headers=H1).json()) == sorted([keep, gone])
+        assert sorted(
+            i["id"] for i in client.get("/issues", headers=H1).json()
+        ) == sorted([keep, gone])
 
 
 def test_archive_is_write_gated(tmp_path):
@@ -84,7 +94,9 @@ def test_archive_records_activity_once(tmp_path):
 
 def _login(client, email="a@e.com", password="pw"):
     client.post("/users", json={"email": email, "name": "A", "password": password})
-    r = client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
     assert r.status_code == 303
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
@@ -96,7 +108,12 @@ def test_web_archive_restore_and_list_toggle(tmp_path):
 
         # Detail offers Archive; archiving hides it from the default list.
         assert "Archive" in client.get(f"/aegis/issues/{iid}").text
-        assert client.post(f"/aegis/issues/{iid}/archive", follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                f"/aegis/issues/{iid}/archive", follow_redirects=False
+            ).status_code
+            == 303
+        )
         assert "archive me" not in client.get("/aegis/issues").text
         # The "Show archived" toggle brings it back into view.
         assert "archive me" in client.get("/aegis/issues?archived=1").text
@@ -104,7 +121,12 @@ def test_web_archive_restore_and_list_toggle(tmp_path):
         detail = client.get(f"/aegis/issues/{iid}").text
         assert "archived-badge" in detail and "Restore" in detail
 
-        assert client.post(f"/aegis/issues/{iid}/unarchive", follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                f"/aegis/issues/{iid}/unarchive", follow_redirects=False
+            ).status_code
+            == 303
+        )
         assert "archive me" in client.get("/aegis/issues").text
 
 
@@ -115,5 +137,7 @@ def test_web_archive_requires_login(tmp_path):
         anon = TestClient(client.app)
         # No session → 401 (CSRF dep allows the request through to the auth check;
         # an anonymous POST without a token is rejected before any write).
-        assert anon.post(f"/aegis/issues/{iid}/archive", follow_redirects=False).status_code in (401, 403)
+        assert anon.post(
+            f"/aegis/issues/{iid}/archive", follow_redirects=False
+        ).status_code in (401, 403)
         assert client.get(f"/issues/{iid}", headers=H1).json()["archived_at"] is None

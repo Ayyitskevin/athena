@@ -6,6 +6,7 @@ beside a clickable checkpoint timeline, that picking a past checkpoint (?as_of=)
 the state THEN (not now), that the detail page links to it, and that a hidden/missing
 issue is a 404. Reads are open, like the issue detail page.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -67,12 +68,42 @@ def test_detail_page_links_to_history(tmp_path):
 
 def test_history_page_404s_a_hidden_issue(tmp_path):
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR).json()["id"]
-        iid = client.post("/issues", json={"title": "secret", "project_id": pid}, headers=H_CREATOR).json()["id"]
-        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=H_CREATOR)
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "secret", "project_id": pid}, headers=H_CREATOR
+        ).json()["id"]
+        client.put(
+            f"/projects/{pid}/visibility",
+            json={"visibility": "private"},
+            headers=H_CREATOR,
+        )
 
         # The web layer's gate keys off request.state.user (the session), so this asserts
         # at least that an anonymous viewer can't see a private issue's history.

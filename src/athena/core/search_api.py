@@ -9,6 +9,7 @@ every issue and page at once, so it is a privileged cross-cutting read — the s
 bar as listing users. (Single-org tool: there is no per-owner scoping to apply;
 auth is the gate, not row filtering.)
 """
+
 from __future__ import annotations
 
 import sqlite3

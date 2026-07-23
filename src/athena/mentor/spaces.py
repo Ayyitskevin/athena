@@ -5,6 +5,7 @@ equivalent of an Aegis project, but identified by a short KEY (e.g. "ENG") rathe
 than by its name, because pages will later be addressed by that key. Pages (a
 later slice) will reference a space; this module owns only the space row itself.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -98,9 +99,7 @@ def update_space(
     if not sets:
         return get_space(conn, space_id)
     params.append(space_id)
-    cur = conn.execute(
-        f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params
-    )
+    cur = conn.execute(f"UPDATE spaces SET {', '.join(sets)} WHERE id = ?", params)
     if commit:
         conn.commit()
     if cur.rowcount == 0:

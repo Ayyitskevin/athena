@@ -5,6 +5,7 @@ The dedicated project listings — REST GET /projects and the web /aegis/project
 creator, and members get the full list. (Project picker dropdowns on forms/filters are
 a separate follow-up.)
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
@@ -16,13 +17,37 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _scenario(client, db_file):
-    priv = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
+    priv = client.post(
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+    ).json()["id"]
     client.post("/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR)
     conn = db.connect(db_file)
     conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (priv,))
@@ -31,7 +56,9 @@ def _scenario(client, db_file):
 
 
 def _login(client, email):
-    r = client.post("/login", data={"email": email, "password": "pw"}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": "pw"}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
@@ -43,7 +70,9 @@ def test_rest_project_list_hides_private(tmp_path):
         conn, priv = _scenario(client, db_file)
 
         def keys(headers=None):
-            return {p["key"] for p in client.get("/projects", headers=headers or {}).json()}
+            return {
+                p["key"] for p in client.get("/projects", headers=headers or {}).json()
+            }
 
         # Outsider + anonymous: only the public project.
         for h in (H_OUTSIDER, None):

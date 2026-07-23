@@ -6,6 +6,7 @@ work), renders an actor's reconstructed runs with their events, badges agents, a
 degrades gracefully with no actor or an unknown one. Reads are open, like the rest
 of the activity views.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -45,7 +46,9 @@ def test_runs_page_groups_actor_runs(tmp_path):
             "/issues", json={"title": "agent work"}, headers={"X-Athena-Actor": "2"}
         ).json()
         client.patch(
-            f"/issues/{iss['id']}", json={"status": "done"}, headers={"X-Athena-Actor": "2"}
+            f"/issues/{iss['id']}",
+            json={"status": "done"},
+            headers={"X-Athena-Actor": "2"},
         )
 
         page = client.get("/aegis/activity/runs?actor=2")

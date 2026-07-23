@@ -8,6 +8,7 @@ token a deleted target gets — indistinguishable from a genuine miss. Admins, t
 creator, and members still get the live link. The _UNGATED default (internal/test
 callers) resolves everything.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db, users
@@ -20,13 +21,37 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _login(client, email):
-    r = client.post("/login", data={"email": email, "password": "pw"}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": "pw"}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
@@ -35,8 +60,14 @@ def test_render_body_gates_hidden_issue_ref(tmp_path):
     db_file = tmp_path / "ir.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hidden = client.post("/issues", json={"title": "TopSecretTitle", "project_id": pp}, headers=H_CREATOR).json()
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hidden = client.post(
+            "/issues",
+            json={"title": "TopSecretTitle", "project_id": pp},
+            headers=H_CREATOR,
+        ).json()
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
@@ -57,7 +88,9 @@ def test_render_body_gates_hidden_issue_ref(tmp_path):
             assert f'{href} class="xref"' in html
         # Membership reveals it to the outsider.
         access.add_project_member(conn, pp, 3, added_by=2)
-        assert "TopSecretTitle" in str(render_body(conn, body, actor=users.get_user(conn, 3)))
+        assert "TopSecretTitle" in str(
+            render_body(conn, body, actor=users.get_user(conn, 3))
+        )
         # The _UNGATED default (internal caller) resolves everything, unchanged.
         assert "TopSecretTitle" in str(render_body(conn, body))
 
@@ -66,8 +99,14 @@ def test_render_body_gates_hidden_key_ref(tmp_path):
     db_file = tmp_path / "kr.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        client.post("/issues", json={"title": "TopSecretTitle", "project_id": pp}, headers=H_CREATOR)
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        client.post(
+            "/issues",
+            json={"title": "TopSecretTitle", "project_id": pp},
+            headers=H_CREATOR,
+        )
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
@@ -76,15 +115,19 @@ def test_render_body_gates_hidden_key_ref(tmp_path):
         out = str(render_body(conn, body, actor=users.get_user(conn, 3)))
         assert "TopSecretTitle" not in out and "xref broken" in out
         creator = str(render_body(conn, body, actor=users.get_user(conn, 2)))
-        assert "TopSecretTitle" in creator and "class=\"xref\"" in creator
+        assert "TopSecretTitle" in creator and 'class="xref"' in creator
 
 
 def test_render_body_gates_hidden_page_ref(tmp_path):
     db_file = tmp_path / "pr.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        ps = client.post("/spaces", json={"key": "SSP", "name": "S"}, headers=H_CREATOR).json()["id"]
-        hp = client.post(f"/spaces/{ps}/pages", json={"title": "HushHushPage"}, headers=H_CREATOR).json()
+        ps = client.post(
+            "/spaces", json={"key": "SSP", "name": "S"}, headers=H_CREATOR
+        ).json()["id"]
+        hp = client.post(
+            f"/spaces/{ps}/pages", json={"title": "HushHushPage"}, headers=H_CREATOR
+        ).json()
         conn = db.connect(db_file)
         conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (ps,))
         conn.commit()
@@ -93,12 +136,18 @@ def test_render_body_gates_hidden_page_ref(tmp_path):
         href = f'href="/mentor/pages/{hp["id"]}"'
         for actor in (None, users.get_user(conn, 3)):
             html = str(render_body(conn, body, actor=actor))
-            assert "HushHushPage" not in html and "xref broken" in html and href not in html
+            assert (
+                "HushHushPage" not in html
+                and "xref broken" in html
+                and href not in html
+            )
         for uid in (1, 2):
             html = str(render_body(conn, body, actor=users.get_user(conn, uid)))
             assert "HushHushPage" in html and f'{href} class="xref"' in html
         access.add_space_member(conn, ps, 3, added_by=2)
-        assert "HushHushPage" in str(render_body(conn, body, actor=users.get_user(conn, 3)))
+        assert "HushHushPage" in str(
+            render_body(conn, body, actor=users.get_user(conn, 3))
+        )
 
 
 def test_issue_detail_page_gates_inline_ref_end_to_end(tmp_path):
@@ -108,11 +157,19 @@ def test_issue_detail_page_gates_inline_ref_end_to_end(tmp_path):
     db_file = tmp_path / "e2e.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hidden = client.post("/issues", json={"title": "TopSecretTitle", "project_id": pp}, headers=H_CREATOR).json()
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hidden = client.post(
+            "/issues",
+            json={"title": "TopSecretTitle", "project_id": pp},
+            headers=H_CREATOR,
+        ).json()
         # A backlog issue (no project → always public) whose body references the hidden one.
         host = client.post(
-            "/issues", json={"title": "Host", "body": f"see [[issue:{hidden['id']}]]"}, headers=H_CREATOR
+            "/issues",
+            json={"title": "Host", "body": f"see [[issue:{hidden['id']}]]"},
+            headers=H_CREATOR,
         ).json()
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))

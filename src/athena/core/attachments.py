@@ -73,9 +73,7 @@ def get_stored_name(conn: sqlite3.Connection, attachment_id: int) -> str | None:
     return row["stored_name"] if row else None
 
 
-def list_for(
-    conn: sqlite3.Connection, target_kind: str, target_id: int
-) -> list[dict]:
+def list_for(conn: sqlite3.Connection, target_kind: str, target_id: int) -> list[dict]:
     rows = conn.execute(
         f"SELECT {_PUBLIC_COLS} FROM attachments "
         "WHERE target_kind = ? AND target_id = ? ORDER BY id",

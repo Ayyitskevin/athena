@@ -9,7 +9,15 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -346,7 +354,10 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
     if space is None:
         raise HTTPException(status_code=404, detail="no such space")
     reason = access.container_write_reason(
-        conn, actor, kind="space", container_id=space_id,
+        conn,
+        actor,
+        kind="space",
+        container_id=space_id,
         created_by=space["created_by"],
     )
     if reason == "not_visible":
@@ -546,7 +557,9 @@ def list_pages(
     # from a real visible space that simply has no pages yet, which returns []). The
     # space gate covers the pages: every page here is in this space. Archived pages are
     # hidden by default; include_archived=true surfaces them (the "show archived" view).
-    if spaces.get_space(conn, space_id) is None or not access.can_see_space(conn, actor, space_id):
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
+        conn, actor, space_id
+    ):
         raise HTTPException(status_code=404, detail="no such space")
     return _with_labels_many(
         conn,
@@ -817,9 +830,7 @@ def _author_page_comment_or_error(
     return existing
 
 
-@pages_router.patch(
-    "/{page_id}/comments/{comment_id}", response_model=PageCommentOut
-)
+@pages_router.patch("/{page_id}/comments/{comment_id}", response_model=PageCommentOut)
 def edit_page_comment(
     page_id: int,
     comment_id: int,
@@ -836,7 +847,11 @@ def edit_page_comment(
     # a silent content rewrite.
     try:
         return page_comment_commands.edit_page_comment(
-            conn, actor_id=actor["id"], page_id=page_id, comment_id=comment_id, body=body
+            conn,
+            actor_id=actor["id"],
+            page_id=page_id,
+            comment_id=comment_id,
+            body=body,
         )
     except page_comment_commands.PageCommentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

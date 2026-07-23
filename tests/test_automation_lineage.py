@@ -8,6 +8,7 @@ a comment committed would re-post it on restart. These pin both: every rule acti
 stamps a per-firing run id (grouping + fork point + parent run), and re-running the
 same (rule, event) firing makes no second change.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import automation
@@ -56,7 +57,8 @@ def test_rule_action_is_stamped_with_its_firing_lineage(tmp_path):
     with TestClient(app) as client:
         _bootstrap(client)
         member = client.post(
-            "/users", json={"email": "m@e.com", "name": "Mem", "role": "member"},
+            "/users",
+            json={"email": "m@e.com", "name": "Mem", "role": "member"},
             headers=H1,
         ).json()
         _rule(db_file, "assign", {"user_id": member["id"]})
@@ -74,9 +76,10 @@ def test_rule_action_is_stamped_with_its_firing_lineage(tmp_path):
             (issue["id"],),
         ).fetchone()["id"]
         fired = automation.process_pending(
-            conn, executor=lambda c, r, e: automation.execute_action(
+            conn,
+            executor=lambda c, r, e: automation.execute_action(
                 c, r, e, actor_id=automation.system_actor_id(c)
-            )
+            ),
         )
         conn.commit()
         conn.close()
@@ -108,7 +111,11 @@ def test_comment_firing_is_idempotent_across_a_reprocessed_event(tmp_path):
             (issue["id"],),
         ).fetchone()["id"]
         actor_id = automation.system_actor_id(conn)
-        rule = {"id": 1, "action_type": "comment", "action_params": {"body": "auto ack"}}
+        rule = {
+            "id": 1,
+            "action_type": "comment",
+            "action_params": {"body": "auto ack"},
+        }
         event = {"id": created, "target_id": issue["id"], "run_id": None}
         first = automation.execute_action(conn, rule, event, actor_id=actor_id)
         conn.commit()

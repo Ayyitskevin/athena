@@ -113,9 +113,9 @@ def _render_board(
     _attach_labels(conn, filtered)
     if user is not None:
         for issue in filtered:
-            issue["etag"] = issue_etags.representation_and_etag(
-                issue, issue["labels"]
-            )[1]
+            issue["etag"] = issue_etags.representation_and_etag(issue, issue["labels"])[
+                1
+            ]
 
     # Each card carries its OWN project's status menu, so the keyboard "Move" control
     # offers exactly the valid targets for that issue (the backlog uses the default
@@ -149,11 +149,7 @@ def _render_board(
         return (cat_rank.get(statuses.global_category(conn, name), 1), name)
 
     status_names = sorted(
-        {
-            status_name
-            for issue in filtered
-            for status_name in issue["status_options"]
-        }
+        {status_name for issue in filtered for status_name in issue["status_options"]}
         | {issue.get("status", "") for issue in filtered},
         key=_sort_key,
     )

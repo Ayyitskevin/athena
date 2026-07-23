@@ -55,7 +55,11 @@ def create_space(
             commit=False,
         )
         space_activity.record_space_created(
-            conn, actor_id=actor_id, space_id=space["id"], name=space["name"], commit=False
+            conn,
+            actor_id=actor_id,
+            space_id=space["id"],
+            name=space["name"],
+            commit=False,
         )
         return space
 
@@ -155,7 +159,10 @@ def add_space_member(
         )
         if added:
             space_activity.record_space_member_added(
-                conn, actor_id=actor_id, space_id=space_id, member_name=member_name,
+                conn,
+                actor_id=actor_id,
+                space_id=space_id,
+                member_name=member_name,
                 commit=False,
             )
         return added
@@ -177,7 +184,10 @@ def remove_space_member(
         removed = access.remove_space_member(conn, space_id, user_id, commit=False)
         if removed:
             space_activity.record_space_member_removed(
-                conn, actor_id=actor_id, space_id=space_id, member_name=member_name,
+                conn,
+                actor_id=actor_id,
+                space_id=space_id,
+                member_name=member_name,
                 commit=False,
             )
         return removed

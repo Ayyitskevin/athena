@@ -7,6 +7,7 @@ product. These tests pin the inversion: an omitted/None scopes list is a clear
 rows with no scopes value still read as full access (parse_scopes owns that
 compatibility; new mints can never create such a row).
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -75,7 +76,11 @@ def test_web_form_with_no_boxes_checked_is_still_a_clear_400(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         r = c.post("/settings/tokens", data={"name": "no-boxes"})
         assert r.status_code == 400

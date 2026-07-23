@@ -13,6 +13,7 @@ The contract these encode — why each rule earns its place:
     wiki model as editing a page or moving it; only DELETE keeps the creator lock.
     Anonymous -> 401, missing space -> 404, empty key/name -> 422.
 """
+
 import sqlite3
 
 import pytest
@@ -42,10 +43,12 @@ def test_update_space_changes_only_the_fields_passed(tmp_path):
     # must not blank the key or description.
     conn = _migrated_conn(tmp_path / "u.db")
     _seed_user(conn)
-    sp = spaces.create_space(conn, key="ENG", name="Eng", description="docs", created_by=1)
+    sp = spaces.create_space(
+        conn, key="ENG", name="Eng", description="docs", created_by=1
+    )
     updated = spaces.update_space(conn, sp["id"], name="Engineering")
     assert updated["name"] == "Engineering"
-    assert updated["key"] == "ENG"          # untouched
+    assert updated["key"] == "ENG"  # untouched
     assert updated["description"] == "docs"  # untouched
 
 
@@ -113,7 +116,9 @@ def test_api_edit_space_updates_fields(tmp_path):
     app = _api_setup(tmp_path, "ae.db")
     with TestClient(app) as client:
         sp = _make_space(client)
-        r = client.patch(f"/spaces/{sp['id']}", json={"name": "Engineering"}, headers=_H)
+        r = client.patch(
+            f"/spaces/{sp['id']}", json={"name": "Engineering"}, headers=_H
+        )
         assert r.status_code == 200, r.text
         assert r.json()["name"] == "Engineering"
         assert r.json()["key"] == "ENG"
@@ -126,7 +131,9 @@ def test_api_edit_is_open_to_any_actor(tmp_path):
     with TestClient(app) as client:
         sp = _make_space(client, actor="1")  # created by user 1
         r = client.patch(
-            f"/spaces/{sp['id']}", json={"name": "By Bob"}, headers={"X-Athena-Actor": "2"}
+            f"/spaces/{sp['id']}",
+            json={"name": "By Bob"},
+            headers={"X-Athena-Actor": "2"},
         )
         assert r.status_code == 200, r.text
         assert r.json()["name"] == "By Bob"
@@ -135,14 +142,19 @@ def test_api_edit_is_open_to_any_actor(tmp_path):
 def test_api_edit_missing_is_404(tmp_path):
     app = _api_setup(tmp_path, "aem.db")
     with TestClient(app) as client:
-        assert client.patch("/spaces/999", json={"name": "x"}, headers=_H).status_code == 404
+        assert (
+            client.patch("/spaces/999", json={"name": "x"}, headers=_H).status_code
+            == 404
+        )
 
 
 def test_api_edit_empty_payload_is_422(tmp_path):
     app = _api_setup(tmp_path, "aep.db")
     with TestClient(app) as client:
         sp = _make_space(client)
-        assert client.patch(f"/spaces/{sp['id']}", json={}, headers=_H).status_code == 422
+        assert (
+            client.patch(f"/spaces/{sp['id']}", json={}, headers=_H).status_code == 422
+        )
 
 
 def test_api_edit_empty_name_is_422(tmp_path):
@@ -170,7 +182,9 @@ def test_api_edit_keeping_own_key_is_not_a_collision(tmp_path):
     with TestClient(app) as client:
         sp = _make_space(client, key="ENG", name="Eng")
         r = client.patch(
-            f"/spaces/{sp['id']}", json={"key": "ENG", "name": "Engineering"}, headers=_H
+            f"/spaces/{sp['id']}",
+            json={"key": "ENG", "name": "Engineering"},
+            headers=_H,
         )
         assert r.status_code == 200, r.text
         assert r.json()["name"] == "Engineering"
@@ -180,14 +194,18 @@ def test_api_edit_requires_auth(tmp_path):
     app = _api_setup(tmp_path, "aea.db")
     with TestClient(app) as client:
         sp = _make_space(client)
-        assert client.patch(f"/spaces/{sp['id']}", json={"name": "x"}).status_code == 401
+        assert (
+            client.patch(f"/spaces/{sp['id']}", json={"name": "x"}).status_code == 401
+        )
 
 
 # --- web --------------------------------------------------------------------
 
 
 def _login(client, email="a@e.com", name="A"):
-    client.post("/users", json={"email": email, "name": name, "password": "secret"}, headers=_H)
+    client.post(
+        "/users", json={"email": email, "name": name, "password": "secret"}, headers=_H
+    )
     client.post("/login", data={"email": email, "password": "secret"})
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 

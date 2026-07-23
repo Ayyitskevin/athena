@@ -4,6 +4,7 @@ The table is authoritative operational state; activity supplies immutable audit,
 actor, time, and run provenance. Handoff text is untrusted advisory input and must
 only be rendered as escaped text. It never grants approval or executes instructions.
 """
+
 from __future__ import annotations
 
 import json
@@ -134,9 +135,7 @@ def get_handoff(
     return None if row is None else _row_to_handoff(row)
 
 
-def get_open_handoff(
-    conn: sqlite3.Connection, issue_id: int
-) -> dict[str, Any] | None:
+def get_open_handoff(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         _SELECT + "WHERE h.issue_id = ? AND h.resume_event_id IS NULL",
         (issue_id,),
@@ -152,8 +151,7 @@ def open_handoffs_for_issues(
         return {}
     placeholders = ",".join("?" for _ in ordered)
     rows = conn.execute(
-        _SELECT
-        + f"WHERE h.issue_id IN ({placeholders}) "
+        _SELECT + f"WHERE h.issue_id IN ({placeholders}) "
         "AND h.resume_event_id IS NULL ORDER BY h.issue_id",
         ordered,
     ).fetchall()

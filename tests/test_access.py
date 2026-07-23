@@ -9,6 +9,7 @@ that deleting a container sweeps its membership rows (ON DELETE CASCADE).
 Marking a project/space private and the REST/web to manage members arrive in a later
 slice; here we flip the `visibility` column directly to exercise the resolver.
 """
+
 import sqlite3
 
 import pytest
@@ -44,6 +45,7 @@ def people(tmp_path):
 
 # --- public: nothing changes, everyone sees everything ----------------------
 
+
 def test_public_project_is_visible_to_everyone_including_anonymous(people):
     conn, admin, creator, outsider = people
     p = projects.create_project(conn, name="Ops", key="OPS", created_by=creator["id"])
@@ -65,9 +67,12 @@ def test_public_space_is_visible_to_everyone_including_anonymous(people):
 
 # --- private: admins, creator, members in; everyone else out ----------------
 
+
 def test_private_project_hidden_from_outsiders_and_anonymous(people):
     conn, admin, creator, outsider = people
-    p = projects.create_project(conn, name="Secret", key="SEC", created_by=creator["id"])
+    p = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=creator["id"]
+    )
     _make_private(conn, "projects", p["id"])
 
     # Creator and admin keep access; the outsider and the signed-out viewer lose it.
@@ -84,12 +89,17 @@ def test_private_project_hidden_from_outsiders_and_anonymous(people):
 
 def test_private_project_opens_to_an_added_member(people):
     conn, admin, creator, outsider = people
-    p = projects.create_project(conn, name="Secret", key="SEC", created_by=creator["id"])
+    p = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=creator["id"]
+    )
     _make_private(conn, "projects", p["id"])
     assert access.can_see_project(conn, outsider, p["id"]) is False
 
     # Granting membership lets them in; revoking shuts them back out.
-    assert access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"]) is True
+    assert (
+        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        is True
+    )
     assert access.can_see_project(conn, outsider, p["id"]) is True
     assert p["id"] in access.visible_project_ids(conn, outsider)
 
@@ -103,7 +113,10 @@ def test_private_space_membership_mirrors_projects(people):
     _make_private(conn, "spaces", s["id"])
 
     assert access.can_see_space(conn, outsider, s["id"]) is False
-    assert access.add_space_member(conn, s["id"], outsider["id"], added_by=creator["id"]) is True
+    assert (
+        access.add_space_member(conn, s["id"], outsider["id"], added_by=creator["id"])
+        is True
+    )
     assert access.can_see_space(conn, outsider, s["id"]) is True
     assert s["id"] in access.visible_space_ids(conn, outsider)
     # Creator and admin are implicit; the outsider needed the explicit grant.
@@ -113,14 +126,21 @@ def test_private_space_membership_mirrors_projects(people):
 
 # --- membership mechanics ---------------------------------------------------
 
+
 def test_membership_add_is_idempotent_and_remove_reports(people):
     conn, _admin, creator, outsider = people
     p = projects.create_project(conn, name="P", key="P", created_by=creator["id"])
 
     assert access.is_project_member(conn, p["id"], outsider["id"]) is False
-    assert access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"]) is True
+    assert (
+        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        is True
+    )
     # Re-adding the same pair is a no-op (returns False) so callers log only real grants.
-    assert access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"]) is False
+    assert (
+        access.add_project_member(conn, p["id"], outsider["id"], added_by=creator["id"])
+        is False
+    )
     assert access.is_project_member(conn, p["id"], outsider["id"]) is True
 
     assert access.remove_project_member(conn, p["id"], outsider["id"]) is True
@@ -166,6 +186,7 @@ def test_admin_sees_every_private_container(people):
 
 # --- schema: deleting a container sweeps its membership ----------------------
 
+
 def test_deleting_project_cascades_membership(people):
     conn, _admin, creator, outsider = people
     p = projects.create_project(conn, name="Temp", key="TMP", created_by=creator["id"])
@@ -182,6 +203,7 @@ def test_deleting_project_cascades_membership(people):
 
 # --- container_write_reason: the one owner of the edit/delete gate ----------
 
+
 def test_container_write_reason_is_visibility_first_and_creator_only(people):
     # WHY: this predicate is the SINGLE home of "may this actor edit/delete this
     # project|space", after three of its four hand-copied boundaries once leaked a
@@ -190,7 +212,9 @@ def test_container_write_reason_is_visibility_first_and_creator_only(people):
     # (b) allow ONLY the creator — NOT an admin, unlike the visibility/member-management
     # gates (destroying someone's container isn't a governance power).
     conn, admin, creator, outsider = people
-    p = projects.create_project(conn, name="Secret", key="SEC", created_by=creator["id"])
+    p = projects.create_project(
+        conn, name="Secret", key="SEC", created_by=creator["id"]
+    )
     s = spaces.create_space(conn, key="ENG", name="Eng", created_by=creator["id"])
 
     def reason(kind, actor, cid, created_by):

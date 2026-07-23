@@ -7,6 +7,7 @@ composite PK refuses a re-link); the SAME subject under different issuers is dis
 (sub is only unique within an issuer); and a link to a missing user is refused by the
 foreign key.
 """
+
 import sqlite3
 
 import pytest
@@ -77,7 +78,9 @@ def test_list_and_unlink_identities(tmp_path):
     conn = _conn(tmp_path)
     uid = _user(conn)
     oidc.link_identity(conn, issuer=ISS, subject="sub-1", user_id=uid)
-    oidc.link_identity(conn, issuer="https://other.example.com", subject="x", user_id=uid)
+    oidc.link_identity(
+        conn, issuer="https://other.example.com", subject="x", user_id=uid
+    )
 
     listed = oidc.list_identities(conn, uid)
     assert {i["issuer"] for i in listed} == {ISS, "https://other.example.com"}

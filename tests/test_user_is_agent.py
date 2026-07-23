@@ -7,6 +7,7 @@ grants and restricts NOTHING — roles still govern that. These tests pin that
 contract end to end: the column defaults to human, an admin can flip it (API + web),
 the value surfaces on UserOut, and an agent contributor is badged on an issue.
 """
+
 import re
 
 from fastapi.testclient import TestClient
@@ -91,7 +92,9 @@ def test_admin_can_toggle_agent_via_api(tmp_path):
             "/users", json={"email": "m@e.com", "name": "Member"}, headers=H1
         ).json()
 
-        on = client.put(f"/users/{member['id']}/agent", json={"is_agent": True}, headers=H1)
+        on = client.put(
+            f"/users/{member['id']}/agent", json={"is_agent": True}, headers=H1
+        )
         assert on.status_code == 200, on.text
         assert on.json()["is_agent"] is True
 
@@ -109,7 +112,8 @@ def test_agent_toggle_requires_admin(tmp_path):
     with TestClient(create_app(tmp_path / "guard.db")) as client:
         _bootstrap_admin(client)
         member = client.post(
-            "/users", json={"email": "m@e.com", "name": "Member", "role": "member"},
+            "/users",
+            json={"email": "m@e.com", "name": "Member", "role": "member"},
             headers=H1,
         ).json()
         denied = client.put(

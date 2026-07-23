@@ -15,6 +15,7 @@ The live background loop (a later slice) is a thin wrapper that injects the real
 executor; here the executor is a parameter so the matching/dispatch logic is unit-
 testable without performing real writes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -54,11 +55,26 @@ CONDITION_FIELDS = ("project_id", "status", "priority", "assignee_id", "sprint_i
 # Validating against this closed set at the boundary means a typo'd verb is a 422, never
 # a rule that silently never fires. The only target_kind rules act on yet is "issue".
 TRIGGER_VERBS = (
-    "created", "issue_edited", "changed_status", "changed_priority",
-    "assigned", "unassigned", "changed_project", "removed_from_project",
-    "moved_to_sprint", "removed_from_sprint", "set_parent", "removed_parent",
-    "added_contributor", "removed_contributor", "labeled", "unlabeled",
-    "commented", "comment_deleted", "archived", "unarchived",
+    "created",
+    "issue_edited",
+    "changed_status",
+    "changed_priority",
+    "assigned",
+    "unassigned",
+    "changed_project",
+    "removed_from_project",
+    "moved_to_sprint",
+    "removed_from_sprint",
+    "set_parent",
+    "removed_parent",
+    "added_contributor",
+    "removed_contributor",
+    "labeled",
+    "unlabeled",
+    "commented",
+    "comment_deleted",
+    "archived",
+    "unarchived",
 )
 TARGET_KINDS = ("issue",)
 
@@ -211,9 +227,7 @@ def set_enabled(
     return get_rule(conn, rule_id)
 
 
-def delete_rule(
-    conn: sqlite3.Connection, rule_id: int, *, commit: bool = True
-) -> bool:
+def delete_rule(conn: sqlite3.Connection, rule_id: int, *, commit: bool = True) -> bool:
     """Delete a rule. Returns True if one was removed, False if there was no such row.
     ``commit=False`` lets an audited command fold the delete and its activity event
     into one transaction."""
@@ -248,9 +262,9 @@ def _matches(conn: sqlite3.Connection, rule: dict, event: dict) -> bool:
 
 def get_cursor(conn: sqlite3.Connection) -> int:
     """The id of the last activity row the engine has processed."""
-    return conn.execute(
-        "SELECT cursor FROM automation_state WHERE id = 1"
-    ).fetchone()["cursor"]
+    return conn.execute("SELECT cursor FROM automation_state WHERE id = 1").fetchone()[
+        "cursor"
+    ]
 
 
 def _set_cursor(conn: sqlite3.Connection, value: int) -> None:
@@ -320,9 +334,14 @@ def process_pending(
                     # misbehaving rule on /admin and via the API.
                     logger.warning(
                         "automation rule %s failed on event %s: %s",
-                        rule["id"], event["id"], exc, exc_info=True,
+                        rule["id"],
+                        event["id"],
+                        exc,
+                        exc_info=True,
                     )
-                    record_rule_failure(conn, rule["id"], f"{type(exc).__name__}: {exc}")
+                    record_rule_failure(
+                        conn, rule["id"], f"{type(exc).__name__}: {exc}"
+                    )
     _set_cursor(conn, last_id)
     return fired
 
@@ -342,8 +361,11 @@ def system_actor_id(conn: sqlite3.Connection) -> int:
     if existing is not None:
         return existing["id"]
     return users.create_user(
-        conn, email=SYSTEM_ACTOR_EMAIL, name="Automation",
-        is_agent=True, role=users.VIEWER_ROLE,
+        conn,
+        email=SYSTEM_ACTOR_EMAIL,
+        name="Automation",
+        is_agent=True,
+        role=users.VIEWER_ROLE,
     )["id"]
 
 

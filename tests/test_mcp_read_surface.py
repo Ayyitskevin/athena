@@ -8,6 +8,7 @@ run in one call), list_issue_comments, the notifications inbox round-trip, and
 list_run_events — through the real transport pieces: AthenaClient against the
 app, and the FastMCP tool for whoami.
 """
+
 import json
 
 import pytest
@@ -72,9 +73,7 @@ def test_whoami_tool_merges_identity_with_the_current_run(tmp_path):
 def test_list_issue_comments_reads_the_thread_oldest_first(tmp_path):
     admin, agent, _ = _workspace(tmp_path, "comments.db")
     try:
-        issue = admin.post(
-            "/issues", json={"title": "discuss"}, headers=H1
-        ).json()
+        issue = admin.post("/issues", json={"title": "discuss"}, headers=H1).json()
         admin.post(
             f"/issues/{issue['id']}/comments",
             json={"body": "context from Ann"},

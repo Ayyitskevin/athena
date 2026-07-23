@@ -8,6 +8,7 @@ zero trace. These tests pin that each lifecycle change records a created_/enable
 disabled_/deleted_automation_rule event in the SAME transaction as the change, once per
 real change, with the admin-only gate preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import automation_commands
@@ -24,7 +25,9 @@ def _app(tmp_path, name="rules.db"):
 
 def _two_users(client):
     client.post("/users", json={"email": "a@e.com", "name": "Alice", "password": "pw"})
-    client.post("/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1
+    )
 
 
 def _valid_rule():
@@ -65,10 +68,25 @@ def test_rest_enable_disable_are_audited(tmp_path):
         _two_users(c)
         rid = c.post("/automation/rules", json=_valid_rule(), headers=H1).json()["id"]
         # New rules are enabled; disable, then re-enable.
-        assert c.patch(f"/automation/rules/{rid}", json={"enabled": False}, headers=H1).status_code == 200
-        assert c.patch(f"/automation/rules/{rid}", json={"enabled": True}, headers=H1).status_code == 200
+        assert (
+            c.patch(
+                f"/automation/rules/{rid}", json={"enabled": False}, headers=H1
+            ).status_code
+            == 200
+        )
+        assert (
+            c.patch(
+                f"/automation/rules/{rid}", json={"enabled": True}, headers=H1
+            ).status_code
+            == 200
+        )
         # Re-enabling an already-enabled rule is a no-op — records nothing more.
-        assert c.patch(f"/automation/rules/{rid}", json={"enabled": True}, headers=H1).status_code == 200
+        assert (
+            c.patch(
+                f"/automation/rules/{rid}", json={"enabled": True}, headers=H1
+            ).status_code
+            == 200
+        )
 
     assert len(_events(db_file, "disabled_automation_rule")) == 1
     assert len(_events(db_file, "enabled_automation_rule")) == 1
@@ -104,7 +122,11 @@ def test_web_create_toggle_delete_are_audited(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _two_users(c)  # a@e.com / pw is admin (id 1)
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
 
         created = c.post(
@@ -119,15 +141,24 @@ def test_web_create_toggle_delete_are_audited(tmp_path):
         )
         assert created.status_code == 303, created.text
         conn = db.connect(db_file)
-        rid = conn.execute("SELECT id FROM automation_rules ORDER BY id").fetchone()["id"]
+        rid = conn.execute("SELECT id FROM automation_rules ORDER BY id").fetchone()[
+            "id"
+        ]
         conn.close()
 
         assert (
-            c.post(f"/admin/automation/{rid}/enabled", data={"enabled": "0"}, follow_redirects=False).status_code
+            c.post(
+                f"/admin/automation/{rid}/enabled",
+                data={"enabled": "0"},
+                follow_redirects=False,
+            ).status_code
             == 303
         )
         assert (
-            c.post(f"/admin/automation/{rid}/delete", follow_redirects=False).status_code == 303
+            c.post(
+                f"/admin/automation/{rid}/delete", follow_redirects=False
+            ).status_code
+            == 303
         )
 
     assert len(_events(db_file, "created_automation_rule")) == 1
@@ -144,12 +175,16 @@ def test_command_set_enabled_unknown_rule_rejects_and_records_nothing(tmp_path):
         _two_users(c)
     conn = db.connect(db_file)
     try:
-        automation_commands.set_rule_enabled(conn, actor_id=1, rule_id=999, enabled=False)
+        automation_commands.set_rule_enabled(
+            conn, actor_id=1, rule_id=999, enabled=False
+        )
         raise AssertionError("expected AutomationCommandError")
     except automation_commands.AutomationCommandError as exc:
         assert exc.status_code == 404
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "disabled_automation_rule"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "disabled_automation_rule"
     ] == []
 
 
@@ -160,5 +195,7 @@ def test_command_delete_unknown_rule_returns_false_records_nothing(tmp_path):
     conn = db.connect(db_file)
     assert automation_commands.delete_rule(conn, actor_id=1, rule_id=999) is False
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "deleted_automation_rule"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "deleted_automation_rule"
     ] == []

@@ -11,6 +11,7 @@ the doc body. These tests encode that contract:
     see the parent issue/page, and it drops out when the parent is archived;
   * the pre-existing backfill makes comments written before this feature searchable.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import comment_commands, issues
@@ -79,7 +80,11 @@ def test_editing_a_comment_reindexes(tmp_path):
         conn, actor_id=1, issue_id=iss["id"], body="the zephyr note"
     )
     comment_commands.edit_comment(
-        conn, actor_id=1, issue_id=iss["id"], comment_id=c["id"], body="the borealis note"
+        conn,
+        actor_id=1,
+        issue_id=iss["id"],
+        comment_id=c["id"],
+        body="the borealis note",
     )
     assert search.search(conn, "zephyr") == []  # old text no longer matches
     assert [h["kind"] for h in search.search(conn, "borealis")] == ["issue_comment"]

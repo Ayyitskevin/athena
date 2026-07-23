@@ -7,6 +7,7 @@ that link/unlink now record a 'linked'/'unlinked' event in the SAME transaction 
 the edge, exactly once per real change, across REST, the web form, and MCP — with the
 creator-or-assignee write gate preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_commands
@@ -98,9 +99,15 @@ def test_idempotent_relink_records_no_second_event(tmp_path):
         a = _issue(c, "A")
         b = _issue(c, "B")
         body = {"target_ref": str(b["id"]), "relation": "blocks"}
-        assert c.post(f"/issues/{a['id']}/links", json=body, headers=H_ADMIN).status_code == 201
+        assert (
+            c.post(f"/issues/{a['id']}/links", json=body, headers=H_ADMIN).status_code
+            == 201
+        )
         # Re-adding the identical edge is a silent no-op — still 201, but no 2nd event.
-        assert c.post(f"/issues/{a['id']}/links", json=body, headers=H_ADMIN).status_code == 201
+        assert (
+            c.post(f"/issues/{a['id']}/links", json=body, headers=H_ADMIN).status_code
+            == 201
+        )
 
     assert len(_link_events(db_file, verb="linked")) == 1
 
@@ -141,7 +148,8 @@ def test_mcp_link_by_an_agent_is_audited(tmp_path):
             headers=H_ADMIN,
         )  # agent id 2
         raw = tc.post(
-            "/tokens", json={"name": "t", "scopes": ["issue:write"]},
+            "/tokens",
+            json={"name": "t", "scopes": ["issue:write"]},
             headers={"X-Athena-Actor": "2"},
         ).json()["token"]
         agent_h = {"Authorization": f"Bearer {raw}"}
@@ -178,7 +186,9 @@ def test_link_write_gate_preserved(tmp_path):
 
         # Viewer role -> 403.
         assert (
-            c.post(f"/issues/{a['id']}/links", json=body, headers={"X-Athena-Actor": "2"}).status_code
+            c.post(
+                f"/issues/{a['id']}/links", json=body, headers={"X-Athena-Actor": "2"}
+            ).status_code
             == 403
         )
         # Read-only token (admin user, but the token lacks issue:write) -> 403.
@@ -224,7 +234,11 @@ def test_command_rolls_back_edge_and_event_together(tmp_path):
     # Contradiction: rejected, and it must leave the DB exactly as the first link did.
     try:
         issue_commands.link_issues(
-            conn, actor=admin, issue_id=b["id"], target_ref=str(a["id"]), relation="blocks"
+            conn,
+            actor=admin,
+            issue_id=b["id"],
+            target_ref=str(a["id"]),
+            relation="blocks",
         )
         raise AssertionError("expected IssueCommandError")
     except issue_commands.IssueCommandError as exc:

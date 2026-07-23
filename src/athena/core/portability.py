@@ -45,9 +45,7 @@ _ISSUE_COLS = (
     "id, title, body, status, priority, created_by, created_at, assignee_id, "
     "project_id, project_seq, parent_id, sprint_id, archived_at"
 )
-_PAGE_COLS = (
-    "id, space_id, parent_id, title, body, created_by, created_at, updated_by, updated_at"
-)
+_PAGE_COLS = "id, space_id, parent_id, title, body, created_by, created_at, updated_by, updated_at"
 _PAGE_VERSION_COLS = "id, page_id, version, title, body, edited_by, created_at"
 _ATTACHMENT_COLS = (
     "id, target_kind, target_id, filename, content_type, byte_size, sha256, "
@@ -376,7 +374,9 @@ def _project_bundle(conn: sqlite3.Connection, project_id: int) -> dict:
     for attachment in attachments:
         users.add(attachment["uploaded_by"])
 
-    activity = _activity_for_targets(conn, {"project": [project_id], "issue": issue_ids})
+    activity = _activity_for_targets(
+        conn, {"project": [project_id], "issue": issue_ids}
+    )
     for event in activity:
         users.add(event["actor_id"])
 
@@ -1123,7 +1123,9 @@ def _bounded_verb(raw: object) -> str:
     # pack or corrupt the trail. Native verbs are short tokens set only by activity.py, so
     # a well-formed export passes through unchanged; only garbage is neutralized.
     text = raw if isinstance(raw, str) else ""
-    text = "".join(ch for ch in text if ch.isprintable()).strip()[:_MAX_IMPORTED_VERB_LEN]
+    text = "".join(ch for ch in text if ch.isprintable()).strip()[
+        :_MAX_IMPORTED_VERB_LEN
+    ]
     return text or "imported"
 
 
@@ -1223,9 +1225,7 @@ def _import_id_map(conn: sqlite3.Connection, bundle: dict) -> dict:
     if bundle["kind"] == "project":
         mapped |= {
             "project": _create_id_ref("project", bundle["project"]["id"]),
-            "project_statuses": _create_id_refs(
-                "project_status", bundle["statuses"]
-            ),
+            "project_statuses": _create_id_refs("project_status", bundle["statuses"]),
             "sprints": _create_id_refs("sprint", bundle["sprints"]),
             "issues": _create_id_refs("issue", bundle["issues"]),
             "comments": _create_id_refs("comment", bundle["comments"]),
@@ -1467,8 +1467,7 @@ def _validate_import_manifest(manifest: dict, bundle: dict) -> dict:
         )
     if manifest.get("schema_version") != 1:
         raise ValueError(
-            "unsupported manifest schema_version: "
-            f"{manifest.get('schema_version')!r}"
+            f"unsupported manifest schema_version: {manifest.get('schema_version')!r}"
         )
     if manifest.get("bundle_schema") != SCHEMA:
         raise ValueError(
@@ -1582,9 +1581,7 @@ def _validate_project_bundle(bundle: dict) -> None:
             ),
             f"issues[{i}]",
         )
-        _require_container_ref(
-            issue["project_id"], root_id, f"issues[{i}].project_id"
-        )
+        _require_container_ref(issue["project_id"], root_id, f"issues[{i}].project_id")
         if _casefold_required(issue, "status", f"issues[{i}]") not in status_names:
             raise ValueError(f"issues[{i}].status is not present in bundle statuses")
         _require_user_ref(users, issue["created_by"], f"issues[{i}].created_by")
@@ -1607,9 +1604,7 @@ def _validate_project_bundle(bundle: dict) -> None:
             ("issue_id", "user_id", "added_by"),
             f"contributors[{i}]",
         )
-        _require_id_ref(
-            issues, contributor["issue_id"], f"contributors[{i}].issue_id"
-        )
+        _require_id_ref(issues, contributor["issue_id"], f"contributors[{i}].issue_id")
         _require_user_ref(users, contributor["user_id"], f"contributors[{i}].user_id")
         _require_user_ref(
             users,
@@ -1675,7 +1670,9 @@ def _validate_space_bundle(bundle: dict) -> None:
             f"pages[{i}]",
         )
         _require_container_ref(page["space_id"], root_id, f"pages[{i}].space_id")
-        _require_id_ref(pages, page["parent_id"], f"pages[{i}].parent_id", nullable=True)
+        _require_id_ref(
+            pages, page["parent_id"], f"pages[{i}].parent_id", nullable=True
+        )
         _require_user_ref(users, page["created_by"], f"pages[{i}].created_by")
         _require_user_ref(
             users, page["updated_by"], f"pages[{i}].updated_by", nullable=True
@@ -2046,9 +2043,7 @@ def _add_warning(
     report["warnings"].append(item)
 
 
-def _one(
-    conn: sqlite3.Connection, sql: str, params: Iterable = ()
-) -> dict | None:
+def _one(conn: sqlite3.Connection, sql: str, params: Iterable = ()) -> dict | None:
     row = conn.execute(sql, tuple(params)).fetchone()
     return _dict(row) if row else None
 

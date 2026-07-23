@@ -8,6 +8,7 @@ deterministic), a run is one actor's work regardless of who else acted in betwee
 events within a run read oldest-first, runs come newest-first, and the API requires
 an actor and authentication.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -119,12 +120,18 @@ def test_runs_api_returns_actor_runs(tmp_path):
     with TestClient(create_app(tmp_path / "api.db")) as client:
         client.post("/users", json={"email": "h@e.com", "name": "Human"})
         client.post(
-            "/users", json={"email": "b@e.com", "name": "Bot", "is_agent": True}, headers=H1
+            "/users",
+            json={"email": "b@e.com", "name": "Bot", "is_agent": True},
+            headers=H1,
         )
         # The agent does a couple of things back-to-back → one run.
-        iss = client.post("/issues", json={"title": "x"}, headers={"X-Athena-Actor": "2"}).json()
+        iss = client.post(
+            "/issues", json={"title": "x"}, headers={"X-Athena-Actor": "2"}
+        ).json()
         client.patch(
-            f"/issues/{iss['id']}", json={"status": "done"}, headers={"X-Athena-Actor": "2"}
+            f"/issues/{iss['id']}",
+            json={"status": "done"},
+            headers={"X-Athena-Actor": "2"},
         )
 
         runs = client.get("/activity/runs?actor_id=2", headers=H1).json()

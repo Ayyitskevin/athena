@@ -6,6 +6,7 @@ tagged issues and a private space's tagged pages must drop out for someone who c
 see them, while admins, the creator, and members get the full set. (The index counts
 are a separate, lesser follow-up.)
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
@@ -17,23 +18,63 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _scenario(client, db_file):
     """Label "shared" on a hidden issue, a public issue, a hidden page, a public page.
     Returns (db_conn, priv_project_id, priv_space_id)."""
-    lid = client.post("/labels", json={"name": "shared", "color": "#ff0000"}, headers=H_CREATOR).json()["id"]
-    pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-    op = client.post("/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR).json()["id"]
-    hi = client.post("/issues", json={"title": "Hidden alpha", "project_id": pp}, headers=H_CREATOR).json()["id"]
-    pi = client.post("/issues", json={"title": "Public beta", "project_id": op}, headers=H_CREATOR).json()["id"]
-    ps = client.post("/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR).json()["id"]
-    os_ = client.post("/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR).json()["id"]
-    hp = client.post(f"/spaces/{ps}/pages", json={"title": "Hidden gamma"}, headers=H_CREATOR).json()["id"]
-    pp_ = client.post(f"/spaces/{os_}/pages", json={"title": "Public delta"}, headers=H_CREATOR).json()["id"]
+    lid = client.post(
+        "/labels", json={"name": "shared", "color": "#ff0000"}, headers=H_CREATOR
+    ).json()["id"]
+    pp = client.post(
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+    ).json()["id"]
+    op = client.post(
+        "/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR
+    ).json()["id"]
+    hi = client.post(
+        "/issues", json={"title": "Hidden alpha", "project_id": pp}, headers=H_CREATOR
+    ).json()["id"]
+    pi = client.post(
+        "/issues", json={"title": "Public beta", "project_id": op}, headers=H_CREATOR
+    ).json()["id"]
+    ps = client.post(
+        "/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR
+    ).json()["id"]
+    os_ = client.post(
+        "/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR
+    ).json()["id"]
+    hp = client.post(
+        f"/spaces/{ps}/pages", json={"title": "Hidden gamma"}, headers=H_CREATOR
+    ).json()["id"]
+    pp_ = client.post(
+        f"/spaces/{os_}/pages", json={"title": "Public delta"}, headers=H_CREATOR
+    ).json()["id"]
     for iid in (hi, pi):
         client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_CREATOR)
     for pid in (hp, pp_):
@@ -47,7 +88,9 @@ def _scenario(client, db_file):
 
 
 def _login(client, email):
-    r = client.post("/login", data={"email": email, "password": "pw"}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": "pw"}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 

@@ -5,6 +5,7 @@ project is a container an issue may belong to (or not). The issue<->project link
 is a single nullable column on the issue (issues.project_id), so unlike labels
 there is no join table — issues.py owns that column and filters on it directly.
 """
+
 from __future__ import annotations
 
 import re
@@ -65,17 +66,13 @@ def create_project(
 
 
 def get_project(conn: sqlite3.Connection, project_id: int) -> dict | None:
-    row = conn.execute(
-        "SELECT * FROM projects WHERE id = ?", (project_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     return dict(row) if row else None
 
 
 def get_project_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
     """Look a project up by name (case-insensitive — the column is COLLATE NOCASE)."""
-    row = conn.execute(
-        "SELECT * FROM projects WHERE name = ?", (name,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE name = ?", (name,)).fetchone()
     return dict(row) if row else None
 
 
@@ -83,9 +80,7 @@ def get_project_by_key(conn: sqlite3.Connection, key: str) -> dict | None:
     """Look a project up by its issue-key prefix (case-insensitive — the column is
     COLLATE NOCASE). Used to resolve an issue ref like "ATH-12" and to detect a
     duplicate key before create returns a 409."""
-    row = conn.execute(
-        "SELECT * FROM projects WHERE key = ?", (key,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM projects WHERE key = ?", (key,)).fetchone()
     return dict(row) if row else None
 
 
@@ -144,9 +139,7 @@ def update_project(
     if not sets:
         return get_project(conn, project_id)
     params.append(project_id)
-    cur = conn.execute(
-        f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params
-    )
+    cur = conn.execute(f"UPDATE projects SET {', '.join(sets)} WHERE id = ?", params)
     if commit:
         conn.commit()
     if cur.rowcount == 0:

@@ -8,6 +8,7 @@ and detaching are idempotent so callers never have to pre-check.
 
 Mirrors aegis/labels.py (an issue↔X join with a name resolved on read).
 """
+
 from __future__ import annotations
 
 import sqlite3

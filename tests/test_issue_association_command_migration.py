@@ -9,6 +9,7 @@ audit into one transaction, under the same can_act_on gate, reachable identicall
 from REST, the browser, and (via REST) MCP. These pin atomicity, attribution, the
 gate, idempotence, and transport parity.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_commands
@@ -62,7 +63,9 @@ def test_label_attach_and_detach_are_recorded_once_and_attributed(tmp_path):
             f"/issues/{issue['id']}/labels", json={"label_id": label["id"]}, headers=H1
         )
         assert (
-            c.delete(f"/issues/{issue['id']}/labels/{label['id']}", headers=H1).status_code
+            c.delete(
+                f"/issues/{issue['id']}/labels/{label['id']}", headers=H1
+            ).status_code
             == 200
         )
     labeled = _events(db_file, "labeled")
@@ -76,12 +79,18 @@ def test_contributor_add_delegate_and_remove_are_recorded(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         member = c.post(
-            "/users", json={"email": "m@e.com", "name": "Mem", "role": "member"},
+            "/users",
+            json={"email": "m@e.com", "name": "Mem", "role": "member"},
             headers=H1,
         ).json()
         agent = c.post(
             "/users",
-            json={"email": "sol@e.com", "name": "Sol", "role": "member", "is_agent": True},
+            json={
+                "email": "sol@e.com",
+                "name": "Sol",
+                "role": "member",
+                "is_agent": True,
+            },
             headers=H1,
         ).json()
         issue = _issue(c)
@@ -108,9 +117,13 @@ def test_contributor_add_delegate_and_remove_are_recorded(tmp_path):
             ).status_code
             == 200
         )
-    assert [e["target_id"] for e in _events(db_file, "added_contributor")] == [issue["id"]]
+    assert [e["target_id"] for e in _events(db_file, "added_contributor")] == [
+        issue["id"]
+    ]
     assert [e["target_id"] for e in _events(db_file, "delegated")] == [issue["id"]]
-    assert [e["target_id"] for e in _events(db_file, "removed_contributor")] == [issue["id"]]
+    assert [e["target_id"] for e in _events(db_file, "removed_contributor")] == [
+        issue["id"]
+    ]
     # The delegated agent is auto-watching (the watch committed atomically with it).
     conn = db.connect(db_file)
     watching = conn.execute(
@@ -160,7 +173,8 @@ def test_association_writes_share_the_can_act_on_gate(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         bystander = c.post(
-            "/users", json={"email": "b@e.com", "name": "Bee", "role": "member"},
+            "/users",
+            json={"email": "b@e.com", "name": "Bee", "role": "member"},
             headers=H1,
         ).json()
         issue = _issue(c)  # created by admin
@@ -189,7 +203,8 @@ def test_delegate_rejects_a_non_agent_target(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         human = c.post(
-            "/users", json={"email": "h@e.com", "name": "Human", "role": "member"},
+            "/users",
+            json={"email": "h@e.com", "name": "Human", "role": "member"},
             headers=H1,
         ).json()
         issue = _issue(c)

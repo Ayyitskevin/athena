@@ -9,6 +9,7 @@ the summarizing onboarded_agent — ALL attributed to the acting admin); the raw
 secret never logged; scopes required with nothing half-created on refusal; and a
 response that carries a working token plus the ready-to-paste MCP config block.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, agent_commands, db, users
@@ -67,7 +68,10 @@ def test_onboard_returns_working_scoped_token_and_mcp_config(tmp_path):
         me = c.get("/users/me", headers=bearer).json()
         assert me["id"] == body["user"]["id"] and me["is_agent"] is True
         assert me["scopes"] == ["read", "issue:write"]
-        assert c.post("/issues", json={"title": "sol's"}, headers=bearer).status_code == 201
+        assert (
+            c.post("/issues", json={"title": "sol's"}, headers=bearer).status_code
+            == 201
+        )
         denied = c.post("/spaces", json={"key": "S", "name": "S"}, headers=bearer)
         assert denied.status_code == 403
 
@@ -106,9 +110,12 @@ def test_onboard_is_admin_only(tmp_path):
         r = _onboard(c, headers={"X-Athena-Actor": "2"})
         assert r.status_code == 403
     conn = db.connect(db_file)
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     conn.close()
 
 
@@ -136,9 +143,12 @@ def test_command_repeats_the_authz_checks_below_every_transport(tmp_path):
             raise AssertionError("expected AgentCommandError")
         except agent_commands.AgentCommandError as exc:
             assert exc.status_code == status
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     conn.close()
 
 
@@ -155,9 +165,12 @@ def test_admin_bearer_token_needs_the_admin_scope(tmp_path):
         assert r.status_code == 403
         assert "token scope required: admin" in r.json()["detail"]
     conn = db.connect(db_file)
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     conn.close()
 
 
@@ -183,9 +196,12 @@ def test_scopes_are_required_and_refusal_creates_nothing(tmp_path):
         raise AssertionError("expected AgentCommandError")
     except agent_commands.AgentCommandError as exc:
         assert exc.status_code == 422
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     assert conn.execute("SELECT COUNT(*) AS n FROM api_tokens").fetchone()["n"] == 0
     conn.close()
     assert _events(db_file, "onboarded_agent") == []
@@ -209,9 +225,12 @@ def test_idempotency_key_is_refused_so_the_secret_never_enters_the_replay_store(
         assert r.status_code == 400
         assert "one-time secret" in r.json()["detail"]
     conn = db.connect(db_file)
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     conn.close()
 
 
@@ -240,9 +259,12 @@ def test_duplicate_email_is_409_and_leaves_no_partial_state(tmp_path):
         assert again.status_code == 409
         assert "email already in use" in again.json()["detail"]
     conn = db.connect(db_file)
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 1
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 1
+    )
     assert conn.execute("SELECT COUNT(*) AS n FROM api_tokens").fetchone()["n"] == 1
     conn.close()
     assert len(_events(db_file, "onboarded_agent")) == 1
@@ -302,9 +324,7 @@ def test_web_cockpit_onboarding_requires_scopes_and_admin(tmp_path):
             follow_redirects=False,
         )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
-        r = c.post(
-            "/admin/agents/onboard", data={"email": "sol@e.com", "name": "Sol"}
-        )
+        r = c.post("/admin/agents/onboard", data={"email": "sol@e.com", "name": "Sol"})
         assert r.status_code == 400
         assert "at least one token scope" in r.text
         # A member session is refused outright.
@@ -320,9 +340,12 @@ def test_web_cockpit_onboarding_requires_scopes_and_admin(tmp_path):
         )
         assert denied.status_code == 403
     conn = db.connect(db_file)
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
+        ).fetchone()["n"]
+        == 0
+    )
     conn.close()
 
 

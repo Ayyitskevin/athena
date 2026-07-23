@@ -10,6 +10,7 @@ change the issue itself. The caller does the write, then hands us the before/aft
 so we record the diff. "Record only on real change" lives here: a no-op edit (same
 status, same assignee) writes nothing, on either surface.
 """
+
 from __future__ import annotations
 
 from collections.abc import Collection
@@ -17,12 +18,11 @@ import sqlite3
 
 from athena.aegis import issues, projects, sprints
 from athena.core import activity, db, labels, notifications, users
+
 _INFER_PROJECT = object()
 
 
-def _project_scope_key(
-    conn: sqlite3.Connection, project_id: int | None
-) -> str | None:
+def _project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str | None:
     if project_id is None:
         return None
     row = conn.execute(
@@ -88,7 +88,6 @@ def _record_lifecycle_fact(
     )
 
 
-
 def _scope_kwargs(
     project_ids: Collection[int | None] | None,
 ) -> dict[str, object]:
@@ -140,18 +139,12 @@ def record_created(
             before_status=None,
             before_category=None,
             after_status=issue["status"],
-            after_category=_status_category(
-                conn, issue["project_id"], issue["status"]
-            ),
+            after_category=_status_category(conn, issue["project_id"], issue["status"]),
             before_project_scope_key=None,
-            after_project_scope_key=_project_scope_key(
-                conn, issue["project_id"]
-            ),
+            after_project_scope_key=_project_scope_key(conn, issue["project_id"]),
             actor_kind=_actor_kind(conn, actor_id),
         )
-        notifications.watch(
-            conn, actor_id, "issue", issue_id, commit=False
-        )
+        notifications.watch(conn, actor_id, "issue", issue_id, commit=False)
         notifications.process_mentions(
             conn,
             event_id=event["id"],
@@ -250,13 +243,9 @@ def record_status_change(
         else before_project_id
     )
     resolved_after_project_id = (
-        issue["project_id"]
-        if after_project_id is _INFER_PROJECT
-        else after_project_id
+        issue["project_id"] if after_project_id is _INFER_PROJECT else after_project_id
     )
-    before_category = _status_category(
-        conn, resolved_before_project_id, before
-    )
+    before_category = _status_category(conn, resolved_before_project_id, before)
     after_category = _status_category(conn, resolved_after_project_id, after)
     if before == after and before_category == after_category:
         return
@@ -358,9 +347,7 @@ def record_assignee_change(
             # The new assignee starts watching BEFORE we record the event, so the
             # assignment itself lands in their inbox (they're a watcher when it
             # fans out).
-            notifications.watch(
-                conn, after, "issue", issue_id, commit=False
-            )
+            notifications.watch(conn, after, "issue", issue_id, commit=False)
             activity.record(
                 conn,
                 actor_id=actor_id,

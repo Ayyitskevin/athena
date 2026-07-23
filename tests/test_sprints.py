@@ -6,6 +6,7 @@ planned and only if the project has no other active sprint; completing moves
 `active` → `completed` (stamping an end date); a sprint can't be deleted while issues
 are in it; and an issue can be put in a sprint or returned to the backlog.
 """
+
 import sqlite3
 
 import pytest
@@ -30,10 +31,15 @@ def test_create_get_list_and_state_filter(tmp_path):
 
     sprints.create_sprint(conn, project_id=pid, name="Sprint 2")
     assert {s["name"] for s in sprints.list_sprints(conn, project_id=pid)} == {
-        "Sprint 1", "Sprint 2",
+        "Sprint 1",
+        "Sprint 2",
     }
-    assert [s["name"] for s in sprints.list_sprints(conn, project_id=pid, state=sprints.PLANNED)] == [
-        "Sprint 2", "Sprint 1",  # newest first
+    assert [
+        s["name"]
+        for s in sprints.list_sprints(conn, project_id=pid, state=sprints.PLANNED)
+    ] == [
+        "Sprint 2",
+        "Sprint 1",  # newest first
     ]
     conn.close()
 

@@ -9,6 +9,7 @@ Two verified defects:
      non-ASCII run id stored from a header wouldn't match its own replay filter.
      The middleware now decodes the headers as UTF-8 to match.
 """
+
 import asyncio
 
 from fastapi.testclient import TestClient
@@ -26,7 +27,9 @@ def _migrated_conn(db_file):
 
 
 def _user(conn, name="Bot"):
-    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name))
+    conn.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name)
+    )
     conn.commit()
 
 
@@ -73,7 +76,7 @@ def test_only_the_oldest_run_is_marked_partial(tmp_path):
     runs = activity.reconstruct_runs(conn, actor_id=1, limit=3)  # window full (3 == 3)
     assert [r["run_id"] for r in runs] == ["r2", "r1"]  # newest first
     assert runs[0]["partial"] is False  # newest run is never clipped
-    assert runs[1]["partial"] is True   # oldest might be
+    assert runs[1]["partial"] is True  # oldest might be
     conn.close()
 
 

@@ -4,6 +4,7 @@ This route is deliberately only a transport adapter. The Aegis projection owns
 visibility, clipping, and every fact in the response; the browser adds no SQL and
 does not rebuild any part of the contract for presentation.
 """
+
 from __future__ import annotations
 
 import sqlite3

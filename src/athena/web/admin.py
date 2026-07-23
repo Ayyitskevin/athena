@@ -244,9 +244,7 @@ def unlink_identity(
     # Only the current user's OWN identities may be unlinked — confirm the pair is in
     # their list before deleting (the (issuer, subject) pair maps to exactly one user,
     # so this is the authorization check, not just a 404 guard).
-    owns_it = any(
-        i["issuer"] == issuer and i["subject"] == subject for i in identities
-    )
+    owns_it = any(i["issuer"] == issuer and i["subject"] == subject for i in identities)
     if not owns_it:
         return HTMLResponse(
             '<div class="error">No such linked sign-in.</div>', status_code=404
@@ -559,9 +557,7 @@ def offboard_agent(
     if err is not None:
         return err
     try:
-        agent_commands.offboard_user(
-            conn, actor=user, target_user_id=user_id
-        )
+        agent_commands.offboard_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
         return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
     return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
@@ -588,9 +584,7 @@ def agent_runs_admin(
             query_pairs = [
                 (key, value) for key, value in query_pairs if key != "agent_id"
             ]
-        agent_id, work_limit = fleet_work.parse_query_pairs(
-            query_pairs
-        )
+        agent_id, work_limit = fleet_work.parse_query_pairs(query_pairs)
     except fleet_work.ActiveWorkQueryError as exc:
         return HTMLResponse(
             f"<h1>Invalid active-work request</h1><p>{escape(exc.detail)}</p>",
@@ -1085,8 +1079,6 @@ def delete_rule(
     err = _admin_required(actor)
     if err is not None:
         return err
-    if not automation_commands.delete_rule(
-        conn, actor_id=actor["id"], rule_id=rule_id
-    ):
+    if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
         return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)

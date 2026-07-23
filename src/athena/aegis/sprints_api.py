@@ -7,6 +7,7 @@ lifecycle transitions (start/complete) surface the data layer's SprintStateError
 a 409. The issue↔sprint assignment lives on the issues router (aegis/api.py), since
 it's a write on the issue, not the sprint.
 """
+
 from __future__ import annotations
 
 import sqlite3

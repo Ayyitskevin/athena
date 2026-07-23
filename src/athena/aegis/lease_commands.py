@@ -12,6 +12,7 @@ Each command owns one transaction: lease state and its audit event commit or rol
 together. Authorization is resolved here, reusing the issue command policy so REST and
 MCP share one boundary.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -50,9 +51,7 @@ LEASE_GENERATION_REQUIRED_DETAIL = (
 )
 
 
-def _claimant_or_reject(
-    conn: sqlite3.Connection, issue: dict, actor: dict
-) -> None:
+def _claimant_or_reject(conn: sqlite3.Connection, issue: dict, actor: dict) -> None:
     """A lease is for whoever actually works the issue: its assignee, a delegated
     contributor, or an admin. Deliberately NARROWER than the general issue-write gate
     (which also lets the creator in) — creating an issue is not the same as being handed
@@ -176,9 +175,7 @@ def claim_issue(
             renewed=renewed,
             commit=False,
         )
-        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(
-            conn, issue_id
-        )
+        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
         return lease
 
 
@@ -243,7 +240,10 @@ def _normalize_handoff_evidence(evidence: object) -> list[str]:
         )
         assert text is not None
         normalized.append(text)
-    if len(claim_handoffs.encode_evidence(normalized)) > MAX_HANDOFF_EVIDENCE_JSON_CHARS:
+    if (
+        len(claim_handoffs.encode_evidence(normalized))
+        > MAX_HANDOFF_EVIDENCE_JSON_CHARS
+    ):
         raise IssueCommandError(
             "invalid",
             f"encoded evidence must be at most {MAX_HANDOFF_EVIDENCE_JSON_CHARS} characters",
@@ -254,7 +254,8 @@ def _normalize_handoff_evidence(evidence: object) -> list[str]:
 def _normalize_handoff_token(handoff_token: object) -> str:
     if not claim_handoffs.is_valid_handoff_token(handoff_token):
         raise IssueCommandError(
-            "invalid", "handoff token must be exactly 32 lowercase hexadecimal characters"
+            "invalid",
+            "handoff token must be exactly 32 lowercase hexadecimal characters",
         )
     assert isinstance(handoff_token, str)
     return handoff_token
@@ -344,9 +345,7 @@ def yield_claim(
             resume_instructions=normalized_resume_instructions,
             handoff_token=handoff_token,
         )
-        if not leases.delete_lease(
-            conn, issue_id, current_generation, commit=False
-        ):
+        if not leases.delete_lease(conn, issue_id, current_generation, commit=False):
             raise IssueCommandError(
                 "lease_generation_mismatch",
                 "lease generation changed before release",
@@ -450,9 +449,7 @@ def complete_claim(
                 "conflict",
                 "resume the open claim handoff before completing this possession",
             )
-        if not leases.delete_lease(
-            conn, issue_id, current_generation, commit=False
-        ):
+        if not leases.delete_lease(conn, issue_id, current_generation, commit=False):
             raise IssueCommandError(
                 "lease_generation_mismatch",
                 "lease generation changed before release",
@@ -490,17 +487,13 @@ def decline_delegation(
         released_generation = None
         if held is not None and held["holder_id"] == actor["id"]:
             if held["active"]:
-                released_generation = _matching_lease_generation(
-                    held, generation
-                )
+                released_generation = _matching_lease_generation(held, generation)
             else:
                 # An expired row is not a current possession. A generationless
                 # pre-claim decline therefore leaves it for the next acquisition
                 # to replace instead of performing any unfenced deletion.
                 if generation is not None:
-                    released_generation = _matching_lease_generation(
-                        held, generation
-                    )
+                    released_generation = _matching_lease_generation(held, generation)
                 else:
                     # The immediate writer lock makes the server-observed expired
                     # generation an exact fence; no replacement can appear between

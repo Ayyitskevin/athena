@@ -73,7 +73,9 @@ def _clean_criteria(payload: FilterCriteria) -> dict:
     the canonical stored form — the one place the JSON API turns criteria input
     into something safe to persist and run."""
     try:
-        criteria = saved_filters.normalize_criteria(payload.model_dump(exclude_none=True))
+        criteria = saved_filters.normalize_criteria(
+            payload.model_dump(exclude_none=True)
+        )
     except saved_filters.InvalidFilterCriteria as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     reason = saved_filters.validate_criteria(criteria)
@@ -82,9 +84,7 @@ def _clean_criteria(payload: FilterCriteria) -> dict:
     return criteria
 
 
-def _owned_filter_or_404(
-    conn: sqlite3.Connection, filter_id: int, actor: dict
-) -> dict:
+def _owned_filter_or_404(conn: sqlite3.Connection, filter_id: int, actor: dict) -> dict:
     """Fetch a filter that belongs to the actor, or raise 404. A filter owned by
     someone else is indistinguishable from a missing one — a user can't probe
     another's saved queries."""
@@ -145,7 +145,9 @@ def update(
     name = payload.name.strip() if payload.name is not None else None
     if name is not None and not name:
         raise HTTPException(status_code=422, detail="filter name cannot be empty")
-    criteria = _clean_criteria(payload.criteria) if payload.criteria is not None else None
+    criteria = (
+        _clean_criteria(payload.criteria) if payload.criteria is not None else None
+    )
     try:
         updated = saved_filters.update_filter(
             conn, filter_id, name=name, criteria=criteria
@@ -177,6 +179,8 @@ def run(
 ) -> list[dict]:
     flt = _owned_filter_or_404(conn, filter_id, actor)
     rows = saved_filters.run_filter(
-        conn, flt["criteria"], visible_project_ids=access.visible_project_filter(conn, actor)
+        conn,
+        flt["criteria"],
+        visible_project_ids=access.visible_project_filter(conn, actor),
     )
     return api._with_labels_many(conn, rows)

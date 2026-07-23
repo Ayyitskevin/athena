@@ -107,7 +107,9 @@ def test_restore_database_refuses_existing_target_without_force(tmp_path):
     }
 
 
-def test_restore_removes_stale_sidecars_before_replacing_the_main_file(tmp_path, monkeypatch):
+def test_restore_removes_stale_sidecars_before_replacing_the_main_file(
+    tmp_path, monkeypatch
+):
     # WHY: the target's stale -wal/-shm must go BEFORE the new main file is swapped in,
     # not after. If they outlived the atomic replace even briefly, a reader opening the
     # freshly-restored db in that window would replay the OLD wal onto the NEW file and
@@ -198,9 +200,7 @@ def test_backup_cli_retention_glob_requires_keep(tmp_path, capsys):
     snapshot = tmp_path / "athena-2026-01-01.db"
 
     assert (
-        ops.backup_main(
-            [str(source), str(snapshot), "--retention-glob", "athena-*.db"]
-        )
+        ops.backup_main([str(source), str(snapshot), "--retention-glob", "athena-*.db"])
         == 1
     )
 

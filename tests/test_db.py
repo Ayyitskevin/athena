@@ -3,6 +3,7 @@
 Each test gets its own throwaway database file via pytest's `tmp_path`, so the
 tests never touch real data and never interfere with each other.
 """
+
 from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 
@@ -57,9 +58,7 @@ def test_connection_can_follow_a_request_across_worker_threads(tmp_path):
     # concurrency, but SQLite's creator-thread default rejects it in real Uvicorn.
     conn = db.connect(tmp_path / "thread-handoff.db")
     with ThreadPoolExecutor(max_workers=1) as pool:
-        result = pool.submit(
-            lambda: conn.execute("SELECT 1").fetchone()[0]
-        ).result()
+        result = pool.submit(lambda: conn.execute("SELECT 1").fetchone()[0]).result()
     assert result == 1
     conn.close()
 

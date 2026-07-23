@@ -6,6 +6,7 @@ never persist agent-visible state without its projections and load-bearing audit
 event. Failure injection proves rollback, rather than merely checking happy-path
 HTTP responses.
 """
+
 import sqlite3
 
 import pytest
@@ -42,9 +43,7 @@ def _command_conn(db_file):
 
 
 def _install_deferred_commit_trap(conn):
-    conn.execute(
-        "CREATE TEMP TABLE deferred_parent (id INTEGER PRIMARY KEY)"
-    )
+    conn.execute("CREATE TEMP TABLE deferred_parent (id INTEGER PRIMARY KEY)")
     conn.execute(
         "CREATE TEMP TABLE deferred_child ("
         "parent_id INTEGER REFERENCES deferred_parent(id) "
@@ -65,13 +64,16 @@ def _assert_no_issue_footprint(conn):
 
 def _assert_no_cross_project_sprints(conn):
     """Every non-null issue sprint exists and belongs to that issue's project."""
-    assert conn.execute(
-        "SELECT COUNT(*) FROM issues AS i "
-        "LEFT JOIN sprints AS s ON s.id = i.sprint_id "
-        "WHERE i.sprint_id IS NOT NULL "
-        "AND (s.id IS NULL OR i.project_id IS NULL "
-        "OR s.project_id <> i.project_id)"
-    ).fetchone()[0] == 0
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM issues AS i "
+            "LEFT JOIN sprints AS s ON s.id = i.sprint_id "
+            "WHERE i.sprint_id IS NOT NULL "
+            "AND (s.id IS NULL OR i.project_id IS NULL "
+            "OR s.project_id <> i.project_id)"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_create_rolls_back_when_search_projection_fails(tmp_path, monkeypatch):
@@ -159,7 +161,9 @@ def test_status_rolls_back_when_its_audit_event_fails(tmp_path, monkeypatch):
         )
 
     assert issues.get_issue(conn, issue["id"])["status"] == "open"
-    assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    assert (
+        conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    )
     assert not conn.in_transaction
     conn.close()
 
@@ -177,7 +181,9 @@ def test_assignee_rolls_back_after_activity_and_notifications_exist(
     # and notification fan-out; the issue row and new-assignee watch must still
     # roll back with them. Parameterizing pins both recorder branches.
     conn, actor = _command_conn(tmp_path / f"{target_assignee}-late-failure.db")
-    issue = issue_commands.create_issue(conn, actor=actor, title="keep ownership honest")
+    issue = issue_commands.create_issue(
+        conn, actor=actor, title="keep ownership honest"
+    )
     if initial_assignee is not None:
         issue_commands.update_issue(
             conn,
@@ -393,16 +399,22 @@ def test_rest_and_web_preserve_the_same_markdown_body_on_create_and_edit(tmp_pat
         conn.close()
 
         edited = "updated  \nsecond line\n"
-        assert client.patch(
-            f"/issues/{api_issue['id']}",
-            json={"body": edited},
-            headers={"X-Athena-Actor": "1"},
-        ).status_code == 200
-        assert client.post(
-            f"/aegis/issues/{web_id}/edit",
-            data={"title": "Web", "body": edited},
-            follow_redirects=False,
-        ).status_code == 303
+        assert (
+            client.patch(
+                f"/issues/{api_issue['id']}",
+                json={"body": edited},
+                headers={"X-Athena-Actor": "1"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/aegis/issues/{web_id}/edit",
+                data={"title": "Web", "body": edited},
+                follow_redirects=False,
+            ).status_code
+            == 303
+        )
 
         conn = db.connect(db_file)
         assert issues.get_issue(conn, api_issue["id"])["body"] == edited
@@ -430,19 +442,20 @@ def test_assignment_surfaces_share_audit_watch_notification_and_noop_semantics(
     headers = {"X-Athena-Actor": "1"}
     with TestClient(create_app(db_file)) as client:
         _bootstrap_and_login(client)
-        assert client.post(
-            "/users",
-            json={
-                "email": "assignee@example.com",
-                "name": "Assignee",
-                "password": "secret",
-                "role": "member",
-            },
-            headers=headers,
-        ).status_code == 201
-        issue = client.post(
-            "/issues", json={"title": surface}, headers=headers
-        ).json()
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "assignee@example.com",
+                    "name": "Assignee",
+                    "password": "secret",
+                    "role": "member",
+                },
+                headers=headers,
+            ).status_code
+            == 201
+        )
+        issue = client.post("/issues", json={"title": surface}, headers=headers).json()
 
         expected_actor = 1
         for attempt in range(2):
@@ -520,28 +533,33 @@ def test_update_authorizes_target_before_disclosing_invalid_input(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap_and_login(client)
         owner = {"X-Athena-Actor": "1"}
-        assert client.post(
-            "/users",
-            json={
-                "email": "outsider@example.com",
-                "name": "Outsider",
-                "password": "secret",
-                "role": "member",
-            },
-            headers=owner,
-        ).status_code == 201
-        issue = client.post(
-            "/issues", json={"title": "Owned"}, headers=owner
-        ).json()
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "outsider@example.com",
+                    "name": "Outsider",
+                    "password": "secret",
+                    "role": "member",
+                },
+                headers=owner,
+            ).status_code
+            == 201
+        )
+        issue = client.post("/issues", json={"title": "Owned"}, headers=owner).json()
         outsider = {"X-Athena-Actor": "2"}
 
         for malformed in ({}, {"title": "   "}):
-            assert client.patch(
-                "/issues/9999", json=malformed, headers=owner
-            ).status_code == 404
-            assert client.patch(
-                f"/issues/{issue['id']}", json=malformed, headers=outsider
-            ).status_code == 403
+            assert (
+                client.patch("/issues/9999", json=malformed, headers=owner).status_code
+                == 404
+            )
+            assert (
+                client.patch(
+                    f"/issues/{issue['id']}", json=malformed, headers=outsider
+                ).status_code
+                == 403
+            )
 
 
 def test_assignee_authorizes_source_before_validating_target(tmp_path):
@@ -553,9 +571,7 @@ def test_assignee_authorizes_source_before_validating_target(tmp_path):
     outsider = users.get_user(conn, 2)
 
     with pytest.raises(issue_commands.IssueCommandError) as missing:
-        issue_commands.update_issue(
-            conn, actor=actor, issue_id=9999, assignee_id=9999
-        )
+        issue_commands.update_issue(conn, actor=actor, issue_id=9999, assignee_id=9999)
     assert (missing.value.kind, missing.value.detail) == (
         "not_found",
         "no such issue",
@@ -634,9 +650,7 @@ def test_combined_command_orders_assignment_after_lifecycle_before_edit(tmp_path
     # status/priority so bulk preserves its historical event sequence, while the
     # content edit remains the final summary fact.
     conn, actor = _command_conn(tmp_path / "combined-assignee.db")
-    issue = issue_commands.create_issue(
-        conn, actor=actor, title="Before", body="old"
-    )
+    issue = issue_commands.create_issue(conn, actor=actor, title="Before", body="old")
     issue_commands.update_issue(
         conn,
         actor=actor,
@@ -673,15 +687,18 @@ def test_bulk_core_and_assignee_roll_back_as_one_item(tmp_path, monkeypatch):
     headers = {"X-Athena-Actor": "1"}
     with TestClient(create_app(db_file)) as client:
         _bootstrap_and_login(client)
-        assert client.post(
-            "/users",
-            json={
-                "email": "assignee@example.com",
-                "name": "Assignee",
-                "role": "member",
-            },
-            headers=headers,
-        ).status_code == 201
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "assignee@example.com",
+                    "name": "Assignee",
+                    "role": "member",
+                },
+                headers=headers,
+            ).status_code
+            == 201
+        )
         issue = client.post(
             "/issues", json={"title": "bulk atomic"}, headers=headers
         ).json()
@@ -739,11 +756,14 @@ def test_custom_done_status_survives_web_blocker_confirmation(tmp_path):
             json={"name": "Ops", "key": "OPS"},
             headers=headers,
         ).json()
-        assert client.post(
-            f"/projects/{project['id']}/statuses",
-            json={"name": "shipped", "category": "done"},
-            headers=headers,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/projects/{project['id']}/statuses",
+                json={"name": "shipped", "category": "done"},
+                headers=headers,
+            ).status_code
+            == 201
+        )
         target = client.post(
             "/issues",
             json={"title": "Target", "project_id": project["id"]},
@@ -806,13 +826,20 @@ def test_automation_status_rolls_back_when_audit_fails(tmp_path, monkeypatch):
         with pytest.raises(RuntimeError, match="automation audit failed"):
             automation.execute_action(
                 conn,
-                {"id": 1, "action_type": "set_status", "action_params": {"status": "done"}},
+                {
+                    "id": 1,
+                    "action_type": "set_status",
+                    "action_params": {"status": "done"},
+                },
                 {"id": 9002, "target_id": issue["id"]},
                 actor_id=actor_id,
             )
 
         assert issues.get_issue(conn, issue["id"])["status"] == "open"
-        assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+        assert (
+            conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+            == baseline_events
+        )
         assert not conn.in_transaction
         conn.close()
 
@@ -825,15 +852,18 @@ def test_automation_assignee_rolls_back_when_audit_fails(tmp_path, monkeypatch):
     headers = {"X-Athena-Actor": "1"}
     with TestClient(create_app(db_file)) as client:
         _bootstrap_and_login(client)
-        assert client.post(
-            "/users",
-            json={
-                "email": "assignee@example.com",
-                "name": "Assignee",
-                "role": "member",
-            },
-            headers=headers,
-        ).status_code == 201
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "assignee@example.com",
+                    "name": "Assignee",
+                    "role": "member",
+                },
+                headers=headers,
+            ).status_code
+            == 201
+        )
         issue = client.post(
             "/issues", json={"title": "Automate ownership"}, headers=headers
         ).json()
@@ -897,9 +927,7 @@ def test_project_move_clears_sprint_remaps_status_and_replays_history(tmp_path):
         sprint_id=source_sprint["id"],
     )
     cutoff = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
-    destination_counter = projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ]
+    destination_counter = projects.get_project(conn, destination["id"])["issue_counter"]
 
     moved = issue_commands.update_issue(
         conn,
@@ -945,7 +973,8 @@ def test_project_move_clears_sprint_remaps_status_and_replays_history(tmp_path):
         conn, issue["id"], as_of_event_id=cutoff
     )["state"]
     assert (previous_state["status"], previous_state["sprint"]) == (
-        "review", "Source Sprint"
+        "review",
+        "Source Sprint",
     )
     current_state = issue_history.project_issue_state(conn, issue["id"])["state"]
     assert current_state["status"] == "open"
@@ -1015,9 +1044,7 @@ def test_combined_relationship_update_orders_events_and_same_project_is_noop(tmp
         sprint_id=source_sprint["id"],
     )
     cutoff = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
-    destination_counter = projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ]
+    destination_counter = projects.get_project(conn, destination["id"])["issue_counter"]
 
     updated = issue_commands.update_issue(
         conn,
@@ -1120,18 +1147,14 @@ def test_relationship_audit_failure_rolls_back_key_counter_and_sprint_clear(
         sprint_id=source_sprint["id"],
     )
     baseline_events = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
-    destination_counter = projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ]
+    destination_counter = projects.get_project(conn, destination["id"])["issue_counter"]
     real_recorder = issue_activity.record_sprint_change
 
     def fail_after_sprint_audit(*args, **kwargs):
         real_recorder(*args, **kwargs)
         raise RuntimeError("injected relationship audit failure")
 
-    monkeypatch.setattr(
-        issue_activity, "record_sprint_change", fail_after_sprint_audit
-    )
+    monkeypatch.setattr(issue_activity, "record_sprint_change", fail_after_sprint_audit)
     with pytest.raises(RuntimeError, match="injected relationship audit failure"):
         issue_commands.update_issue(
             conn,
@@ -1154,10 +1177,13 @@ def test_relationship_audit_failure_rolls_back_key_counter_and_sprint_clear(
         before["status"],
         before["sprint_id"],
     )
-    assert projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ] == destination_counter
-    assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    assert (
+        projects.get_project(conn, destination["id"])["issue_counter"]
+        == destination_counter
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    )
     assert not conn.in_transaction
     _assert_no_cross_project_sprints(conn)
     conn.close()
@@ -1189,9 +1215,7 @@ def test_relationship_setters_roll_back_when_commit_finalization_fails(
         sprint_id=source_sprint["id"],
     )
     before = issues.get_issue(conn, issue["id"])
-    destination_counter = projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ]
+    destination_counter = projects.get_project(conn, destination["id"])["issue_counter"]
     _install_deferred_commit_trap(conn)
     conn.execute("INSERT INTO deferred_child (parent_id) VALUES (999)")
 
@@ -1215,9 +1239,10 @@ def test_relationship_setters_roll_back_when_commit_finalization_fails(
         before["status"],
         before["sprint_id"],
     )
-    assert projects.get_project(conn, destination["id"])[
-        "issue_counter"
-    ] == destination_counter
+    assert (
+        projects.get_project(conn, destination["id"])["issue_counter"]
+        == destination_counter
+    )
     assert conn.execute("SELECT COUNT(*) FROM deferred_child").fetchone()[0] == 0
     assert not conn.in_transaction
     _assert_no_cross_project_sprints(conn)
@@ -1265,7 +1290,9 @@ def test_relationship_recorders_roll_back_when_commit_finalization_fails(
                 after=destination["id"],
             )
 
-    assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    assert (
+        conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    )
     assert conn.execute("SELECT COUNT(*) FROM deferred_child").fetchone()[0] == 0
     assert not conn.in_transaction
     conn.close()
@@ -1278,15 +1305,18 @@ def test_bulk_core_and_sprint_roll_back_as_one_item(tmp_path, monkeypatch):
     headers = {"X-Athena-Actor": "1"}
     with TestClient(create_app(db_file)) as client:
         _bootstrap_and_login(client)
-        assert client.post(
-            "/users",
-            json={
-                "email": "assignee@example.com",
-                "name": "Assignee",
-                "role": "member",
-            },
-            headers=headers,
-        ).status_code == 201
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "assignee@example.com",
+                    "name": "Assignee",
+                    "role": "member",
+                },
+                headers=headers,
+            ).status_code
+            == 201
+        )
         project = client.post(
             "/projects",
             json={"name": "Ops", "key": "OPS"},
@@ -1355,28 +1385,34 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
     secret_headers = {"X-Athena-Actor": "3"}
     admin_headers = {"X-Athena-Actor": "1"}
     with TestClient(create_app(db_file)) as client:
-        assert client.post(
-            "/users",
-            json={
-                "email": "admin@example.com",
-                "name": "Admin",
-                "password": "pw",
-            },
-        ).status_code == 201
+        assert (
+            client.post(
+                "/users",
+                json={
+                    "email": "admin@example.com",
+                    "name": "Admin",
+                    "password": "pw",
+                },
+            ).status_code
+            == 201
+        )
         for email, name in (
             ("source@example.com", "Source Owner"),
             ("secret@example.com", "Secret Owner"),
         ):
-            assert client.post(
-                "/users",
-                json={
-                    "email": email,
-                    "name": name,
-                    "password": "pw",
-                    "role": "member",
-                },
-                headers=admin_headers,
-            ).status_code == 201
+            assert (
+                client.post(
+                    "/users",
+                    json={
+                        "email": email,
+                        "name": name,
+                        "password": "pw",
+                        "role": "member",
+                    },
+                    headers=admin_headers,
+                ).status_code
+                == 201
+            )
 
         source_project = client.post(
             "/projects",
@@ -1398,11 +1434,14 @@ def test_hidden_and_missing_sprints_collapse_across_rest_web_and_bulk(tmp_path):
             json={"name": "Hidden Sprint"},
             headers=secret_headers,
         ).json()
-        assert client.put(
-            f"/projects/{secret_project['id']}/visibility",
-            json={"visibility": "private"},
-            headers=secret_headers,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{secret_project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=secret_headers,
+            ).status_code
+            == 200
+        )
 
         visible_other = client.post(
             "/projects",
@@ -1520,11 +1559,14 @@ def test_rest_and_web_project_moves_clear_sprint_through_shared_command(tmp_path
             headers=headers,
         ).json()
         for issue in (rest_issue, web_issue):
-            assert client.put(
-                f"/issues/{issue['id']}/sprint",
-                json={"sprint_id": sprint["id"]},
-                headers=headers,
-            ).status_code == 200
+            assert (
+                client.put(
+                    f"/issues/{issue['id']}/sprint",
+                    json={"sprint_id": sprint["id"]},
+                    headers=headers,
+                ).status_code
+                == 200
+            )
 
         rest_move = client.put(
             f"/issues/{rest_issue['id']}/project",

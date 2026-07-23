@@ -7,6 +7,7 @@ fingerprints, caller isolation, revocation and rate-limit enforcement, bounded
 storage, secret-route exclusion, completed TTL, and conservative indeterminate
 handling whenever Athena cannot prove whether a mutation committed.
 """
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -26,7 +27,9 @@ H2 = {"X-Athena-Actor": "2"}
 
 def _bootstrap(client):
     client.post("/users", json={"email": "a@e.com", "name": "A"})
-    client.post("/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "B", "role": "member"}, headers=H1
+    )
 
 
 def _ids(client):
@@ -75,8 +78,12 @@ def test_key_reused_on_a_different_path_is_409(tmp_path):
 def test_distinct_keys_create_distinctly(tmp_path):
     with TestClient(create_app(tmp_path / "distinct.db")) as client:
         _bootstrap(client)
-        a = client.post("/issues", json={"title": "a"}, headers={"Idempotency-Key": "k1", **H1})
-        b = client.post("/issues", json={"title": "b"}, headers={"Idempotency-Key": "k2", **H1})
+        a = client.post(
+            "/issues", json={"title": "a"}, headers={"Idempotency-Key": "k1", **H1}
+        )
+        b = client.post(
+            "/issues", json={"title": "b"}, headers={"Idempotency-Key": "k2", **H1}
+        )
         assert a.json()["id"] != b.json()["id"]
         assert _ids(client) == sorted([a.json()["id"], b.json()["id"]])
 
@@ -95,8 +102,16 @@ def test_key_is_scoped_per_identity(tmp_path):
         _bootstrap(client)
         # The SAME key string from two different callers must not collide: each gets
         # its own create, and neither reads the other's stored response.
-        mine = client.post("/issues", json={"title": "mine"}, headers={"Idempotency-Key": "shared", **H1})
-        theirs = client.post("/issues", json={"title": "theirs"}, headers={"Idempotency-Key": "shared", **H2})
+        mine = client.post(
+            "/issues",
+            json={"title": "mine"},
+            headers={"Idempotency-Key": "shared", **H1},
+        )
+        theirs = client.post(
+            "/issues",
+            json={"title": "theirs"},
+            headers={"Idempotency-Key": "shared", **H2},
+        )
         assert mine.json()["id"] != theirs.json()["id"]
         assert theirs.headers.get("idempotent-replay") is None
         assert len(_ids(client)) == 2
@@ -123,7 +138,9 @@ def test_unidentified_caller_is_passed_through(tmp_path, monkeypatch):
         # With the actor header untrusted and no bearer token, there's no identity to
         # scope a key to — the request isn't deduped, it's just handled (401 here).
         monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
-        r = client.post("/issues", json={"title": "x"}, headers={"Idempotency-Key": "k"})
+        r = client.post(
+            "/issues", json={"title": "x"}, headers={"Idempotency-Key": "k"}
+        )
         assert r.status_code == 401
 
 
@@ -144,8 +161,12 @@ def test_patch_replay_does_not_duplicate_a_page_version(tmp_path):
         _bootstrap(client)
         pg = _space_and_page(client, body="")
         key = {"Idempotency-Key": "edit-1", **H1}
-        first = client.patch(f"/pages/{pg['id']}", json={"body": "new text"}, headers=key)
-        second = client.patch(f"/pages/{pg['id']}", json={"body": "new text"}, headers=key)
+        first = client.patch(
+            f"/pages/{pg['id']}", json={"body": "new text"}, headers=key
+        )
+        second = client.patch(
+            f"/pages/{pg['id']}", json={"body": "new text"}, headers=key
+        )
         assert first.status_code == 200 and second.status_code == 200
         assert second.json() == first.json()
         assert second.headers.get("idempotent-replay") == "true"
@@ -167,7 +188,9 @@ def test_delete_replays_success_instead_of_404(tmp_path):
         first = client.delete(f"/pages/{pg['id']}", headers=key)
         second = client.delete(f"/pages/{pg['id']}", headers=key)
         assert first.status_code == 204
-        assert second.status_code == 204  # a replay, not the 404 a real second delete gives
+        assert (
+            second.status_code == 204
+        )  # a replay, not the 404 a real second delete gives
         assert second.headers.get("idempotent-replay") == "true"
         # Proof the replay MASKED a real 404: the same delete without the key is a 404.
         assert client.delete(f"/pages/{pg['id']}", headers=H1).status_code == 404
@@ -185,7 +208,9 @@ def test_key_reused_across_methods_is_409(tmp_path):
         assert patched.status_code == 200
         clash = client.delete(f"/pages/{pg['id']}", headers=key)
         assert clash.status_code == 409
-        assert clash.json()["detail"] == "Idempotency-Key reused for a different request"
+        assert (
+            clash.json()["detail"] == "Idempotency-Key reused for a different request"
+        )
         # The delete never ran — the page is still there.
         assert client.get(f"/pages/{pg['id']}").status_code == 200
 
@@ -215,7 +240,9 @@ def test_atomic_claim_has_one_owner_and_fenced_completion(tmp_path):
             local.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [future.result() for future in (pool.submit(claim), pool.submit(claim))]
+        results = [
+            future.result() for future in (pool.submit(claim), pool.submit(claim))
+        ]
 
     assert sorted(result.kind for result in results) == ["in_progress", "owner"]
     owner = next(result for result in results if result.kind == "owner")
@@ -426,9 +453,7 @@ def test_concurrent_wait_timeout_never_runs_a_second_handler(tmp_path):
         _bootstrap(client)
         headers = {"Idempotency-Key": "slow", **H1}
         with ThreadPoolExecutor(max_workers=2) as pool:
-            owner = pool.submit(
-                client.post, "/automation/slow-probe", headers=headers
-            )
+            owner = pool.submit(client.post, "/automation/slow-probe", headers=headers)
             assert entered.wait(timeout=2)
             waiting = client.post("/automation/slow-probe", headers=headers)
             assert waiting.status_code == 409
@@ -457,10 +482,12 @@ def test_body_query_content_type_and_run_headers_are_fingerprinted(tmp_path):
             "/issues", json={"title": "different"}, headers=headers
         )
         query_clash = client.post(
-            "/issues?source=retry", content=first.request.content, headers={
+            "/issues?source=retry",
+            content=first.request.content,
+            headers={
                 **headers,
                 "Content-Type": "application/json",
-            }
+            },
         )
         content_type_clash = client.post(
             "/issues",
@@ -501,7 +528,10 @@ def test_revoked_bearer_token_cannot_replay_completed_response(tmp_path):
 
         first = client.post("/issues", json={"title": "created"}, headers=keyed)
         assert first.status_code == 201
-        assert client.delete(f"/tokens/{created_token['id']}", headers=H1).status_code == 204
+        assert (
+            client.delete(f"/tokens/{created_token['id']}", headers=H1).status_code
+            == 204
+        )
 
         after = client.post("/issues", json={"title": "created"}, headers=keyed)
 
@@ -517,9 +547,9 @@ def test_keyed_bearer_request_and_replay_each_consume_rate_limit_once(tmp_path):
     )
     with TestClient(app) as client:
         _bootstrap(client)
-        raw = client.post("/tokens", json={"name": "agent", "scopes": ["admin"]}, headers=H1).json()[
-            "token"
-        ]
+        raw = client.post(
+            "/tokens", json={"name": "agent", "scopes": ["admin"]}, headers=H1
+        ).json()["token"]
         headers = {
             "Authorization": f"Bearer {raw}",
             "Idempotency-Key": "rate-safe",
@@ -542,7 +572,9 @@ def test_secret_bearing_creation_routes_reject_keys_without_persisting_secret(tm
         _bootstrap(client)
         headers = {"Idempotency-Key": "never-store-a-secret", **H1}
         responses = [
-            client.post("/tokens", json={"name": "unsafe", "scopes": ["admin"]}, headers=headers),
+            client.post(
+                "/tokens", json={"name": "unsafe", "scopes": ["admin"]}, headers=headers
+            ),
             client.post(
                 "/webhooks",
                 json={"url": "https://example.com/events"},
@@ -594,9 +626,7 @@ def test_completed_replay_survives_application_restart(tmp_path):
         first = client.post("/issues", json={"title": "survives"}, headers=headers)
 
     with TestClient(create_app(db_path)) as restarted:
-        replay = restarted.post(
-            "/issues", json={"title": "survives"}, headers=headers
-        )
+        replay = restarted.post("/issues", json={"title": "survives"}, headers=headers)
         assert _ids(restarted) == [first.json()["id"]]
 
     assert replay.status_code == 201
@@ -623,9 +653,7 @@ def test_unhandled_owner_failure_becomes_indeterminate(tmp_path):
     assert retry.json()["code"] == "idempotency_indeterminate"
     conn = db.connect(db_path)
     try:
-        row = idempotency.get_record(
-            conn, key="unknown-outcome", identity="actor:1"
-        )
+        row = idempotency.get_record(conn, key="unknown-outcome", identity="actor:1")
         assert row["state"] == "indeterminate"
         assert row["failure_code"] == "execution_failed"
     finally:
@@ -680,8 +708,7 @@ def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(tmp_path):
     conn = db.connect(db_path)
     db.migrate(conn)
     conn.execute(
-        "DELETE FROM schema_migrations WHERE version = "
-        "'0043_durable_idempotency.sql'"
+        "DELETE FROM schema_migrations WHERE version = '0043_durable_idempotency.sql'"
     )
     conn.execute("DROP TABLE idempotency_keys")
     for trigger in conn.execute(
@@ -765,7 +792,6 @@ def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(tmp_path):
     conn.close()
 
 
-
 def test_receipt_finalization_failure_never_allows_duplicate_mutation(
     tmp_path, monkeypatch
 ):
@@ -780,7 +806,9 @@ def test_receipt_finalization_failure_never_allows_duplicate_mutation(
         _bootstrap(client)
         headers = {"Idempotency-Key": "finalize-once", **H1}
         monkeypatch.setattr(idempotency, "complete", fail_completion)
-        first = client.post("/issues", json={"title": "committed once"}, headers=headers)
+        first = client.post(
+            "/issues", json={"title": "committed once"}, headers=headers
+        )
         monkeypatch.setattr(idempotency, "complete", real_complete)
 
         retry = client.post(
@@ -795,9 +823,7 @@ def test_receipt_finalization_failure_never_allows_duplicate_mutation(
 
     conn = db.connect(db_path)
     try:
-        row = idempotency.get_record(
-            conn, key="finalize-once", identity="actor:1"
-        )
+        row = idempotency.get_record(conn, key="finalize-once", identity="actor:1")
         assert row["state"] == "indeterminate"
         assert row["failure_code"] == "finalization_failed"
     finally:
@@ -823,12 +849,11 @@ def test_oversized_success_response_becomes_indeterminate(tmp_path):
     assert retry.json()["code"] == "idempotency_indeterminate"
     conn = db.connect(db_path)
     try:
-        row = idempotency.get_record(
-            conn, key="bounded-response", identity="actor:1"
-        )
+        row = idempotency.get_record(conn, key="bounded-response", identity="actor:1")
         assert row["failure_code"] == "execution_failed"
     finally:
         conn.close()
+
 
 def test_key_on_non_api_endpoint_is_rejected_instead_of_silently_ignored(tmp_path):
     with TestClient(create_app(tmp_path / "unsupported.db")) as client:
@@ -857,16 +882,22 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
             json={"name": "Private", "key": "PRV"},
             headers=H1,
         ).json()
-        assert client.put(
-            f"/projects/{project['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H1,
-        ).status_code == 200
-        assert client.post(
-            f"/projects/{project['id']}/members",
-            json={"user_id": 2},
-            headers=H1,
-        ).status_code == 201
+        assert (
+            client.put(
+                f"/projects/{project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/projects/{project['id']}/members",
+                json={"user_id": 2},
+                headers=H1,
+            ).status_code
+            == 201
+        )
         issue = client.post(
             "/issues",
             json={"title": "private fact", "project_id": project["id"]},
@@ -882,9 +913,12 @@ def test_membership_revocation_fences_private_response_replay(tmp_path):
         assert first.status_code == 200
         assert first.json()["body"] == "sensitive private body"
 
-        assert client.delete(
-            f"/projects/{project['id']}/members/2", headers=H1
-        ).status_code == 200
+        assert (
+            client.delete(
+                f"/projects/{project['id']}/members/2", headers=H1
+            ).status_code
+            == 200
+        )
         assert client.get(f"/issues/{issue['id']}", headers=bearer).status_code == 404
 
         retry = client.patch(
@@ -945,8 +979,7 @@ def test_target_expiry_is_enforced_beyond_cleanup_batch(tmp_path):
     assert result.kind == "owner"
     assert (
         conn.execute(
-            "SELECT state FROM idempotency_keys "
-            "WHERE idempotency_key = 'expired-100'"
+            "SELECT state FROM idempotency_keys WHERE idempotency_key = 'expired-100'"
         ).fetchone()["state"]
         == "executing"
     )
@@ -1046,6 +1079,7 @@ def test_sprint_mutation_supports_durable_replay(tmp_path):
     assert replay.json() == first.json()
     assert replay.headers["idempotent-replay"] == "true"
 
+
 def test_role_downgrade_fences_admin_response_replay(tmp_path):
     with TestClient(create_app(tmp_path / "role-fence.db")) as client:
         _bootstrap(client)
@@ -1071,11 +1105,14 @@ def test_role_downgrade_fences_admin_response_replay(tmp_path):
             headers=keyed,
         )
         assert first.status_code == 200
-        assert client.put(
-            "/users/1/role",
-            json={"role": "member"},
-            headers={"X-Athena-Actor": str(third_admin["id"])},
-        ).status_code == 200
+        assert (
+            client.put(
+                "/users/1/role",
+                json={"role": "member"},
+                headers={"X-Athena-Actor": str(third_admin["id"])},
+            ).status_code
+            == 200
+        )
 
         normal = client.patch(
             f"/webhooks/{webhook['id']}",
@@ -1108,26 +1145,35 @@ def test_private_project_move_fences_old_issue_response(tmp_path):
             "/projects", json={"name": "Destination", "key": "DST"}, headers=H1
         ).json()
         for project in (source, destination):
-            assert client.put(
-                f"/projects/{project['id']}/visibility",
-                json={"visibility": "private"},
+            assert (
+                client.put(
+                    f"/projects/{project['id']}/visibility",
+                    json={"visibility": "private"},
+                    headers=H1,
+                ).status_code
+                == 200
+            )
+        assert (
+            client.post(
+                f"/projects/{source['id']}/members",
+                json={"user_id": 2},
                 headers=H1,
-            ).status_code == 200
-        assert client.post(
-            f"/projects/{source['id']}/members",
-            json={"user_id": 2},
-            headers=H1,
-        ).status_code == 201
+            ).status_code
+            == 201
+        )
         issue = client.post(
             "/issues",
             json={"title": "source-only fact", "project_id": source["id"]},
             headers=H1,
         ).json()
-        assert client.put(
-            f"/issues/{issue['id']}/assignee",
-            json={"assignee_id": 2},
-            headers=H1,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/issues/{issue['id']}/assignee",
+                json={"assignee_id": 2},
+                headers=H1,
+            ).status_code
+            == 200
+        )
         keyed = {"Idempotency-Key": "source-edit", **bearer}
 
         first = client.patch(
@@ -1136,11 +1182,14 @@ def test_private_project_move_fences_old_issue_response(tmp_path):
             headers=keyed,
         )
         assert first.status_code == 200
-        assert client.patch(
-            f"/issues/{issue['id']}",
-            json={"project_id": destination["id"]},
-            headers=H1,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{issue['id']}",
+                json={"project_id": destination["id"]},
+                headers=H1,
+            ).status_code
+            == 200
+        )
 
         assert client.get(f"/issues/{issue['id']}", headers=bearer).status_code == 404
         retry = client.patch(
@@ -1162,11 +1211,14 @@ def test_assignee_handoff_succeeds_once_then_fences_replay(tmp_path):
         ).json()["token"]
         bearer = {"Authorization": f"Bearer {member_token}"}
         issue = client.post("/issues", json={"title": "handoff"}, headers=H1).json()
-        assert client.put(
-            f"/issues/{issue['id']}/assignee",
-            json={"assignee_id": 2},
-            headers=H1,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/issues/{issue['id']}/assignee",
+                json={"assignee_id": 2},
+                headers=H1,
+            ).status_code
+            == 200
+        )
         keyed = {"Idempotency-Key": "handoff-once", **bearer}
 
         first = client.put(
@@ -1190,6 +1242,7 @@ def test_assignee_handoff_succeeds_once_then_fences_replay(tmp_path):
     assert normal.status_code == 403
     assert retry.status_code == 409
     assert retry.json()["code"] == "idempotency_authorization_changed"
+
 
 async def _raw_streamed_keyed_request(app, body: bytes) -> tuple[int, bytes]:
     messages = []
@@ -1252,9 +1305,7 @@ def test_streamed_keyed_body_is_bounded_before_claim(tmp_path):
 
     with TestClient(app) as client:
         _bootstrap(client)
-        status, response_body = asyncio.run(
-            _raw_streamed_keyed_request(app, body)
-        )
+        status, response_body = asyncio.run(_raw_streamed_keyed_request(app, body))
 
     assert status == 413
     assert json.loads(response_body) == {"detail": "request body too large"}
@@ -1263,6 +1314,7 @@ def test_streamed_keyed_body_is_bounded_before_claim(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0] == 0
     finally:
         conn.close()
+
 
 def test_authorization_change_does_not_steal_live_owner(tmp_path):
     db_path = tmp_path / "live-owner-authz.db"
@@ -1295,9 +1347,7 @@ def test_authorization_change_does_not_steal_live_owner(tmp_path):
         now=101,
     )
     assert waiter.kind == "authorization_changed"
-    still_owned = idempotency.get_record(
-        conn, key="live-owner", identity="actor:1"
-    )
+    still_owned = idempotency.get_record(conn, key="live-owner", identity="actor:1")
     assert still_owned["state"] == "executing"
     assert still_owned["owner_token"] == owner.record["owner_token"]
 
@@ -1328,12 +1378,11 @@ def test_revoked_token_on_users_keeps_normal_401_after_bootstrap(tmp_path):
         created_token = client.post(
             "/tokens", json={"name": "revoked", "scopes": ["admin"]}, headers=H1
         ).json()
-        assert client.delete(
-            f"/tokens/{created_token['id']}", headers=H1
-        ).status_code == 204
-        invalid_bearer = {
-            "Authorization": f"Bearer {created_token['token']}"
-        }
+        assert (
+            client.delete(f"/tokens/{created_token['id']}", headers=H1).status_code
+            == 204
+        )
+        invalid_bearer = {"Authorization": f"Bearer {created_token['token']}"}
         normal = client.post(
             "/users",
             json={"email": "blocked@example.com", "name": "Blocked"},

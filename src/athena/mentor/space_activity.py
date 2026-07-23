@@ -12,6 +12,7 @@ detail page can show its history. A space_deleted row outlives the space it name
 the trail is append-only and holds no FK to the (now gone) space, so the name is
 preserved in the detail.
 """
+
 from __future__ import annotations
 
 import sqlite3

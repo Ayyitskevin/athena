@@ -3,6 +3,7 @@
 All issue SQL lives here. HTTP handlers call these functions instead of writing
 queries, so if the storage ever changes, only this file does.
 """
+
 from __future__ import annotations
 
 import re
@@ -35,6 +36,7 @@ def _like_contains(value: str) -> str:
     query. Mirrors core.activity._like_pattern; kept local to stay in the aegis lane."""
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
+
 
 # Every read returns the assignee's display name + actor kind and the project's
 # name + key alongside the row (NULL when unassigned / no project), so callers
@@ -115,9 +117,7 @@ def create_issue(
             body=body,
             commit=False,
         )
-        search.index_document(
-            conn, kind="issue", source_id=issue_id, commit=False
-        )
+        search.index_document(conn, kind="issue", source_id=issue_id, commit=False)
     except BaseException:
         if commit:
             conn.rollback()
@@ -181,9 +181,7 @@ def update_issue(
         # Re-index for search whenever an indexed field (title or body) changed; a
         # status/priority-only edit can't affect the text index.
         if "title" in fields or "body" in fields:
-            search.index_document(
-                conn, kind="issue", source_id=issue_id, commit=False
-            )
+            search.index_document(conn, kind="issue", source_id=issue_id, commit=False)
     except BaseException:
         if commit:
             conn.rollback()
@@ -193,9 +191,7 @@ def update_issue(
     return get_issue(conn, issue_id)
 
 
-def update_status(
-    conn: sqlite3.Connection, issue_id: int, status: str
-) -> dict | None:
+def update_status(conn: sqlite3.Connection, issue_id: int, status: str) -> dict | None:
     """Move an issue to a new status. Thin data-layer wrapper over update_issue.
 
     User-facing and automation writes go through issue_commands so this mutation
@@ -280,9 +276,7 @@ def set_archived(
             "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (issue_id,)
         )
     else:
-        conn.execute(
-            "UPDATE issues SET archived_at = NULL WHERE id = ?", (issue_id,)
-        )
+        conn.execute("UPDATE issues SET archived_at = NULL WHERE id = ?", (issue_id,))
     if commit:
         conn.commit()
     return get_issue(conn, issue_id)

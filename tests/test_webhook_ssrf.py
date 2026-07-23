@@ -7,6 +7,7 @@ to http://169.254.169.254/ or an internal service) and RE-RESOLVED DNS at connec
 to the exact IP it validated. These tests exercise the real poster (http.client), not
 the injected stub used in test_webhooks.py.
 """
+
 import http.server
 import ipaddress
 import threading
@@ -73,7 +74,9 @@ def test_address_policy_blocks_internal_targets():
 def test_poster_refuses_to_reach_an_internal_address():
     # No monkeypatching: the guard must refuse a loopback/metadata target outright.
     post = webhooks.urllib_poster(2.0)
-    ok, reason = post("http://127.0.0.1:9/", b"{}", {"Content-Type": "application/json"})
+    ok, reason = post(
+        "http://127.0.0.1:9/", b"{}", {"Content-Type": "application/json"}
+    )
     assert not ok
     assert "internal" in reason
     ok, reason = post(
@@ -223,7 +226,9 @@ def _self_signed_cert(tmp_path, hostname):
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime(2020, 1, 1, tzinfo=timezone.utc))
         .not_valid_after(datetime(2035, 1, 1, tzinfo=timezone.utc))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(hostname)]), critical=False
+        )
         .sign(key, hashes.SHA256())
     )
     cert_file = tmp_path / "cert.pem"
@@ -278,19 +283,25 @@ def test_https_pin_still_validates_cert_against_the_hostname(tmp_path, monkeypat
     )
     monkeypatch.setattr(webhooks, "_address_blocked", lambda ip: False)
     monkeypatch.setattr(
-        webhooks.socket, "getaddrinfo", lambda host, prt, *a, **k: [(2, 1, 6, "", ("127.0.0.1", port))]
+        webhooks.socket,
+        "getaddrinfo",
+        lambda host, prt, *a, **k: [(2, 1, 6, "", ("127.0.0.1", port))],
     )
     try:
         post = webhooks.urllib_poster(3.0)
         # The cert covers pinned.test -> validates against server_hostname -> delivers.
         ok, reason = post(
-            f"https://pinned.test:{port}/hook", b"{}", {"Content-Type": "application/json"}
+            f"https://pinned.test:{port}/hook",
+            b"{}",
+            {"Content-Type": "application/json"},
         )
         assert ok, reason
         # Same server + cert, but a hostname the cert does NOT cover -> TLS name mismatch,
         # proving the pin did not silently validate against the IP.
         ok, reason = post(
-            f"https://wrong.test:{port}/hook", b"{}", {"Content-Type": "application/json"}
+            f"https://wrong.test:{port}/hook",
+            b"{}",
+            {"Content-Type": "application/json"},
         )
         assert not ok
         assert any(w in reason.lower() for w in ("match", "hostname", "certificate"))

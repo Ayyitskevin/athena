@@ -7,6 +7,7 @@ client over core.activity — it owns no data. The template accessor and the sha
 int-parse helper are imported from web.router (get_templates reads the Jinja
 instance main.py injects at startup).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -153,9 +154,7 @@ def activity_export_csv(
     return Response(
         activity.to_csv(rows),
         media_type="text/csv",
-        headers={
-            "Content-Disposition": 'attachment; filename="athena-activity.csv"'
-        },
+        headers={"Content-Disposition": 'attachment; filename="athena-activity.csv"'},
     )
 
 

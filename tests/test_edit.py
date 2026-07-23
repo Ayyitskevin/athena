@@ -7,6 +7,7 @@ column is NOT NULL and a titleless issue is meaningless), editing a missing
 issue is a 404, and the web edit path obeys the same actor rule as every write —
 logged-out callers cannot edit.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db

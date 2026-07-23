@@ -12,6 +12,7 @@ single nullable column (issues.project_id). These tests encode the contract:
   * every issue read carries its project_id + project_name (NULL when none), and
     the issue list can be filtered to one project.
 """
+
 import re
 
 from fastapi.testclient import TestClient
@@ -456,7 +457,9 @@ def test_list_issues_backlog_only_unprojected(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     proj = projects.create_project(conn, name="Core", key="CORE", created_by=1)
-    issues.create_issue(conn, title="in core", body="", created_by=1, project_id=proj["id"])
+    issues.create_issue(
+        conn, title="in core", body="", created_by=1, project_id=proj["id"]
+    )
     issues.create_issue(conn, title="loose one", body="", created_by=1)
     backlog = [i["title"] for i in issues.list_issues(conn, backlog=True)]
     assert backlog == ["loose one"]
@@ -476,7 +479,9 @@ def test_api_filter_backlog_with_project_none(tmp_path):
         backlog = [i["title"] for i in client.get("/issues?project=none").json()]
         assert backlog == ["no project"]
         # the id form is unaffected by the sentinel
-        assert [i["title"] for i in client.get(f"/issues?project={core['id']}").json()] == ["in core"]
+        assert [
+            i["title"] for i in client.get(f"/issues?project={core['id']}").json()
+        ] == ["in core"]
         # a non-"none", non-numeric value stays a 422 (param is still strict)
         assert client.get("/issues?project=bogus").status_code == 422
 

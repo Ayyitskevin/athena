@@ -8,6 +8,7 @@ change and its activity event land in one transaction. These pin the three verbs
 detail, atomicity (a failed write leaves no orphan event), no-op silence on an
 edit that changes nothing, and that the delete event OUTLIVES its target.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import project_commands, projects
@@ -61,7 +62,9 @@ def test_create_is_atomic_no_event_when_the_insert_fails(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         assert (
-            c.post("/projects", json={"name": "A", "key": "DUP"}, headers=H1).status_code
+            c.post(
+                "/projects", json={"name": "A", "key": "DUP"}, headers=H1
+            ).status_code
             == 201
         )
         assert (
@@ -79,7 +82,8 @@ def test_edit_that_changes_nothing_records_no_event(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         pid = c.post(
-            "/projects", json={"name": "Ops", "key": "OPS", "description": "d"},
+            "/projects",
+            json={"name": "Ops", "key": "OPS", "description": "d"},
             headers=H1,
         ).json()["id"]
         # Re-save the exact same values — a no-op edit is not a lifecycle moment.

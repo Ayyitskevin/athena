@@ -8,6 +8,7 @@ the web. These tests pin that create/edit/delete each record a commented / comme
 the edit — previously silent — is now on the record; and that the author-ownership and
 admin-moderation authz is preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import comment_commands
@@ -24,16 +25,22 @@ def _app(tmp_path, name="comments.db"):
 
 def _two_users(client):
     client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
-    client.post("/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1)
+    client.post(
+        "/users", json={"email": "b@e.com", "name": "Bob", "password": "pw"}, headers=H1
+    )
 
 
 def _issue(client, actor="1") -> int:
-    return client.post("/issues", json={"title": "t"}, headers={"X-Athena-Actor": actor}).json()["id"]
+    return client.post(
+        "/issues", json={"title": "t"}, headers={"X-Athena-Actor": actor}
+    ).json()["id"]
 
 
 def _comment(client, issue_id, body="hello", actor="1") -> int:
     r = client.post(
-        f"/issues/{issue_id}/comments", json={"body": body}, headers={"X-Athena-Actor": actor}
+        f"/issues/{issue_id}/comments",
+        json={"body": body},
+        headers={"X-Athena-Actor": actor},
     )
     assert r.status_code == 201, r.text
     return r.json()["id"]
@@ -75,12 +82,18 @@ def test_rest_edit_is_audited(tmp_path):
         _two_users(c)
         iid = _issue(c)
         cid = _comment(c, iid, body="orig", actor="1")
-        r = c.patch(f"/issues/{iid}/comments/{cid}", json={"body": "edited"}, headers=H1)
+        r = c.patch(
+            f"/issues/{iid}/comments/{cid}", json={"body": "edited"}, headers=H1
+        )
         assert r.status_code == 200 and r.json()["body"] == "edited"
 
     ev = _events(db_file, "comment_edited")
     assert len(ev) == 1
-    assert ev[0]["target_kind"] == "issue" and ev[0]["target_id"] == iid and ev[0]["actor_id"] == 1
+    assert (
+        ev[0]["target_kind"] == "issue"
+        and ev[0]["target_id"] == iid
+        and ev[0]["actor_id"] == 1
+    )
 
 
 def test_rest_delete_is_audited(tmp_path):
@@ -104,7 +117,9 @@ def test_edit_is_author_only_even_for_admin(tmp_path):
         _two_users(c)
         iid = _issue(c)
         cid = _comment(c, iid, body="bob's words", actor="2")  # authored by user 2
-        r = c.patch(f"/issues/{iid}/comments/{cid}", json={"body": "hijacked"}, headers=H1)  # admin
+        r = c.patch(
+            f"/issues/{iid}/comments/{cid}", json={"body": "hijacked"}, headers=H1
+        )  # admin
         assert r.status_code == 403
     assert _events(db_file, "comment_edited") == []
 
@@ -117,7 +132,9 @@ def test_admin_can_moderate_delete_and_it_is_audited_to_the_admin(tmp_path):
         _two_users(c)
         iid = _issue(c)
         cid = _comment(c, iid, body="spam", actor="2")  # authored by user 2
-        assert c.delete(f"/issues/{iid}/comments/{cid}", headers=H1).status_code == 204  # admin
+        assert (
+            c.delete(f"/issues/{iid}/comments/{cid}", headers=H1).status_code == 204
+        )  # admin
 
     ev = _events(db_file, "comment_deleted")
     assert len(ev) == 1 and ev[0]["actor_id"] == 1  # the moderating admin
@@ -133,7 +150,11 @@ def test_web_edit_is_audited(tmp_path):
         _two_users(c)  # a@e.com / pw is admin (id 1)
         iid = _issue(c)
         cid = _comment(c, iid, body="orig", actor="1")
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         r = c.post(
             f"/aegis/issues/{iid}/comments/{cid}/edit",
@@ -162,5 +183,7 @@ def test_command_edit_vanished_comment_rejects_and_records_nothing(tmp_path):
     except comment_commands.CommentCommandError as exc:
         assert exc.status_code == 404
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "comment_edited"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "comment_edited"
     ] == []

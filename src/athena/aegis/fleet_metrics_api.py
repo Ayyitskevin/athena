@@ -112,9 +112,7 @@ class FleetMetricsOut(_StrictModel):
 
 def _query_from_request(request: Request) -> fleet_metrics.FleetMetricsQuery:
     try:
-        return fleet_metrics.parse_query_pairs(
-            list(request.query_params.multi_items())
-        )
+        return fleet_metrics.parse_query_pairs(list(request.query_params.multi_items()))
     except fleet_metrics.FleetMetricsError as exc:
         raise HTTPException(
             status_code=422,
@@ -126,16 +124,12 @@ def _query_from_request(request: Request) -> fleet_metrics.FleetMetricsQuery:
 def _fleet_metrics_actor(
     request: Request,
     authorization: str | None = Header(default=None),
-    x_athena_actor: str | None = Header(
-        default=None, alias=identity.ACTOR_HEADER
-    ),
+    x_athena_actor: str | None = Header(default=None, alias=identity.ACTOR_HEADER),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | None:
     """Allow absent credentials, but never downgrade presented-invalid ones."""
     try:
-        actor = identity.optional_actor(
-            request, authorization, x_athena_actor, conn
-        )
+        actor = identity.optional_actor(request, authorization, x_athena_actor, conn)
     except HTTPException as exc:
         headers = dict(exc.headers or {})
         headers.update(_PRIVATE_HEADERS)
@@ -144,9 +138,7 @@ def _fleet_metrics_actor(
             detail=exc.detail,
             headers=headers,
         ) from exc
-    if actor is None and (
-        authorization is not None or x_athena_actor is not None
-    ):
+    if actor is None and (authorization is not None or x_athena_actor is not None):
         raise HTTPException(
             status_code=401,
             detail="invalid or revoked authentication credential",

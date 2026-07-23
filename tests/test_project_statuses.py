@@ -6,6 +6,7 @@ moving an issue to a project that lacks its status remaps it; "done" is now
 category-based; statuses can be added/removed (creator-only, not when in use); and
 the web surfaces (board columns, project edit, detail dropdown) reflect all of it.
 """
+
 from athena.aegis import dependencies, issues, projects, statuses
 from athena.core import db
 from athena.main import create_app
@@ -54,10 +55,18 @@ def test_open_blockers_uses_done_category(tmp_path):
     conn.commit()
     proj = projects.create_project(conn, name="P", key="P", created_by=1)
     statuses.add_status(conn, proj["id"], "shipped", "done")  # a custom CLOSED status
-    blocker = issues.create_issue(conn, title="b", body="", created_by=1, project_id=proj["id"])
-    blocked = issues.create_issue(conn, title="a", body="", created_by=1, project_id=proj["id"])
+    blocker = issues.create_issue(
+        conn, title="b", body="", created_by=1, project_id=proj["id"]
+    )
+    blocked = issues.create_issue(
+        conn, title="a", body="", created_by=1, project_id=proj["id"]
+    )
     dependencies.add_link(
-        conn, from_id=blocker["id"], to_id=blocked["id"], relation="blocks", created_by=1
+        conn,
+        from_id=blocker["id"],
+        to_id=blocked["id"],
+        relation="blocks",
+        created_by=1,
     )
     # 'open' blocker is open.
     assert len(dependencies.open_blockers(conn, blocked["id"])) == 1
@@ -140,10 +149,20 @@ def test_remove_status_rules(tmp_path):
             headers=H1,
         ).json()
         # In use -> refused.
-        assert client.delete(f"/projects/{proj['id']}/statuses/review", headers=H1).status_code == 409
+        assert (
+            client.delete(
+                f"/projects/{proj['id']}/statuses/review", headers=H1
+            ).status_code
+            == 409
+        )
         # Free it, then it removes.
         client.patch(f"/issues/{iss['id']}", json={"status": "open"}, headers=H1)
-        assert client.delete(f"/projects/{proj['id']}/statuses/review", headers=H1).status_code == 200
+        assert (
+            client.delete(
+                f"/projects/{proj['id']}/statuses/review", headers=H1
+            ).status_code
+            == 200
+        )
 
 
 def test_status_management_is_creator_only(tmp_path):
@@ -165,10 +184,16 @@ def test_create_defaults_to_first_status(tmp_path):
     with TestClient(create_app(tmp_path / "f.db")) as client:
         _admin(client)
         proj = _project(client)
-        assert client.post(
-            "/issues", json={"title": "x", "project_id": proj["id"]}, headers=H1
-        ).json()["status"] == "open"
-        assert client.post("/issues", json={"title": "y"}, headers=H1).json()["status"] == "open"
+        assert (
+            client.post(
+                "/issues", json={"title": "x", "project_id": proj["id"]}, headers=H1
+            ).json()["status"]
+            == "open"
+        )
+        assert (
+            client.post("/issues", json={"title": "y"}, headers=H1).json()["status"]
+            == "open"
+        )
 
 
 def test_update_status_validated_against_project(tmp_path):
@@ -183,12 +208,18 @@ def test_update_status_validated_against_project(tmp_path):
         iss = client.post(
             "/issues", json={"title": "x", "project_id": proj["id"]}, headers=H1
         ).json()
-        assert client.patch(
-            f"/issues/{iss['id']}", json={"status": "review"}, headers=H1
-        ).json()["status"] == "review"
-        assert client.patch(
-            f"/issues/{iss['id']}", json={"status": "bogus"}, headers=H1
-        ).status_code == 422
+        assert (
+            client.patch(
+                f"/issues/{iss['id']}", json={"status": "review"}, headers=H1
+            ).json()["status"]
+            == "review"
+        )
+        assert (
+            client.patch(
+                f"/issues/{iss['id']}", json={"status": "bogus"}, headers=H1
+            ).status_code
+            == 422
+        )
 
 
 def test_move_remaps_invalid_status(tmp_path):

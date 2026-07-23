@@ -99,9 +99,7 @@ def update_project(
         return updated
 
 
-def delete_project(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int
-) -> bool:
+def delete_project(conn: sqlite3.Connection, *, actor_id: int, project_id: int) -> bool:
     """Delete a project and record a 'deleted_project' event atomically. Returns
     True if a project was deleted, False if none had that id.
 

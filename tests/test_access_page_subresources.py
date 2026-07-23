@@ -7,6 +7,7 @@ flipped private (slice 5 makes that possible) an outsider could read a hidden pa
 content and discussion through these. They now all funnel through _page_for_read and
 404 for anyone who can't see the space — the Mentor twin of the issue sub-resource gate.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,17 +22,47 @@ LIST_SUBRESOURCES = ["comments", "attachments", "versions", "backlinks"]
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _private_page(client, db_file):
-    sid = client.post("/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR).json()["id"]
-    pid = client.post(f"/spaces/{sid}/pages", json={"title": "Hidden", "body": "v1"}, headers=H_CREATOR).json()["id"]
+    sid = client.post(
+        "/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR
+    ).json()["id"]
+    pid = client.post(
+        f"/spaces/{sid}/pages",
+        json={"title": "Hidden", "body": "v1"},
+        headers=H_CREATOR,
+    ).json()["id"]
     # Seed a comment + an edit so the comments and versions endpoints would carry real
     # content if they weren't gated.
-    client.post(f"/pages/{pid}/comments", json={"body": "secret note"}, headers=H_CREATOR)
+    client.post(
+        f"/pages/{pid}/comments", json={"body": "secret note"}, headers=H_CREATOR
+    )
     client.patch(f"/pages/{pid}", json={"body": "v2"}, headers=H_CREATOR)
     conn = db.connect(db_file)
     conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (sid,))
@@ -79,8 +110,12 @@ def test_public_page_subresources_stay_open(tmp_path):
     db_file = tmp_path / "ppub.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        sid = client.post("/spaces", json={"key": "OPN", "name": "Open"}, headers=H_CREATOR).json()["id"]
-        pid = client.post(f"/spaces/{sid}/pages", json={"title": "Open page"}, headers=H_CREATOR).json()["id"]
+        sid = client.post(
+            "/spaces", json={"key": "OPN", "name": "Open"}, headers=H_CREATOR
+        ).json()["id"]
+        pid = client.post(
+            f"/spaces/{sid}/pages", json={"title": "Open page"}, headers=H_CREATOR
+        ).json()["id"]
         # A page in a public space reads like before — every sub-resource is open to all.
         for sub in LIST_SUBRESOURCES:
             assert client.get(f"/pages/{pid}/{sub}").status_code == 200

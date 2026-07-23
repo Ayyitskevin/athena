@@ -207,7 +207,9 @@ def test_space_import_dry_run_reports_counts_and_key_conflict(tmp_path):
     target = _connect(tmp_path / "target-space.db")
     target_owner = _user(target, "owner@example.com", "Owner", role="admin")
     _user(target, "member@example.com", "Member")
-    spaces.create_space(target, key="DOC", name="Existing Docs", created_by=target_owner)
+    spaces.create_space(
+        target, key="DOC", name="Existing Docs", created_by=target_owner
+    )
 
     report = portability.dry_run_import_bundle(target, bundle)
     target.close()

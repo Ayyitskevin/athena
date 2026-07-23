@@ -12,6 +12,7 @@ Delivery is exercised through webhooks.deliver_pending with a STUB poster, so th
 logic is tested without real network or background-loop timing (the live loop is
 disabled in tests by conftest).
 """
+
 from datetime import datetime, timezone
 import json
 
@@ -60,14 +61,14 @@ def test_is_safe_url_accepts_public_address():
 
 def test_is_safe_url_rejects_internal_and_bad_schemes():
     bad = [
-        "http://127.0.0.1/x",          # loopback
-        "http://10.0.0.5/x",           # private
-        "http://192.168.1.10/x",       # private
-        "http://169.254.169.254/x",    # link-local (cloud metadata)
-        "http://[::1]/x",              # ipv6 loopback
-        "http://localhost/x",          # resolves to loopback
-        "ftp://93.184.216.34/x",       # wrong scheme
-        "https:///nohost",             # no host
+        "http://127.0.0.1/x",  # loopback
+        "http://10.0.0.5/x",  # private
+        "http://192.168.1.10/x",  # private
+        "http://169.254.169.254/x",  # link-local (cloud metadata)
+        "http://[::1]/x",  # ipv6 loopback
+        "http://localhost/x",  # resolves to loopback
+        "ftp://93.184.216.34/x",  # wrong scheme
+        "https:///nohost",  # no host
     ]
     for url in bad:
         ok, reason = webhooks.is_safe_url(url)
@@ -112,7 +113,8 @@ def test_create_rejects_unsafe_url(tmp_path):
     with TestClient(app) as client:
         _conn(tmp_path / "ssrf.db").close()
         r = client.post(
-            "/webhooks", json={"url": "http://169.254.169.254/latest/meta-data"},
+            "/webhooks",
+            json={"url": "http://169.254.169.254/latest/meta-data"},
             headers={"X-Athena-Actor": "1"},
         )
         assert r.status_code == 422
@@ -131,11 +133,15 @@ def test_webhook_management_is_admin_only(tmp_path):
         url = {"url": "https://93.184.216.34/hook"}
         assert client.post("/webhooks", json=url).status_code == 401  # no actor
         assert (
-            client.post("/webhooks", json=url, headers={"X-Athena-Actor": "2"}).status_code
+            client.post(
+                "/webhooks", json=url, headers={"X-Athena-Actor": "2"}
+            ).status_code
             == 403  # member, not admin
         )
         assert (
-            client.post("/webhooks", json=url, headers={"X-Athena-Actor": "1"}).status_code
+            client.post(
+                "/webhooks", json=url, headers={"X-Athena-Actor": "1"}
+            ).status_code
             == 201  # admin
         )
 
@@ -162,7 +168,8 @@ def test_new_webhook_starts_at_tip_no_history(tmp_path):
         _event(conn, target_id=2)  # two events exist BEFORE registration
         conn.close()
         wid = client.post(
-            "/webhooks", json={"url": "https://93.184.216.34/hook"},
+            "/webhooks",
+            json={"url": "https://93.184.216.34/hook"},
             headers={"X-Athena-Actor": "1"},
         ).json()["id"]
         # The cursor was set to the current tip, so nothing pre-registration is pending.
@@ -232,7 +239,9 @@ def test_delivery_signs_orders_and_advances_cursor(tmp_path):
     assert [json.loads(c["body"])["id"] for c in poster.calls] == [e1["id"], e2["id"]]
     # Each carries a valid signature over its exact body, plus event headers.
     for c in poster.calls:
-        assert c["headers"]["X-Athena-Signature"] == webhooks.sign(wh["secret"], c["body"])
+        assert c["headers"]["X-Athena-Signature"] == webhooks.sign(
+            wh["secret"], c["body"]
+        )
         assert c["headers"]["Content-Type"] == "application/json"
     # Cursor advanced to the last delivered event; a re-run delivers nothing.
     assert webhooks.get_webhook(conn, wh["id"])["cursor"] == e2["id"]
@@ -243,8 +252,11 @@ def test_delivery_signs_orders_and_advances_cursor(tmp_path):
 def test_delivery_filters_by_event_kind(tmp_path):
     conn = _conn(tmp_path / "k.db")
     webhooks.create_webhook(
-        conn, url="https://93.184.216.34/hook", created_by=1,
-        event_kind="page", start_cursor=0,
+        conn,
+        url="https://93.184.216.34/hook",
+        created_by=1,
+        event_kind="page",
+        start_cursor=0,
     )
     _event(conn, kind="issue", target_id=1)
     page_ev = _event(conn, kind="page", target_id=2)

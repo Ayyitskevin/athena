@@ -93,9 +93,10 @@ def test_board_renders_drag_hooks_for_signed_in_user(tmp_path):
         assert 'data-status="open"' in body
         assert csrf in body  # the native move form carries the session CSRF
         assert "/static/board-dnd.js" in body
-        assert _board_etag(body, iss["id"]) == client.get(
-            f"/issues/{iss['id']}", headers=H1
-        ).headers["etag"]
+        assert (
+            _board_etag(body, iss["id"])
+            == client.get(f"/issues/{iss['id']}", headers=H1).headers["etag"]
+        )
 
 
 def test_board_cards_not_draggable_when_logged_out(tmp_path):
@@ -385,7 +386,10 @@ def test_move_changes_status_and_records(tmp_path):
         # The card is re-rendered under its new column...
         assert 'data-status="in_progress"' in r.text and "shipit" in r.text
         # ...the issue really moved...
-        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "in_progress"
+        assert (
+            client.get(f"/issues/{iss['id']}", headers=H1).json()["status"]
+            == "in_progress"
+        )
         # ...and the transition is on the trail, same as every other status change.
         acts = client.get(
             f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
@@ -477,7 +481,9 @@ def test_move_requires_login(tmp_path):
         # No session cookie at all → 401 (the UI never offers the drag here).
         assert (
             client.post(
-                f"/aegis/boards/move/{iss['id']}", data={"new_status": "done"}, headers=HX
+                f"/aegis/boards/move/{iss['id']}",
+                data={"new_status": "done"},
+                headers=HX,
             ).status_code
             == 401
         )
@@ -491,7 +497,9 @@ def test_move_requires_csrf(tmp_path):
         # Logged in but no CSRF token → 403, the browser-write guard.
         assert (
             client.post(
-                f"/aegis/boards/move/{iss['id']}", data={"new_status": "done"}, headers=HX
+                f"/aegis/boards/move/{iss['id']}",
+                data={"new_status": "done"},
+                headers=HX,
             ).status_code
             == 403
         )
@@ -526,7 +534,12 @@ def test_move_by_a_demoted_viewer_snaps_back(tmp_path):
         _admin(client)  # user 1, admin
         client.post(
             "/users",
-            json={"email": "c@e.com", "name": "Carol", "password": "pw", "role": "member"},
+            json={
+                "email": "c@e.com",
+                "name": "Carol",
+                "password": "pw",
+                "role": "member",
+            },
             headers=H1,
         )  # user 2, member
         iss = client.post(
@@ -740,7 +753,10 @@ def test_keyboard_move_via_form_redirects_and_applies(tmp_path):
         )
         assert r.status_code == 303
         assert r.headers["location"].startswith("/aegis/boards")
-        assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "in_progress"
+        assert (
+            client.get(f"/issues/{iss['id']}", headers=H1).json()["status"]
+            == "in_progress"
+        )
         acts = client.get(
             f"/activity?target_kind=issue&target_id={iss['id']}", headers=H1
         ).json()
@@ -778,9 +794,9 @@ def test_stale_keyboard_move_redirects_to_fresh_conflict_notice(tmp_path):
         assert response.status_code == 303
         location = urlparse(response.headers["location"])
         assert location.path == "/aegis/boards"
-        assert parse_qs(location.query, keep_blank_values=True)[
-            "move_conflict"
-        ] == ["stale"]
+        assert parse_qs(location.query, keep_blank_values=True)["move_conflict"] == [
+            "stale"
+        ]
         assert client.get(f"/issues/{iss['id']}", headers=H1).json()["status"] == "done"
         assert (
             client.get(
@@ -792,7 +808,7 @@ def test_stale_keyboard_move_redirects_to_fresh_conflict_notice(tmp_path):
         refreshed = client.get(response.headers["location"])
         assert refreshed.status_code == 200
         assert "<title>Boards — Aegis</title>" in refreshed.text
-        assert 'data-board-conflict' in refreshed.text
+        assert "data-board-conflict" in refreshed.text
         assert _board_etag(refreshed.text, iss["id"]) == newer.headers["etag"]
 
 
@@ -868,13 +884,19 @@ def test_card_move_options_are_the_cards_project_statuses(tmp_path):
     with TestClient(create_app(tmp_path / "ko.db")) as client:
         _admin(client)
         csrf = _login(client)
-        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=H1).json()
+        proj = client.post(
+            "/projects", json={"name": "Web", "key": "WEB"}, headers=H1
+        ).json()
         client.post(
             f"/projects/{proj['id']}/statuses",
             json={"name": "review", "category": "doing"},
             headers=H1,
         )
-        client.post("/issues", json={"title": "in project", "project_id": proj["id"]}, headers=H1)
+        client.post(
+            "/issues",
+            json={"title": "in project", "project_id": proj["id"]},
+            headers=H1,
+        )
         body = client.get("/aegis/boards").text
         # the custom status is an option on the board (for the project card's menu)
         assert 'value="review"' in body

@@ -4,6 +4,7 @@ All comment SQL lives here, mirroring aegis/issues.py. A comment is append-only:
 it belongs to one issue and one author, and listing joins the author's name so
 the UI can show "who said it" without a second lookup.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -48,9 +49,7 @@ def update_comment(
     Author-ownership (only the author may edit) is enforced at the boundary, not
     here — this function just writes. ``commit=False`` lets an audited command fold the
     edit and its activity event into one transaction."""
-    cur = conn.execute(
-        "UPDATE comments SET body = ? WHERE id = ?", (body, comment_id)
-    )
+    cur = conn.execute("UPDATE comments SET body = ? WHERE id = ?", (body, comment_id))
     if commit:
         conn.commit()
     if cur.rowcount == 0:

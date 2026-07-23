@@ -12,6 +12,7 @@ The contract these encode — why each rule earns its place:
   * restore IS an edit, so it's open to any signed-in actor (like edit/move), NOT
     creator-locked the way delete is; anonymous -> 401, missing page/version -> 404.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -37,7 +38,9 @@ def _space_with_page(conn, *, title="Runbook", body="v1 text", created_by=1):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.execute("INSERT INTO users (email, name) VALUES ('b@e.com', 'B')")
     conn.commit()
-    space = spaces.create_space(conn, key="ENG", name="Engineering", created_by=created_by)
+    space = spaces.create_space(
+        conn, key="ENG", name="Engineering", created_by=created_by
+    )
     return pages.create_page(
         conn, space_id=space["id"], title=title, body=body, created_by=created_by
     )
@@ -51,8 +54,12 @@ def test_restore_makes_prior_content_live_and_keeps_current(tmp_path):
     # content it displaced is preserved as the newest version, not discarded.
     conn = _migrated_conn(tmp_path / "r.db")
     page = _space_with_page(conn, body="v1 text")
-    pages.update_page(conn, page["id"], editor_id=1, body="v2 text")  # cuts version 1 (v1)
-    pages.update_page(conn, page["id"], editor_id=1, body="v3 text")  # cuts version 2 (v2)
+    pages.update_page(
+        conn, page["id"], editor_id=1, body="v2 text"
+    )  # cuts version 1 (v1)
+    pages.update_page(
+        conn, page["id"], editor_id=1, body="v3 text"
+    )  # cuts version 2 (v2)
 
     restored = pages.restore_version(conn, page["id"], 1, editor_id=1)
     assert restored["body"] == "v1 text"  # the old content is live again
@@ -66,7 +73,9 @@ def test_restore_makes_prior_content_live_and_keeps_current(tmp_path):
 def test_restore_missing_page_or_version_returns_none(tmp_path):
     conn = _migrated_conn(tmp_path / "rm.db")
     page = _space_with_page(conn)
-    assert pages.restore_version(conn, page["id"], 99, editor_id=1) is None  # no such version
+    assert (
+        pages.restore_version(conn, page["id"], 99, editor_id=1) is None
+    )  # no such version
     assert pages.restore_version(conn, 999, 1, editor_id=1) is None  # no such page
 
 
@@ -76,7 +85,9 @@ def test_restore_identical_content_cuts_no_version(tmp_path):
     conn = _migrated_conn(tmp_path / "ri.db")
     page = _space_with_page(conn, body="v1 text")
     pages.update_page(conn, page["id"], editor_id=1, body="v2 text")  # version 1 = v1
-    pages.restore_version(conn, page["id"], 1, editor_id=1)  # live -> v1, version 2 = v2
+    pages.restore_version(
+        conn, page["id"], 1, editor_id=1
+    )  # live -> v1, version 2 = v2
     assert len(pages.list_page_versions(conn, page["id"])) == 2
     # restoring v1 again, when v1 is already live, changes nothing
     pages.restore_version(conn, page["id"], 1, editor_id=1)
@@ -88,7 +99,9 @@ def test_restore_attributes_new_revision_to_the_restorer(tmp_path):
     # while the snapshot of the displaced content keeps its own author.
     conn = _migrated_conn(tmp_path / "ra.db")
     page = _space_with_page(conn, body="v1 text", created_by=1)  # user 1 = Ann
-    pages.update_page(conn, page["id"], editor_id=1, body="v2 text")  # Ann wrote v2; version1 = v1
+    pages.update_page(
+        conn, page["id"], editor_id=1, body="v2 text"
+    )  # Ann wrote v2; version1 = v1
     pages.restore_version(conn, page["id"], 1, editor_id=2)  # user 2 = Bob restores v1
     live = pages.get_page(conn, page["id"])
     assert live["body"] == "v1 text"
@@ -105,7 +118,8 @@ def test_restore_attributes_new_revision_to_the_restorer(tmp_path):
 def _make_space_and_page(client, db_file, *, body="v1 text"):
     _seed_two_users(db_file)
     space = client.post(
-        "/spaces", json={"key": "ENG", "name": "Engineering"},
+        "/spaces",
+        json={"key": "ENG", "name": "Engineering"},
         headers={"X-Athena-Actor": "1"},
     ).json()
     return client.post(
@@ -119,8 +133,14 @@ def test_api_restore_returns_updated_page(tmp_path):
     app = create_app(tmp_path / "ar.db")
     with TestClient(app) as client:
         page = _make_space_and_page(client, tmp_path / "ar.db", body="v1 text")
-        client.patch(f"/pages/{page['id']}", json={"body": "v2 text"}, headers={"X-Athena-Actor": "1"})
-        r = client.post(f"/pages/{page['id']}/versions/1/restore", headers={"X-Athena-Actor": "2"})
+        client.patch(
+            f"/pages/{page['id']}",
+            json={"body": "v2 text"},
+            headers={"X-Athena-Actor": "1"},
+        )
+        r = client.post(
+            f"/pages/{page['id']}/versions/1/restore", headers={"X-Athena-Actor": "2"}
+        )
         assert r.status_code == 200, r.text
         assert r.json()["body"] == "v1 text"  # old content live again
         assert r.json()["updated_by"] == 2  # stamped to the restorer
@@ -133,7 +153,9 @@ def test_api_restore_requires_an_actor(tmp_path):
     app = create_app(tmp_path / "arq.db")
     with TestClient(app) as client:
         page = _make_space_and_page(client, tmp_path / "arq.db")
-        client.patch(f"/pages/{page['id']}", json={"body": "v2"}, headers={"X-Athena-Actor": "1"})
+        client.patch(
+            f"/pages/{page['id']}", json={"body": "v2"}, headers={"X-Athena-Actor": "1"}
+        )
         assert client.post(f"/pages/{page['id']}/versions/1/restore").status_code == 401
 
 
@@ -141,7 +163,9 @@ def test_api_restore_unknown_version_is_404(tmp_path):
     app = create_app(tmp_path / "arv.db")
     with TestClient(app) as client:
         page = _make_space_and_page(client, tmp_path / "arv.db")
-        r = client.post(f"/pages/{page['id']}/versions/7/restore", headers={"X-Athena-Actor": "1"})
+        r = client.post(
+            f"/pages/{page['id']}/versions/7/restore", headers={"X-Athena-Actor": "1"}
+        )
         assert r.status_code == 404
 
 
@@ -149,7 +173,9 @@ def test_api_restore_unknown_page_is_404(tmp_path):
     app = create_app(tmp_path / "arp.db")
     with TestClient(app) as client:
         _seed_two_users(tmp_path / "arp.db")
-        r = client.post("/pages/999/versions/1/restore", headers={"X-Athena-Actor": "1"})
+        r = client.post(
+            "/pages/999/versions/1/restore", headers={"X-Athena-Actor": "1"}
+        )
         assert r.status_code == 404
 
 
@@ -160,16 +186,24 @@ _H = {"X-Athena-Actor": "1"}
 
 
 def _login(client):
-    client.post("/users", json={"email": "a@e.com", "name": "A", "password": "secret"}, headers=_H)
+    client.post(
+        "/users",
+        json={"email": "a@e.com", "name": "A", "password": "secret"},
+        headers=_H,
+    )
     client.post("/login", data={"email": "a@e.com", "password": "secret"})
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def _logged_in_page_with_history(client):
     """A space + page edited once (so it has version 1), created by the session user."""
-    space = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=_H).json()
+    space = client.post(
+        "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_H
+    ).json()
     page = client.post(
-        f"/spaces/{space['id']}/pages", json={"title": "Runbook", "body": "v1 text"}, headers=_H
+        f"/spaces/{space['id']}/pages",
+        json={"title": "Runbook", "body": "v1 text"},
+        headers=_H,
     ).json()
     client.patch(f"/pages/{page['id']}", json={"body": "v2 text"}, headers=_H)
     return page
@@ -194,7 +228,10 @@ def test_web_restore_requires_login(tmp_path):
         _login(client)
         page = _logged_in_page_with_history(client)
     with TestClient(app) as anon:
-        assert anon.post(f"/mentor/pages/{page['id']}/versions/1/restore").status_code == 401
+        assert (
+            anon.post(f"/mentor/pages/{page['id']}/versions/1/restore").status_code
+            == 401
+        )
 
 
 def test_web_restore_unknown_version_is_404(tmp_path):

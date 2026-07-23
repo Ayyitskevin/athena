@@ -5,6 +5,7 @@ creating and running them is the project creator's call. These pin the page rend
 the create form, the start/complete lifecycle (incl. the 409 on an illegal move),
 the membership-guarded delete, and the creator-only gating.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -13,13 +14,17 @@ H1 = {"X-Athena-Actor": "1"}
 
 
 def _login(client, email="a@e.com", password="pw"):
-    r = client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def _project(client, name="Ops", key="OPS"):
-    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()["id"]
+    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()[
+        "id"
+    ]
 
 
 def _sprints(client, pid):
@@ -33,7 +38,11 @@ def test_page_renders_and_web_create(tmp_path):
         _login(client)
 
         page = client.get(f"/aegis/projects/{pid}/sprints")
-        assert page.status_code == 200 and "Sprints" in page.text and "New sprint" in page.text
+        assert (
+            page.status_code == 200
+            and "Sprints" in page.text
+            and "New sprint" in page.text
+        )
 
         created = client.post(
             f"/aegis/projects/{pid}/sprints",
@@ -50,15 +59,34 @@ def test_start_then_complete_lifecycle(tmp_path):
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         pid = _project(client)
         _login(client)
-        client.post(f"/aegis/projects/{pid}/sprints", data={"name": "S1"}, follow_redirects=False)
+        client.post(
+            f"/aegis/projects/{pid}/sprints",
+            data={"name": "S1"},
+            follow_redirects=False,
+        )
         sid = _sprints(client, pid)[0]["id"]
 
-        assert client.post(f"/aegis/sprints/{sid}/start", follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                f"/aegis/sprints/{sid}/start", follow_redirects=False
+            ).status_code
+            == 303
+        )
         assert "sprint-active" in client.get(f"/aegis/projects/{pid}/sprints").text
         # Starting an active sprint is an illegal move → 409.
-        assert client.post(f"/aegis/sprints/{sid}/start", follow_redirects=False).status_code == 409
+        assert (
+            client.post(
+                f"/aegis/sprints/{sid}/start", follow_redirects=False
+            ).status_code
+            == 409
+        )
 
-        assert client.post(f"/aegis/sprints/{sid}/complete", follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                f"/aegis/sprints/{sid}/complete", follow_redirects=False
+            ).status_code
+            == 303
+        )
         assert "sprint-completed" in client.get(f"/aegis/projects/{pid}/sprints").text
 
 
@@ -67,22 +95,40 @@ def test_delete_guarded_by_membership(tmp_path):
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         pid = _project(client)
         _login(client)
-        client.post(f"/aegis/projects/{pid}/sprints", data={"name": "S1"}, follow_redirects=False)
+        client.post(
+            f"/aegis/projects/{pid}/sprints",
+            data={"name": "S1"},
+            follow_redirects=False,
+        )
         sid = _sprints(client, pid)[0]["id"]
-        iss = client.post("/issues", json={"title": "x", "project_id": pid}, headers=H1).json()
+        iss = client.post(
+            "/issues", json={"title": "x", "project_id": pid}, headers=H1
+        ).json()
         client.put(f"/issues/{iss['id']}/sprint", json={"sprint_id": sid}, headers=H1)
 
         # Holds an issue → refuse.
-        assert client.post(f"/aegis/sprints/{sid}/delete", follow_redirects=False).status_code == 409
+        assert (
+            client.post(
+                f"/aegis/sprints/{sid}/delete", follow_redirects=False
+            ).status_code
+            == 409
+        )
         # Empty it → deletes.
         client.put(f"/issues/{iss['id']}/sprint", json={"sprint_id": None}, headers=H1)
-        assert client.post(f"/aegis/sprints/{sid}/delete", follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                f"/aegis/sprints/{sid}/delete", follow_redirects=False
+            ).status_code
+            == 303
+        )
         assert _sprints(client, pid) == []
 
 
 def test_management_is_creator_only(tmp_path):
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})  # creator
+        client.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}
+        )  # creator
         client.post(
             "/users",
             json={"email": "b@e.com", "name": "B", "password": "pw", "role": "member"},
@@ -108,4 +154,7 @@ def test_unknown_project_and_sprint(tmp_path):
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         _login(client)
         assert client.get("/aegis/projects/9999/sprints").status_code == 404
-        assert client.post("/aegis/sprints/9999/start", follow_redirects=False).status_code == 404
+        assert (
+            client.post("/aegis/sprints/9999/start", follow_redirects=False).status_code
+            == 404
+        )

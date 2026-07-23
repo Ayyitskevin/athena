@@ -9,6 +9,7 @@ KEY (e.g. "ENG"). These tests encode the contract:
   * key and name are both required (blank -> 422);
   * the space list is open to read, and a missing space is a 404.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db

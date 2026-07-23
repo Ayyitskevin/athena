@@ -21,6 +21,7 @@ project/space defaults to public, those answers are "everything" until a row is
 actually marked private — so wiring this resolver into the read paths is INERT until
 the privacy feature is switched on in a later slice.
 """
+
 from __future__ import annotations
 
 from collections.abc import Collection
@@ -40,6 +41,7 @@ def _is_admin(actor: dict | None) -> bool:
 
 
 # --- project membership -----------------------------------------------------
+
 
 def add_project_member(
     conn: sqlite3.Connection, project_id: int, user_id: int, added_by: int | None
@@ -70,9 +72,7 @@ def remove_project_member(
     return cur.rowcount > 0
 
 
-def is_project_member(
-    conn: sqlite3.Connection, project_id: int, user_id: int
-) -> bool:
+def is_project_member(conn: sqlite3.Connection, project_id: int, user_id: int) -> bool:
     return (
         conn.execute(
             "SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?",
@@ -97,6 +97,7 @@ def list_project_members(conn: sqlite3.Connection, project_id: int) -> list[dict
 
 
 # --- space membership -------------------------------------------------------
+
 
 def add_space_member(
     conn: sqlite3.Connection,
@@ -158,6 +159,7 @@ def list_space_members(conn: sqlite3.Connection, space_id: int) -> list[dict]:
 
 # --- the read-side resolver -------------------------------------------------
 
+
 def can_see_project(
     conn: sqlite3.Connection, actor: dict | None, project_id: int
 ) -> bool:
@@ -179,9 +181,7 @@ def can_see_project(
     return is_project_member(conn, project_id, actor["id"])
 
 
-def can_see_space(
-    conn: sqlite3.Connection, actor: dict | None, space_id: int
-) -> bool:
+def can_see_space(conn: sqlite3.Connection, actor: dict | None, space_id: int) -> bool:
     """May this actor read this space (and its pages)? Same rule as can_see_project."""
     row = conn.execute(
         "SELECT visibility, created_by FROM spaces WHERE id = ?", (space_id,)
@@ -282,9 +282,7 @@ def can_see_page(conn: sqlite3.Connection, actor: dict | None, page_id: int) -> 
     """Whether the actor may read this page, resolved by its id — the page twin of
     can_see_issue. Looks up the page's space and defers to can_see_space; a missing
     page is not visible."""
-    row = conn.execute(
-        "SELECT space_id FROM pages WHERE id = ?", (page_id,)
-    ).fetchone()
+    row = conn.execute("SELECT space_id FROM pages WHERE id = ?", (page_id,)).fetchone()
     if row is None:
         return False
     return can_see_space(conn, actor, row["space_id"])
@@ -362,17 +360,14 @@ def _in_or_null(ids: Collection[int | str]) -> tuple[str, list]:
     return (",".join("?" for _ in vals), vals) if vals else ("NULL", [])
 
 
-def _project_scope_keys(
-    conn: sqlite3.Connection, project_ids: set[int]
-) -> set[str]:
+def _project_scope_keys(conn: sqlite3.Connection, project_ids: set[int]) -> set[str]:
     if not project_ids:
         return set()
     placeholders, params = _in_or_null(project_ids)
     return {
         row["activity_scope_key"]
         for row in conn.execute(
-            "SELECT activity_scope_key FROM projects "
-            f"WHERE id IN ({placeholders})",
+            f"SELECT activity_scope_key FROM projects WHERE id IN ({placeholders})",
             params,
         )
         if row["activity_scope_key"] is not None
@@ -526,9 +521,7 @@ def can_see_complete_issue_history(
         return False
 
     visible_projects = visible_project_ids(conn, actor)
-    scope_ph, scope_params = _in_or_null(
-        _project_scope_keys(conn, visible_projects)
-    )
+    scope_ph, scope_params = _in_or_null(_project_scope_keys(conn, visible_projects))
     hidden = conn.execute(
         "SELECT 1 FROM activity a "
         "WHERE a.target_kind = 'issue' AND a.target_id = ? "

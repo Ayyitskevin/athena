@@ -20,6 +20,7 @@ The index is DERIVED, not truth: the `issues`/`pages` rows are the truth, and a
 row's entry is re-derived from the live row on every write. If the two ever drift,
 the source row wins and a reindex repairs the index.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -163,8 +164,10 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
                 else None
             )
             ic_ctx[row["cid"]] = {
-                "parent_id": row["pid"], "title": row["title"],
-                "key": key, "status": row["status"],
+                "parent_id": row["pid"],
+                "title": row["title"],
+                "key": key,
+                "status": row["status"],
             }
     pc_ctx: dict[int, dict] = {}
     if pc_ids:
@@ -176,7 +179,8 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
             pc_ids,
         ).fetchall():
             pc_ctx[row["cid"]] = {
-                "parent_id": row["pid"], "title": row["title"],
+                "parent_id": row["pid"],
+                "title": row["title"],
                 "space_key": row["space_key"],
             }
     for h in hits:

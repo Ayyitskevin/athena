@@ -8,6 +8,7 @@ other kinds (e.g. pages) attach through the same vocabulary via their own join.
 All label SQL lives here. Attaching/detaching is idempotent so callers don't have
 to check first.
 """
+
 from __future__ import annotations
 
 import re
@@ -31,25 +32,19 @@ def create_label(
     """Insert a label and return it. Raises sqlite3.IntegrityError if a label
     with this name already exists (name is UNIQUE, case-insensitive)."""
     color = normalize_color(color)
-    cur = conn.execute(
-        "INSERT INTO labels (name, color) VALUES (?, ?)", (name, color)
-    )
+    cur = conn.execute("INSERT INTO labels (name, color) VALUES (?, ?)", (name, color))
     conn.commit()
     return get_label(conn, cur.lastrowid)
 
 
 def get_label(conn: sqlite3.Connection, label_id: int) -> dict | None:
-    row = conn.execute(
-        "SELECT * FROM labels WHERE id = ?", (label_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM labels WHERE id = ?", (label_id,)).fetchone()
     return dict(row) if row else None
 
 
 def get_label_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
     """Look a label up by name (case-insensitive — the column is COLLATE NOCASE)."""
-    row = conn.execute(
-        "SELECT * FROM labels WHERE name = ?", (name,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM labels WHERE name = ?", (name,)).fetchone()
     return dict(row) if row else None
 
 
@@ -66,9 +61,7 @@ def get_or_create_label(
 
 def list_labels(conn: sqlite3.Connection) -> list[dict]:
     """Every label, alphabetical."""
-    rows = conn.execute(
-        "SELECT * FROM labels ORDER BY name COLLATE NOCASE"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM labels ORDER BY name COLLATE NOCASE").fetchall()
     return [dict(row) for row in rows]
 
 
@@ -96,12 +89,17 @@ def label_usage(
     label whose usages are all hidden still appears, just at zero."""
     if visible_project_ids is None:
         issue_counts = _grouped_counts(
-            conn, "SELECT label_id, COUNT(*) AS n FROM issue_labels GROUP BY label_id", []
+            conn,
+            "SELECT label_id, COUNT(*) AS n FROM issue_labels GROUP BY label_id",
+            [],
         )
     else:
         if visible_project_ids:
             ph = ",".join("?" for _ in visible_project_ids)
-            cond, params = f"(i.project_id IS NULL OR i.project_id IN ({ph}))", list(visible_project_ids)
+            cond, params = (
+                f"(i.project_id IS NULL OR i.project_id IN ({ph}))",
+                list(visible_project_ids),
+            )
         else:
             cond, params = "i.project_id IS NULL", []
         issue_counts = _grouped_counts(
@@ -113,7 +111,9 @@ def label_usage(
 
     if visible_space_ids is None:
         page_counts = _grouped_counts(
-            conn, "SELECT label_id, COUNT(*) AS n FROM page_labels GROUP BY label_id", []
+            conn,
+            "SELECT label_id, COUNT(*) AS n FROM page_labels GROUP BY label_id",
+            [],
         )
     elif visible_space_ids:
         ph = ",".join("?" for _ in visible_space_ids)
@@ -230,9 +230,7 @@ def labels_for_issues(
 # --- The page<->label join (the Mentor twin of the issue join above) ---------
 
 
-def add_label_to_page(
-    conn: sqlite3.Connection, page_id: int, label_id: int
-) -> bool:
+def add_label_to_page(conn: sqlite3.Connection, page_id: int, label_id: int) -> bool:
     """Attach a label to a page. Idempotent (composite PK + OR IGNORE). Returns True
     if a new pairing was created, False if it was already attached — so the caller
     records the audit event only on a real change. Raises sqlite3.IntegrityError if

@@ -11,6 +11,7 @@ the test (e.g. `monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)`).
 `athena.core.identity` reads the flag at call time, so a per-test override takes
 effect immediately.
 """
+
 import pytest
 
 from athena import config

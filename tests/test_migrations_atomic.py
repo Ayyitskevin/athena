@@ -7,6 +7,7 @@ schema_migrations row — and the next boot re-ran it from the top and died on e
 (no half-applied schema, no version row), earlier migrations in the same run stay
 applied, and a subsequent corrected run succeeds instead of wedging.
 """
+
 import sqlite3
 
 import pytest
@@ -19,9 +20,12 @@ def _write(dir_, name, sql):
 
 
 def _table_exists(conn, name):
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone() is not None
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _applied_versions(conn):
@@ -47,8 +51,12 @@ def test_a_partial_migration_rolls_back_wholesale(tmp_path, monkeypatch):
 
     # 0001 committed atomically before 0002 was attempted; 0002 left NO trace.
     assert _table_exists(conn, "good")
-    assert not _table_exists(conn, "half")  # the first statement rolled back with the rest
-    assert _applied_versions(conn) == {"0001_good.sql"}  # only the successful one recorded
+    assert not _table_exists(
+        conn, "half"
+    )  # the first statement rolled back with the rest
+    assert _applied_versions(conn) == {
+        "0001_good.sql"
+    }  # only the successful one recorded
 
 
 def test_a_fixed_migration_reruns_cleanly_instead_of_wedging(tmp_path, monkeypatch):

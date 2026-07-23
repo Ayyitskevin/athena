@@ -15,6 +15,7 @@ that intersection, the things it must NOT change, and the boundaries:
     /issues/{ref} read), and the web /find drops into filtered issue mode when any
     filter is set.
 """
+
 from athena.aegis import issue_search, issues, projects
 from athena.core import db, labels
 from athena.main import create_app
@@ -48,7 +49,9 @@ def test_unfiltered_is_a_plain_issue_search(tmp_path):
     conn = _conn(tmp_path / "u.db")
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     iss = issues.create_issue(conn, title="deploy pipeline", body="", created_by=1)
-    pages.create_page(conn, space_id=sp["id"], title="deploy runbook", body="", created_by=1)
+    pages.create_page(
+        conn, space_id=sp["id"], title="deploy runbook", body="", created_by=1
+    )
     hits = issue_search.search_issues(conn, "deploy")
     assert [(h["kind"], h["source_id"]) for h in hits] == [("issue", iss["id"])]
 
@@ -79,17 +82,27 @@ def test_label_filter_intersects(tmp_path):
 def test_project_filter_intersects(tmp_path):
     conn = _conn(tmp_path / "p.db")
     proj = projects.create_project(conn, name="Web", key="WEB", created_by=1)
-    inproj = issues.create_issue(conn, title="deploy alpha", body="", created_by=1, project_id=proj["id"])
+    inproj = issues.create_issue(
+        conn, title="deploy alpha", body="", created_by=1, project_id=proj["id"]
+    )
     backlog = issues.create_issue(conn, title="deploy beta", body="", created_by=1)
-    assert [h["source_id"] for h in issue_search.search_issues(conn, "deploy", project=str(proj["id"]))] == [inproj["id"]]
-    assert [h["source_id"] for h in issue_search.search_issues(conn, "deploy", project="none")] == [backlog["id"]]
+    assert [
+        h["source_id"]
+        for h in issue_search.search_issues(conn, "deploy", project=str(proj["id"]))
+    ] == [inproj["id"]]
+    assert [
+        h["source_id"]
+        for h in issue_search.search_issues(conn, "deploy", project="none")
+    ] == [backlog["id"]]
 
 
 def test_filter_matching_nothing_returns_empty(tmp_path):
     # WHY: a filter that excludes every textual match yields [], not a fallback to
     # the unfiltered results.
     conn = _conn(tmp_path / "n.db")
-    issues.create_issue(conn, title="deploy alpha", body="", created_by=1, priority="low")
+    issues.create_issue(
+        conn, title="deploy alpha", body="", created_by=1, priority="low"
+    )
     assert issue_search.search_issues(conn, "deploy", priority="urgent") == []
 
 
@@ -102,7 +115,9 @@ def test_endpoint_does_not_collide_with_issue_ref(tmp_path):
     app = create_app(tmp_path / "api.db")
     with TestClient(app) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
-        iss = client.post("/issues", json={"title": "deploy pipeline"}, headers=H).json()
+        iss = client.post(
+            "/issues", json={"title": "deploy pipeline"}, headers=H
+        ).json()
         r = client.get("/issues/search", params={"q": "deploy"})
         assert r.status_code == 200
         assert [h["source_id"] for h in r.json()] == [iss["id"]]
@@ -114,15 +129,28 @@ def test_endpoint_filters_and_excludes_pages(tmp_path):
     app = create_app(tmp_path / "apif.db")
     with TestClient(app) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
-        a = client.post("/issues", json={"title": "deploy alpha", "priority": "high"}, headers=H).json()
-        client.post("/issues", json={"title": "deploy beta", "priority": "low"}, headers=H)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "deploy runbook"}, headers=H)
+        a = client.post(
+            "/issues", json={"title": "deploy alpha", "priority": "high"}, headers=H
+        ).json()
+        client.post(
+            "/issues", json={"title": "deploy beta", "priority": "low"}, headers=H
+        )
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "deploy runbook"}, headers=H
+        )
         # no pages, even though a page matches the text
-        kinds = {h["kind"] for h in client.get("/issues/search", params={"q": "deploy"}).json()}
+        kinds = {
+            h["kind"]
+            for h in client.get("/issues/search", params={"q": "deploy"}).json()
+        }
         assert kinds == {"issue"}
         # priority filter narrows to the one matching issue
-        hi = client.get("/issues/search", params={"q": "deploy", "priority": "high"}).json()
+        hi = client.get(
+            "/issues/search", params={"q": "deploy", "priority": "high"}
+        ).json()
         assert [h["source_id"] for h in hi] == [a["id"]]
 
 
@@ -130,7 +158,12 @@ def test_endpoint_rejects_bad_project_filter(tmp_path):
     app = create_app(tmp_path / "apibad.db")
     with TestClient(app) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
-        assert client.get("/issues/search", params={"q": "x", "project": "abc"}).status_code == 422
+        assert (
+            client.get(
+                "/issues/search", params={"q": "x", "project": "abc"}
+            ).status_code
+            == 422
+        )
 
 
 def test_endpoint_bounds_limit_and_offset(tmp_path):
@@ -141,10 +174,22 @@ def test_endpoint_bounds_limit_and_offset(tmp_path):
     app = create_app(tmp_path / "apibound.db")
     with TestClient(app) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
-        assert client.get("/issues/search", params={"q": "x", "limit": -1}).status_code == 422
-        assert client.get("/issues/search", params={"q": "x", "limit": 0}).status_code == 422
-        assert client.get("/issues/search", params={"q": "x", "limit": 1000}).status_code == 422
-        assert client.get("/issues/search", params={"q": "x", "offset": -1}).status_code == 422
+        assert (
+            client.get("/issues/search", params={"q": "x", "limit": -1}).status_code
+            == 422
+        )
+        assert (
+            client.get("/issues/search", params={"q": "x", "limit": 0}).status_code
+            == 422
+        )
+        assert (
+            client.get("/issues/search", params={"q": "x", "limit": 1000}).status_code
+            == 422
+        )
+        assert (
+            client.get("/issues/search", params={"q": "x", "offset": -1}).status_code
+            == 422
+        )
         assert (
             client.get(
                 "/issues/search",
@@ -159,7 +204,10 @@ def test_endpoint_bounds_limit_and_offset(tmp_path):
             ).status_code
             == 422
         )
-        assert client.get("/issues/search", params={"q": "x", "limit": 50}).status_code == 200
+        assert (
+            client.get("/issues/search", params={"q": "x", "limit": 50}).status_code
+            == 200
+        )
 
 
 # --- web --------------------------------------------------------------------
@@ -174,8 +222,12 @@ def test_find_enters_filtered_issue_mode(tmp_path):
         a = client.post("/issues", json={"title": "deploy alpha"}, headers=H).json()
         client.post("/issues", json={"title": "deploy beta"}, headers=H)
         client.patch(f"/issues/{a['id']}", json={"status": "done"}, headers=H)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "deploy runbook"}, headers=H)
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "deploy runbook"}, headers=H
+        )
 
         # plain search shows scope tabs and the page hit
         plain = client.get("/find", params={"q": "deploy"}).text
@@ -192,4 +244,6 @@ def test_find_bad_project_is_400(tmp_path):
     app = create_app(tmp_path / "web400.db")
     with TestClient(app) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
-        assert client.get("/find", params={"q": "x", "project": "abc"}).status_code == 400
+        assert (
+            client.get("/find", params={"q": "x", "project": "abc"}).status_code == 400
+        )

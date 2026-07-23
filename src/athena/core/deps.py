@@ -5,6 +5,7 @@ HTTP layer (aegis, users, later mentor) depends on this instead of opening its
 own — so connection handling lives in exactly one spot. Kept out of db.py so
 that module stays framework-free (pure SQLite, importable without FastAPI).
 """
+
 from __future__ import annotations
 
 from fastapi import Request

@@ -14,7 +14,9 @@ H1 = {"X-Athena-Actor": "1"}
 def _conn(db_file):
     conn = db.connect(db_file)
     db.migrate(conn)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')"
+    )
     conn.commit()
     return conn
 
@@ -69,7 +71,9 @@ def test_run_replay_artifact_exports_ordered_events_and_lineage(tmp_path):
         child_first["id"],
         child_second["id"],
     ]
-    assert all(event["forked_from_event_id"] == root["id"] for event in artifact["events"])
+    assert all(
+        event["forked_from_event_id"] == root["id"] for event in artifact["events"]
+    )
     assert [node["run_id"] for node in artifact["lineage"]["ancestors"]] == ["goal"]
     assert artifact["lineage"]["run"]["event_count"] == 2
     assert artifact["lineage"]["run"]["events"] == []
@@ -100,7 +104,9 @@ def test_run_replay_endpoint_returns_visible_artifact(tmp_path):
         assert body["events"][0]["run_id"] == "goal"
         assert [node["run_id"] for node in body["lineage"]["descendants"]] == ["child"]
         assert client.get("/activity/runs/goal/replay").status_code == 401
-        assert client.get("/activity/runs/missing/replay", headers=H1).status_code == 404
+        assert (
+            client.get("/activity/runs/missing/replay", headers=H1).status_code == 404
+        )
 
 
 def test_run_replay_artifact_caps_a_huge_run(tmp_path, monkeypatch):
@@ -129,20 +135,54 @@ def test_run_replay_endpoint_gates_hidden_runs(tmp_path):
     h_creator = {"X-Athena-Actor": "2"}
     h_outsider = {"X-Athena-Actor": "3"}
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H1)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H1)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H1)
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=h_creator).json()["id"]
         client.post(
-            "/issues", json={"title": "secret", "project_id": pid},
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H1,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H1,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H1,
+        )
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=h_creator
+        ).json()["id"]
+        client.post(
+            "/issues",
+            json={"title": "secret", "project_id": pid},
             headers={**h_creator, "X-Athena-Run": "p1"},
         )
-        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=h_creator)
+        client.put(
+            f"/projects/{pid}/visibility",
+            json={"visibility": "private"},
+            headers=h_creator,
+        )
 
         # The outsider can't see the only event, so the run's replay is a 404 — no leak.
-        assert client.get("/activity/runs/p1/replay", headers=h_outsider).status_code == 404
+        assert (
+            client.get("/activity/runs/p1/replay", headers=h_outsider).status_code
+            == 404
+        )
         # The creator (a member) and the admin (god-view) both get the artifact.
-        assert client.get("/activity/runs/p1/replay", headers=h_creator).status_code == 200
+        assert (
+            client.get("/activity/runs/p1/replay", headers=h_creator).status_code == 200
+        )
         assert client.get("/activity/runs/p1/replay", headers=H1).status_code == 200
 
 
@@ -180,34 +220,49 @@ def test_run_replay_rejects_a_visibility_filtered_subsequence(tmp_path):
             json={"title": "Mixed run", "project_id": project_id},
             headers=run_headers,
         ).json()["id"]
-        assert client.put(
-            f"/projects/{project_id}/visibility",
-            json={"visibility": "private"},
-            headers=h_creator,
-        ).status_code == 200
-        assert client.put(
-            f"/issues/{issue_id}/project",
-            json={"project_id": None},
-            headers=run_headers,
-        ).status_code == 200
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "high"},
-            headers=run_headers,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{project_id}/visibility",
+                json={"visibility": "private"},
+                headers=h_creator,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                f"/issues/{issue_id}/project",
+                json={"project_id": None},
+                headers=run_headers,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "high"},
+                headers=run_headers,
+            ).status_code
+            == 200
+        )
 
-        visible = client.get(
-            "/events?run_id=mixed-scope", headers=h_outsider
-        ).json()["events"]
+        visible = client.get("/events?run_id=mixed-scope", headers=h_outsider).json()[
+            "events"
+        ]
         assert [(event["verb"], event["detail"]) for event in visible] == [
             ("changed_priority", "medium → high")
         ]
-        assert client.get(
-            "/activity/runs/mixed-scope/replay", headers=h_outsider
-        ).status_code == 404
-        assert client.get(
-            "/activity/runs/mixed-scope/replay", headers=h_creator
-        ).status_code == 200
+        assert (
+            client.get(
+                "/activity/runs/mixed-scope/replay", headers=h_outsider
+            ).status_code
+            == 404
+        )
+        assert (
+            client.get(
+                "/activity/runs/mixed-scope/replay", headers=h_creator
+            ).status_code
+            == 200
+        )
 
 
 def test_export_run_cli_writes_json_and_refuses_overwrite(tmp_path):
@@ -225,9 +280,10 @@ def test_export_run_cli_writes_json_and_refuses_overwrite(tmp_path):
 
     assert ops.export_run_main([str(db_file), "goal", str(artifact_path)]) == 1
     assert (
-        ops.export_run_main(
-            [str(db_file), "goal", str(artifact_path), "--overwrite"]
-        )
+        ops.export_run_main([str(db_file), "goal", str(artifact_path), "--overwrite"])
         == 0
     )
-    assert ops.export_run_main([str(db_file), "missing", str(tmp_path / "missing.json")]) == 1
+    assert (
+        ops.export_run_main([str(db_file), "missing", str(tmp_path / "missing.json")])
+        == 1
+    )

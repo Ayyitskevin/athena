@@ -7,6 +7,7 @@ unbounded activity table and then sorted. These tests pin that the index exists 
 that SQLite seeks by it (SEARCH ... USING INDEX, not SCAN activity) -- the behavioral
 intent, not just the schema.
 """
+
 from athena.core import db
 
 

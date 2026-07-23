@@ -39,7 +39,9 @@ def _client(tmp_path, name) -> tuple[TestClient, AthenaClient]:
     # trusted-actor path (enabled in tests by conftest).
     tc.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
     raw = tc.post(
-        "/tokens", json={"name": "mcp", "scopes": ["admin"]}, headers={"X-Athena-Actor": "1"}
+        "/tokens",
+        json={"name": "mcp", "scopes": ["admin"]},
+        headers={"X-Athena-Actor": "1"},
     ).json()["token"]
     tc.headers.update({"Authorization": f"Bearer {raw}"})
     return tc, AthenaClient(client=tc)
@@ -118,9 +120,7 @@ MUTATION_CASES = [
         "claim_issue",
         "POST",
         "/issues/7/claim",
-        lambda c, k: c.claim_issue(
-            7, if_match='"issue-v1"', idempotency_key=k
-        ),
+        lambda c, k: c.claim_issue(7, if_match='"issue-v1"', idempotency_key=k),
     ),
     (
         "yield_claim",
@@ -1409,10 +1409,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         )
         assert note_string["maxLength"] == 500
         assert yield_schema["properties"]["evidence"]["maxItems"] == 10
-        assert (
-            yield_schema["properties"]["evidence"]["items"]["maxLength"]
-            == 1000
-        )
+        assert yield_schema["properties"]["evidence"]["items"]["maxLength"] == 1000
         resume_schema = tools["resume_claim_handoff"].inputSchema
         assert {
             "issue_id",
@@ -1544,9 +1541,9 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
         assert len(yielded) == 1
         assert yielded[0]["run_id"] == "mcp-yield-run"
 
-        open_handoff = ath.get_issue_work_context(str(issue["id"]))[
-            "claim_handoffs"
-        ]["open"]
+        open_handoff = ath.get_issue_work_context(str(issue["id"]))["claim_handoffs"][
+            "open"
+        ]
         asyncio.run(
             server.call_tool(
                 "claim_issue",
@@ -1554,8 +1551,9 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
             )
         )
         replacement = ath.get_issue_lease(issue["id"])
-        assert replacement["open_claim_handoff"]["handoff_token"] == (
-            open_handoff["handoff_token"]
+        assert (
+            replacement["open_claim_handoff"]["handoff_token"]
+            == (open_handoff["handoff_token"])
         )
         asyncio.run(
             server.call_tool(
@@ -1568,9 +1566,10 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
                 },
             )
         )
-        assert ath.get_issue_work_context(str(issue["id"]))[
-            "claim_handoffs"
-        ]["open"] is None
+        assert (
+            ath.get_issue_work_context(str(issue["id"]))["claim_handoffs"]["open"]
+            is None
+        )
 
         stale_issue = ath.create_issue(title="MCP stale claim")
         stale = ath.get_issue(str(stale_issue["id"]))
@@ -1590,9 +1589,7 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
                     },
                 )
             )
-        payload = json.loads(
-            str(rejected.value).split("ATHENA_ERROR_JSON=", 1)[1]
-        )
+        payload = json.loads(str(rejected.value).split("ATHENA_ERROR_JSON=", 1)[1])
         assert payload["status_code"] == 412
         assert payload["code"] == "precondition_failed"
         assert payload["current_etag"] == current["_etag"]

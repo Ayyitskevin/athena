@@ -7,6 +7,7 @@ and a tagged event never shares a run with an untagged one. Untagged events stil
 back to the gap. These tests pin that precedence on the data layer, that the run
 carries its id through the API, and that the browser run card surfaces it.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -22,7 +23,9 @@ def _migrated_conn(db_file):
 
 
 def _user(conn, name="Bot"):
-    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name))
+    conn.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name)
+    )
     conn.commit()
 
 

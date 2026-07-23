@@ -9,6 +9,7 @@ remove_space_member fold each into one db.transaction. These pin that atomicity:
 the recorder fails, EVERY write in the command rolls back with it — a space-access
 control change never half-lands.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, activity, db
@@ -93,7 +94,10 @@ def test_member_add_rolls_back_when_audit_fails(tmp_path):
     try:
         try:
             space_commands.add_space_member(
-                conn, actor_id=1, space_id=sp["id"], user_id=member["id"],
+                conn,
+                actor_id=1,
+                space_id=sp["id"],
+                user_id=member["id"],
                 member_name=member["name"],
             )
             raise AssertionError("expected the recorder failure to propagate")
@@ -132,7 +136,10 @@ def test_member_remove_rolls_back_when_audit_fails(tmp_path):
     try:
         try:
             space_commands.remove_space_member(
-                conn, actor_id=1, space_id=sp["id"], user_id=member["id"],
+                conn,
+                actor_id=1,
+                space_id=sp["id"],
+                user_id=member["id"],
                 member_name=member["name"],
             )
             raise AssertionError("expected the recorder failure to propagate")
@@ -164,7 +171,9 @@ def test_visibility_and_membership_record_attributed_events(tmp_path):
         c.put(
             f"/spaces/{sp['id']}/visibility", json={"visibility": "public"}, headers=H1
         )
-    assert [e["target_id"] for e in _events(db_file, "space_made_private")] == [sp["id"]]
+    assert [e["target_id"] for e in _events(db_file, "space_made_private")] == [
+        sp["id"]
+    ]
     assert [e["target_id"] for e in _events(db_file, "space_made_public")] == [sp["id"]]
     assert [
         (e["actor_id"], e["detail"]) for e in _events(db_file, "space_member_added")

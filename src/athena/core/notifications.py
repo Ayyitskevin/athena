@@ -275,10 +275,7 @@ def mark_read(
     if actor is not _UNGATED:
         gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
         if gate:
-            where += (
-                " AND event_id IN (SELECT a.id FROM activity a "
-                f"WHERE {gate})"
-            )
+            where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)
     cur = conn.execute(
         f"UPDATE notifications SET read_at = datetime('now') {where}",
@@ -300,10 +297,7 @@ def mark_all_read(
     if actor is not _UNGATED:
         gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
         if gate:
-            where += (
-                " AND event_id IN (SELECT a.id FROM activity a "
-                f"WHERE {gate})"
-            )
+            where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)
     cur = conn.execute(
         f"UPDATE notifications SET read_at = datetime('now') {where}",

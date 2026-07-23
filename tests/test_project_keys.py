@@ -15,6 +15,7 @@ These encode the contract behind the feature, not just HTTP shapes:
   * a [[ATH-12]] cross-link resolves to that issue (and records a backlink); an
     unresolvable key ref renders broken and records no backlink.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues, projects
@@ -65,9 +66,15 @@ def test_keys_count_from_one_per_project(tmp_path):
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
     mise = projects.create_project(conn, name="Mise", key="MISE", created_by=1)
-    a1 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
-    a2 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
-    m1 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=mise["id"])
+    a1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
+    a2 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
+    m1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=mise["id"]
+    )
     assert (a1["key"], a2["key"], m1["key"]) == ("ATH-1", "ATH-2", "MISE-1")
 
 
@@ -90,13 +97,17 @@ def test_moving_an_issue_retires_its_number(tmp_path):
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
     mise = projects.create_project(conn, name="Mise", key="MISE", created_by=1)
     issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
-    a2 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    a2 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
     assert a2["key"] == "ATH-2"
     # Move ATH-2 to Mise: it gives up 2 and is handed a fresh MISE number.
     moved = issues.set_project(conn, a2["id"], mise["id"])
     assert moved["key"] == "MISE-1"
     # A new Athena issue must NOT reclaim the retired 2 — it gets 3.
-    a3 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    a3 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
     assert a3["key"] == "ATH-3"
     # And the retired ATH-2 ref no longer resolves to anything.
     assert issues.get_by_ref(conn, "ATH-2") is None
@@ -109,7 +120,9 @@ def test_reassigning_same_project_keeps_number(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    a1 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    a1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
     again = issues.set_project(conn, a1["id"], ath["id"])
     assert again["key"] == "ATH-1"
 
@@ -119,7 +132,9 @@ def test_removing_from_project_clears_key(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    a1 = issues.create_issue(conn, title="t", body="", created_by=1, project_id=ath["id"])
+    a1 = issues.create_issue(
+        conn, title="t", body="", created_by=1, project_id=ath["id"]
+    )
     cleared = issues.set_project(conn, a1["id"], None)
     assert cleared["key"] is None
 
@@ -129,7 +144,9 @@ def test_get_by_ref_resolves_id_and_key(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    a1 = issues.create_issue(conn, title="hi", body="", created_by=1, project_id=ath["id"])
+    a1 = issues.create_issue(
+        conn, title="hi", body="", created_by=1, project_id=ath["id"]
+    )
     assert issues.get_by_ref(conn, str(a1["id"]))["id"] == a1["id"]
     assert issues.get_by_ref(conn, "ATH-1")["id"] == a1["id"]
     assert issues.get_by_ref(conn, "ath-1")["id"] == a1["id"]  # key is case-insensitive
@@ -175,13 +192,21 @@ def test_create_project_requires_valid_key(tmp_path):
     with TestClient(app) as client:
         _seed_user(tmp_path / "vk.db")
         # Missing key — Pydantic 422.
-        assert client.post(
-            "/projects", json={"name": "X"}, headers={"X-Athena-Actor": "1"}
-        ).status_code == 422
+        assert (
+            client.post(
+                "/projects", json={"name": "X"}, headers={"X-Athena-Actor": "1"}
+            ).status_code
+            == 422
+        )
         # Bad shape (leading digit) — 422 from the boundary check.
-        assert client.post(
-            "/projects", json={"name": "X", "key": "1AB"}, headers={"X-Athena-Actor": "1"}
-        ).status_code == 422
+        assert (
+            client.post(
+                "/projects",
+                json={"name": "X", "key": "1AB"},
+                headers={"X-Athena-Actor": "1"},
+            ).status_code
+            == 422
+        )
 
 
 def test_duplicate_key_is_409(tmp_path):
@@ -229,7 +254,9 @@ def test_key_crosslink_resolves_and_backlinks(tmp_path):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
-    target = issues.create_issue(conn, title="Target", body="", created_by=1, project_id=ath["id"])
+    target = issues.create_issue(
+        conn, title="Target", body="", created_by=1, project_id=ath["id"]
+    )
     source = issues.create_issue(
         conn, title="Source", body="see [[ATH-1]]", created_by=1, project_id=ath["id"]
     )
@@ -249,7 +276,11 @@ def test_broken_key_crosslink_renders_broken_without_backlink(tmp_path):
     conn.commit()
     ath = projects.create_project(conn, name="Athena", key="ATH", created_by=1)
     source = issues.create_issue(
-        conn, title="Source", body="ghost [[ATH-99]]", created_by=1, project_id=ath["id"]
+        conn,
+        title="Source",
+        body="ghost [[ATH-99]]",
+        created_by=1,
+        project_id=ath["id"],
     )
     html = str(render_body(conn, source["body"]))
     assert "xref broken" in html

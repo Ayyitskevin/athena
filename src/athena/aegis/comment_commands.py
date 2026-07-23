@@ -57,7 +57,12 @@ def create_comment(
 
 
 def edit_comment(
-    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, comment_id: int, body: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    comment_id: int,
+    body: str,
 ) -> dict:
     """Rewrite a comment's body and record a 'comment_edited' event atomically —
     previously a silent write. Author-ownership is the caller's guard. Raises
