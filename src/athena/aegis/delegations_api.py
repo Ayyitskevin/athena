@@ -58,11 +58,37 @@ class VisibleBlockerOut(BaseModel):
     status: str
 
 
+class ClaimHandoffEventOut(BaseModel):
+    event_id: int
+    actor_id: int
+    actor_name: str
+    created_at: str
+    run_id: str | None
+
+
+class ClaimHandoffOut(BaseModel):
+    handoff_token: str
+    issue_id: int
+    lease_generation: str
+    schema_version: Literal[1]
+    state: Literal["awaiting_resume"]
+    reason: Literal["needs_input", "blocked", "capacity"]
+    note: str | None
+    attempted_work: str
+    evidence: list[str]
+    blocking_question: str
+    resume_instructions: str
+    yielded: ClaimHandoffEventOut
+    resumed: None
+    advisory_untrusted: Literal[True]
+
+
 DelegationWarning = Literal[
     "empty_description",
     "no_accountable_assignee",
     "subject_cannot_see_issue",
     "visible_open_blockers",
+    "open_claim_handoff",
 ]
 
 
@@ -74,6 +100,7 @@ class DelegationItemOut(BaseModel):
     visible_open_blockers: list[VisibleBlockerOut]
     visible_open_blocker_count: int
     visible_open_blockers_truncated: bool
+    open_claim_handoff: ClaimHandoffOut | None
     warnings: list[DelegationWarning]
 
 

@@ -14,10 +14,12 @@ MCP share one boundary.
 """
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from typing import Literal
 
 from athena.aegis import (
+    claim_handoffs,
     contributors as contributors_data,
     issue_activity,
     leases,
@@ -33,8 +35,18 @@ from athena.core import db, identity
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
 MAX_CLAIM_YIELD_NOTE_CHARS = 500
+MAX_HANDOFF_ATTEMPTED_WORK_CHARS = 4_000
+MAX_HANDOFF_EVIDENCE_ITEMS = 10
+MAX_HANDOFF_EVIDENCE_ITEM_CHARS = 1_000
+MAX_HANDOFF_EVIDENCE_JSON_CHARS = 8_000
+MAX_HANDOFF_BLOCKING_QUESTION_CHARS = 1_000
+MAX_HANDOFF_RESUME_INSTRUCTIONS_CHARS = 4_000
+MAX_HANDOFF_RESUME_NOTE_CHARS = 2_000
 CLAIM_PRECONDITION_REQUIRED_DETAIL = (
     "If-Match with exactly one strong issue ETag is required to claim"
+)
+LEASE_GENERATION_REQUIRED_DETAIL = (
+    "the exact current lease generation is required for this operation"
 )
 
 
@@ -57,12 +69,42 @@ def _claimant_or_reject(
     )
 
 
+def _normalize_lease_generation(
+    generation: object | None, *, required: bool
+) -> str | None:
+    if generation is None:
+        if required:
+            raise IssueCommandError(
+                "lease_generation_required",
+                LEASE_GENERATION_REQUIRED_DETAIL,
+            )
+        return None
+    if not leases.is_valid_generation(generation):
+        raise IssueCommandError(
+            "invalid_lease_generation",
+            "lease generation must be exactly 32 lowercase hexadecimal characters",
+        )
+    return generation
+
+
+def _matching_lease_generation(existing: dict, generation: object | None) -> str:
+    normalized = _normalize_lease_generation(generation, required=True)
+    assert normalized is not None
+    if not secrets.compare_digest(existing["generation"], normalized):
+        raise IssueCommandError(
+            "lease_generation_mismatch",
+            "lease generation is stale; fetch the current lease before retrying",
+        )
+    return normalized
+
+
 def claim_issue(
     conn: sqlite3.Connection,
     *,
     actor: dict | None,
     issue_id: int,
     if_match: list[str] | None = None,
+    generation: object | None = None,
     lease_seconds: int = leases.DEFAULT_LEASE_SECONDS,
 ) -> dict:
     """Take the exclusive lease on an issue (accept). Returns the lease
@@ -90,6 +132,7 @@ def claim_issue(
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)
         renewed = False
+        current_generation: str | None = None
         if existing is not None and existing["active"]:
             if existing["holder_id"] != actor["id"]:
                 raise IssueCommandError(
@@ -97,7 +140,18 @@ def claim_issue(
                     f"issue is claimed by {existing['holder_name']} until "
                     f"{existing['expires_at']}",
                 )
-            renewed = True  # the holder re-claiming just extends its own window
+            # Supplying the current generation explicitly selects renew mode. An
+            # omitted token may never turn a delayed acquire into a renewal.
+            current_generation = _matching_lease_generation(existing, generation)
+            renewed = True
+        elif generation is not None:
+            # Supplying a token explicitly selects renew mode. An expired/absent
+            # possession cannot be renewed and must not silently become an acquire.
+            _normalize_lease_generation(generation, required=True)
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation is stale; acquire again without a generation",
+            )
         _check_issue_precondition(
             conn,
             issue,
@@ -106,15 +160,24 @@ def claim_issue(
             exact=True,
         )
         lease = leases.upsert_lease(
-            conn, issue_id, actor["id"], lease_seconds, commit=False
+            conn,
+            issue_id,
+            actor["id"],
+            lease_seconds,
+            generation=current_generation,
+            commit=False,
         )
         issue_activity.record_issue_claimed(
             conn,
             actor_id=actor["id"],
             issue_id=issue_id,
             expires_at=lease["expires_at"],
+            generation=lease["generation"],
             renewed=renewed,
             commit=False,
+        )
+        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(
+            conn, issue_id
         )
         return lease
 
@@ -125,15 +188,76 @@ def _normalize_claim_yield(reason: str, note: str | None) -> tuple[str, str | No
             "invalid",
             "reason must be one of: needs_input, blocked, capacity",
         )
-    if note is not None and not isinstance(note, str):
-        raise IssueCommandError("invalid", "note must be a string or null")
-    if note is not None and len(note) > MAX_CLAIM_YIELD_NOTE_CHARS:
+    normalized_note = _normalize_handoff_text(
+        note,
+        name="note",
+        maximum=MAX_CLAIM_YIELD_NOTE_CHARS,
+        required=False,
+    )
+    return reason, normalized_note or None
+
+
+def _normalize_handoff_text(
+    value: object | None,
+    *,
+    name: str,
+    maximum: int,
+    required: bool,
+) -> str | None:
+    if value is None:
+        if required:
+            raise IssueCommandError("invalid", f"{name} is required")
+        return None
+    if not isinstance(value, str):
+        suffix = "a string" if required else "a string or null"
+        raise IssueCommandError("invalid", f"{name} must be {suffix}")
+    if len(value) > maximum:
+        raise IssueCommandError(
+            "invalid", f"{name} must be at most {maximum} characters"
+        )
+    if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
+        raise IssueCommandError(
+            "invalid", f"{name} contains an unsupported control character"
+        )
+    normalized = value.strip()
+    if required and not normalized:
+        raise IssueCommandError("invalid", f"{name} must not be blank")
+    return normalized or None
+
+
+def _normalize_handoff_evidence(evidence: object) -> list[str]:
+    if not isinstance(evidence, list):
+        raise IssueCommandError("invalid", "evidence must be an array of strings")
+    if len(evidence) > MAX_HANDOFF_EVIDENCE_ITEMS:
         raise IssueCommandError(
             "invalid",
-            f"note must be at most {MAX_CLAIM_YIELD_NOTE_CHARS} characters",
+            f"evidence must contain at most {MAX_HANDOFF_EVIDENCE_ITEMS} items",
         )
-    normalized_note = note.strip() if note is not None else None
-    return reason, normalized_note or None
+    normalized: list[str] = []
+    for index, item in enumerate(evidence):
+        text = _normalize_handoff_text(
+            item,
+            name=f"evidence[{index}]",
+            maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+            required=True,
+        )
+        assert text is not None
+        normalized.append(text)
+    if len(claim_handoffs.encode_evidence(normalized)) > MAX_HANDOFF_EVIDENCE_JSON_CHARS:
+        raise IssueCommandError(
+            "invalid",
+            f"encoded evidence must be at most {MAX_HANDOFF_EVIDENCE_JSON_CHARS} characters",
+        )
+    return normalized
+
+
+def _normalize_handoff_token(handoff_token: object) -> str:
+    if not claim_handoffs.is_valid_handoff_token(handoff_token):
+        raise IssueCommandError(
+            "invalid", "handoff token must be exactly 32 lowercase hexadecimal characters"
+        )
+    assert isinstance(handoff_token, str)
+    return handoff_token
 
 
 def yield_claim(
@@ -141,9 +265,14 @@ def yield_claim(
     *,
     actor: dict | None,
     issue_id: int,
+    generation: object | None,
     reason: str,
     note: str | None = None,
-) -> None:
+    attempted_work: object,
+    evidence: object,
+    blocking_question: object,
+    resume_instructions: object,
+) -> dict:
     """Release the caller's active lease without pretending the work completed.
 
     Yield is deliberately holder-only, including for admins: recording another
@@ -153,6 +282,28 @@ def yield_claim(
     """
     actor = _require_issue_writer(actor)
     reason, note = _normalize_claim_yield(reason, note)
+    normalized_attempted_work = _normalize_handoff_text(
+        attempted_work,
+        name="attempted_work",
+        maximum=MAX_HANDOFF_ATTEMPTED_WORK_CHARS,
+        required=True,
+    )
+    normalized_evidence = _normalize_handoff_evidence(evidence)
+    normalized_blocking_question = _normalize_handoff_text(
+        blocking_question,
+        name="blocking_question",
+        maximum=MAX_HANDOFF_BLOCKING_QUESTION_CHARS,
+        required=True,
+    )
+    normalized_resume_instructions = _normalize_handoff_text(
+        resume_instructions,
+        name="resume_instructions",
+        maximum=MAX_HANDOFF_RESUME_INSTRUCTIONS_CHARS,
+        required=True,
+    )
+    assert normalized_attempted_work is not None
+    assert normalized_blocking_question is not None
+    assert normalized_resume_instructions is not None
     with db.transaction(conn, immediate=True):
         _visible_issue(conn, actor, issue_id)
         existing = leases.get_lease(conn, issue_id)
@@ -163,19 +314,114 @@ def yield_claim(
                 "conflict",
                 f"issue is claimed by {existing['holder_name']}, not you",
             )
-        leases.delete_lease(conn, issue_id, commit=False)
-        issue_activity.record_claim_yielded(
+        current_generation = _matching_lease_generation(existing, generation)
+        if claim_handoffs.get_open_handoff(conn, issue_id) is not None:
+            raise IssueCommandError(
+                "conflict",
+                "an open claim handoff must be resumed before another can be created",
+            )
+        handoff_token = claim_handoffs.new_handoff_token()
+        event = issue_activity.record_claim_yielded(
             conn,
             actor_id=actor["id"],
             issue_id=issue_id,
+            generation=current_generation,
+            handoff_token=handoff_token,
             reason=reason,
-            note=note,
+            blocking_question=normalized_blocking_question,
             commit=False,
         )
+        handoff = claim_handoffs.create_handoff(
+            conn,
+            issue_id=issue_id,
+            yield_event_id=event["id"],
+            lease_generation=current_generation,
+            reason=reason,
+            note=note,
+            attempted_work=normalized_attempted_work,
+            evidence=normalized_evidence,
+            blocking_question=normalized_blocking_question,
+            resume_instructions=normalized_resume_instructions,
+            handoff_token=handoff_token,
+        )
+        if not leases.delete_lease(
+            conn, issue_id, current_generation, commit=False
+        ):
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation changed before release",
+            )
+        return handoff
+
+
+def resume_claim_handoff(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    handoff_token: object,
+    generation: object | None,
+    resume_note: object | None = None,
+) -> dict:
+    """Acknowledge one open handoff as the exact current leaseholder.
+
+    This transition means the context was received. It never asserts that the
+    blocker was solved, work completed, approval granted, or instructions trusted.
+    """
+    actor = _require_issue_writer(actor)
+    normalized_token = _normalize_handoff_token(handoff_token)
+    normalized_note = _normalize_handoff_text(
+        resume_note,
+        name="resume_note",
+        maximum=MAX_HANDOFF_RESUME_NOTE_CHARS,
+        required=False,
+    )
+    with db.transaction(conn, immediate=True):
+        _visible_issue(conn, actor, issue_id)
+        existing = leases.get_lease(conn, issue_id)
+        if existing is None or not existing["active"]:
+            raise IssueCommandError(
+                "conflict", "an active claim is required to resume a handoff"
+            )
+        if existing["holder_id"] != actor["id"]:
+            raise IssueCommandError(
+                "conflict", f"issue is claimed by {existing['holder_name']}, not you"
+            )
+        current_generation = _matching_lease_generation(existing, generation)
+        handoff = claim_handoffs.get_handoff(
+            conn, issue_id=issue_id, handoff_token=normalized_token
+        )
+        if handoff is None:
+            raise IssueCommandError("not_found", "claim handoff not found")
+        if handoff["state"] != "awaiting_resume":
+            raise IssueCommandError("conflict", "claim handoff was already resumed")
+        event = issue_activity.record_claim_handoff_resumed(
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            handoff_token=normalized_token,
+            generation=current_generation,
+            commit=False,
+        )
+        resumed = claim_handoffs.resume_handoff(
+            conn,
+            issue_id=issue_id,
+            handoff_token=normalized_token,
+            resume_event_id=event["id"],
+            lease_generation=current_generation,
+            resume_note=normalized_note,
+        )
+        if resumed is None:
+            raise IssueCommandError("conflict", "claim handoff was already resumed")
+        return resumed
 
 
 def complete_claim(
-    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    generation: object | None,
 ) -> None:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the ACTIVE lease (an admin may release anyone's,
@@ -195,14 +441,37 @@ def complete_claim(
                 "conflict",
                 f"issue is claimed by {existing['holder_name']}, not you",
             )
-        leases.delete_lease(conn, issue_id, commit=False)
+        current_generation = _matching_lease_generation(existing, generation)
+        if (
+            existing["holder_id"] == actor["id"]
+            and claim_handoffs.get_open_handoff(conn, issue_id) is not None
+        ):
+            raise IssueCommandError(
+                "conflict",
+                "resume the open claim handoff before completing this possession",
+            )
+        if not leases.delete_lease(
+            conn, issue_id, current_generation, commit=False
+        ):
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation changed before release",
+            )
         issue_activity.record_claim_completed(
-            conn, actor_id=actor["id"], issue_id=issue_id, commit=False
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            generation=current_generation,
+            commit=False,
         )
 
 
 def decline_delegation(
-    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    generation: object | None = None,
 ) -> list[dict]:
     """Decline a delegation handed to you (decline): remove YOURSELF from the contributor
     set so the work is visibly refused, not silently dropped, and can be re-routed. Returns
@@ -213,16 +482,52 @@ def decline_delegation(
     actor = _require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         _visible_issue(conn, actor, issue_id)
-        if not contributors_data.remove_contributor(
-            conn, issue_id, actor["id"], commit=False
-        ):
+        if not contributors_data.is_contributor(conn, issue_id, actor["id"]):
             raise IssueCommandError(
                 "not_found", "you are not a delegated contributor on this issue"
             )
         held = leases.get_lease(conn, issue_id)
+        released_generation = None
         if held is not None and held["holder_id"] == actor["id"]:
-            leases.delete_lease(conn, issue_id, commit=False)
+            if held["active"]:
+                released_generation = _matching_lease_generation(
+                    held, generation
+                )
+            else:
+                # An expired row is not a current possession. A generationless
+                # pre-claim decline therefore leaves it for the next acquisition
+                # to replace instead of performing any unfenced deletion.
+                if generation is not None:
+                    released_generation = _matching_lease_generation(
+                        held, generation
+                    )
+                else:
+                    # The immediate writer lock makes the server-observed expired
+                    # generation an exact fence; no replacement can appear between
+                    # this read and deletion.
+                    released_generation = held["generation"]
+        elif generation is not None:
+            _normalize_lease_generation(generation, required=True)
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation is stale; fetch the current lease before retrying",
+            )
+        if not contributors_data.remove_contributor(
+            conn, issue_id, actor["id"], commit=False
+        ):
+            raise RuntimeError("delegation disappeared inside its write transaction")
+        if released_generation is not None and not leases.delete_lease(
+            conn, issue_id, released_generation, commit=False
+        ):
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation changed before release",
+            )
         issue_activity.record_delegation_declined(
-            conn, actor_id=actor["id"], issue_id=issue_id, commit=False
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            released_generation=released_generation,
+            commit=False,
         )
         return contributors_data.list_contributors(conn, issue_id)

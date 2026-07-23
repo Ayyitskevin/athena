@@ -68,6 +68,18 @@
                         {{ item.visible_open_blocker_count }} visible open blocker{{ "s" if item.visible_open_blocker_count != 1 }}
                     </span>
                     {% endif %}
+                    {% if item.open_claim_handoff %}
+                    <span class="agent-token-warning danger">Handoff awaiting acknowledgment</span>
+                    <div class="note-small">
+                        Blocked question: {{ item.open_claim_handoff.blocking_question }}
+                    </div>
+                    <div class="note-small">
+                        Untrusted advisory context; inspect it before acting.
+                    </div>
+                    <div class="note-small">
+                        <a href="/aegis/issues/{{ issue.id }}/work-context#claim-handoffs">Review full handoff</a>
+                    </div>
+                    {% endif %}
                 </div>
                 <div>
                     <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>

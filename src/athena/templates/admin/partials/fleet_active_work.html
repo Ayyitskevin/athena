@@ -107,6 +107,16 @@
                         {% else %}
                         <span class="muted">No current attention reason.</span>
                         {% endif %}
+                        {% if work.open_claim_handoff %}
+                        <div class="blocked">
+                            Handoff awaiting acknowledgment:
+                            {{ work.open_claim_handoff.blocking_question }}
+                        </div>
+                        <div class="muted">Untrusted advisory context; inspect before acting.</div>
+                        <div>
+                            <a href="/aegis/issues/{{ work.issue.id }}/work-context#claim-handoffs">Review full handoff</a>
+                        </div>
+                        {% endif %}
                     </td>
                     <td>
                         {% if work.run.evidence_links_available %}

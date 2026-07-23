@@ -20,6 +20,15 @@ from athena.core import db
 from athena.mcp.client import AthenaClient, AthenaError
 
 
+LEASE_GENERATION = "a" * 32
+HANDOFF_ARGUMENTS = {
+    "attempted_work": "Reproduced the blocker.",
+    "evidence": ["focused test failed"],
+    "blocking_question": "Which behavior should win?",
+    "resume_instructions": "Choose the behavior and rerun the focused test.",
+}
+
+
 def _client(tmp_path, name) -> tuple[TestClient, AthenaClient]:
     """A TestClient with a real admin bearer token set, wrapped in an AthenaClient.
     Returns both so a test can still bootstrap via the raw client if needed."""
@@ -118,14 +127,32 @@ MUTATION_CASES = [
         "POST",
         "/issues/7/yield",
         lambda c, k: c.yield_claim(
-            7, reason="blocked", note="waiting", idempotency_key=k
+            7,
+            generation=LEASE_GENERATION,
+            reason="blocked",
+            note="waiting",
+            idempotency_key=k,
+            **HANDOFF_ARGUMENTS,
+        ),
+    ),
+    (
+        "resume_claim_handoff",
+        "POST",
+        "/issues/7/claim-handoffs/" + ("b" * 32) + "/resume",
+        lambda c, k: c.resume_claim_handoff(
+            7,
+            "b" * 32,
+            generation=LEASE_GENERATION,
+            idempotency_key=k,
         ),
     ),
     (
         "complete_claim",
         "POST",
         "/issues/7/complete",
-        lambda c, k: c.complete_claim(7, idempotency_key=k),
+        lambda c, k: c.complete_claim(
+            7, generation=LEASE_GENERATION, idempotency_key=k
+        ),
     ),
     (
         "decline_delegation",
@@ -251,8 +278,25 @@ MCP_MUTATION_CASES = [
     ("assign_issue", {"issue_id": 7}),
     ("delegate_issue", {"issue_id": 7, "agent_user_id": 9}),
     ("claim_issue", {"issue_id": 7, "if_match": '"issue-v1"'}),
-    ("yield_claim", {"issue_id": 7, "reason": "blocked", "note": "waiting"}),
-    ("complete_claim", {"issue_id": 7}),
+    (
+        "yield_claim",
+        {
+            "issue_id": 7,
+            "generation": LEASE_GENERATION,
+            "reason": "blocked",
+            "note": "waiting",
+            **HANDOFF_ARGUMENTS,
+        },
+    ),
+    (
+        "resume_claim_handoff",
+        {
+            "issue_id": 7,
+            "handoff_token": "b" * 32,
+            "generation": LEASE_GENERATION,
+        },
+    ),
+    ("complete_claim", {"issue_id": 7, "generation": LEASE_GENERATION}),
     ("decline_delegation", {"issue_id": 7}),
     ("comment_on_issue", {"issue_id": 7, "body": "x"}),
     ("archive_issue", {"issue_id": 7}),
@@ -342,12 +386,21 @@ def test_yield_client_forwards_reason_and_note():
     client = AthenaClient(client=transport)
 
     assert client.yield_claim(
-        7, reason="blocked", note="waiting"
+        7,
+        generation=LEASE_GENERATION,
+        reason="blocked",
+        note="waiting",
+        **HANDOFF_ARGUMENTS,
     ) == {"ok": True}
 
     method, path, kwargs = transport.calls.pop()
     assert (method, path) == ("POST", "/issues/7/yield")
-    assert kwargs["json"] == {"reason": "blocked", "note": "waiting"}
+    assert kwargs["json"] == {
+        "generation": LEASE_GENERATION,
+        "reason": "blocked",
+        **HANDOFF_ARGUMENTS,
+        "note": "waiting",
+    }
 
 
 def test_mutation_helper_merges_existing_headers_case_insensitively():
@@ -1024,10 +1077,24 @@ def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
     ("tool_name", "arguments"),
     [
         ("claim_issue", {"issue_id": 7}),
-        ("yield_claim", {"issue_id": 7, "reason": "other"}),
         (
             "yield_claim",
-            {"issue_id": 7, "reason": "blocked", "note": "x" * 501},
+            {
+                "issue_id": 7,
+                "generation": LEASE_GENERATION,
+                "reason": "other",
+                **HANDOFF_ARGUMENTS,
+            },
+        ),
+        (
+            "yield_claim",
+            {
+                "issue_id": 7,
+                "generation": LEASE_GENERATION,
+                "reason": "blocked",
+                "note": "x" * 501,
+                **HANDOFF_ARGUMENTS,
+            },
         ),
     ],
 )
@@ -1193,6 +1260,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "get_issue_lease",
             "claim_issue",
             "yield_claim",
+            "resume_claim_handoff",
             "complete_claim",
             "decline_delegation",
             "comment_on_issue",
@@ -1319,7 +1387,15 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             assert "if_match" not in tools[tool_name].inputSchema["properties"]
 
         yield_schema = tools["yield_claim"].inputSchema
-        assert {"issue_id", "reason"} <= set(yield_schema["required"])
+        assert {
+            "issue_id",
+            "generation",
+            "reason",
+            "attempted_work",
+            "evidence",
+            "blocking_question",
+            "resume_instructions",
+        } <= set(yield_schema["required"])
         assert "note" not in set(yield_schema["required"])
         assert set(yield_schema["properties"]["reason"]["enum"]) == {
             "needs_input",
@@ -1332,6 +1408,17 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             if option["type"] == "string"
         )
         assert note_string["maxLength"] == 500
+        assert yield_schema["properties"]["evidence"]["maxItems"] == 10
+        assert (
+            yield_schema["properties"]["evidence"]["items"]["maxLength"]
+            == 1000
+        )
+        resume_schema = tools["resume_claim_handoff"].inputSchema
+        assert {
+            "issue_id",
+            "handoff_token",
+            "generation",
+        } <= set(resume_schema["required"])
 
         # Read-only operator tools are wired through FastMCP, not merely client helpers.
         asyncio.run(server.call_tool("get_agent_run_health", {}))
@@ -1433,15 +1520,18 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
                 {"issue_id": issue["id"], "if_match": reviewed["_etag"]},
             )
         )
-        assert ath.get_issue_lease(issue["id"])["holder_id"] == 1
+        lease = ath.get_issue_lease(issue["id"])
+        assert lease["holder_id"] == 1
 
         asyncio.run(
             server.call_tool(
                 "yield_claim",
                 {
                     "issue_id": issue["id"],
+                    "generation": lease["generation"],
                     "reason": "needs_input",
                     "note": "operator decision",
+                    **HANDOFF_ARGUMENTS,
                 },
             )
         )
@@ -1453,6 +1543,34 @@ def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
         ]
         assert len(yielded) == 1
         assert yielded[0]["run_id"] == "mcp-yield-run"
+
+        open_handoff = ath.get_issue_work_context(str(issue["id"]))[
+            "claim_handoffs"
+        ]["open"]
+        asyncio.run(
+            server.call_tool(
+                "claim_issue",
+                {"issue_id": issue["id"], "if_match": reviewed["_etag"]},
+            )
+        )
+        replacement = ath.get_issue_lease(issue["id"])
+        assert replacement["open_claim_handoff"]["handoff_token"] == (
+            open_handoff["handoff_token"]
+        )
+        asyncio.run(
+            server.call_tool(
+                "resume_claim_handoff",
+                {
+                    "issue_id": issue["id"],
+                    "handoff_token": open_handoff["handoff_token"],
+                    "generation": replacement["generation"],
+                    "resume_note": "context received",
+                },
+            )
+        )
+        assert ath.get_issue_work_context(str(issue["id"]))[
+            "claim_handoffs"
+        ]["open"] is None
 
         stale_issue = ath.create_issue(title="MCP stale claim")
         stale = ath.get_issue(str(stale_issue["id"]))

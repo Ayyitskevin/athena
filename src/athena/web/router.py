@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from athena import config
 from athena.aegis import (
+    claim_handoffs,
     comment_commands,
     comments,
     contributors,
@@ -875,6 +876,9 @@ def _render_issue_detail(
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
         "contributors": contributors.list_contributors(conn, issue_id),
+        "open_claim_handoff": claim_handoffs.get_open_handoff(
+            conn, issue_id
+        ),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": visible_projects,

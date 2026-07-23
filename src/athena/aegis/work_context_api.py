@@ -189,6 +189,43 @@ class ActivityGroupOut(BaseModel):
     clipped: bool
 
 
+class ClaimHandoffEventOut(BaseModel):
+    event_id: int
+    actor_id: int
+    actor_name: str
+    created_at: str
+    run_id: str | None
+
+
+class ClaimHandoffResumeEventOut(ClaimHandoffEventOut):
+    lease_generation: str
+    note: str | None
+
+
+class ClaimHandoffOut(BaseModel):
+    handoff_token: str
+    issue_id: int
+    lease_generation: str
+    schema_version: Literal[1]
+    state: Literal["awaiting_resume", "resumed"]
+    reason: Literal["needs_input", "blocked", "capacity"]
+    note: str | None
+    attempted_work: str
+    evidence: list[str]
+    blocking_question: str
+    resume_instructions: str
+    yielded: ClaimHandoffEventOut
+    resumed: ClaimHandoffResumeEventOut | None
+    advisory_untrusted: Literal[True]
+
+
+class ClaimHandoffGroupOut(BaseModel):
+    open: ClaimHandoffOut | None
+    items: list[ClaimHandoffOut]
+    visible_total: int
+    clipped: bool
+
+
 AssertionNotMade = Literal[
     "claimed",
     "ready",
@@ -220,6 +257,7 @@ class IssueWorkContextOut(BaseModel):
     comments: CommentGroupOut
     references: ReferencesOut
     recent_activity: ActivityGroupOut
+    claim_handoffs: ClaimHandoffGroupOut
 
 
 @router.get("/{ref}/work-context", response_model=IssueWorkContextOut)

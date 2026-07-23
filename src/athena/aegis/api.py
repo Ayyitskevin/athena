@@ -7,7 +7,7 @@ Pydantic models validate the request body before our code runs (bad input ->
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import (
     APIRouter,
@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from athena import config
 from athena.aegis import (
+    claim_handoffs,
     comment_commands,
     comments,
     contributors,
@@ -299,6 +300,9 @@ def _issue_command_http_error(
         "invalid_precondition": 400,
         "precondition_too_large": 431,
         "precondition_failed": 412,
+        "lease_generation_required": 428,
+        "invalid_lease_generation": 422,
+        "lease_generation_mismatch": 409,
     }[exc.kind]
     return HTTPException(status_code=status_code, detail=exc.detail)
 
@@ -308,6 +312,17 @@ _PRECONDITION_HTTP = {
     "invalid_precondition": (400, "invalid_if_match"),
     "precondition_too_large": (431, "if_match_too_large"),
     "precondition_failed": (412, "precondition_failed"),
+}
+
+_LEASE_GENERATION_HTTP = {
+    "lease_generation_required": (428, "lease_generation_required"),
+    "invalid_lease_generation": (422, "invalid_lease_generation"),
+    "lease_generation_mismatch": (409, "lease_generation_mismatch"),
+}
+
+_PRIVATE_LEASE_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Vary": "Authorization, X-Athena-Actor",
 }
 
 
@@ -338,6 +353,14 @@ def _issue_command_error_response(
     response = _issue_precondition_response(exc)
     if response is not None:
         return response
+    generation_spec = _LEASE_GENERATION_HTTP.get(exc.kind)
+    if generation_spec is not None:
+        status_code, code = generation_spec
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": exc.detail, "code": code},
+            headers=_PRIVATE_LEASE_HEADERS,
+        )
     raise _issue_command_http_error(exc) from exc
 
 
@@ -1505,6 +1528,36 @@ class ContributorOut(BaseModel):
     added_at: str
 
 
+class ClaimHandoffEventOut(BaseModel):
+    event_id: int
+    actor_id: int
+    actor_name: str
+    created_at: str
+    run_id: str | None
+
+
+class ClaimHandoffResumeEventOut(ClaimHandoffEventOut):
+    lease_generation: str
+    note: str | None
+
+
+class ClaimHandoffOut(BaseModel):
+    handoff_token: str
+    issue_id: int
+    lease_generation: str
+    schema_version: Literal[1]
+    state: Literal["awaiting_resume", "resumed"]
+    reason: lease_commands.ClaimYieldReason
+    note: str | None
+    attempted_work: str
+    evidence: list[str]
+    blocking_question: str
+    resume_instructions: str
+    yielded: ClaimHandoffEventOut
+    resumed: ClaimHandoffResumeEventOut | None
+    advisory_untrusted: Literal[True]
+
+
 class LeaseOut(BaseModel):
     # The exclusive claim on an issue: who holds it, when it was taken, when it expires,
     # and whether that window is still open (active=false is an expired, reclaimable lease).
@@ -1513,23 +1566,75 @@ class LeaseOut(BaseModel):
     holder_name: str
     claimed_at: str
     expires_at: str
+    generation: str
     active: bool
+    open_claim_handoff: ClaimHandoffOut | None = None
+
+
+HandoffEvidenceItem = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=lease_commands.MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+    ),
+]
 
 
 class ClaimIn(BaseModel):
     # How long the lease should hold before it must be renewed. Omitted → the server
     # default. Bounded by the command to [MIN, MAX] lease seconds.
     lease_seconds: int | None = None
+    # Omit to acquire a free/expired lease. Supply the current value to renew the
+    # same active possession; a supplied stale value never becomes acquisition.
+    generation: str | None = None
 
 
 class YieldClaimIn(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    # Optional at the transport boundary so the command can return the stable
+    # 428 lease_generation_required error instead of a generic validation error.
+    generation: str | None = None
     reason: lease_commands.ClaimYieldReason
     note: str | None = Field(
         default=None,
         max_length=lease_commands.MAX_CLAIM_YIELD_NOTE_CHARS,
     )
+    attempted_work: str = Field(
+        min_length=1,
+        max_length=lease_commands.MAX_HANDOFF_ATTEMPTED_WORK_CHARS,
+    )
+    evidence: list[HandoffEvidenceItem] = Field(
+        max_length=lease_commands.MAX_HANDOFF_EVIDENCE_ITEMS
+    )
+    blocking_question: str = Field(
+        min_length=1,
+        max_length=lease_commands.MAX_HANDOFF_BLOCKING_QUESTION_CHARS,
+    )
+    resume_instructions: str = Field(
+        min_length=1,
+        max_length=lease_commands.MAX_HANDOFF_RESUME_INSTRUCTIONS_CHARS,
+    )
+
+
+class LeaseGenerationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    generation: str | None = None
+
+
+class ResumeClaimHandoffIn(LeaseGenerationIn):
+    resume_note: str | None = Field(
+        default=None,
+        max_length=lease_commands.MAX_HANDOFF_RESUME_NOTE_CHARS,
+    )
+
+
+class DeclineDelegationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    # Required only when decline would release this actor's active lease.
+    generation: str | None = None
 
 
 class ContributorAdd(BaseModel):
@@ -1614,6 +1719,7 @@ def remove_issue_contributor(
 @router.get("/{issue_id}/lease", response_model=LeaseOut | None)
 def get_issue_lease(
     issue_id: int,
+    response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | None:
@@ -1626,7 +1732,13 @@ def get_issue_lease(
         conn, actor, issue["project_id"]
     ):
         raise HTTPException(status_code=404, detail="no such issue")
-    return leases.get_lease(conn, issue_id)
+    response.headers.update(_PRIVATE_LEASE_HEADERS)
+    lease = leases.get_lease(conn, issue_id)
+    if lease is not None:
+        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(
+            conn, issue_id
+        )
+    return lease
 
 
 @router.post(
@@ -1638,6 +1750,7 @@ def get_issue_lease(
 def claim_issue(
     issue_id: int,
     request: Request,
+    response: Response,
     payload: ClaimIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1645,6 +1758,7 @@ def claim_issue(
     # Accept only against the exact root issue revision the claimant reviewed.
     # The command checks the raw If-Match under the lease's write transaction.
     lease_seconds = payload.lease_seconds if payload else None
+    response.headers.update(_PRIVATE_LEASE_HEADERS)
     kwargs = {} if lease_seconds is None else {"lease_seconds": lease_seconds}
     try:
         return lease_commands.claim_issue(
@@ -1652,60 +1766,115 @@ def claim_issue(
             actor=actor,
             issue_id=issue_id,
             if_match=_if_match_values(request),
+            generation=payload.generation if payload else None,
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
 
 
-@router.post("/{issue_id}/yield", status_code=204)
+@router.post(
+    "/{issue_id}/yield",
+    response_model=ClaimHandoffOut,
+    status_code=201,
+)
 def yield_issue_claim(
     issue_id: int,
     payload: YieldClaimIn,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> None:
+) -> dict | JSONResponse:
     # Yield is a truthful holder action, not completion or reassignment. The
     # command atomically releases the lease and records the run-stamped reason.
     try:
-        lease_commands.yield_claim(
+        handoff = lease_commands.yield_claim(
             conn,
             actor=actor,
             issue_id=issue_id,
+            generation=payload.generation,
             reason=payload.reason,
             note=payload.note,
+            attempted_work=payload.attempted_work,
+            evidence=payload.evidence,
+            blocking_question=payload.blocking_question,
+            resume_instructions=payload.resume_instructions,
         )
+        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        return handoff
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        return _issue_command_error_response(exc)
 
 
-@router.post("/{issue_id}/complete", status_code=204)
-def complete_issue_claim(
+@router.post(
+    "/{issue_id}/claim-handoffs/{handoff_token}/resume",
+    response_model=ClaimHandoffOut,
+)
+def resume_issue_claim_handoff(
     issue_id: int,
+    handoff_token: str,
+    payload: ResumeClaimHandoffIn,
+    response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> None:
+) -> dict | JSONResponse:
+    try:
+        handoff = lease_commands.resume_claim_handoff(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            handoff_token=handoff_token,
+            generation=payload.generation,
+            resume_note=payload.resume_note,
+        )
+        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        return handoff
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_error_response(exc)
+
+
+@router.post("/{issue_id}/complete", status_code=204, response_model=None)
+def complete_issue_claim(
+    issue_id: int,
+    response: Response,
+    payload: LeaseGenerationIn | None = None,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None | JSONResponse:
     # Complete: release the lease you hold (the issue is freed for the next claimant).
     # 409 if you don't hold an active lease. Releases the coordination lease only — status
     # changes go through the ordinary status command.
     try:
-        lease_commands.complete_claim(conn, actor=actor, issue_id=issue_id)
+        lease_commands.complete_claim(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            generation=payload.generation if payload is not None else None,
+        )
+        response.headers.update(_PRIVATE_LEASE_HEADERS)
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        return _issue_command_error_response(exc)
 
 
 @router.post("/{issue_id}/decline", response_model=list[ContributorOut])
 def decline_issue_delegation(
     issue_id: int,
+    response: Response,
+    payload: DeclineDelegationIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> list[dict]:
+) -> list[dict] | JSONResponse:
     # Decline: remove yourself from the contributor set so the work is visibly refused, not
     # silently dropped. 404 if you weren't a delegated contributor. Returns the remaining
     # contributors; any lease you held is released with the same act.
     try:
-        return lease_commands.decline_delegation(
-            conn, actor=actor, issue_id=issue_id
+        result = lease_commands.decline_delegation(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            generation=payload.generation if payload else None,
         )
+        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        return result
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        return _issue_command_error_response(exc)

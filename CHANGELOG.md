@@ -19,9 +19,15 @@ follow semantic versioning while the project remains pre-1.0.
 - An admin-only active claimed-work projection across Mission Control, REST, and
   MCP, joining durable leases to exact claim runs, cooperative reports, current
   holder access, blockers, and replay evidence without inferring process health.
-- A holder-only REST and MCP claim-yield command with structured reasons and an
-  optional bounded note. It atomically releases the active lease and records a
-  run-stamped `claim_yielded` event without changing or reassigning the issue.
+- Generation-fenced issue leases across REST, MCP, and Active Work. Every fresh
+  acquisition receives a new opaque generation, renew/release mutations require
+  the exact current generation, and delayed commands from an earlier possession
+  fail without exposing the replacement token.
+- Typed claim handoffs across yield, claim, work context, delegation inboxes,
+  Active Work, and browser views. A holder yields bounded attempted work,
+  evidence, a blocking question, and resume instructions atomically with its
+  lease release; the next holder must explicitly acknowledge the untrusted
+  advisory context before completing the claim.
 - Project- and sprint-scoped fleet boards with explicit agent, human, and
   unassigned swimlanes; filter state survives HTMX, drag, and no-JS moves while
   private project and sprint names remain visibility-gated.

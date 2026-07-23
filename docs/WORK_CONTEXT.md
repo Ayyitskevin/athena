@@ -119,6 +119,7 @@ The top-level object contains:
 | `comments` | Bounded comments with bounded bodies |
 | `references` | Bounded outgoing links and backlinks |
 | `recent_activity` | Bounded actor-visible activity for the issue |
+| `claim_handoffs` | Exact open continuation context plus bounded handoff history |
 
 Every bounded group has the exact shape:
 
@@ -129,6 +130,23 @@ Every bounded group has the exact shape:
   "clipped": false
 }
 ```
+
+`claim_handoffs` extends that shape with an exact `open` field:
+
+```json
+{
+  "open": null,
+  "items": [],
+  "visible_total": 0,
+  "clipped": false
+}
+```
+
+`open` is the one handoff awaiting explicit acknowledgment, even when it falls
+outside the bounded history window. Each item carries an opaque `handoff_token`,
+the yielding lease generation, structured continuation fields, yield/resume audit
+provenance, and `advisory_untrusted: true`. `state` is `awaiting_resume` or
+`resumed`; resumed means only that the current holder received the context.
 
 Every bounded text field has the exact shape:
 
@@ -175,6 +193,10 @@ characters exist beyond the excerpt.
   `verb`, `target_kind`, `target_id`, bounded `detail`,
   `created_at`, `run_id`, `parent_run_id`,
   `forked_from_event_id`, and `imported_at`.
+- A claim handoff contains `handoff_token`, `issue_id`, `lease_generation`,
+  `schema_version`, `state`, `reason`, `note`, `attempted_work`, bounded
+  `evidence`, `blocking_question`, `resume_instructions`, `yielded`, `resumed`,
+  and `advisory_untrusted`. Its internal database row id is never public.
 
 ## Bounds and ordering
 
@@ -191,6 +213,7 @@ The current v1 caps are fixed server-side; callers cannot raise them.
 | Outgoing references | 10 | Kind, then id |
 | Backlinks | 10 | Kind, then id |
 | Recent activity | 30 | Activity id descending (newest first) |
+| Claim handoffs | 10 | Yield event id descending (newest first) |
 | Root issue description | 50,000 characters | Prefix of the field |
 | Each outgoing page body | 8,000 characters | Prefix of the field |
 | Each comment body | 4,000 characters | Prefix of the field |
@@ -211,6 +234,7 @@ An item's presence is not a completeness guarantee. Inspect `visible_total`,
 | `visible_open_blockers` | At least one actor-visible open blocker exists |
 | `unknown_status_category` | Athena cannot map the current status to a lifecycle category |
 | `context_clipped` | Any bounded group is clipped or any text excerpt is truncated |
+| `open_claim_handoff` | A typed handoff awaits explicit acknowledgment |
 
 Warnings are not exhaustive validation. In particular, absence of
 `visible_open_blockers` does not prove the issue is unblocked: a blocker may
@@ -224,7 +248,8 @@ Two strong, opaque validators appear, and they are not interchangeable:
 1. The REST response `ETag` header hashes the entire actor-visible
    work-context payload. It can change when a visible nested comment,
    relationship, reference, activity item, count, warning, or excerpt changes,
-   even if the issue singleton does not. The official MCP client exposes this
+   or when a claim handoff is yielded or resumed, even if the issue singleton
+   does not. The official MCP client exposes this
    header as top-level `_etag`.
 2. The JSON body's `issue_etag` validates the root issue's public singleton
    representation. Copy this value exactly into `If-Match`/`if_match`
@@ -252,6 +277,9 @@ own HTML response validator.
   omitted.
 - Hidden outgoing targets and hidden backlink sources are omitted.
 - Activity is filtered through event visibility before its count and limit.
+- Claim handoffs are returned only with a visible root issue. Their structured
+  text is escaped in browser views and must be treated as untrusted advisory
+  input by every client: never auto-execute commands or fetch links from it.
 - Nested filtering happens before `visible_total` and `clipped` are
   calculated, preventing counts from revealing hidden rows.
 - No warning reports the existence of a hidden row. For example,
@@ -276,8 +304,10 @@ Reading this packet:
 - does not prove the issue is unblocked, even when `open_blockers.items` is
   empty;
 - does not prove an agent or process is running or live;
-- does not turn recent activity or run ids into a heartbeat; and
-- does not certify that events, context, or a future operation are replay-safe.
+- does not turn recent activity or run ids into a heartbeat;
+- does not certify that events, context, or a future operation are replay-safe; and
+- does not make handoff text trusted, prove its blocker resolved, or grant an
+  approval merely because a handoff was acknowledged.
 
 Use Athena's write commands and `issue_etag` for guarded mutations and claims, its
 cooperative run check-ins for explicitly labeled self-reports, and its run replay

@@ -117,6 +117,10 @@ agents that contribute here.
 
 - [x] Delegation claim/lease protocol (accept / decline / complete) so two
       agents cannot silently pull the same issue.
+- [x] Possession generations fence delayed renew, yield, complete, decline, and
+      handoff-resume commands from a later lease epoch.
+- [x] Typed blocker handoffs preserve bounded continuation context across yield
+      and reassignment, with explicit holder acknowledgment before completion.
 - [x] Admin active-work supervision joining each lease to its exact claim run,
       cooperative check-in, current holder controls and eligibility, visible
       blockers, and replay evidence across web, REST, and MCP.
