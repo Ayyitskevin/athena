@@ -19,6 +19,9 @@ follow semantic versioning while the project remains pre-1.0.
 - An admin-only active claimed-work projection across Mission Control, REST, and
   MCP, joining durable leases to exact claim runs, cooperative reports, current
   holder access, blockers, and replay evidence without inferring process health.
+- A holder-only REST and MCP claim-yield command with structured reasons and an
+  optional bounded note. It atomically releases the active lease and records a
+  run-stamped `claim_yielded` event without changing or reassigning the issue.
 - Project- and sprint-scoped fleet boards with explicit agent, human, and
   unassigned swimlanes; filter state survives HTMX, drag, and no-JS moves while
   private project and sprint names remain visibility-gated.
@@ -31,6 +34,9 @@ follow semantic versioning while the project remains pre-1.0.
 
 ### Changed
 
+- Claim acquisition and same-holder renewal now require exactly one strong root
+  issue ETag across REST and MCP, with explicit missing, malformed, oversized, and
+  stale-precondition responses and durable exact-retry replay.
 - The test gate runs in parallel (`pytest -n 4` via pytest-xdist), cutting the
   suite from ~16 minutes to ~3 — the suite was already deterministic
   (no sleeps, per-test databases), so no test changed.

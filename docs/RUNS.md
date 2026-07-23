@@ -75,6 +75,14 @@ blockers, and replay readiness. The same admin-only projection is available at
 snapshot and reports explicit attention reasons; it never treats a claim or
 heartbeat as proof that work is executing.
 
+Claim acquisition and same-holder renewal require the current strong root issue
+ETag. When the active holder instead calls `POST /issues/{id}/yield` or MCP
+`yield_claim`, Athena atomically removes the lease and records `claim_yielded` with
+the supplied reason. Claim, renewal, and yield events inherit the ambient run
+headers/context, so use the same stable run id for the whole logical execution.
+Yield does not change issue assignment, contributors, status, dependencies, or
+automatically select another holder, and it does not finish or close the run.
+
 See [ACTIVE_WORK.md](ACTIVE_WORK.md) for the complete operator workflow, retry and
 restart behavior, privacy contract, bounds, and limitations.
 

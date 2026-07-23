@@ -691,6 +691,28 @@ def record_claim_completed(
     )
 
 
+def record_claim_yielded(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    reason: str,
+    note: str | None,
+    commit: bool = True,
+) -> None:
+    """Record an honest release that does not assert completion or reassignment."""
+    detail = reason if note is None else f"{reason}: {note}"
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="claim_yielded",
+        target_kind="issue",
+        target_id=issue_id,
+        detail=detail,
+        commit=commit,
+    )
+
+
 def record_delegation_declined(
     conn: sqlite3.Connection,
     *,

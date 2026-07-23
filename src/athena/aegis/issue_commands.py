@@ -32,6 +32,7 @@ ErrorKind = Literal[
     "not_found",
     "invalid",
     "conflict",
+    "precondition_required",
     "invalid_precondition",
     "precondition_too_large",
     "precondition_failed",
@@ -107,6 +108,55 @@ def _writable_issue(
     conn: sqlite3.Connection, actor: dict, issue_id: int
 ) -> dict:
     return _modifiable_issue(conn, _visible_issue(conn, actor, issue_id), actor)
+
+
+def _check_issue_precondition(
+    conn: sqlite3.Connection,
+    issue: dict,
+    if_match: list[str] | None,
+    *,
+    required_detail: str | None = None,
+    exact: bool = False,
+) -> None:
+    """Evaluate one issue precondition against the current public representation.
+
+    The caller must hold the write transaction that owns the mutation. Optional
+    issue updates retain normal HTTP If-Match list/wildcard semantics; commands
+    using exact mode require one actual strong tag so callers cannot bypass a
+    reviewed-revision gate with a wildcard or a list.
+    """
+    if if_match is None:
+        if required_detail is not None:
+            raise IssueCommandError(
+                "precondition_required",
+                required_detail,
+            )
+        return
+
+    current_etag = issue_etags.current_etag(conn, issue)
+    try:
+        condition = etag.parse_if_match(if_match)
+        matches = (
+            condition.single_strong_tag() == current_etag
+            if exact
+            else condition.matches(current_etag)
+        )
+    except etag.IfMatchTooLarge as exc:
+        raise IssueCommandError(
+            "precondition_too_large",
+            str(exc),
+        ) from exc
+    except etag.InvalidIfMatch as exc:
+        raise IssueCommandError(
+            "invalid_precondition",
+            str(exc),
+        ) from exc
+    if not matches:
+        raise IssueCommandError(
+            "precondition_failed",
+            "If-Match precondition failed",
+            current_etag=current_etag,
+        )
 
 
 def get_writable_issue(
@@ -378,26 +428,7 @@ def _update_issue(
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
         # writers holding the same tag cannot both pass and mutate.
-        if if_match is not None:
-            current_etag = issue_etags.current_etag(conn, before)
-            try:
-                condition = etag.parse_if_match(if_match)
-            except etag.IfMatchTooLarge as exc:
-                raise IssueCommandError(
-                    "precondition_too_large",
-                    str(exc),
-                ) from exc
-            except etag.InvalidIfMatch as exc:
-                raise IssueCommandError(
-                    "invalid_precondition",
-                    str(exc),
-                ) from exc
-            if not condition.matches(current_etag):
-                raise IssueCommandError(
-                    "precondition_failed",
-                    "If-Match precondition failed",
-                    current_etag=current_etag,
-                )
+        _check_issue_precondition(conn, before, if_match)
 
         if "project_id" in provided:
             updated = issues.set_project(

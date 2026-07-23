@@ -8,17 +8,24 @@ does not create a second run table, poll processes, or mutate work.
 ## Operator workflow
 
 1. Create or assign an issue and add the agent as an assignee or contributor.
-2. Give one logical execution a stable run id. MCP clients set a run with the normal
+2. Read the root issue and retain the REST response `ETag` header (exposed as
+   `_etag` by the official client), or read Agent Work Context and retain the JSON
+   body's `issue_etag`. The context packet's top-level `_etag` is a different
+   validator and cannot guard a claim.
+3. Give one logical execution a stable run id. MCP clients set a run with the normal
    run context; direct REST clients send `X-Athena-Run`.
-3. Claim the issue under that same run id. Claim and renewal remain the exclusive,
-   retry-safe lease protocol.
-4. While work continues, send `heartbeat_agent_run(run_id)` (or
+4. Claim the issue under that same run id, passing the root issue tag as exactly one
+   strong `If-Match` value (REST) or `if_match` argument (MCP). Acquisition and
+   same-holder renewal use the same guarded, retry-safe lease protocol.
+5. While work continues, send `heartbeat_agent_run(run_id)` (or
    `PUT /agent-runs/heartbeat`) and make audited writes under the same run id.
-5. Inspect **Admin → Agent Mission Control** at `/admin/agents/runs`, call
+6. Inspect **Admin → Agent Mission Control** at `/admin/agents/runs`, call
    `GET /fleet/active-work`, or use the MCP tool `get_fleet_active_work`.
-6. Inspect lineage or the replay artifact for a tagged claim run. Capture the
+7. Inspect lineage or the replay artifact for a tagged claim run. Capture the
    artifact in the handoff when needed, transition the issue through its normal
    audited workflow, and complete the claim when the work is handed off or done.
+   If the holder cannot responsibly continue, yield it with `needs_input`, `blocked`,
+   or `capacity` and an optional note instead of letting the lease imply progress.
 
 The projection is read-only. It never releases or transfers a lease, resumes or
 revokes an account, approves an action, or changes issue status. Existing
@@ -87,16 +94,37 @@ authorized for a separate gated action.
 
 No new mutable state is introduced. Leases, activity, account controls, check-ins,
 dependencies, and token revocation already survive restart in Athena's SQLite
-database. Repeating an active claim by the same holder renews the single lease row;
-an expired row is reacquired. Either path records a new claim-run event, and the
-projection deterministically chooses the newest event id even when timestamps tie.
-Repeating a heartbeat upserts the same agent/run row.
+database. Every acquisition and same-holder renewal requires exactly one strong root
+issue validator. A missing precondition returns `428 precondition_required` without
+disclosing a current tag and with `Cache-Control: no-store`; a wildcard, weak, empty,
+multiple, or duplicate tag returns `400 invalid_if_match`; an oversized header
+returns `431`; and one stale tag returns `412 precondition_failed` with the current
+root issue tag. Authentication, visibility, claimant eligibility, lease-window, and
+active competing-holder failures are resolved before this guard.
+
+Repeating an active claim by the same holder with a current tag renews the single
+lease row; an expired row is reacquired. Either path records a new claim-run event,
+and the projection deterministically chooses the newest event id even when timestamps
+tie. An exact retry with the same `Idempotency-Key` replays its original response.
+After `412`, fetch a new root issue `_etag` or work-context `issue_etag` and submit a
+new logical request with a new key. Repeating a heartbeat upserts the same agent/run
+row.
+
+`POST /issues/{id}/yield` and MCP `yield_claim` are available only to the current
+active holder; admin status is not an override. The strict request reason is
+`needs_input`, `blocked`, or `capacity`. An optional note is limited to 500 raw
+characters, trimmed, and omitted when blank. Success atomically removes the lease
+and appends a `claim_yielded` activity event under the ambient run context. It leaves
+assignee, contributors, status, dependencies, and every other issue field unchanged,
+and it never reassigns the issue. An absent or expired lease, or a non-holder caller,
+returns `409`; exact idempotent retries replay the original result.
 
 Expired lease rows remain visible until a new eligible claim replaces them or the
-holder declines its delegation; completion removes only an active lease. Athena
-does not perform automatic takeover after a stale check-in. After restart, clients
-resume by reusing the logical run id, refreshing the heartbeat, and reacquiring or
-completing the lease through the existing commands.
+holder declines its delegation; completion and yield remove only an active lease.
+Athena does not perform automatic takeover or reassignment after a stale check-in or
+yield. After restart, clients resume by reusing the logical run id, refreshing the
+heartbeat, fetching a current root issue tag, and reacquiring, yielding, or completing
+the lease through the existing commands.
 
 ## Limitations
 

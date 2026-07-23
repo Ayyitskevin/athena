@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from athena import config
 from athena.aegis import (
@@ -295,6 +295,7 @@ def _issue_command_http_error(
         "not_found": 404,
         "invalid": 422,
         "conflict": 409,
+        "precondition_required": 428,
         "invalid_precondition": 400,
         "precondition_too_large": 431,
         "precondition_failed": 412,
@@ -303,6 +304,7 @@ def _issue_command_http_error(
 
 
 _PRECONDITION_HTTP = {
+    "precondition_required": (428, "precondition_required"),
     "invalid_precondition": (400, "invalid_if_match"),
     "precondition_too_large": (431, "if_match_too_large"),
     "precondition_failed": (412, "precondition_failed"),
@@ -317,7 +319,11 @@ def _issue_precondition_response(
     if spec is None:
         return None
     status_code, code = spec
-    headers = {"ETag": exc.current_etag} if exc.current_etag is not None else None
+    headers = {}
+    if exc.current_etag is not None:
+        headers["ETag"] = exc.current_etag
+    if exc.kind == "precondition_required":
+        headers["Cache-Control"] = "no-store"
     return JSONResponse(
         status_code=status_code,
         content={"detail": exc.detail, "code": code},
@@ -343,6 +349,19 @@ def _if_match_values(request: Request) -> list[str] | None:
         if name.lower() == b"if-match"
     ]
     return values or None
+
+
+_CLAIM_IF_MATCH_OPENAPI = {
+    "parameters": [
+        {
+            "name": "If-Match",
+            "in": "header",
+            "required": True,
+            "description": "Exactly one strong root issue ETag.",
+            "schema": {"type": "string"},
+        }
+    ]
+}
 
 
 def _validate_key(key: str) -> str:
@@ -1503,6 +1522,16 @@ class ClaimIn(BaseModel):
     lease_seconds: int | None = None
 
 
+class YieldClaimIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reason: lease_commands.ClaimYieldReason
+    note: str | None = Field(
+        default=None,
+        max_length=lease_commands.MAX_CLAIM_YIELD_NOTE_CHARS,
+    )
+
+
 class ContributorAdd(BaseModel):
     user_id: int
 
@@ -1600,20 +1629,51 @@ def get_issue_lease(
     return leases.get_lease(conn, issue_id)
 
 
-@router.post("/{issue_id}/claim", response_model=LeaseOut, status_code=201)
+@router.post(
+    "/{issue_id}/claim",
+    response_model=LeaseOut,
+    status_code=201,
+    openapi_extra=_CLAIM_IF_MATCH_OPENAPI,
+)
 def claim_issue(
     issue_id: int,
+    request: Request,
     payload: ClaimIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
-    # Accept: take the exclusive lease. 409 if another agent holds it (the interlock);
-    # re-claiming your own lease renews it. The command owns the atomic acquire + event.
-    lease_seconds = (payload.lease_seconds if payload else None)
+) -> dict | JSONResponse:
+    # Accept only against the exact root issue revision the claimant reviewed.
+    # The command checks the raw If-Match under the lease's write transaction.
+    lease_seconds = payload.lease_seconds if payload else None
     kwargs = {} if lease_seconds is None else {"lease_seconds": lease_seconds}
     try:
         return lease_commands.claim_issue(
-            conn, actor=actor, issue_id=issue_id, **kwargs
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            if_match=_if_match_values(request),
+            **kwargs,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_error_response(exc)
+
+
+@router.post("/{issue_id}/yield", status_code=204)
+def yield_issue_claim(
+    issue_id: int,
+    payload: YieldClaimIn,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    # Yield is a truthful holder action, not completion or reassignment. The
+    # command atomically releases the lease and records the run-stamped reason.
+    try:
+        lease_commands.yield_claim(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            reason=payload.reason,
+            note=payload.note,
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc

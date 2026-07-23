@@ -397,15 +397,32 @@ class AthenaClient:
         self,
         issue_id: int,
         *,
+        if_match: str,
         lease_seconds: int | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Take the exclusive lease on a delegated issue (accept). 409 if another agent
-        holds it; re-claiming your own lease renews the window."""
+        """Claim against the exact strong root issue ETag the caller reviewed."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/claim",
             json=self._params(lease_seconds=lease_seconds),
+            if_match=if_match,
+            idempotency_key=idempotency_key,
+        )
+
+    def yield_claim(
+        self,
+        issue_id: int,
+        *,
+        reason: str,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Release this caller's live claim with an audited non-completion reason."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/yield",
+            json=self._params(reason=reason, note=note),
             idempotency_key=idempotency_key,
         )
 

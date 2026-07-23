@@ -36,10 +36,30 @@ class IfMatch:
 
     wildcard: bool
     _strong_tags: frozenset[str]
+    _entity_tag_count: int
+    _weak_tag_count: int
 
     def matches(self, current_etag: str) -> bool:
         """Return whether this condition strongly matches ``current_etag``."""
         return self.wildcard or current_etag in self._strong_tags
+
+    def single_strong_tag(self) -> str:
+        """Return the sole submitted strong tag for an exact-revision command.
+
+        Generic HTTP ``If-Match`` permits a wildcard or a list. Commands such as
+        issue claiming deliberately require evidence of one exact reviewed
+        representation, so neither form may silently weaken that contract.
+        """
+        if (
+            self.wildcard
+            or self._entity_tag_count != 1
+            or self._weak_tag_count != 0
+            or len(self._strong_tags) != 1
+        ):
+            raise InvalidIfMatch(
+                "If-Match must contain exactly one strong entity tag"
+            )
+        return next(iter(self._strong_tags))
 
 
 def strong_etag(namespace: str, representation: object) -> str:
@@ -102,22 +122,36 @@ def parse_if_match(values: list[str]) -> IfMatch:
     length = len(combined)
     index = _skip_ows(combined, 0)
     if index == length:
-        return IfMatch(wildcard=False, _strong_tags=frozenset())
+        return IfMatch(
+            wildcard=False,
+            _strong_tags=frozenset(),
+            _entity_tag_count=0,
+            _weak_tag_count=0,
+        )
 
     if combined[index] == "*":
         index = _skip_ows(combined, index + 1)
         if index != length:
             raise InvalidIfMatch("If-Match wildcard must be the sole value")
-        return IfMatch(wildcard=True, _strong_tags=frozenset())
+        return IfMatch(
+            wildcard=True,
+            _strong_tags=frozenset(),
+            _entity_tag_count=0,
+            _weak_tag_count=0,
+        )
 
     strong_tags: set[str] = set()
     tag_count = 0
+    entity_tag_count = 0
+    weak_tag_count = 0
     while True:
         index = _skip_ows(combined, index)
         if index == length:
             return IfMatch(
                 wildcard=False,
                 _strong_tags=frozenset(strong_tags),
+                _entity_tag_count=entity_tag_count,
+                _weak_tag_count=weak_tag_count,
             )
         if combined[index] == ",":
             tag_count += 1
@@ -147,9 +181,12 @@ def parse_if_match(values: list[str]) -> IfMatch:
         index += 1
         raw_tag = combined[tag_start:index]
         tag_count += 1
+        entity_tag_count += 1
         if tag_count > MAX_IF_MATCH_TAGS:
             raise IfMatchTooLarge(f"If-Match exceeds {MAX_IF_MATCH_TAGS} entity tags")
-        if not weak:
+        if weak:
+            weak_tag_count += 1
+        else:
             strong_tags.add(raw_tag)
 
         index = _skip_ows(combined, index)
@@ -157,6 +194,8 @@ def parse_if_match(values: list[str]) -> IfMatch:
             return IfMatch(
                 wildcard=False,
                 _strong_tags=frozenset(strong_tags),
+                _entity_tag_count=entity_tag_count,
+                _weak_tag_count=weak_tag_count,
             )
         if combined[index] != ",":
             raise InvalidIfMatch("If-Match entity tags must be comma-separated")

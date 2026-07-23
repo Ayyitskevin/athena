@@ -394,6 +394,59 @@ self-service projection. Admins see a bounded open-delegation projection for eve
 agent at `/admin/agents`, including an explicit warning when an agent was added to
 an issue in a private project it cannot access.
 
+## Claiming and yielding delegated work
+
+Before acquiring or renewing a lease, fetch `GET /issues/{id}` and copy its
+response `ETag` header (exposed as `_etag` by the official client), or fetch Agent
+Work Context and copy its JSON `issue_etag`. Do not use the context packet's
+top-level `_etag`. Pass the root tag, including its quotes, as the only `If-Match`
+field value:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8000/issues/42/claim \
+  -H "Authorization: Bearer $ATHENA_AGENT_TOKEN" \
+  -H "If-Match: $ATHENA_ISSUE_ETAG" \
+  -H 'Idempotency-Key: goal-123-claim-42' \
+  -H 'X-Athena-Run: goal-123' \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+A successful claim or renewal returns `201` with the lease body and no response
+`ETag`; obtain a root issue validator from an issue or work-context read for the
+next guarded logical request.
+
+MCP callers pass the same value as the required `if_match` argument to
+`claim_issue`. Acquisition and same-holder renewal both require exactly one strong
+root tag. Missing input returns `428 precondition_required` without a current tag
+and with `Cache-Control: no-store`; malformed, weak, wildcard, empty, multiple, or
+duplicate input returns `400 invalid_if_match`; oversized input returns `431`; and
+a stale tag returns `412 precondition_failed` with the current root issue tag.
+Authentication, visibility, claimant eligibility, lease-window, and active
+competing-holder errors take precedence. An exact retry with the same
+`Idempotency-Key` replays its original result; after `412`, fetch a fresh root tag
+and use a new key for the new logical attempt.
+
+When the active holder cannot responsibly continue, it can release the lease and
+record why without changing the issue:
+
+```bash
+curl -fsS -o /dev/null -X POST http://127.0.0.1:8000/issues/42/yield \
+  -H "Authorization: Bearer $ATHENA_AGENT_TOKEN" \
+  -H 'Idempotency-Key: goal-123-yield-42' \
+  -H 'X-Athena-Run: goal-123' \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"needs_input","note":"Waiting for the operator decision."}'
+```
+
+MCP callers use `yield_claim`. The reason is exactly `needs_input`, `blocked`, or
+`capacity`; the optional note accepts at most 500 raw characters, is trimmed, and
+is omitted when blank. Only the current active holder may yield: admin status does
+not override ownership, and an absent or expired lease or non-holder returns `409`.
+Success returns `204` after atomically deleting the lease and appending a
+run-stamped `claim_yielded` event. It preserves assignee, contributors, status,
+dependencies, and all other issue state, and it performs no automatic reassignment.
+
 
 ## Agent Mission Control
 

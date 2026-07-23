@@ -20,6 +20,7 @@ from athena.aegis import (
     dependencies,
     fleet_work,
     issue_commands,
+    issue_etags,
     issues,
     lease_commands,
     projects,
@@ -49,6 +50,12 @@ def _migrated(path):
 
 def _user(conn, user_id: int) -> dict:
     return dict(conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def _issue_tag(conn, issue_id: int) -> str:
+    issue = issues.get_issue(conn, issue_id)
+    assert issue is not None
+    return issue_etags.current_etag(conn, issue)
 
 
 def _seed_claim(
@@ -98,6 +105,7 @@ def _seed_claim(
             conn,
             actor=_user(conn, agent_id),
             issue_id=issue["id"],
+            if_match=[_issue_tag(conn, issue["id"])],
             lease_seconds=3600,
         )
     finally:
@@ -503,6 +511,7 @@ def test_repeated_claim_is_one_item_and_restart_safe(tmp_path):
             conn,
             actor=_user(conn, seeded["agent_id"]),
             issue_id=seeded["issue_id"],
+            if_match=[_issue_tag(conn, seeded["issue_id"])],
             lease_seconds=3600,
         )
     finally:
@@ -535,6 +544,7 @@ def test_newest_same_timestamp_renewal_selects_new_run(tmp_path):
             conn,
             actor=_user(conn, seeded["agent_id"]),
             issue_id=seeded["issue_id"],
+            if_match=[_issue_tag(conn, seeded["issue_id"])],
             lease_seconds=3600,
         )
     finally:
