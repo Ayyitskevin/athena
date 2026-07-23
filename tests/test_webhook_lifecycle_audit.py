@@ -8,6 +8,7 @@ each lifecycle change records a registered_/paused_/resumed_/deleted_webhook eve
 the SAME transaction as the change, once per real change, that the one-time signing
 SECRET never leaks into the audit detail, and that the admin-only gate is preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, webhook_commands, webhooks
@@ -74,10 +75,19 @@ def test_rest_pause_and_resume_are_audited(tmp_path):
         _bootstrap(c)
         wid = c.post("/webhooks", json={"url": HOOK}, headers=H1).json()["id"]
         # Pause, then resume.
-        assert c.patch(f"/webhooks/{wid}", json={"active": False}, headers=H1).status_code == 200
-        assert c.patch(f"/webhooks/{wid}", json={"active": True}, headers=H1).status_code == 200
+        assert (
+            c.patch(f"/webhooks/{wid}", json={"active": False}, headers=H1).status_code
+            == 200
+        )
+        assert (
+            c.patch(f"/webhooks/{wid}", json={"active": True}, headers=H1).status_code
+            == 200
+        )
         # Re-resuming an already-active webhook is a no-op — records nothing more.
-        assert c.patch(f"/webhooks/{wid}", json={"active": True}, headers=H1).status_code == 200
+        assert (
+            c.patch(f"/webhooks/{wid}", json={"active": True}, headers=H1).status_code
+            == 200
+        )
 
     assert len(_events(db_file, "paused_webhook")) == 1
     assert len(_events(db_file, "resumed_webhook")) == 1
@@ -118,7 +128,11 @@ def test_web_register_toggle_delete_are_audited(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)  # a@e.com / pw
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
 
         created = c.post("/admin/webhooks", data={"url": HOOK})
@@ -128,11 +142,16 @@ def test_web_register_toggle_delete_are_audited(tmp_path):
         conn.close()
 
         assert (
-            c.post(f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False).status_code
+            c.post(
+                f"/admin/webhooks/{wid}/active",
+                data={"active": "0"},
+                follow_redirects=False,
+            ).status_code
             == 303
         )
         assert (
-            c.post(f"/admin/webhooks/{wid}/delete", follow_redirects=False).status_code == 303
+            c.post(f"/admin/webhooks/{wid}/delete", follow_redirects=False).status_code
+            == 303
         )
 
     assert len(_events(db_file, "registered_webhook")) == 1
@@ -156,7 +175,9 @@ def test_command_set_active_unknown_webhook_rejects_and_records_nothing(tmp_path
     except webhook_commands.WebhookCommandError as exc:
         assert exc.status_code == 404
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "paused_webhook"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "paused_webhook"
     ] == []
 
 
@@ -167,7 +188,9 @@ def test_command_delete_unknown_webhook_returns_false_records_nothing(tmp_path):
     conn = db.connect(db_file)
     assert webhook_commands.delete_webhook(conn, actor_id=1, webhook_id=999) is False
     assert [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "deleted_webhook"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "deleted_webhook"
     ] == []
 
 

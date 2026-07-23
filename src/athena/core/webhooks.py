@@ -204,9 +204,7 @@ def create_webhook(
 
 
 def list_webhooks(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute(
-        f"SELECT {_PUBLIC_COLS} FROM webhooks ORDER BY id"
-    ).fetchall()
+    rows = conn.execute(f"SELECT {_PUBLIC_COLS} FROM webhooks ORDER BY id").fetchall()
     return [_public_row(r) for r in rows]
 
 
@@ -235,9 +233,7 @@ def set_webhook_active(
             (webhook_id,),
         )
     else:
-        cur = conn.execute(
-            "UPDATE webhooks SET active = 0 WHERE id = ?", (webhook_id,)
-        )
+        cur = conn.execute("UPDATE webhooks SET active = 0 WHERE id = ?", (webhook_id,))
     if commit:
         conn.commit()
     if cur.rowcount == 0:
@@ -282,7 +278,9 @@ def _stamp(moment: datetime) -> str:
 
 
 def _backoff_seconds(failure_count: int) -> int:
-    return min(_BACKOFF_BASE_SECONDS * (2 ** max(failure_count - 1, 0)), _BACKOFF_CAP_SECONDS)
+    return min(
+        _BACKOFF_BASE_SECONDS * (2 ** max(failure_count - 1, 0)), _BACKOFF_CAP_SECONDS
+    )
 
 
 def _event_payload(event: dict) -> dict:
@@ -373,7 +371,9 @@ def deliver_pending(
     for wh in due:
         ok_url, reason = is_safe_url(wh["url"])
         if not ok_url:
-            _record_failure(conn, wh["id"], wh["failure_count"], f"unsafe url: {reason}", now)
+            _record_failure(
+                conn, wh["id"], wh["failure_count"], f"unsafe url: {reason}", now
+            )
             continue
         events = activity.list_events(
             conn,
@@ -401,7 +401,9 @@ def deliver_pending(
                 failure_count = 0
                 delivered += 1
             else:
-                _record_failure(conn, wh["id"], failure_count, error or "delivery failed", now)
+                _record_failure(
+                    conn, wh["id"], failure_count, error or "delivery failed", now
+                )
                 break  # keep this webhook's events ordered; retry from the cursor
     return delivered
 
@@ -427,7 +429,13 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     the cert must still match the name the operator registered, not the raw IP."""
 
     def __init__(
-        self, host: str, port: int, *, pinned_ip: str, timeout: float, context: ssl.SSLContext
+        self,
+        host: str,
+        port: int,
+        *,
+        pinned_ip: str,
+        timeout: float,
+        context: ssl.SSLContext,
     ):
         super().__init__(host, port, timeout=timeout, context=context)
         self._pinned_ip = pinned_ip
@@ -536,5 +544,7 @@ async def delivery_loop(db_path: str | Path) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 — a failed pass must not stop the loop
-            logger.warning("webhook delivery pass failed; loop continues", exc_info=True)
+            logger.warning(
+                "webhook delivery pass failed; loop continues", exc_info=True
+            )
         await asyncio.sleep(config.WEBHOOK_DELIVERY_INTERVAL_SECONDS)

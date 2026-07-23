@@ -72,9 +72,7 @@ def parse_query_pairs(pairs: list[tuple[str, str]]) -> tuple[int | None, int]:
         if key not in _QUERY_FIELDS:
             raise ActiveWorkQueryError(f"unsupported query parameter: {key}")
         if key in raw:
-            raise ActiveWorkQueryError(
-                f"query parameter may appear only once: {key}"
-            )
+            raise ActiveWorkQueryError(f"query parameter may appear only once: {key}")
         raw[key] = value
     agent_id = _parse_query_int(
         raw.get("agent_id"),
@@ -327,9 +325,7 @@ def _item(
         },
         "open_blockers": blocker_info,
         "open_claim_handoff": open_claim_handoff,
-        "attention_state": (
-            "needs_attention" if attention_reasons else "observed"
-        ),
+        "attention_state": ("needs_attention" if attention_reasons else "observed"),
         "attention_reasons": attention_reasons,
     }
 
@@ -358,8 +354,7 @@ def _live_issue_write_token_counts(
         return {}
     statement, params = _live_issue_write_token_statement(holder_ids)
     return {
-        int(row["user_id"]): int(row["n"])
-        for row in conn.execute(statement, params)
+        int(row["user_id"]): int(row["n"]) for row in conn.execute(statement, params)
     }
 
 
@@ -413,9 +408,7 @@ def _open_blocker_summaries(
     return grouped
 
 
-def _replay_ready_run_ids(
-    conn: sqlite3.Connection, run_ids: set[str]
-) -> set[str]:
+def _replay_ready_run_ids(conn: sqlite3.Connection, run_ids: set[str]) -> set[str]:
     if not run_ids:
         return set()
     ordered = sorted(run_ids)
@@ -436,8 +429,7 @@ def _run_links_available(run_id: str | None, replay_ready: bool) -> bool:
     if not replay_ready or run_id is None or run_id in {".", ".."}:
         return False
     return all(
-        char.isascii() and (char.isalnum() or char in "-._~:")
-        for char in run_id
+        char.isascii() and (char.isalnum() or char in "-._~:") for char in run_id
     )
 
 

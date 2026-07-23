@@ -17,6 +17,7 @@ project membership (its event detail is the new name only, so the value before t
 move isn't recoverable). Those are intentionally absent rather than guessed — the log is
 the source of truth, and this never invents a value it can't derive from it.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -150,9 +151,7 @@ def _project_issue_state(
         limit=_MAX_EVENTS + 1,
     )
     if len(newest_first) > _MAX_EVENTS:
-        raise IssueHistoryTooLarge(
-            "issue history exceeds the exact projection limit"
-        )
+        raise IssueHistoryTooLarge("issue history exceeds the exact projection limit")
     events = list(reversed(newest_first))
     visible = [e for e in events if as_of_event_id is None or e["id"] <= as_of_event_id]
     last = visible[-1] if visible else None
@@ -177,21 +176,37 @@ def _project_issue_state(
                 events, as_of_event_id, "changed_priority", issue["priority"]
             ),
             "assignee": _project_set_clear(
-                events, as_of_event_id, "assigned", "unassigned",
-                lambda e: e["detail"], None,
+                events,
+                as_of_event_id,
+                "assigned",
+                "unassigned",
+                lambda e: e["detail"],
+                None,
             ),
             "labels": _project_labels(events, as_of_event_id),
             "sprint": _project_set_clear(
-                events, as_of_event_id, "moved_to_sprint", "removed_from_sprint",
-                lambda e: e["detail"], None,
+                events,
+                as_of_event_id,
+                "moved_to_sprint",
+                "removed_from_sprint",
+                lambda e: e["detail"],
+                None,
             ),
             "parent": _project_set_clear(
-                events, as_of_event_id, "set_parent", "removed_parent",
-                lambda e: e["detail"], None,
+                events,
+                as_of_event_id,
+                "set_parent",
+                "removed_parent",
+                lambda e: e["detail"],
+                None,
             ),
             "archived": _project_set_clear(
-                events, as_of_event_id, "archived", "unarchived",
-                lambda e: True, False,
+                events,
+                as_of_event_id,
+                "archived",
+                "unarchived",
+                lambda e: True,
+                False,
             ),
         },
     }

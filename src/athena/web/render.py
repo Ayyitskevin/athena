@@ -21,6 +21,7 @@ bodies written before Markdown landed still read the way their authors intended.
 render_plaintext / render_snippet stay escape-first (no Markdown): comments and
 search snippets are short, untrusted, and want literal text, not formatting.
 """
+
 from __future__ import annotations
 
 import re
@@ -58,6 +59,7 @@ def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
         return f'<span class="mention">@{escape(user["name"])}</span>'
 
     return _MENTION_RE.sub(_one, html)
+
 
 # core.search builds snippets with the matched terms wrapped in [..] (its chosen
 # delimiters). This pulls a balanced [..] pair out of the ALREADY-escaped snippet

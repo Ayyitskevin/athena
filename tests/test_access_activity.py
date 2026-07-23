@@ -8,6 +8,7 @@ page limit, so cursor paging stays exact. Notifications are CREATED without an a
 check (a watch/mention can outlive a project going private), so the inbox gates at READ
 time: hidden ones are filtered out, not deleted.
 """
+
 from fastapi.testclient import TestClient
 import pytest
 
@@ -22,9 +23,31 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _feed_targets(client, headers=None):
@@ -40,14 +63,30 @@ def test_feed_gates_issue_page_and_space_events(tmp_path):
         _bootstrap(client)
         # Private project + space, public project + space, each with a target whose
         # creation records an activity event.
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        op = client.post("/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR).json()["id"]
-        hi = client.post("/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        pi = client.post("/issues", json={"title": "Public", "project_id": op}, headers=H_CREATOR).json()["id"]
-        ps = client.post("/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR).json()["id"]
-        os_ = client.post("/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR).json()["id"]
-        hp = client.post(f"/spaces/{ps}/pages", json={"title": "HiddenPage"}, headers=H_CREATOR).json()["id"]
-        pp_ = client.post(f"/spaces/{os_}/pages", json={"title": "PublicPage"}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        op = client.post(
+            "/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR
+        ).json()["id"]
+        hi = client.post(
+            "/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
+        pi = client.post(
+            "/issues", json={"title": "Public", "project_id": op}, headers=H_CREATOR
+        ).json()["id"]
+        ps = client.post(
+            "/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR
+        ).json()["id"]
+        os_ = client.post(
+            "/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR
+        ).json()["id"]
+        hp = client.post(
+            f"/spaces/{ps}/pages", json={"title": "HiddenPage"}, headers=H_CREATOR
+        ).json()["id"]
+        pp_ = client.post(
+            f"/spaces/{os_}/pages", json={"title": "PublicPage"}, headers=H_CREATOR
+        ).json()["id"]
 
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
@@ -77,9 +116,15 @@ def test_web_activity_feed_hides_private_targets_from_anonymous(tmp_path):
     db_file = tmp_path / "webfeed.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hidden = client.post("/issues", json={"title": "Secret", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        public = client.post("/issues", json={"title": "Loose"}, headers=H_CREATOR).json()["id"]  # backlog
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hidden = client.post(
+            "/issues", json={"title": "Secret", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
+        public = client.post(
+            "/issues", json={"title": "Loose"}, headers=H_CREATOR
+        ).json()["id"]  # backlog
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
@@ -110,27 +155,31 @@ def test_web_activity_actor_pickers_only_list_visible_event_actors(tmp_path):
             assert response.status_code == 201
             actor_ids[name] = response.json()["id"]
 
-        private_headers = {
-            "X-Athena-Actor": str(actor_ids["Private Only"])
-        }
+        private_headers = {"X-Athena-Actor": str(actor_ids["Private Only"])}
         private_project = client.post(
             "/projects",
             json={"name": "Private Actor Project", "key": "PAP"},
             headers=private_headers,
         ).json()["id"]
-        assert client.post(
-            "/issues",
-            json={
-                "title": "Private actor event",
-                "project_id": private_project,
-            },
-            headers=private_headers,
-        ).status_code == 201
-        assert client.put(
-            f"/projects/{private_project}/visibility",
-            json={"visibility": "private"},
-            headers=private_headers,
-        ).status_code == 200
+        assert (
+            client.post(
+                "/issues",
+                json={
+                    "title": "Private actor event",
+                    "project_id": private_project,
+                },
+                headers=private_headers,
+            ).status_code
+            == 201
+        )
+        assert (
+            client.put(
+                f"/projects/{private_project}/visibility",
+                json={"visibility": "private"},
+                headers=private_headers,
+            ).status_code
+            == 200
+        )
 
         visible_issue = client.post(
             "/issues",
@@ -179,21 +228,38 @@ def test_inbox_filters_notifications_on_hidden_targets(tmp_path):
     db_file = tmp_path / "inbox.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        iid = client.post("/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         # The outsider watches the issue (as if mentioned/added before it went private).
-        conn.execute("INSERT INTO watches (user_id, target_kind, target_id) VALUES (3, 'issue', ?)", (iid,))
+        conn.execute(
+            "INSERT INTO watches (user_id, target_kind, target_id) VALUES (3, 'issue', ?)",
+            (iid,),
+        )
         conn.commit()
         # The creator changes the issue → an event fans out to the watcher's inbox.
-        assert client.patch(f"/issues/{iid}", json={"status": "in_progress"}, headers=H_CREATOR).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"status": "in_progress"}, headers=H_CREATOR
+            ).status_code
+            == 200
+        )
 
         def inbox_targets():
-            return {n["target_id"] for n in client.get("/notifications", headers=H_OUTSIDER).json()}
+            return {
+                n["target_id"]
+                for n in client.get("/notifications", headers=H_OUTSIDER).json()
+            }
 
         def badge():
-            return client.get("/notifications/unread_count", headers=H_OUTSIDER).json()["count"]
+            return client.get("/notifications/unread_count", headers=H_OUTSIDER).json()[
+                "count"
+            ]
 
         # The notification exists but the outsider can't see its target → filtered out,
         # and the badge doesn't count it either.
@@ -207,16 +273,22 @@ def test_inbox_filters_notifications_on_hidden_targets(tmp_path):
             "AND a.target_id = ? ORDER BY n.id DESC LIMIT 1",
             (iid,),
         ).fetchone()["id"]
-        assert client.post(
-            f"/notifications/{hidden_notification}/read", headers=H_OUTSIDER
-        ).status_code == 404
-        assert client.post(
-            "/notifications/read_all", headers=H_OUTSIDER
-        ).json() == {"count": 0}
-        assert conn.execute(
-            "SELECT read_at FROM notifications WHERE id = ?",
-            (hidden_notification,),
-        ).fetchone()["read_at"] is None
+        assert (
+            client.post(
+                f"/notifications/{hidden_notification}/read", headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
+        assert client.post("/notifications/read_all", headers=H_OUTSIDER).json() == {
+            "count": 0
+        }
+        assert (
+            conn.execute(
+                "SELECT read_at FROM notifications WHERE id = ?",
+                (hidden_notification,),
+            ).fetchone()["read_at"]
+            is None
+        )
 
         # Granting membership reveals the still-unread notification and counts it.
         access.add_project_member(conn, pp, 3, added_by=2)
@@ -230,18 +302,31 @@ def test_inbox_gates_page_notifications_by_space(tmp_path):
     db_file = tmp_path / "inbox_page.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        ps = client.post("/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR).json()["id"]
-        pid = client.post(f"/spaces/{ps}/pages", json={"title": "Runbook"}, headers=H_CREATOR).json()["id"]
+        ps = client.post(
+            "/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR
+        ).json()["id"]
+        pid = client.post(
+            f"/spaces/{ps}/pages", json={"title": "Runbook"}, headers=H_CREATOR
+        ).json()["id"]
         conn = db.connect(db_file)
         conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (ps,))
-        conn.execute("INSERT INTO watches (user_id, target_kind, target_id) VALUES (3, 'page', ?)", (pid,))
+        conn.execute(
+            "INSERT INTO watches (user_id, target_kind, target_id) VALUES (3, 'page', ?)",
+            (pid,),
+        )
         conn.commit()
         # An edit to the page fans out to the watcher's inbox.
         client.patch(f"/pages/{pid}", json={"body": "updated"}, headers=H_CREATOR)
 
-        assert pid not in {n["target_id"] for n in client.get("/notifications", headers=H_OUTSIDER).json()}
+        assert pid not in {
+            n["target_id"]
+            for n in client.get("/notifications", headers=H_OUTSIDER).json()
+        }
         access.add_space_member(conn, ps, 3, added_by=2)
-        assert pid in {n["target_id"] for n in client.get("/notifications", headers=H_OUTSIDER).json()}
+        assert pid in {
+            n["target_id"]
+            for n in client.get("/notifications", headers=H_OUTSIDER).json()
+        }
 
 
 def test_orphan_target_events_hidden_from_non_admin(tmp_path):
@@ -254,14 +339,21 @@ def test_orphan_target_events_hidden_from_non_admin(tmp_path):
         _bootstrap(client)
         conn = db.connect(db_file)
         for kind in ("issue", "page", "space"):
-            activity.record(conn, actor_id=2, verb="changed_status", target_kind=kind, target_id=99999, detail="orphan")
+            activity.record(
+                conn,
+                actor_id=2,
+                verb="changed_status",
+                target_kind=kind,
+                target_id=99999,
+                detail="orphan",
+            )
         conn.close()
 
         out = _feed_targets(client, H_OUTSIDER)
         adm = _feed_targets(client, H_ADMIN)
         for kind in ("issue", "page", "space"):
             assert (kind, 99999) not in out  # hidden from the non-admin viewer
-            assert (kind, 99999) in adm      # admin is ungated
+            assert (kind, 99999) in adm  # admin is ungated
 
 
 def test_events_stream_gates_by_actor(tmp_path):
@@ -270,9 +362,15 @@ def test_events_stream_gates_by_actor(tmp_path):
     db_file = tmp_path / "events.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hi = client.post("/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        pi = client.post("/issues", json={"title": "Public"}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hi = client.post(
+            "/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
+        pi = client.post("/issues", json={"title": "Public"}, headers=H_CREATOR).json()[
+            "id"
+        ]
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
@@ -294,16 +392,26 @@ def test_runs_omit_hidden_target_events(tmp_path):
     db_file = tmp_path / "runs.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hi = client.post("/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        pi = client.post("/issues", json={"title": "Public"}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hi = client.post(
+            "/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
+        pi = client.post("/issues", json={"title": "Public"}, headers=H_CREATOR).json()[
+            "id"
+        ]
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
 
         def run_event_targets(headers):
             runs = client.get("/activity/runs?actor_id=2", headers=headers).json()
-            return {(e["target_kind"], e["target_id"]) for run in runs for e in run["events"]}
+            return {
+                (e["target_kind"], e["target_id"])
+                for run in runs
+                for e in run["events"]
+            }
 
         out = run_event_targets(H_OUTSIDER)
         assert ("issue", pi) in out and ("issue", hi) not in out
@@ -318,11 +426,23 @@ def test_feed_paging_excludes_hidden_rows_exactly(tmp_path):
     db_file = tmp_path / "paging.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
         visible, hidden = [], []
         for n in range(5):
-            hidden.append(client.post("/issues", json={"title": f"h{n}", "project_id": pp}, headers=H_CREATOR).json()["id"])
-            visible.append(client.post("/issues", json={"title": f"v{n}"}, headers=H_CREATOR).json()["id"])
+            hidden.append(
+                client.post(
+                    "/issues",
+                    json={"title": f"h{n}", "project_id": pp},
+                    headers=H_CREATOR,
+                ).json()["id"]
+            )
+            visible.append(
+                client.post(
+                    "/issues", json={"title": f"v{n}"}, headers=H_CREATOR
+                ).json()["id"]
+            )
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
         conn.commit()
@@ -330,7 +450,9 @@ def test_feed_paging_excludes_hidden_rows_exactly(tmp_path):
         seen, before, pages = set(), None, 0
         while pages < 20:
             pages += 1
-            url = "/activity?kind=issue&limit=3" + (f"&before_id={before}" if before else "")
+            url = "/activity?kind=issue&limit=3" + (
+                f"&before_id={before}" if before else ""
+            )
             rows = client.get(url, headers=H_OUTSIDER).json()
             if not rows:
                 break
@@ -380,31 +502,46 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
         )
         conn.commit()
 
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "high"},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.put(
-            f"/issues/{issue_id}/project",
-            json={"project_id": project_b},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "urgent"},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.put(
-            f"/issues/{issue_id}/project",
-            json={"project_id": project_c},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "low"},
-            headers=H_CREATOR,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "high"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                f"/issues/{issue_id}/project",
+                json={"project_id": project_b},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "urgent"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                f"/issues/{issue_id}/project",
+                json={"project_id": project_c},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "low"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
 
         rows = conn.execute(
             "SELECT id, verb, detail, visibility_restricted FROM activity "
@@ -451,7 +588,10 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
         assert denied.json() == {
             "detail": "complete issue history is not available to this actor"
         }
-        assert client.get(f"/issues/{issue_id}/state", headers=H_CREATOR).status_code == 200
+        assert (
+            client.get(f"/issues/{issue_id}/state", headers=H_CREATOR).status_code
+            == 200
+        )
 
         login = client.post(
             "/login",
@@ -478,9 +618,10 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
             "changed_project",
             "Private B",
         ) not in outsider_facts()
-        assert client.get(
-            f"/issues/{issue_id}/state", headers=H_OUTSIDER
-        ).status_code == 403
+        assert (
+            client.get(f"/issues/{issue_id}/state", headers=H_OUTSIDER).status_code
+            == 403
+        )
 
         access.add_project_member(conn, project_b, 3, added_by=2)
         assert outsider_facts() == set(scope_by_fact)
@@ -488,9 +629,10 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
         assert reopened.status_code == 200
         assert "medium → high" in reopened.text
         assert "high → urgent" in reopened.text
-        assert client.get(
-            f"/issues/{issue_id}/state", headers=H_OUTSIDER
-        ).status_code == 200
+        assert (
+            client.get(f"/issues/{issue_id}/state", headers=H_OUTSIDER).status_code
+            == 200
+        )
         conn.close()
 
 
@@ -533,16 +675,22 @@ def test_raw_issue_activity_fails_closed_while_native_events_are_scoped(tmp_path
             )
         }
         assert flags == {legacy: 1, native: 0}
-        assert conn.execute(
-            "SELECT p.id AS project_id FROM activity_visibility_projects avp "
-            "JOIN projects p ON p.activity_scope_key = avp.project_scope_key "
-            "WHERE avp.event_id = ?",
-            (native,),
-        ).fetchone()["project_id"] == project_id
-        assert conn.execute(
-            "SELECT COUNT(*) FROM activity_visibility_projects WHERE event_id = ?",
-            (legacy,),
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT p.id AS project_id FROM activity_visibility_projects avp "
+                "JOIN projects p ON p.activity_scope_key = avp.project_scope_key "
+                "WHERE avp.event_id = ?",
+                (native,),
+            ).fetchone()["project_id"]
+            == project_id
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM activity_visibility_projects WHERE event_id = ?",
+                (legacy,),
+            ).fetchone()[0]
+            == 0
+        )
 
         outsider_ids = {
             row["id"]
@@ -602,10 +750,13 @@ def test_activity_scope_and_event_roll_back_together(tmp_path, monkeypatch):
             target_id=issue_id,
         )
 
-    assert conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
-    assert conn.execute(
-        "SELECT COUNT(*) FROM activity_visibility_projects"
-    ).fetchone()[0] == baseline_scopes
+    assert (
+        conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0] == baseline_events
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM activity_visibility_projects").fetchone()[0]
+        == baseline_scopes
+    )
     assert not conn.in_transaction
     conn.close()
 
@@ -661,16 +812,22 @@ def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
             (legacy_id, native_id),
         )
     } == {legacy_id: 1, native_id: 0}
-    assert conn.execute(
-        "SELECT COUNT(*) FROM activity_visibility_projects WHERE event_id = ?",
-        (legacy_id,),
-    ).fetchone()[0] == 0
-    assert conn.execute(
-        "SELECT p.id AS project_id FROM activity_visibility_projects avp "
-        "JOIN projects p ON p.activity_scope_key = avp.project_scope_key "
-        "WHERE avp.event_id = ?",
-        (native_id,),
-    ).fetchone()["project_id"] == project_id
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM activity_visibility_projects WHERE event_id = ?",
+            (legacy_id,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute(
+            "SELECT p.id AS project_id FROM activity_visibility_projects avp "
+            "JOIN projects p ON p.activity_scope_key = avp.project_scope_key "
+            "WHERE avp.event_id = ?",
+            (native_id,),
+        ).fetchone()["project_id"]
+        == project_id
+    )
     conn.close()
 
 
@@ -688,11 +845,14 @@ def test_deleted_project_id_is_reserved_and_cannot_reauthorize_old_events(tmp_pa
             json={"title": "Outlives project", "project_id": old_project["id"]},
             headers=H_CREATOR,
         ).json()["id"]
-        assert client.put(
-            f"/projects/{old_project['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_CREATOR,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{old_project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
 
         conn = db.connect(db_file)
         old_scope_key = conn.execute(
@@ -700,14 +860,20 @@ def test_deleted_project_id_is_reserved_and_cannot_reauthorize_old_events(tmp_pa
             (old_project["id"],),
         ).fetchone()["activity_scope_key"]
 
-        assert client.put(
-            f"/issues/{issue_id}/project",
-            json={"project_id": None},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.delete(
-            f"/projects/{old_project['id']}", headers=H_CREATOR
-        ).status_code == 204
+        assert (
+            client.put(
+                f"/issues/{issue_id}/project",
+                json={"project_id": None},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.delete(
+                f"/projects/{old_project['id']}", headers=H_CREATOR
+            ).status_code
+            == 204
+        )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
                 "INSERT INTO projects "
@@ -728,11 +894,14 @@ def test_deleted_project_id_is_reserved_and_cannot_reauthorize_old_events(tmp_pa
         ).fetchone()["activity_scope_key"]
         assert replacement_scope_key != old_scope_key
 
-        assert client.patch(
-            f"/issues/{issue_id}",
-            json={"priority": "high"},
-            headers=H_CREATOR,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{issue_id}",
+                json={"priority": "high"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
         outsider = client.get(
             f"/activity?target_kind=issue&target_id={issue_id}",
             headers=H_OUTSIDER,
@@ -756,14 +925,11 @@ def test_deleted_project_id_is_reserved_and_cannot_reauthorize_old_events(tmp_pa
         # The old target stays admin-forensic only after its live project is deleted;
         # the public replacement receives a fresh id and cannot inherit that event.
         project_activity_url = (
-            "/activity?target_kind=project"
-            f"&target_id={old_project['id']}"
+            f"/activity?target_kind=project&target_id={old_project['id']}"
         )
         outsider_project_facts = {
             (row["verb"], row["detail"])
-            for row in client.get(
-                project_activity_url, headers=H_OUTSIDER
-            ).json()
+            for row in client.get(project_activity_url, headers=H_OUTSIDER).json()
         }
         assert (
             "project_made_private",
@@ -771,9 +937,7 @@ def test_deleted_project_id_is_reserved_and_cannot_reauthorize_old_events(tmp_pa
         ) not in outsider_project_facts
         admin_project_facts = {
             (row["verb"], row["detail"])
-            for row in client.get(
-                project_activity_url, headers=H_ADMIN
-            ).json()
+            for row in client.get(project_activity_url, headers=H_ADMIN).json()
         }
         assert (
             "project_made_private",
@@ -796,17 +960,22 @@ def test_deleted_private_space_and_page_ids_are_never_reused(tmp_path):
             json={"title": "Old Hidden Page"},
             headers=H_CREATOR,
         ).json()
-        assert client.put(
-            f"/spaces/{old_space['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_CREATOR,
-        ).status_code == 200
-        assert client.delete(
-            f"/pages/{old_page['id']}", headers=H_CREATOR
-        ).status_code == 204
-        assert client.delete(
-            f"/spaces/{old_space['id']}", headers=H_CREATOR
-        ).status_code == 204
+        assert (
+            client.put(
+                f"/spaces/{old_space['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.delete(f"/pages/{old_page['id']}", headers=H_CREATOR).status_code
+            == 204
+        )
+        assert (
+            client.delete(f"/spaces/{old_space['id']}", headers=H_CREATOR).status_code
+            == 204
+        )
 
         new_space = client.post(
             "/spaces",
@@ -831,14 +1000,20 @@ def test_deleted_private_space_and_page_ids_are_never_reused(tmp_path):
         } >= {("space", old_space["id"]), ("page", old_page["id"])}
         conn.close()
 
-        assert client.get(
-            f"/activity?target_kind=space&target_id={old_space['id']}",
-            headers=H_OUTSIDER,
-        ).json() == []
-        assert client.get(
-            f"/activity?target_kind=page&target_id={old_page['id']}",
-            headers=H_OUTSIDER,
-        ).json() == []
+        assert (
+            client.get(
+                f"/activity?target_kind=space&target_id={old_space['id']}",
+                headers=H_OUTSIDER,
+            ).json()
+            == []
+        )
+        assert (
+            client.get(
+                f"/activity?target_kind=page&target_id={old_page['id']}",
+                headers=H_OUTSIDER,
+            ).json()
+            == []
+        )
 
 
 def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
@@ -870,11 +1045,14 @@ def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
             json={"name": "Private Sprint"},
             headers=H_CREATOR,
         ).json()
-        assert client.put(
-            f"/projects/{private_project}/visibility",
-            json={"visibility": "private"},
-            headers=H_CREATOR,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{private_project}/visibility",
+                json={"visibility": "private"},
+                headers=H_CREATOR,
+            ).status_code
+            == 200
+        )
 
         conn = db.connect(db_file)
         issue_activity.record_parent_change(
@@ -918,9 +1096,7 @@ def test_cross_project_parent_and_sprint_details_use_related_scopes(tmp_path):
             f"/activity?target_kind=issue&target_id={child['id']}",
             headers=H_OUTSIDER,
         ).json()
-        assert [(row["verb"], row["detail"]) for row in outsider] == [
-            ("created", "")
-        ]
+        assert [(row["verb"], row["detail"]) for row in outsider] == [("created", "")]
         access.add_project_member(conn, private_project, 3, added_by=2)
         opened = {
             (row["verb"], row["detail"])

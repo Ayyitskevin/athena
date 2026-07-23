@@ -4,6 +4,7 @@ These tests encode the contract that matters: the web layer owns NO data (every
 created space/page is confirmed back through the REST API, never a stub store),
 writes are gated on the browser session, and the page tree renders its nesting.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -56,8 +57,14 @@ def test_web_space_key_and_name_required(tmp_path):
     app = create_app(tmp_path / "csr.db")
     with TestClient(app) as client:
         _login(client)
-        assert client.post("/mentor/spaces", data={"key": "  ", "name": "Eng"}).status_code == 400
-        assert client.post("/mentor/spaces", data={"key": "ENG", "name": "  "}).status_code == 400
+        assert (
+            client.post("/mentor/spaces", data={"key": "  ", "name": "Eng"}).status_code
+            == 400
+        )
+        assert (
+            client.post("/mentor/spaces", data={"key": "ENG", "name": "  "}).status_code
+            == 400
+        )
 
 
 def test_web_duplicate_space_key_is_409_case_insensitive(tmp_path):
@@ -161,7 +168,9 @@ def test_page_detail_shows_space_nav_tree(tmp_path):
             data={"title": "Deploy guide", "parent_id": str(parent["id"])},
         )
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Onboarding"})
-        by_title = {p["title"]: p for p in client.get(f"/spaces/{space['id']}/pages").json()}
+        by_title = {
+            p["title"]: p for p in client.get(f"/spaces/{space['id']}/pages").json()
+        }
         child, sibling = by_title["Deploy guide"], by_title["Onboarding"]
 
         html = client.get(f"/mentor/pages/{child['id']}").text
@@ -189,14 +198,18 @@ def test_page_detail_breadcrumb_trail(tmp_path):
             data={"title": "Runbooks", "parent_id": str(gp["id"])},
         )
         parent = next(
-            p for p in client.get(f"/spaces/{space['id']}/pages").json() if p["title"] == "Runbooks"
+            p
+            for p in client.get(f"/spaces/{space['id']}/pages").json()
+            if p["title"] == "Runbooks"
         )
         client.post(
             f"/mentor/spaces/{space['id']}/pages",
             data={"title": "Deploy", "parent_id": str(parent["id"])},
         )
         child = next(
-            p for p in client.get(f"/spaces/{space['id']}/pages").json() if p["title"] == "Deploy"
+            p
+            for p in client.get(f"/spaces/{space['id']}/pages").json()
+            if p["title"] == "Deploy"
         )
 
         html = client.get(f"/mentor/pages/{child['id']}").text
@@ -205,7 +218,9 @@ def test_page_detail_breadcrumb_trail(tmp_path):
         assert f'href="/mentor/spaces/{space["id"]}">Engineering</a>' in crumb
         assert f'href="/mentor/pages/{gp["id"]}">Handbook</a>' in crumb
         assert f'href="/mentor/pages/{parent["id"]}">Runbooks</a>' in crumb
-        positions = [crumb.find(t) for t in ("Engineering", "Handbook", "Runbooks", "Deploy")]
+        positions = [
+            crumb.find(t) for t in ("Engineering", "Handbook", "Runbooks", "Deploy")
+        ]
         assert positions == sorted(positions)
         # the current page is the final crumb, not a link
         assert 'aria-current="page">Deploy</span>' in crumb
@@ -219,7 +234,11 @@ def test_page_detail_breadcrumb_top_level(tmp_path):
         space = _make_space(client)
         client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Charter"})
         page = client.get(f"/spaces/{space['id']}/pages").json()[0]
-        crumb = client.get(f"/mentor/pages/{page['id']}").text.split('class="breadcrumb"')[1].split("</nav>")[0]
+        crumb = (
+            client.get(f"/mentor/pages/{page['id']}")
+            .text.split('class="breadcrumb"')[1]
+            .split("</nav>")[0]
+        )
         assert "Engineering" in crumb and 'aria-current="page">Charter</span>' in crumb
 
 
@@ -247,7 +266,10 @@ def test_web_empty_space_shows_no_pages(tmp_path):
     with TestClient(app) as client:
         _login(client)
         space = _make_space(client)
-        assert "No pages in this space yet." in client.get(f"/mentor/spaces/{space['id']}").text
+        assert (
+            "No pages in this space yet."
+            in client.get(f"/mentor/spaces/{space['id']}").text
+        )
 
 
 # --- pages: view + edit + history ------------------------------------------
@@ -258,7 +280,10 @@ def test_web_page_detail_renders_body(tmp_path):
     with TestClient(app) as client:
         _login(client)
         space = _make_space(client)
-        client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc", "body": "hello world"})
+        client.post(
+            f"/mentor/spaces/{space['id']}/pages",
+            data={"title": "Doc", "body": "hello world"},
+        )
         page = client.get(f"/spaces/{space['id']}/pages").json()[0]
         html = client.get(f"/mentor/pages/{page['id']}").text
         assert "Doc" in html and "hello world" in html
@@ -279,7 +304,12 @@ def test_web_edit_requires_login(tmp_path):
         page = client.get(f"/spaces/{space['id']}/pages").json()[0]
         client.post("/logout")
         assert client.get(f"/mentor/pages/{page['id']}/edit").status_code == 401
-        assert client.post(f"/mentor/pages/{page['id']}/edit", data={"title": "X"}).status_code == 401
+        assert (
+            client.post(
+                f"/mentor/pages/{page['id']}/edit", data={"title": "X"}
+            ).status_code
+            == 401
+        )
 
 
 def test_web_edit_empty_title_is_400(tmp_path):
@@ -300,7 +330,9 @@ def test_web_edit_saves_and_snapshots_history(tmp_path):
     with TestClient(app) as client:
         _login(client)
         space = _make_space(client)
-        client.post(f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc", "body": "v1"})
+        client.post(
+            f"/mentor/spaces/{space['id']}/pages", data={"title": "Doc", "body": "v1"}
+        )
         page = client.get(f"/spaces/{space['id']}/pages").json()[0]
 
         r = client.post(

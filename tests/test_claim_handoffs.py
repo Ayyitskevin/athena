@@ -34,12 +34,10 @@ def _seed_users(conn):
         "VALUES ('owner@e.com', 'Owner', 'admin', 0)"
     )
     conn.execute(
-        "INSERT INTO users (email, name, is_agent) "
-        "VALUES ('a@e.com', 'Agent A', 1)"
+        "INSERT INTO users (email, name, is_agent) VALUES ('a@e.com', 'Agent A', 1)"
     )
     conn.execute(
-        "INSERT INTO users (email, name, is_agent) "
-        "VALUES ('b@e.com', 'Agent B', 1)"
+        "INSERT INTO users (email, name, is_agent) VALUES ('b@e.com', 'Agent B', 1)"
     )
     conn.commit()
 
@@ -224,7 +222,9 @@ def test_upgrade_from_0056_preserves_leases_and_enforces_generations(
     assert replacement["generation"] != generations[0]
     assert replacement["holder_id"] == 3
     assert leases.delete_lease(conn, issue_a["id"], generations[0]) is False
-    assert leases.get_lease(conn, issue_a["id"])["generation"] == replacement["generation"]
+    assert (
+        leases.get_lease(conn, issue_a["id"])["generation"] == replacement["generation"]
+    )
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
 
@@ -287,13 +287,17 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
         **_handoff_payload(generation),
     )
     assert "id" not in handoff
-    with pytest.raises(sqlite3.IntegrityError, match="claim handoff activity is immutable"):
+    with pytest.raises(
+        sqlite3.IntegrityError, match="claim handoff activity is immutable"
+    ):
         conn.execute(
             "UPDATE activity SET detail = 'rewritten' WHERE id = ?",
             (handoff["yielded"]["event_id"],),
         )
     conn.rollback()
-    with pytest.raises(sqlite3.IntegrityError, match="claim handoff activity is immutable"):
+    with pytest.raises(
+        sqlite3.IntegrityError, match="claim handoff activity is immutable"
+    ):
         conn.execute(
             "DELETE FROM activity WHERE id = ?",
             (handoff["yielded"]["event_id"],),
@@ -345,9 +349,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
         verb="claim_handoff_resumed",
         target_kind="issue",
         target_id=issue["id"],
-        detail=(
-            f"handoff {'e' * 32}; generation {replacement['generation']}"
-        ),
+        detail=(f"handoff {'e' * 32}; generation {replacement['generation']}"),
     )
     with pytest.raises(sqlite3.IntegrityError, match="matching native handoff resume"):
         conn.execute(
@@ -405,9 +407,7 @@ def test_handoff_database_binds_audit_payload_and_is_durable(tmp_path):
     )
     for index, overrides in enumerate(blank_variants):
         token = f"{index + 1:032x}"
-        question = overrides.get(
-            "question", "Which recovery path should be used?"
-        )
+        question = overrides.get("question", "Which recovery path should be used?")
         event = activity.record(
             conn,
             actor_id=2,
@@ -445,7 +445,9 @@ def test_generation_fences_every_delayed_holder_mutation(tmp_path):
     )
     replacement = _claim(conn, 2, issue["id"])
     assert replacement["generation"] != first["generation"]
-    assert replacement["open_claim_handoff"]["handoff_token"] == handoff["handoff_token"]
+    assert (
+        replacement["open_claim_handoff"]["handoff_token"] == handoff["handoff_token"]
+    )
 
     lease_before = leases.get_lease(conn, issue["id"])
     contributors_before = conn.execute(
@@ -489,16 +491,21 @@ def test_generation_fences_every_delayed_holder_mutation(tmp_path):
             mutate()
         assert rejected.value.kind == "lease_generation_mismatch"
         assert leases.get_lease(conn, issue["id"]) == lease_before
-        assert conn.execute(
-            "SELECT user_id FROM issue_contributors WHERE issue_id = ? ORDER BY user_id",
-            (issue["id"],),
-        ).fetchall() == contributors_before
-        assert activity.list_activity(
-            conn, target_kind="issue", target_id=issue["id"]
-        ) == events_before
-        assert claim_handoffs.get_open_handoff(conn, issue["id"])[
-            "handoff_token"
-        ] == handoff["handoff_token"]
+        assert (
+            conn.execute(
+                "SELECT user_id FROM issue_contributors WHERE issue_id = ? ORDER BY user_id",
+                (issue["id"],),
+            ).fetchall()
+            == contributors_before
+        )
+        assert (
+            activity.list_activity(conn, target_kind="issue", target_id=issue["id"])
+            == events_before
+        )
+        assert (
+            claim_handoffs.get_open_handoff(conn, issue["id"])["handoff_token"]
+            == handoff["handoff_token"]
+        )
 
     with pytest.raises(issue_commands.IssueCommandError, match="resume the open"):
         lease_commands.complete_claim(
@@ -546,7 +553,9 @@ def test_handoff_writes_roll_back_as_one_unit(tmp_path, monkeypatch):
     issue = _delegated_issue(conn)
     lease = _claim(conn, 2, issue["id"])
     lease_before = leases.get_lease(conn, issue["id"])
-    notification_count = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+    notification_count = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[
+        0
+    ]
 
     def fail_handoff(*args, **kwargs):
         raise RuntimeError("handoff storage unavailable")
@@ -565,13 +574,19 @@ def test_handoff_writes_roll_back_as_one_unit(tmp_path, monkeypatch):
             )
     assert leases.get_lease(conn, issue["id"]) == lease_before
     assert claim_handoffs.get_open_handoff(conn, issue["id"]) is None
-    assert conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == notification_count
-    assert activity.list_activity(
-        conn,
-        target_kind="issue",
-        target_id=issue["id"],
-        verb="claim_yielded",
-    ) == []
+    assert (
+        conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+        == notification_count
+    )
+    assert (
+        activity.list_activity(
+            conn,
+            target_kind="issue",
+            target_id=issue["id"],
+            verb="claim_yielded",
+        )
+        == []
+    )
 
     handoff = lease_commands.yield_claim(
         conn,
@@ -597,11 +612,16 @@ def test_handoff_writes_roll_back_as_one_unit(tmp_path, monkeypatch):
                 handoff_token=handoff["handoff_token"],
                 generation=replacement["generation"],
             )
-    assert leases.get_lease(conn, issue["id"])["generation"] == replacement["generation"]
-    assert claim_handoffs.get_open_handoff(conn, issue["id"])["state"] == "awaiting_resume"
-    assert activity.list_activity(
-        conn, target_kind="issue", target_id=issue["id"]
-    ) == events_before
+    assert (
+        leases.get_lease(conn, issue["id"])["generation"] == replacement["generation"]
+    )
+    assert (
+        claim_handoffs.get_open_handoff(conn, issue["id"])["state"] == "awaiting_resume"
+    )
+    assert (
+        activity.list_activity(conn, target_kind="issue", target_id=issue["id"])
+        == events_before
+    )
 
 
 def test_concurrent_resume_records_exactly_one_acknowledgment(tmp_path):
@@ -639,7 +659,10 @@ def test_concurrent_resume_records_exactly_one_acknowledgment(tmp_path):
             conn.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = [future.result(timeout=10) for future in (pool.submit(resume), pool.submit(resume))]
+        outcomes = [
+            future.result(timeout=10)
+            for future in (pool.submit(resume), pool.submit(resume))
+        ]
     assert sorted(outcomes) == ["conflict", "resumed"]
 
     check = db.connect(db_path)
@@ -650,14 +673,17 @@ def test_concurrent_resume_records_exactly_one_acknowledgment(tmp_path):
             handoff_token=handoff["handoff_token"],
         )
         assert persisted["state"] == "resumed"
-        assert len(
-            activity.list_activity(
-                check,
-                target_kind="issue",
-                target_id=issue["id"],
-                verb="claim_handoff_resumed",
+        assert (
+            len(
+                activity.list_activity(
+                    check,
+                    target_kind="issue",
+                    target_id=issue["id"],
+                    verb="claim_handoff_resumed",
+                )
             )
-        ) == 1
+            == 1
+        )
     finally:
         check.close()
 
@@ -676,11 +702,14 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
             "/issues", json={"title": "safe handoff"}, headers=owner
         ).json()
         for user_id in (2, 3):
-            assert client.post(
-                f"/issues/{issue['id']}/delegate",
-                json={"user_id": user_id},
-                headers=owner,
-            ).status_code == 201
+            assert (
+                client.post(
+                    f"/issues/{issue['id']}/delegate",
+                    json={"user_id": user_id},
+                    headers=owner,
+                ).status_code
+                == 201
+            )
         issue_tag = client.get(f"/issues/{issue['id']}").headers["etag"]
         first_claim = client.post(
             f"/issues/{issue['id']}/claim",
@@ -768,11 +797,15 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
         assert context["claim_handoffs"]["items"][0] == handoff
         assert context_response.headers["cache-control"] == "private, no-store"
         inbox = client.get("/delegations/me", headers=agent_b).json()
-        delegated = next(item for item in inbox["items"] if item["issue"]["id"] == issue["id"])
+        delegated = next(
+            item for item in inbox["items"] if item["issue"]["id"] == issue["id"]
+        )
         assert delegated["open_claim_handoff"] == handoff
         assert "open_claim_handoff" in delegated["warnings"]
         fleet = client.get("/fleet/active-work", headers=owner).json()
-        active = next(item for item in fleet["items"] if item["issue"]["id"] == issue["id"])
+        active = next(
+            item for item in fleet["items"] if item["issue"]["id"] == issue["id"]
+        )
         assert active["open_claim_handoff"] == handoff
         assert "open_claim_handoff" in active["attention_reasons"]
 
@@ -787,8 +820,7 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
             assert "Untrusted advisory context" in page.text
 
         resume_url = (
-            f"/issues/{issue['id']}/claim-handoffs/"
-            f"{handoff['handoff_token']}/resume"
+            f"/issues/{issue['id']}/claim-handoffs/{handoff['handoff_token']}/resume"
         )
         missing_resume = client.post(resume_url, json={}, headers=agent_b)
         assert missing_resume.status_code == 428
@@ -835,8 +867,11 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
         ).json()
         assert final_context["claim_handoffs"]["open"] is None
         assert final_context["claim_handoffs"]["items"][0]["state"] == "resumed"
-        assert client.post(
-            f"/issues/{issue['id']}/complete",
-            json={"generation": replacement_generation},
-            headers=agent_b,
-        ).status_code == 204
+        assert (
+            client.post(
+                f"/issues/{issue['id']}/complete",
+                json={"generation": replacement_generation},
+                headers=agent_b,
+            ).status_code
+            == 204
+        )

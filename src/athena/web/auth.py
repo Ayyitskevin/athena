@@ -8,6 +8,7 @@ SameSite=Lax; it carries the Secure flag only when config.COOKIE_SECURE is on.
 Who-is-logged-in for every page is resolved once, in main.py's middleware, onto
 request.state.user — these routes only mint and tear down the session.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -45,6 +46,7 @@ def _record_login_failure(db_path, user_id: int) -> None:
         )
     finally:
         conn.close()
+
 
 # Pins an in-flight SSO login to the browser that started it: set at /login/sso,
 # required to match the returned `state` at /auth/callback (login CSRF/fixation
@@ -289,11 +291,11 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         return _sso_error(
             request, templates, "SSO sign-in could not be verified. Please try again."
         )
-    pending = oidc.take_login_state(conn, state, max_age_seconds=_OIDC_STATE_TTL_SECONDS)
+    pending = oidc.take_login_state(
+        conn, state, max_age_seconds=_OIDC_STATE_TTL_SECONDS
+    )
     if pending is None or not code:
-        return _sso_error(
-            request, templates, "SSO sign-in expired. Please try again."
-        )
+        return _sso_error(request, templates, "SSO sign-in expired. Please try again.")
 
     try:
         discovery = oidc_flow.discover(config.OIDC_ISSUER)

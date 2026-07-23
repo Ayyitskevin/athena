@@ -7,6 +7,7 @@ Pages always live in a space (no backlog), so the space gate covers the pages to
 Nothing marks a space private through the app yet; these flip the visibility column on
 a side connection.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
@@ -18,18 +19,48 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _scenario(client, db_file):
     """Private space SEC (with a page), public space ENG (with a page). Returns
     (db_conn, priv_space_id, priv_page_id, pub_page_id)."""
-    priv = client.post("/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR).json()["id"]
-    pub = client.post("/spaces", json={"key": "ENG", "name": "Engineering"}, headers=H_CREATOR).json()["id"]
-    priv_page = client.post(f"/spaces/{priv}/pages", json={"title": "Hidden runbook"}, headers=H_CREATOR).json()["id"]
-    pub_page = client.post(f"/spaces/{pub}/pages", json={"title": "Public doc"}, headers=H_CREATOR).json()["id"]
+    priv = client.post(
+        "/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR
+    ).json()["id"]
+    pub = client.post(
+        "/spaces", json={"key": "ENG", "name": "Engineering"}, headers=H_CREATOR
+    ).json()["id"]
+    priv_page = client.post(
+        f"/spaces/{priv}/pages", json={"title": "Hidden runbook"}, headers=H_CREATOR
+    ).json()["id"]
+    pub_page = client.post(
+        f"/spaces/{pub}/pages", json={"title": "Public doc"}, headers=H_CREATOR
+    ).json()["id"]
     conn = db.connect(db_file)
     conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (priv,))
     conn.commit()
@@ -37,12 +68,15 @@ def _scenario(client, db_file):
 
 
 def _login(client, email):
-    r = client.post("/login", data={"email": email, "password": "pw"}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": "pw"}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 # --- REST -------------------------------------------------------------------
+
 
 def test_rest_space_list_hides_private(tmp_path):
     db_file = tmp_path / "list.db"
@@ -51,7 +85,9 @@ def test_rest_space_list_hides_private(tmp_path):
         conn, priv, _pp, _pub = _scenario(client, db_file)
 
         def keys(headers=None):
-            return {s["key"] for s in client.get("/spaces", headers=headers or {}).json()}
+            return {
+                s["key"] for s in client.get("/spaces", headers=headers or {}).json()
+            }
 
         for h in (H_OUTSIDER, None):
             assert keys(h) == {"ENG"}
@@ -71,7 +107,9 @@ def test_rest_space_and_pages_404_for_outsider(tmp_path):
         # The private space, its page list, and its page are all 404 for the outsider
         # and anonymous; the creator and admin get 200.
         assert client.get(f"/spaces/{priv}", headers=H_OUTSIDER).status_code == 404
-        assert client.get(f"/spaces/{priv}/pages", headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.get(f"/spaces/{priv}/pages", headers=H_OUTSIDER).status_code == 404
+        )
         assert client.get(f"/pages/{priv_page}", headers=H_OUTSIDER).status_code == 404
         assert client.get(f"/pages/{priv_page}").status_code == 404
         for h in (H_CREATOR, H_ADMIN):
@@ -86,6 +124,7 @@ def test_rest_space_and_pages_404_for_outsider(tmp_path):
 
 
 # --- Web --------------------------------------------------------------------
+
 
 def test_web_mentor_surfaces_hide_private_from_anonymous(tmp_path):
     db_file = tmp_path / "web.db"

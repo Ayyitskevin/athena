@@ -8,6 +8,7 @@ the same can-act-on gate as every other issue write, reachable identically from
 REST, the browser, and (via REST) MCP. These pin atomicity, attribution, the
 gate, no-op silence, and transport parity.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_commands
@@ -125,10 +126,15 @@ def test_state_writes_share_the_can_act_on_gate(tmp_path):
         issue = _issue(c)  # created by admin
         as_bystander = {"X-Athena-Actor": str(bystander["id"])}
         # A member who is neither creator/assignee/contributor/admin is refused.
-        assert c.post(f"/issues/{issue['id']}/archive", headers=as_bystander).status_code == 403
+        assert (
+            c.post(f"/issues/{issue['id']}/archive", headers=as_bystander).status_code
+            == 403
+        )
         assert (
             c.put(
-                f"/issues/{issue['id']}/parent", json={"parent_id": None}, headers=as_bystander
+                f"/issues/{issue['id']}/parent",
+                json={"parent_id": None},
+                headers=as_bystander,
             ).status_code
             == 403
         )
@@ -178,8 +184,6 @@ def test_mcp_client_reaches_the_migrated_writes(tmp_path):
     finally:
         tc.__exit__(None, None, None)
     conn = db.connect(db_file)
-    ev = conn.execute(
-        "SELECT run_id FROM activity WHERE verb = 'archived'"
-    ).fetchone()
+    ev = conn.execute("SELECT run_id FROM activity WHERE verb = 'archived'").fetchone()
     conn.close()
     assert ev["run_id"] == "state-run"  # attributed to the agent's run

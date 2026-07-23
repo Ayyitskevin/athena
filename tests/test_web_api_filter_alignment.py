@@ -18,6 +18,7 @@ way they used to:
   * the boards column filtering runs through list_issues, not a re-implemented
     Python scan.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues
@@ -36,7 +37,9 @@ _H = {"X-Athena-Actor": "1"}
 
 
 def _make_issue(client, title, body=""):
-    return client.post("/issues", json={"title": title, "body": body}, headers=_H).json()
+    return client.post(
+        "/issues", json={"title": title, "body": body}, headers=_H
+    ).json()
 
 
 # --- unit: the shared parser is the one owner of ?project= meaning -----------
@@ -102,9 +105,7 @@ def test_numeric_issue_filters_are_safe_at_every_http_boundary(tmp_path):
                     client.get("/issues", params={field_name: malformed}).status_code
                     == 422
                 )
-                web = client.get(
-                    "/aegis/issues", params={field_name: malformed}
-                )
+                web = client.get("/aegis/issues", params={field_name: malformed})
                 assert web.status_code == 200
                 assert "still visible" in web.text
 

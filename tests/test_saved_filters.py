@@ -7,6 +7,7 @@ duplicate names per owner are rejected; closed-set criteria (priority/project) a
 validated while open ones (status/label/assignee) stay resilient; and the web and
 API surfaces agree because they share normalize/validate/run.
 """
+
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -36,7 +37,10 @@ def test_create_list_get_filter(tmp_path):
         _admin(client)
         r = client.post(
             "/filters",
-            json={"name": "My bugs", "criteria": {"priority": "high", "search": " login "}},
+            json={
+                "name": "My bugs",
+                "criteria": {"priority": "high", "search": " login "},
+            },
             headers=H1,
         )
         assert r.status_code == 201
@@ -45,7 +49,9 @@ def test_create_list_get_filter(tmp_path):
         # Whitespace stripped, only set keys kept.
         assert body["criteria"] == {"priority": "high", "search": "login"}
         fid = body["id"]
-        assert [f["name"] for f in client.get("/filters", headers=H1).json()] == ["My bugs"]
+        assert [f["name"] for f in client.get("/filters", headers=H1).json()] == [
+            "My bugs"
+        ]
         assert client.get(f"/filters/{fid}", headers=H1).json()["id"] == fid
 
 
@@ -63,7 +69,10 @@ def test_duplicate_name_rejected(tmp_path):
     with TestClient(create_app(tmp_path / "d.db")) as client:
         _admin(client)
         client.post("/filters", json={"name": "Triage"}, headers=H1)
-        assert client.post("/filters", json={"name": "triage"}, headers=H1).status_code == 409
+        assert (
+            client.post("/filters", json={"name": "triage"}, headers=H1).status_code
+            == 409
+        )
 
 
 def test_bad_priority_and_project_rejected(tmp_path):
@@ -71,19 +80,31 @@ def test_bad_priority_and_project_rejected(tmp_path):
     is a 422, so a typo fails loud instead of silently matching nothing."""
     with TestClient(create_app(tmp_path / "v.db")) as client:
         _admin(client)
-        assert client.post(
-            "/filters", json={"name": "x", "criteria": {"priority": "nope"}}, headers=H1
-        ).status_code == 422
-        assert client.post(
-            "/filters", json={"name": "y", "criteria": {"project": "abc"}}, headers=H1
-        ).status_code == 422
+        assert (
+            client.post(
+                "/filters",
+                json={"name": "x", "criteria": {"priority": "nope"}},
+                headers=H1,
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                "/filters",
+                json={"name": "y", "criteria": {"project": "abc"}},
+                headers=H1,
+            ).status_code
+            == 422
+        )
 
 
 def test_name_required(tmp_path):
     """A blank name is rejected at the boundary (422), matching the web form."""
     with TestClient(create_app(tmp_path / "n.db")) as client:
         _admin(client)
-        assert client.post("/filters", json={"name": "  "}, headers=H1).status_code == 422
+        assert (
+            client.post("/filters", json={"name": "  "}, headers=H1).status_code == 422
+        )
 
 
 # --- API: running a filter --------------------------------------------------
@@ -100,10 +121,15 @@ def test_run_matches_priority_and_assignee(tmp_path):
         client.put(f"/issues/{hit['id']}/assignee", json={"assignee_id": 1}, headers=H1)
         fid = client.post(
             "/filters",
-            json={"name": "mine-high", "criteria": {"priority": "high", "assignee_id": 1}},
+            json={
+                "name": "mine-high",
+                "criteria": {"priority": "high", "assignee_id": 1},
+            },
             headers=H1,
         ).json()["id"]
-        titles = [i["title"] for i in client.get(f"/filters/{fid}/issues", headers=H1).json()]
+        titles = [
+            i["title"] for i in client.get(f"/filters/{fid}/issues", headers=H1).json()
+        ]
         assert titles == ["urgent login bug"]
         assert other_high["title"] not in titles
 
@@ -113,23 +139,31 @@ def test_run_resolves_label_and_backlog(tmp_path):
     to the backlog — both go through the shared list path, not a parallel one."""
     with TestClient(create_app(tmp_path / "rl.db")) as client:
         _admin(client)
-        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=H1).json()
+        proj = client.post(
+            "/projects", json={"name": "Web", "key": "WEB"}, headers=H1
+        ).json()
         backlog_issue = _issue(client, "backlog item")
         in_project = _issue(client, "project item", project_id=proj["id"])
         label = client.post("/labels", json={"name": "ux"}, headers=H1).json()
         client.post(
-            f"/issues/{backlog_issue['id']}/labels", json={"label_id": label["id"]}, headers=H1
+            f"/issues/{backlog_issue['id']}/labels",
+            json={"label_id": label["id"]},
+            headers=H1,
         )
         # label filter
         fid = client.post(
-            "/filters", json={"name": "ux-items", "criteria": {"label": "ux"}}, headers=H1
+            "/filters",
+            json={"name": "ux-items", "criteria": {"label": "ux"}},
+            headers=H1,
         ).json()["id"]
-        assert [i["id"] for i in client.get(f"/filters/{fid}/issues", headers=H1).json()] == [
-            backlog_issue["id"]
-        ]
+        assert [
+            i["id"] for i in client.get(f"/filters/{fid}/issues", headers=H1).json()
+        ] == [backlog_issue["id"]]
         # backlog filter
         bid = client.post(
-            "/filters", json={"name": "backlog", "criteria": {"project": "none"}}, headers=H1
+            "/filters",
+            json={"name": "backlog", "criteria": {"project": "none"}},
+            headers=H1,
         ).json()["id"]
         ids = [i["id"] for i in client.get(f"/filters/{bid}/issues", headers=H1).json()]
         assert backlog_issue["id"] in ids and in_project["id"] not in ids
@@ -142,7 +176,9 @@ def test_run_carries_labels(tmp_path):
         _admin(client)
         iss = _issue(client, "labeled")
         label = client.post("/labels", json={"name": "bug"}, headers=H1).json()
-        client.post(f"/issues/{iss['id']}/labels", json={"label_id": label["id"]}, headers=H1)
+        client.post(
+            f"/issues/{iss['id']}/labels", json={"label_id": label["id"]}, headers=H1
+        )
         fid = client.post("/filters", json={"name": "all"}, headers=H1).json()["id"]
         result = client.get(f"/filters/{fid}/issues", headers=H1).json()
         assert [label["name"]] == [
@@ -164,7 +200,10 @@ def test_filters_are_private(tmp_path):
         assert client.get("/filters", headers=H2).json() == []
         assert client.get(f"/filters/{fid}", headers=H2).status_code == 404
         assert client.get(f"/filters/{fid}/issues", headers=H2).status_code == 404
-        assert client.patch(f"/filters/{fid}", json={"name": "x"}, headers=H2).status_code == 404
+        assert (
+            client.patch(f"/filters/{fid}", json={"name": "x"}, headers=H2).status_code
+            == 404
+        )
         assert client.delete(f"/filters/{fid}", headers=H2).status_code == 404
 
 
@@ -173,8 +212,14 @@ def test_two_owners_share_a_name(tmp_path):
     with TestClient(create_app(tmp_path / "to.db")) as client:
         _admin(client)
         _user2(client)
-        assert client.post("/filters", json={"name": "Mine"}, headers=H1).status_code == 201
-        assert client.post("/filters", json={"name": "Mine"}, headers=H2).status_code == 201
+        assert (
+            client.post("/filters", json={"name": "Mine"}, headers=H1).status_code
+            == 201
+        )
+        assert (
+            client.post("/filters", json={"name": "Mine"}, headers=H2).status_code
+            == 201
+        )
 
 
 def test_filters_require_authentication(tmp_path):
@@ -194,7 +239,9 @@ def test_patch_renames_and_replaces_criteria(tmp_path):
     with TestClient(create_app(tmp_path / "pa.db")) as client:
         _admin(client)
         fid = client.post(
-            "/filters", json={"name": "old", "criteria": {"priority": "low"}}, headers=H1
+            "/filters",
+            json={"name": "old", "criteria": {"priority": "low"}},
+            headers=H1,
         ).json()["id"]
         client.post("/filters", json={"name": "taken"}, headers=H1)
         updated = client.patch(
@@ -204,7 +251,12 @@ def test_patch_renames_and_replaces_criteria(tmp_path):
         ).json()
         assert updated["name"] == "new" and updated["criteria"] == {"status": "open"}
         assert client.patch(f"/filters/{fid}", json={}, headers=H1).status_code == 422
-        assert client.patch(f"/filters/{fid}", json={"name": "taken"}, headers=H1).status_code == 409
+        assert (
+            client.patch(
+                f"/filters/{fid}", json={"name": "taken"}, headers=H1
+            ).status_code
+            == 409
+        )
 
 
 def test_delete_filter(tmp_path):
@@ -229,12 +281,12 @@ def test_issue_list_filters_by_priority_and_assignee(tmp_path):
         a = _issue(client, "high one", priority="high")
         _issue(client, "low one", priority="low")
         client.put(f"/issues/{a['id']}/assignee", json={"assignee_id": 1}, headers=H1)
-        assert [i["title"] for i in client.get("/issues?priority=high", headers=H1).json()] == [
-            "high one"
-        ]
-        assert [i["title"] for i in client.get("/issues?assignee=1", headers=H1).json()] == [
-            "high one"
-        ]
+        assert [
+            i["title"] for i in client.get("/issues?priority=high", headers=H1).json()
+        ] == ["high one"]
+        assert [
+            i["title"] for i in client.get("/issues?assignee=1", headers=H1).json()
+        ] == ["high one"]
 
 
 # --- web --------------------------------------------------------------------
@@ -275,20 +327,37 @@ def test_web_summary_hides_a_private_project_name(tmp_path):
 
     conn = db.connect(tmp_path / "leak.db")
     db.migrate(conn)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('admin@e.com', 'Admin', 'admin')")
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('c@e.com', 'Creator', 'member')")
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('o@e.com', 'Outsider', 'member')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('admin@e.com', 'Admin', 'admin')"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('c@e.com', 'Creator', 'member')"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('o@e.com', 'Outsider', 'member')"
+    )
     conn.commit()
     proj = projects.create_project(conn, name="Acquisition", key="ACQ", created_by=2)
-    conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (proj["id"],))
+    conn.execute(
+        "UPDATE projects SET visibility = 'private' WHERE id = ?", (proj["id"],)
+    )
     conn.commit()
     crit = {"project": str(proj["id"])}
 
     # The creator (a member) and an admin (god-view) see the real name...
-    assert _describe_criteria(conn, crit, users.get_user(conn, 2)) == "project: Acquisition"
-    assert _describe_criteria(conn, crit, users.get_user(conn, 1)) == "project: Acquisition"
+    assert (
+        _describe_criteria(conn, crit, users.get_user(conn, 2))
+        == "project: Acquisition"
+    )
+    assert (
+        _describe_criteria(conn, crit, users.get_user(conn, 1))
+        == "project: Acquisition"
+    )
     # ...but an outsider and an anonymous viewer get only the id — no name leak.
-    assert _describe_criteria(conn, crit, users.get_user(conn, 3)) == f"project: #{proj['id']}"
+    assert (
+        _describe_criteria(conn, crit, users.get_user(conn, 3))
+        == f"project: #{proj['id']}"
+    )
     assert _describe_criteria(conn, crit, None) == f"project: #{proj['id']}"
     conn.close()
 
@@ -330,15 +399,23 @@ def test_web_dup_and_bad_input(tmp_path):
     with TestClient(create_app(tmp_path / "wd.db")) as client:
         _admin(client)
         csrf = _login(client)
-        client.post("/aegis/filters", data={"name": "dup"}, headers={"X-CSRF-Token": csrf})
-        assert client.post(
+        client.post(
             "/aegis/filters", data={"name": "dup"}, headers={"X-CSRF-Token": csrf}
-        ).status_code == 409
-        assert client.post(
-            "/aegis/filters",
-            data={"name": "z", "priority": "nope"},
-            headers={"X-CSRF-Token": csrf},
-        ).status_code == 400
+        )
+        assert (
+            client.post(
+                "/aegis/filters", data={"name": "dup"}, headers={"X-CSRF-Token": csrf}
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/aegis/filters",
+                data={"name": "z", "priority": "nope"},
+                headers={"X-CSRF-Token": csrf},
+            ).status_code
+            == 400
+        )
 
 
 def test_web_requires_login_and_ownership(tmp_path):
@@ -360,7 +437,9 @@ def test_web_delete(tmp_path):
     with TestClient(create_app(tmp_path / "wdel.db")) as client:
         _admin(client)
         csrf = _login(client)
-        client.post("/aegis/filters", data={"name": "gone"}, headers={"X-CSRF-Token": csrf})
+        client.post(
+            "/aegis/filters", data={"name": "gone"}, headers={"X-CSRF-Token": csrf}
+        )
         fid = client.get("/filters", headers=H1).json()[0]["id"]
         client.post(f"/aegis/filters/{fid}/delete", headers={"X-CSRF-Token": csrf})
         assert "gone" not in client.get("/aegis/filters").text
@@ -380,7 +459,9 @@ def test_search_within_filter_intersects_text_and_criteria(tmp_path):
         _issue(client, "deploy docs", priority="low")  # text but wrong priority
         _issue(client, "unrelated thing", priority="high")  # priority but no text
         fid = client.post(
-            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+            "/filters",
+            json={"name": "highs", "criteria": {"priority": "high"}},
+            headers=H1,
         ).json()["id"]
         page = client.get(f"/aegis/filters/{fid}?q=deploy").text
         assert "deploy pipeline" in page
@@ -416,7 +497,9 @@ def test_search_within_filter_blank_q_shows_full_run(tmp_path):
         _issue(client, "alpha", priority="high")
         _issue(client, "beta", priority="high")
         fid = client.post(
-            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+            "/filters",
+            json={"name": "highs", "criteria": {"priority": "high"}},
+            headers=H1,
         ).json()["id"]
         page = client.get(f"/aegis/filters/{fid}").text
         assert "alpha" in page and "beta" in page
@@ -429,7 +512,9 @@ def test_search_within_filter_no_match_message(tmp_path):
         _login(client)
         _issue(client, "alpha", priority="high")
         fid = client.post(
-            "/filters", json={"name": "highs", "criteria": {"priority": "high"}}, headers=H1
+            "/filters",
+            json={"name": "highs", "criteria": {"priority": "high"}},
+            headers=H1,
         ).json()["id"]
         page = client.get(f"/aegis/filters/{fid}?q=zzznope").text
         assert "No issues in this filter match" in page

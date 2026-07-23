@@ -63,9 +63,7 @@ def resource_and_etag(
     conn: sqlite3.Connection, issue: dict
 ) -> tuple[dict[str, Any], str]:
     """Build one representation once, then derive its strong validator."""
-    return representation_and_etag(
-        issue, labels.labels_for_issue(conn, issue["id"])
-    )
+    return representation_and_etag(issue, labels.labels_for_issue(conn, issue["id"]))
 
 
 def current_etag(conn: sqlite3.Connection, issue: dict) -> str:

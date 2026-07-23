@@ -48,7 +48,9 @@ def _project_bundle(tmp_path):
     owner = _user(source, "owner@example.com", "Owner", role="admin")
     member = _user(source, "member@example.com", "Member")
     bot = _user(source, "bot@example.com", "Bot", is_agent=True)
-    ext_space = spaces.create_space(source, key="EXT", name="External", created_by=owner)
+    ext_space = spaces.create_space(
+        source, key="EXT", name="External", created_by=owner
+    )
     ext_page = pages.create_page(
         source,
         space_id=ext_space["id"],
@@ -91,8 +93,7 @@ def _project_bundle(tmp_path):
         source, issue_id=parent["id"], author_id=member, body="portable comment"
     )
     source.execute(
-        "INSERT INTO issue_contributors (issue_id, user_id, added_by) "
-        "VALUES (?, ?, ?)",
+        "INSERT INTO issue_contributors (issue_id, user_id, added_by) VALUES (?, ?, ?)",
         (parent["id"], bot, owner),
     )
     source.execute(
@@ -141,7 +142,9 @@ def _project_bundle(tmp_path):
 def _prepare_project_target(path):
     target = _connect(path)
     extra = _user(target, "extra@example.com", "Extra")
-    existing = projects.create_project(target, name="Existing", key="EX", created_by=extra)
+    existing = projects.create_project(
+        target, name="Existing", key="EX", created_by=extra
+    )
     issues.create_issue(
         target,
         title="Existing issue",
@@ -184,13 +187,9 @@ def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
 
     result = portability.replay_import_manifest(target, bundle, manifest)
 
-    imported = target.execute(
-        "SELECT id FROM projects WHERE key = 'RPL'"
-    ).fetchone()
+    imported = target.execute("SELECT id FROM projects WHERE key = 'RPL'").fetchone()
     assert result["status"] == "imported"
-    imported_issue_ids = {
-        row["target_id"] for row in result["id_map"]["issues"]
-    }
+    imported_issue_ids = {row["target_id"] for row in result["id_map"]["issues"]}
     assert min(imported_issue_ids) > deleted_issue["id"]
     assert deleted_issue["id"] not in imported_issue_ids
     assert imported["id"] > deleted["id"]
@@ -233,7 +232,9 @@ def test_project_import_replays_manifest_and_rewrites_internal_refs(tmp_path):
         {"source_id": bundle["users"][2]["id"], "target_id": bot},
     ]
     external_page_id = next(
-        row["target_id"] for row in bundle["cross_links"] if row["target_kind"] == "page"
+        row["target_id"]
+        for row in bundle["cross_links"]
+        if row["target_kind"] == "page"
     )
     assert parent["id"] != bundle["issues"][0]["id"]
     assert f"[[issue:{child['id']}]]" in parent["body"]
@@ -256,9 +257,7 @@ def test_project_import_rebuilds_links_activity_and_search(tmp_path):
     }
     parent_id = issue_map[bundle["issues"][0]["id"]]
     child_id = issue_map[bundle["issues"][1]["id"]]
-    source_triaged = next(
-        row for row in bundle["activity"] if row["verb"] == "triaged"
-    )
+    source_triaged = next(row for row in bundle["activity"] if row["verb"] == "triaged")
     # The bundle's triaged event carries run_id/parent_run_id/forked_from_event_id (see the
     # raw INSERT in _project_bundle) — a forged fork that import must NOT honor.
     assert source_triaged["run_id"] and source_triaged["forked_from_event_id"]
@@ -516,7 +515,10 @@ def test_import_refuses_blocked_manifest(tmp_path):
     else:
         raise AssertionError("blocked manifest should not import")
     finally:
-        assert target.execute("SELECT COUNT(*) FROM projects WHERE key='RPL'").fetchone()[
-            0
-        ] == 0
+        assert (
+            target.execute("SELECT COUNT(*) FROM projects WHERE key='RPL'").fetchone()[
+                0
+            ]
+            == 0
+        )
         target.close()

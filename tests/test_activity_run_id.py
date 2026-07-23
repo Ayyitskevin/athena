@@ -9,6 +9,7 @@ ambient id (and only within its scope), that an HTTP request carries the id onto
 events it causes — including into the sync handler — and that /activity and /events
 filter by run_id while untagged actions stay null and backward-compatible.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, run_context
@@ -24,7 +25,9 @@ def _migrated_conn(db_file):
 
 
 def _user(conn, name="Human"):
-    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name))
+    conn.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?)", (f"{name}@e.com", name)
+    )
     conn.commit()
 
 
@@ -33,7 +36,7 @@ def _user(conn, name="Human"):
 
 def test_normalize_run_id():
     assert run_context.normalize(None) is None
-    assert run_context.normalize("   ") is None          # whitespace → untagged
+    assert run_context.normalize("   ") is None  # whitespace → untagged
     assert run_context.normalize("  job-7 ") == "job-7"  # trimmed
     assert run_context.normalize("u" * 500) == "u" * 200  # bounded, not rejected
 
@@ -67,7 +70,9 @@ def test_list_filters_by_run_id(tmp_path):
     for verb, run in [("created", "r1"), ("changed_status", "r1"), ("commented", "r2")]:
         token = run_context.set_run_id(run)
         try:
-            activity.record(conn, actor_id=1, verb=verb, target_kind="issue", target_id=1)
+            activity.record(
+                conn, actor_id=1, verb=verb, target_kind="issue", target_id=1
+            )
         finally:
             run_context.reset_run_id(token)
 
@@ -109,8 +114,12 @@ def test_http_header_tags_events_and_replays(tmp_path):
 def test_events_replay_by_run_id(tmp_path):
     with TestClient(create_app(tmp_path / "events.db")) as client:
         client.post("/users", json={"email": "h@e.com", "name": "Human"})
-        client.post("/issues", json={"title": "a"}, headers={**H1, "X-Athena-Run": "r1"})
-        client.post("/issues", json={"title": "b"}, headers={**H1, "X-Athena-Run": "r2"})
+        client.post(
+            "/issues", json={"title": "a"}, headers={**H1, "X-Athena-Run": "r1"}
+        )
+        client.post(
+            "/issues", json={"title": "b"}, headers={**H1, "X-Athena-Run": "r2"}
+        )
 
         r1 = client.get("/events?run_id=r1", headers=H1).json()["events"]
         assert len(r1) == 1

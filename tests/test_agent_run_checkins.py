@@ -59,9 +59,7 @@ def test_migration_has_composite_identity_and_enforces_references(tmp_path):
     conn = _open(tmp_path / "schema.db")
     try:
         columns = conn.execute("PRAGMA table_info(agent_run_checkins)").fetchall()
-        primary_key = {
-            row["name"]: row["pk"] for row in columns if row["pk"]
-        }
+        primary_key = {row["name"]: row["pk"] for row in columns if row["pk"]}
         assert primary_key == {"agent_id": 1, "run_id": 2}
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'index' "
@@ -149,15 +147,11 @@ def test_heartbeat_requires_agent_bearer_with_live_write_scope(tmp_path):
         )
         _assert_command_error(
             "forbidden",
-            lambda: agent_run_commands.heartbeat(
-                conn, actor=human_actor, run_id="run"
-            ),
+            lambda: agent_run_commands.heartbeat(conn, actor=human_actor, run_id="run"),
         )
         _assert_command_error(
             "forbidden",
-            lambda: agent_run_commands.heartbeat(
-                conn, actor=read_actor, run_id="run"
-            ),
+            lambda: agent_run_commands.heartbeat(conn, actor=read_actor, run_id="run"),
         )
         header_actor = {**write_actor}
         header_actor.pop("_token_id")
@@ -173,9 +167,10 @@ def test_heartbeat_requires_agent_bearer_with_live_write_scope(tmp_path):
                 conn, actor=write_actor, run_id="line\nbreak"
             ),
         )
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_run_checkins"
-        ).fetchone()["n"] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) AS n FROM agent_run_checkins").fetchone()["n"]
+            == 0
+        )
 
         for index, scope in enumerate(
             (tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE, tokens.ADMIN_SCOPE)
@@ -224,14 +219,10 @@ def test_heartbeat_rechecks_database_authority_inside_transaction(tmp_path):
             (tokens.ISSUE_WRITE_SCOPE, token["id"]),
         )
         conn.commit()
-        assert tokens.revoke_token(
-            conn, user_id=agent["id"], token_id=token["id"]
-        )
+        assert tokens.revoke_token(conn, user_id=agent["id"], token_id=token["id"])
         _assert_command_error(
             "forbidden",
-            lambda: agent_run_commands.heartbeat(
-                conn, actor=actor, run_id="revoked"
-            ),
+            lambda: agent_run_commands.heartbeat(conn, actor=actor, run_id="revoked"),
         )
 
         _, _, current_actor = _actor(
@@ -246,9 +237,10 @@ def test_heartbeat_rechecks_database_authority_inside_transaction(tmp_path):
                 conn, actor=current_actor, run_id="unmarked"
             ),
         )
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_run_checkins"
-        ).fetchone()["n"] == 0
+        assert (
+            conn.execute("SELECT COUNT(*) AS n FROM agent_run_checkins").fetchone()["n"]
+            == 0
+        )
     finally:
         conn.close()
 
@@ -319,14 +311,15 @@ def test_checkin_capacity_blocks_only_new_ids(tmp_path, monkeypatch):
         assert refreshed["run_id"] == "run-1"
         _assert_command_error(
             "capacity",
-            lambda: agent_run_commands.heartbeat(
-                conn, actor=actor, run_id="run-3"
-            ),
+            lambda: agent_run_commands.heartbeat(conn, actor=actor, run_id="run-3"),
         )
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM agent_run_checkins WHERE agent_id = ?",
-            (agent["id"],),
-        ).fetchone()["n"] == 2
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM agent_run_checkins WHERE agent_id = ?",
+                (agent["id"],),
+            ).fetchone()["n"]
+            == 2
+        )
     finally:
         conn.close()
 
@@ -375,19 +368,25 @@ def test_checkin_capacity_serializes_last_slot_across_tokens(tmp_path, monkeypat
         # WHY: the cap belongs to the agent, not a token, and BEGIN IMMEDIATE makes
         # the count-and-insert decision atomic across workers.
         assert sorted(outcomes) == ["accepted", "capacity"]
-        assert check.execute(
-            "SELECT COUNT(*) AS n FROM agent_run_checkins WHERE agent_id = ?",
-            (agent["id"],),
-        ).fetchone()["n"] == 2
+        assert (
+            check.execute(
+                "SELECT COUNT(*) AS n FROM agent_run_checkins WHERE agent_id = ?",
+                (agent["id"],),
+            ).fetchone()["n"]
+            == 2
+        )
 
         _, _, other_actor = _actor(
             check,
             email="other@example.com",
             name="Other Agent",
         )
-        assert agent_run_commands.heartbeat(
-            check, actor=other_actor, run_id="independent"
-        )["run_id"] == "independent"
+        assert (
+            agent_run_commands.heartbeat(
+                check, actor=other_actor, run_id="independent"
+            )["run_id"]
+            == "independent"
+        )
     finally:
         check.close()
 
@@ -471,9 +470,7 @@ def test_latest_projection_uses_full_history_and_deterministic_ties(tmp_path):
         )
         for run_id in ("old-stale", "z-latest", "a-latest"):
             agent_run_commands.heartbeat(conn, actor=first_actor, run_id=run_id)
-        agent_run_commands.heartbeat(
-            conn, actor=second_actor, run_id="second-latest"
-        )
+        agent_run_commands.heartbeat(conn, actor=second_actor, run_id="second-latest")
         timestamps = {
             (first_agent["id"], "old-stale"): "2025-12-31 23:00:00",
             # Equal newest timestamps deliberately prove the run-id tie-break.
@@ -527,26 +524,31 @@ def test_concurrent_first_heartbeats_converge_without_activity(tmp_path):
         conn = db.connect(db_path)
         try:
             barrier.wait(timeout=5)
-            return agent_run_commands.heartbeat(
-                conn, actor=actor, run_id="same-run"
-            )
+            return agent_run_commands.heartbeat(conn, actor=actor, run_id="same-run")
         finally:
             conn.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = [future.result(timeout=10) for future in (pool.submit(report), pool.submit(report))]
+        results = [
+            future.result(timeout=10)
+            for future in (pool.submit(report), pool.submit(report))
+        ]
 
     check = db.connect(db_path)
     try:
         assert len(results) == 2
         assert {result["run_id"] for result in results} == {"same-run"}
-        assert check.execute(
-            "SELECT COUNT(*) AS n FROM agent_run_checkins "
-            "WHERE agent_id = ? AND run_id = ?",
-            (agent["id"], "same-run"),
-        ).fetchone()["n"] == 1
-        assert check.execute(
-            "SELECT COUNT(*) AS n FROM activity"
-        ).fetchone()["n"] == activity_before
+        assert (
+            check.execute(
+                "SELECT COUNT(*) AS n FROM agent_run_checkins "
+                "WHERE agent_id = ? AND run_id = ?",
+                (agent["id"], "same-run"),
+            ).fetchone()["n"]
+            == 1
+        )
+        assert (
+            check.execute("SELECT COUNT(*) AS n FROM activity").fetchone()["n"]
+            == activity_before
+        )
     finally:
         check.close()

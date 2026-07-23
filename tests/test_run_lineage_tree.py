@@ -9,6 +9,7 @@ projection of (run_id, parent_run_id) — no stored tree. These tests pin the tr
 the focal-vs-light event payloads, cycle-safety, and the visibility gate (a run on a
 target the viewer can't see is a 404, indistinguishable from one that never existed).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, run_context
@@ -22,7 +23,9 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 def _conn(db_file):
     conn = db.connect(db_file)
     db.migrate(conn)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')"
+    )
     conn.commit()
     return conn
 
@@ -118,30 +121,70 @@ def test_lineage_endpoint_walks_the_tree(tmp_path):
         child = client.get("/activity/runs/c1/lineage", headers=H_ADMIN).json()
         assert [a["run_id"] for a in child["ancestors"]] == ["g1"]
 
-        assert client.get("/activity/runs/nope/lineage", headers=H_ADMIN).status_code == 404
+        assert (
+            client.get("/activity/runs/nope/lineage", headers=H_ADMIN).status_code
+            == 404
+        )
         # Authentication is the gate, like the rest of the activity API.
         assert client.get("/activity/runs/g1/lineage").status_code == 401
 
 
 def test_lineage_is_visibility_gated(tmp_path):
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR).json()["id"]
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H_CREATOR
+        ).json()["id"]
         # The only event in run p1 targets an issue in P.
         client.post(
-            "/issues", json={"title": "secret", "project_id": pid},
+            "/issues",
+            json={"title": "secret", "project_id": pid},
             headers={**H_CREATOR, "X-Athena-Run": "p1"},
         )
-        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=H_CREATOR)
+        client.put(
+            f"/projects/{pid}/visibility",
+            json={"visibility": "private"},
+            headers=H_CREATOR,
+        )
 
         # The outsider can't see the only event, so the run is a 404 — its existence
         # never leaks through lineage.
-        assert client.get("/activity/runs/p1/lineage", headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.get("/activity/runs/p1/lineage", headers=H_OUTSIDER).status_code
+            == 404
+        )
         # The creator (a member of P) and the admin (god-view) both see it.
-        assert client.get("/activity/runs/p1/lineage", headers=H_CREATOR).status_code == 200
-        assert client.get("/activity/runs/p1/lineage", headers=H_ADMIN).status_code == 200
+        assert (
+            client.get("/activity/runs/p1/lineage", headers=H_CREATOR).status_code
+            == 200
+        )
+        assert (
+            client.get("/activity/runs/p1/lineage", headers=H_ADMIN).status_code == 200
+        )
 
 
 def test_lineage_partial_tree_gating_does_not_leak_hidden_runs(tmp_path):
@@ -151,28 +194,61 @@ def test_lineage_partial_tree_gating_does_not_leak_hidden_runs(tmp_path):
     # ancestors to []; viewing g, the hidden child c must drop the whole subtree (c AND
     # its visible grandchild gc). The creator (a member of the private project) sees all.
     with TestClient(create_app(tmp_path / "partial.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
-        pub = client.post("/projects", json={"name": "Pub", "key": "PUB"}, headers=H_CREATOR).json()["id"]
-        priv = client.post("/projects", json={"name": "Priv", "key": "PRIV"}, headers=H_CREATOR).json()["id"]
+        client.post(
+            "/users",
+            json={"email": "a@e.com", "name": "Admin", "password": "pw"},
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "c@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        client.post(
+            "/users",
+            json={
+                "email": "o@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H_ADMIN,
+        )
+        pub = client.post(
+            "/projects", json={"name": "Pub", "key": "PUB"}, headers=H_CREATOR
+        ).json()["id"]
+        priv = client.post(
+            "/projects", json={"name": "Priv", "key": "PRIV"}, headers=H_CREATOR
+        ).json()["id"]
 
         # g: create issue A in the public project.
         a = client.post(
-            "/issues", json={"title": "A", "project_id": pub},
+            "/issues",
+            json={"title": "A", "project_id": pub},
             headers={**H_CREATOR, "X-Athena-Run": "g"},
         ).json()["id"]
         # c (child of g): create issue B in the private project.
         client.post(
-            "/issues", json={"title": "B", "project_id": priv},
+            "/issues",
+            json={"title": "B", "project_id": priv},
             headers={**H_CREATOR, "X-Athena-Run": "c", "X-Athena-Parent-Run": "g"},
         )
         # gc (child of c): a status change on the public issue A.
         client.patch(
-            f"/issues/{a}", json={"status": "in_progress"},
+            f"/issues/{a}",
+            json={"status": "in_progress"},
             headers={**H_CREATOR, "X-Athena-Run": "gc", "X-Athena-Parent-Run": "c"},
         )
-        client.put(f"/projects/{priv}/visibility", json={"visibility": "private"}, headers=H_CREATOR)
+        client.put(
+            f"/projects/{priv}/visibility",
+            json={"visibility": "private"},
+            headers=H_CREATOR,
+        )
 
         # Outsider viewing gc: focal is visible (public), but the hidden parent c
         # truncates the ancestor chain — neither c nor g leaks.

@@ -7,6 +7,7 @@ never disagree. These pin the detail-page placement form, the retained sprint-on
 route (assign, clear, cross-project 400, and creator-or-assignee gate), and the
 list/API sprint filter.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -15,7 +16,9 @@ H1 = {"X-Athena-Actor": "1"}  # the bootstrap admin (project + issue creator)
 
 
 def _login(client, email="a@e.com", password="pw"):
-    r = client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
@@ -57,7 +60,9 @@ def test_assign_and_clear_sprint_from_detail(tmp_path):
 
         # Assign it to the sprint.
         moved = client.post(
-            f"/aegis/issues/{iid}/sprint", data={"sprint_id": sid}, follow_redirects=False
+            f"/aegis/issues/{iid}/sprint",
+            data={"sprint_id": sid},
+            follow_redirects=False,
         )
         assert moved.status_code == 303
         assert _sprint_of(client, iid) == sid
@@ -65,7 +70,9 @@ def test_assign_and_clear_sprint_from_detail(tmp_path):
 
         # Clear it (empty value) → back to the backlog.
         cleared = client.post(
-            f"/aegis/issues/{iid}/sprint", data={"sprint_id": ""}, follow_redirects=False
+            f"/aegis/issues/{iid}/sprint",
+            data={"sprint_id": ""},
+            follow_redirects=False,
         )
         assert cleared.status_code == 303
         assert _sprint_of(client, iid) is None
@@ -83,7 +90,9 @@ def test_cross_project_sprint_is_rejected(tmp_path):
         # An issue can only join a sprint in its own project — the web 400 mirrors
         # the REST 422 the PUT /issues/{id}/sprint endpoint raises.
         denied = client.post(
-            f"/aegis/issues/{iid}/sprint", data={"sprint_id": sid_b}, follow_redirects=False
+            f"/aegis/issues/{iid}/sprint",
+            data={"sprint_id": sid_b},
+            follow_redirects=False,
         )
         assert denied.status_code == 400
         assert _sprint_of(client, iid) is None
@@ -91,7 +100,9 @@ def test_cross_project_sprint_is_rejected(tmp_path):
 
 def test_sprint_assign_is_author_gated(tmp_path):
     with TestClient(create_app(tmp_path / "gate.db")) as client:
-        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})  # creator
+        client.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}
+        )  # creator
         client.post(
             "/users",
             json={"email": "b@e.com", "name": "B", "password": "pw", "role": "member"},
@@ -103,7 +114,9 @@ def test_sprint_assign_is_author_gated(tmp_path):
 
         _login(client, "b@e.com", "pw")  # a member who is neither creator nor assignee
         denied = client.post(
-            f"/aegis/issues/{iid}/sprint", data={"sprint_id": sid}, follow_redirects=False
+            f"/aegis/issues/{iid}/sprint",
+            data={"sprint_id": sid},
+            follow_redirects=False,
         )
         assert denied.status_code == 403
         assert _sprint_of(client, iid) is None

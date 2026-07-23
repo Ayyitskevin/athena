@@ -105,15 +105,9 @@ FleetMetricId = Annotated[
 FleetActorLimit = Annotated[
     int, Field(strict=True, ge=1, le=fleet_metrics.MAX_ACTOR_LIMIT)
 ]
-FleetMetricDate = Annotated[
-    str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
-]
-FleetWorkLimit = Annotated[
-    int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)
-]
-FleetAgentId = Annotated[
-    int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)
-]
+FleetMetricDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
+FleetWorkLimit = Annotated[int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)]
+FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 
 
 def build_server(client: AthenaClient) -> FastMCP:

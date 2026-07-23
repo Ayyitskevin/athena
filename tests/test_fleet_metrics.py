@@ -90,9 +90,7 @@ def _issue(
     payload: dict[str, object] = {"title": title, "project_id": project_id}
     if status is not None:
         payload["status"] = status
-    response = client.post(
-        "/issues", json=payload, headers=_headers(actor_id)
-    )
+    response = client.post("/issues", json=payload, headers=_headers(actor_id))
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -206,24 +204,15 @@ def test_preset_links_share_one_utc_end_boundary():
     assert web_fleet_metrics._preset_links(date(2026, 6, 10)) == [
         {
             "days": 7,
-            "href": (
-                "/aegis/fleet-metrics?"
-                "start=2026-06-03&end=2026-06-10"
-            ),
+            "href": ("/aegis/fleet-metrics?start=2026-06-03&end=2026-06-10"),
         },
         {
             "days": 30,
-            "href": (
-                "/aegis/fleet-metrics?"
-                "start=2026-05-11&end=2026-06-10"
-            ),
+            "href": ("/aegis/fleet-metrics?start=2026-05-11&end=2026-06-10"),
         },
         {
             "days": 90,
-            "href": (
-                "/aegis/fleet-metrics?"
-                "start=2026-03-12&end=2026-06-10"
-            ),
+            "href": ("/aegis/fleet-metrics?start=2026-03-12&end=2026-06-10"),
         },
     ]
 
@@ -236,13 +225,9 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
         actors = _bootstrap(client)
         human_id = actors["human"]["id"]
         agent_id = actors["agent"]["id"]
-        project = _project(
-            client, name="Delivery", key="DEL", actor_id=human_id
-        )
+        project = _project(client, name="Delivery", key="DEL", actor_id=human_id)
         conn = db.connect(db_file)
-        assert statuses.add_status(
-            conn, project["id"], "shipped", "done"
-        ) is None
+        assert statuses.add_status(conn, project["id"], "shipped", "done") is None
 
         issue = _issue(
             client,
@@ -253,13 +238,9 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
         _stamp_latest(conn, issue["id"], "created", "2026-01-01 00:00:00")
 
         _set_status(client, issue["id"], "shipped", actor_id=human_id)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-05 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-05 00:00:00")
         _set_status(client, issue["id"], "in_progress", actor_id=human_id)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-06 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-06 00:00:00")
 
         assigned = client.put(
             f"/issues/{issue['id']}/assignee",
@@ -268,9 +249,7 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
         )
         assert assigned.status_code == 200
         _set_status(client, issue["id"], "shipped", actor_id=agent_id)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-07 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-07 00:00:00")
 
         # Lease/run completion is coordination, not issue lifecycle completion.
         activity.record(
@@ -280,9 +259,7 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
             target_kind="issue",
             target_id=issue["id"],
         )
-        _stamp_latest(
-            conn, issue["id"], "claim_completed", "2026-01-07 12:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "claim_completed", "2026-01-07 12:00:00")
 
         archived = client.post(
             f"/issues/{issue['id']}/archive", headers=_headers(human_id)
@@ -340,9 +317,7 @@ def test_completion_semantics_cycle_reopen_attribution_and_mutable_state(
         assert bounded["limits"]["actor_rows_truncated"] is True
         assert bounded["actors"][0]["actor_id"] == human_id
 
-        conn.execute(
-            "UPDATE users SET name = 'Zulu human' WHERE id = ?", (human_id,)
-        )
+        conn.execute("UPDATE users SET name = 'Zulu human' WHERE id = ?", (human_id,))
         conn.execute(
             "UPDATE users SET name = 'Aardvark agent' WHERE id = ?", (agent_id,)
         )
@@ -380,21 +355,13 @@ def test_malformed_reopen_timestamp_excludes_cycle_instead_of_skipping_boundary(
         _bootstrap(client)
         issue = _issue(client, title="Malformed reopen")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, issue["id"], "created", "2026-01-01 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "created", "2026-01-01 00:00:00")
         _set_status(client, issue["id"], "done", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-02 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-02 00:00:00")
         _set_status(client, issue["id"], "open", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-03Tbad"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-03Tbad")
         _set_status(client, issue["id"], "done", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-04 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-04 00:00:00")
 
         result = _metrics(
             client,
@@ -421,16 +388,10 @@ def test_done_to_done_is_not_a_completion_and_assignee_is_not_attribution(
         actors = _bootstrap(client)
         human_id = actors["human"]["id"]
         agent_id = actors["agent"]["id"]
-        project = _project(
-            client, name="Release", key="REL", actor_id=human_id
-        )
+        project = _project(client, name="Release", key="REL", actor_id=human_id)
         conn = db.connect(db_file)
-        assert statuses.add_status(
-            conn, project["id"], "shipped", "done"
-        ) is None
-        assert statuses.add_status(
-            conn, project["id"], "verified", "done"
-        ) is None
+        assert statuses.add_status(conn, project["id"], "shipped", "done") is None
+        assert statuses.add_status(conn, project["id"], "verified", "done") is None
 
         issue = _issue(
             client,
@@ -447,13 +408,9 @@ def test_done_to_done_is_not_a_completion_and_assignee_is_not_attribution(
         assert assigned.status_code == 200
 
         _set_status(client, issue["id"], "shipped", actor_id=human_id)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-02 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-02 00:00:00")
         _set_status(client, issue["id"], "verified", actor_id=agent_id)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-01-03 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-01-03 00:00:00")
 
         result = _metrics(
             client,
@@ -482,10 +439,7 @@ def test_same_name_cross_project_category_moves_complete_and_reopen(tmp_path):
         destination = _project(client, name="Destination", key="DST")
         conn = db.connect(db_file)
         assert statuses.remove_status(conn, destination["id"], "open") is None
-        assert (
-            statuses.add_status(conn, destination["id"], "open", "done")
-            is None
-        )
+        assert statuses.add_status(conn, destination["id"], "open", "done") is None
 
         issue = _issue(
             client,
@@ -524,9 +478,7 @@ def test_same_name_cross_project_category_moves_complete_and_reopen(tmp_path):
                 headers=H_ADMIN,
             )
             assert moved.status_code == 200, moved.text
-            _stamp_latest(
-                conn, issue["id"], "changed_status", timestamp
-            )
+            _stamp_latest(conn, issue["id"], "changed_status", timestamp)
 
         result = _metrics(
             client,
@@ -570,15 +522,14 @@ def test_half_open_boundary_direct_terminal_archive_and_no_data(tmp_path):
             status="done",
         )
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, included["id"], "created", "2026-02-01 00:00:00"
+        _stamp_latest(conn, included["id"], "created", "2026-02-01 00:00:00")
+        _stamp_latest(conn, excluded["id"], "created", "2026-02-02 00:00:00")
+        assert (
+            client.post(
+                f"/issues/{included['id']}/archive", headers=H_ADMIN
+            ).status_code
+            == 200
         )
-        _stamp_latest(
-            conn, excluded["id"], "created", "2026-02-02 00:00:00"
-        )
-        assert client.post(
-            f"/issues/{included['id']}/archive", headers=H_ADMIN
-        ).status_code == 200
 
         result = _metrics(
             client,
@@ -614,9 +565,7 @@ def test_hidden_rows_do_not_change_any_payload_or_consume_caps(tmp_path, monkeyp
         outsider = _headers(actors["outsider"]["id"])
         visible = _issue(client, title="Visible", status="done")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, visible["id"], "created", "2026-03-02 00:00:00"
-        )
+        _stamp_latest(conn, visible["id"], "created", "2026-03-02 00:00:00")
         before = _metrics(
             client,
             start="2026-03-01",
@@ -631,14 +580,15 @@ def test_hidden_rows_do_not_change_any_payload_or_consume_caps(tmp_path, monkeyp
             project_id=private["id"],
             status="done",
         )
-        _stamp_latest(
-            conn, hidden["id"], "created", "2026-03-03 00:00:00"
+        _stamp_latest(conn, hidden["id"], "created", "2026-03-03 00:00:00")
+        assert (
+            client.put(
+                f"/projects/{private['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
         )
-        assert client.put(
-            f"/projects/{private['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
 
         after = _metrics(
             client,
@@ -677,12 +627,8 @@ def test_visible_legacy_imported_and_orphan_evidence_is_reported_not_guessed(
         visible = _issue(client, title="Typed visible", status="done")
         orphan = _issue(client, title="Soon orphaned", status="done")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, visible["id"], "created", "2026-04-02 00:00:00"
-        )
-        _stamp_latest(
-            conn, orphan["id"], "created", "2026-04-03 00:00:00"
-        )
+        _stamp_latest(conn, visible["id"], "created", "2026-04-02 00:00:00")
+        _stamp_latest(conn, orphan["id"], "created", "2026-04-03 00:00:00")
 
         conn.execute(
             "INSERT INTO activity "
@@ -723,12 +669,8 @@ def test_visible_legacy_imported_and_orphan_evidence_is_reported_not_guessed(
             "completed": 2,
             "net": 0,
         }
-        assert (
-            outsider_before_orphan["coverage"]["excluded_legacy_events"] == 1
-        )
-        assert (
-            outsider_before_orphan["coverage"]["excluded_imported_events"] == 1
-        )
+        assert outsider_before_orphan["coverage"]["excluded_legacy_events"] == 1
+        assert outsider_before_orphan["coverage"]["excluded_imported_events"] == 1
 
         conn.execute("DELETE FROM issues WHERE id = ?", (orphan["id"],))
         conn.commit()
@@ -803,9 +745,7 @@ def test_project_filter_reports_visible_untyped_activity_scope(tmp_path):
             target_id=issue["id"],
             issue_project_ids={project["id"]},
         )
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-04-02 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-04-02 00:00:00")
 
         result = _metrics(
             client,
@@ -829,19 +769,13 @@ def test_deleted_highest_issue_id_is_never_rebound_to_new_generation(
         _bootstrap(client)
         deleted = _issue(client, title="Deleted generation", status="done")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, deleted["id"], "created", "2026-04-04 00:00:00"
-        )
+        _stamp_latest(conn, deleted["id"], "created", "2026-04-04 00:00:00")
         conn.execute("DELETE FROM issues WHERE id = ?", (deleted["id"],))
         conn.commit()
 
-        replacement = _issue(
-            client, title="Fresh generation", status="done"
-        )
+        replacement = _issue(client, title="Fresh generation", status="done")
         assert replacement["id"] > deleted["id"]
-        _stamp_latest(
-            conn, replacement["id"], "created", "2026-04-05 00:00:00"
-        )
+        _stamp_latest(conn, replacement["id"], "created", "2026-04-05 00:00:00")
 
         result = _metrics(
             client,
@@ -873,29 +807,34 @@ def test_hidden_lifecycle_predecessor_excludes_cycle_without_hiding_completion(
         issue = _issue(client, title="Moves through secret")
         conn = db.connect(db_file)
         _stamp_latest(conn, issue["id"], "created", "2026-05-01 00:00:00")
-        assert client.put(
-            f"/projects/{private['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
-        assert client.patch(
-            f"/issues/{issue['id']}",
-            json={"project_id": private["id"]},
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{private['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.patch(
+                f"/issues/{issue['id']}",
+                json={"project_id": private["id"]},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
         _set_status(client, issue["id"], "in_progress", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-05-02 00:00:00"
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-05-02 00:00:00")
+        assert (
+            client.patch(
+                f"/issues/{issue['id']}",
+                json={"project_id": None},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
         )
-        assert client.patch(
-            f"/issues/{issue['id']}",
-            json={"project_id": None},
-            headers=H_ADMIN,
-        ).status_code == 200
         _set_status(client, issue["id"], "done", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-05-03 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-05-03 00:00:00")
 
         result = _metrics(
             client,
@@ -923,16 +862,17 @@ def test_hidden_same_category_detour_cannot_change_partial_visibility_payload(
             actors = _bootstrap(client)
             outsider = _headers(actors["outsider"]["id"])
             private = _project(client, name="Private detour", key="PDT")
-            assert client.put(
-                f"/projects/{private['id']}/visibility",
-                json={"visibility": "private"},
-                headers=H_ADMIN,
-            ).status_code == 200
+            assert (
+                client.put(
+                    f"/projects/{private['id']}/visibility",
+                    json={"visibility": "private"},
+                    headers=H_ADMIN,
+                ).status_code
+                == 200
+            )
             issue = _issue(client, title="Same visible lifecycle")
             conn = db.connect(db_file)
-            _stamp_latest(
-                conn, issue["id"], "created", "2026-05-01 00:00:00"
-            )
+            _stamp_latest(conn, issue["id"], "created", "2026-05-01 00:00:00")
 
             if with_detour:
                 for project_id in (private["id"], None):
@@ -944,9 +884,7 @@ def test_hidden_same_category_detour_cannot_change_partial_visibility_payload(
                     assert moved.status_code == 200
 
             _set_status(client, issue["id"], "done", actor_id=1)
-            _stamp_latest(
-                conn, issue["id"], "changed_status", "2026-05-03 00:00:00"
-            )
+            _stamp_latest(conn, issue["id"], "changed_status", "2026-05-03 00:00:00")
             result = _metrics(
                 client,
                 start="2026-05-01",
@@ -998,16 +936,14 @@ def test_very_large_decimal_ids_are_bounded_before_conversion(tmp_path):
     with TestClient(create_app(tmp_path / "huge-filter.db")) as client:
         _bootstrap(client)
         rest = client.get(
-            "/fleet/metrics?start=2026-01-01&end=2026-01-02"
-            f"&project_id={huge_id}",
+            f"/fleet/metrics?start=2026-01-01&end=2026-01-02&project_id={huge_id}",
             headers=H_ADMIN,
         )
         assert rest.status_code == 422
         assert rest.headers["cache-control"] == "private, no-store"
 
         web = client.get(
-            "/aegis/fleet-metrics?start=2026-01-01&end=2026-01-02"
-            f"&project_id={huge_id}"
+            f"/aegis/fleet-metrics?start=2026-01-01&end=2026-01-02&project_id={huge_id}"
         )
         assert web.status_code == 400
         assert web.headers["cache-control"] == "private, no-store"
@@ -1034,9 +970,7 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         actors = _bootstrap(client)
         issue = _issue(client, title="<script>visible</script>", status="done")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, issue["id"], "created", "2026-06-02 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "created", "2026-06-02 00:00:00")
         hostile_actor = "<script>actor()</script>"
         conn.execute("UPDATE users SET name = ? WHERE id = 1", (hostile_actor,))
         conn.commit()
@@ -1064,9 +998,7 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         assert "visibility_restricted" not in str(rest)
         assert "@metrics.test" not in str(rest)
 
-        web = client.get(
-            "/aegis/fleet-metrics?start=2026-06-01&end=2026-06-10"
-        )
+        web = client.get("/aegis/fleet-metrics?start=2026-06-01&end=2026-06-10")
         assert web.status_code == 200
         assert web.headers["cache-control"] == "private, no-store"
         assert "cookie" in _vary(web)
@@ -1091,17 +1023,13 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         for scope in ("read", "issue:write"):
             response = client.get(
                 path,
-                headers={
-                    "Authorization": f"Bearer {tokens_by_scope[scope]}"
-                },
+                headers={"Authorization": f"Bearer {tokens_by_scope[scope]}"},
             )
             assert response.status_code == 200
             assert response.json() == rest
         docs_only = client.get(
             path,
-            headers={
-                "Authorization": f"Bearer {tokens_by_scope['docs:write']}"
-            },
+            headers={"Authorization": f"Bearer {tokens_by_scope['docs:write']}"},
         )
         assert docs_only.status_code == 403
         assert docs_only.headers["cache-control"] == "private, no-store"
@@ -1122,24 +1050,16 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         assert rest["cycle_time"]["visibility_complete"] is True
 
         for actor_key in ("human", "outsider"):
-            partial = client.get(
-                path, headers=_headers(actors[actor_key]["id"])
-            )
+            partial = client.get(path, headers=_headers(actors[actor_key]["id"]))
             assert partial.status_code == 200
             assert partial.json()["flow"] == rest["flow"]
-            assert (
-                partial.json()["cycle_time"]["visibility_complete"] is False
-            )
-        invalid_bearer = client.get(
-            path, headers={"Authorization": "Bearer invalid"}
-        )
+            assert partial.json()["cycle_time"]["visibility_complete"] is False
+        invalid_bearer = client.get(path, headers={"Authorization": "Bearer invalid"})
         assert invalid_bearer.status_code == 401
         assert invalid_bearer.headers["cache-control"] == "private, no-store"
         assert invalid_bearer.json()["detail"]
 
-        client.headers.update(
-            {"Authorization": f"Bearer {tokens_by_scope['read']}"}
-        )
+        client.headers.update({"Authorization": f"Bearer {tokens_by_scope['read']}"})
         through_client = AthenaClient(client=client).get_fleet_metrics(
             start="2026-06-01",
             end="2026-06-10",
@@ -1170,9 +1090,7 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
         users.set_paused(conn, actors["human"]["id"], True)
         paused_response = client.get(
             path,
-            headers={
-                "Authorization": f"Bearer {paused_token.json()['token']}"
-            },
+            headers={"Authorization": f"Bearer {paused_token.json()['token']}"},
         )
         assert paused_response.status_code == 403
         assert paused_response.headers["cache-control"] == "private, no-store"
@@ -1186,11 +1104,14 @@ def test_browser_session_matches_member_private_project_visibility(tmp_path):
         actors = _bootstrap(client)
         public = _project(client, name="Public metrics", key="PMT")
         private = _project(client, name="Private metrics", key="SMT")
-        assert client.put(
-            f"/projects/{private['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{private['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
 
         public_issue = _issue(
             client,
@@ -1212,18 +1133,14 @@ def test_browser_session_matches_member_private_project_visibility(tmp_path):
         )
 
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, public_issue["id"], "created", "2026-06-02 00:00:00"
-        )
+        _stamp_latest(conn, public_issue["id"], "created", "2026-06-02 00:00:00")
         _stamp_latest(
             conn,
             public_issue["id"],
             "changed_status",
             "2026-06-03 00:00:00",
         )
-        _stamp_latest(
-            conn, private_issue["id"], "created", "2026-06-02 00:00:00"
-        )
+        _stamp_latest(conn, private_issue["id"], "created", "2026-06-02 00:00:00")
         users.set_password(conn, actors["outsider"]["id"], "pw")
         conn.close()
 
@@ -1246,9 +1163,7 @@ def test_browser_session_matches_member_private_project_visibility(tmp_path):
             follow_redirects=False,
         )
         assert login.status_code == 303
-        web = client.get(
-            "/aegis/fleet-metrics?start=2026-06-01&end=2026-06-10"
-        )
+        web = client.get("/aegis/fleet-metrics?start=2026-06-01&end=2026-06-10")
         assert web.status_code == 200
         compact = " ".join(web.text.split())
         assert (
@@ -1270,11 +1185,14 @@ def test_hidden_and_missing_project_filters_are_identical(tmp_path):
         actors = _bootstrap(client)
         outsider = _headers(actors["outsider"]["id"])
         private = _project(client, name="Hidden filter", key="HIF")
-        assert client.put(
-            f"/projects/{private['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/projects/{private['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
         base = "/fleet/metrics?start=2026-01-01&end=2026-01-02&project_id="
         hidden = client.get(base + str(private["id"]), headers=outsider)
         missing = client.get(base + "999999", headers=outsider)
@@ -1292,31 +1210,21 @@ def test_actual_metrics_query_uses_bounded_partial_time_index(tmp_path):
         name="Planner",
         role="admin",
     )
-    issue = issue_commands.create_issue(
-        conn, actor=actor, title="History plan target"
-    )
-    issue_commands.update_issue(
-        conn, actor=actor, issue_id=issue["id"], status="done"
-    )
+    issue = issue_commands.create_issue(conn, actor=actor, title="History plan target")
+    issue_commands.update_issue(conn, actor=actor, issue_id=issue["id"], status="done")
     conn.executemany(
         "INSERT INTO activity "
         "(actor_id, verb, target_kind, target_id, detail, created_at, "
         "visibility_restricted) VALUES (1, ?, 'issue', ?, '', ?, 0)",
-        [
-            ("commented", offset + 1, "2025-01-01 00:00:00")
-            for offset in range(5_000)
-        ]
+        [("commented", offset + 1, "2025-01-01 00:00:00") for offset in range(5_000)]
         + [
-            ("created", 10_000 + offset, "2026-01-02 00:00:00")
-            for offset in range(200)
+            ("created", 10_000 + offset, "2026-01-02 00:00:00") for offset in range(200)
         ],
     )
     conn.commit()
     conn.execute("ANALYZE")
 
-    query = fleet_metrics.parse_query(
-        start="2026-01-01", end="2026-01-08"
-    )
+    query = fleet_metrics.parse_query(start="2026-01-01", end="2026-01-08")
     sql, params = fleet_metrics._evidence_statement(
         conn,
         query,
@@ -1324,8 +1232,7 @@ def test_actual_metrics_query_uses_bounded_partial_time_index(tmp_path):
         project_scope_key=None,
     )
     plan = " ".join(
-        row["detail"]
-        for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
+        row["detail"] for row in conn.execute("EXPLAIN QUERY PLAN " + sql, params)
     )
     assert "idx_activity_issue_lifecycle_window" in plan
     assert "SCAN a" not in plan
@@ -1347,8 +1254,7 @@ def test_actual_metrics_query_uses_bounded_partial_time_index(tmp_path):
         if "INDEXED BY idx_issue_lifecycle_issue_event" in statement
     )
     history_plan = " ".join(
-        row["detail"]
-        for row in conn.execute("EXPLAIN QUERY PLAN " + history_sql)
+        row["detail"] for row in conn.execute("EXPLAIN QUERY PLAN " + history_sql)
     )
     assert "idx_issue_lifecycle_issue_event" in history_plan
     assert "USE TEMP B-TREE" not in history_plan
@@ -1367,9 +1273,7 @@ def test_project_filter_uses_event_time_destination_scope(tmp_path):
             project_id=first["id"],
         )
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, issue["id"], "created", "2026-07-01 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "created", "2026-07-01 00:00:00")
         moved = client.patch(
             f"/issues/{issue['id']}",
             json={"project_id": second["id"]},
@@ -1377,9 +1281,7 @@ def test_project_filter_uses_event_time_destination_scope(tmp_path):
         )
         assert moved.status_code == 200, moved.text
         _set_status(client, issue["id"], "done", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-07-02 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-07-02 00:00:00")
 
         first_metrics = _metrics(
             client,
@@ -1422,9 +1324,7 @@ def test_deleted_actor_keeps_snapshot_type_with_unknown_safe_label(tmp_path):
             status="done",
         )
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, issue["id"], "created", "2026-07-05 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "created", "2026-07-05 00:00:00")
         conn.execute("PRAGMA foreign_keys = OFF")
         conn.execute("DELETE FROM users WHERE id = ?", (human_id,))
         conn.commit()
@@ -1467,24 +1367,18 @@ def test_deleted_actor_keeps_snapshot_type_with_unknown_safe_label(tmp_path):
         conn.close()
 
 
-def test_service_reads_are_side_effect_free_and_one_wal_snapshot(
-    tmp_path, monkeypatch
-):
+def test_service_reads_are_side_effect_free_and_one_wal_snapshot(tmp_path, monkeypatch):
     db_file = tmp_path / "snapshot.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         issue = _issue(client, title="Snapshot target", status="done")
         writer = db.connect(db_file)
-        _stamp_latest(
-            writer, issue["id"], "created", "2026-07-08 00:00:00"
-        )
+        _stamp_latest(writer, issue["id"], "created", "2026-07-08 00:00:00")
 
         reader = db.connect(db_file)
         actor = users.get_user(reader, 1)
         assert actor is not None
-        query = fleet_metrics.parse_query(
-            start="2026-07-08", end="2026-07-09"
-        )
+        query = fleet_metrics.parse_query(start="2026-07-08", end="2026-07-09")
         before_counts = tuple(
             reader.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in ("activity", "issue_lifecycle_facts", "issues")
@@ -1505,9 +1399,7 @@ def test_service_reads_are_side_effect_free_and_one_wal_snapshot(
             nonlocal interleaved
             if not interleaved:
                 interleaved = True
-                writer.execute(
-                    "DELETE FROM issues WHERE id = ?", (issue["id"],)
-                )
+                writer.execute("DELETE FROM issues WHERE id = ?", (issue["id"],))
                 writer.commit()
             return original(*args, **kwargs)
 
@@ -1516,9 +1408,7 @@ def test_service_reads_are_side_effect_free_and_one_wal_snapshot(
             "_load_visible_lifecycle",
             delete_between_component_queries,
         )
-        coherent = fleet_metrics.build_fleet_metrics(
-            reader, query, actor=actor
-        )
+        coherent = fleet_metrics.build_fleet_metrics(reader, query, actor=actor)
         assert interleaved is True
         assert coherent["flow"] == {
             "created": 1,
@@ -1544,13 +1434,9 @@ def test_history_cap_rejects_instead_of_returning_partial_cycle_time(
         _bootstrap(client)
         issue = _issue(client, title="Long enough history")
         conn = db.connect(db_file)
-        _stamp_latest(
-            conn, issue["id"], "created", "2026-07-10 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "created", "2026-07-10 00:00:00")
         _set_status(client, issue["id"], "done", actor_id=1)
-        _stamp_latest(
-            conn, issue["id"], "changed_status", "2026-07-11 00:00:00"
-        )
+        _stamp_latest(conn, issue["id"], "changed_status", "2026-07-11 00:00:00")
         monkeypatch.setattr(fleet_metrics, "HISTORY_EVENT_LIMIT", 1)
         response = client.get(
             "/fleet/metrics?start=2026-07-11&end=2026-07-12",
@@ -1647,9 +1533,7 @@ def test_upgrade_from_0054_preserves_legacy_and_types_only_new_commands(
         staged_migrations / "0055_issue_lifecycle_facts.sql",
     )
     assert db.migrate(conn) == ["0055_issue_lifecycle_facts.sql"]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM issue_lifecycle_facts"
-    ).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM issue_lifecycle_facts").fetchone()[0] == 0
 
     native = issue_commands.create_issue(
         conn,

@@ -8,6 +8,7 @@ unaudited Mentor write. These encode that a space appearing or disappearing is a
 recorded fact (who, the name preserved even after deletion), surfaced on the space's
 own Activity section and linked from the global feed.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -72,9 +73,7 @@ def test_api_space_delete_records_with_name_preserved(tmp_path):
     with TestClient(app) as client:
         _seed_user(db_file)
         space = _make_space(client, name="Obsolete")
-        r = client.delete(
-            f"/spaces/{space['id']}", headers={"X-Athena-Actor": "1"}
-        )
+        r = client.delete(f"/spaces/{space['id']}", headers={"X-Athena-Actor": "1"})
         assert r.status_code == 204
     conn = db.connect(db_file)
     row = conn.execute(
@@ -110,8 +109,7 @@ def test_api_space_edit_records_and_noop_is_silent(tmp_path):
         )
     conn = db.connect(db_file)
     rows = conn.execute(
-        "SELECT detail FROM activity "
-        "WHERE verb = 'space_edited' AND target_id = ?",
+        "SELECT detail FROM activity WHERE verb = 'space_edited' AND target_id = ?",
         (space["id"],),
     ).fetchall()
     conn.close()
@@ -176,9 +174,7 @@ def test_web_space_delete_records(tmp_path):
     with TestClient(app) as client:
         _login(client)
         space = _make_space(client, name="Scratch")  # actor 1 == the session user
-        r = client.post(
-            f"/mentor/spaces/{space['id']}/delete", follow_redirects=False
-        )
+        r = client.post(f"/mentor/spaces/{space['id']}/delete", follow_redirects=False)
         assert r.status_code == 303
     conn = db.connect(db_file)
     row = conn.execute(

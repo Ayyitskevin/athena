@@ -11,6 +11,7 @@ path) reports scopes=null because it is not scope-limited; missing/invalid creds
 are 401; the route resolves to the caller's own identity (not shadowed by
 /{user_id}, and not admin-gated); and the password hash never leaks.
 """
+
 from fastapi.testclient import TestClient
 
 from athena import config

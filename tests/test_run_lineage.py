@@ -9,6 +9,7 @@ parent, an HTTP child run carries its parent through to its events and reconstru
 run, lineage walks downward by parent_run_id on both feeds, and a top-level/untagged
 run has no parent (backward-compatible).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, run_context
@@ -116,7 +117,9 @@ def test_events_filter_by_parent_run(tmp_path):
         client.patch(f"/issues/{iid}", json={"status": "done"}, headers=child)
 
         ev = client.get("/events?parent_run_id=A1", headers=H1).json()["events"]
-        assert ev and all(e["parent_run_id"] == "A1" and e["run_id"] == "B1" for e in ev)
+        assert ev and all(
+            e["parent_run_id"] == "A1" and e["run_id"] == "B1" for e in ev
+        )
 
 
 def test_untagged_action_has_no_parent(tmp_path):

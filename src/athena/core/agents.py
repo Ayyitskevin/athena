@@ -79,9 +79,7 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
             "agents_with_activity_count": sum(
                 1 for row in rows if row["run_count"] > 0
             ),
-            "replay_ready_count": sum(
-                1 for row in rows if row["tagged_run_count"] > 0
-            ),
+            "replay_ready_count": sum(1 for row in rows if row["tagged_run_count"] > 0),
             "untagged_only_count": sum(
                 1 for row in rows if row["health_state"] == "untagged_only"
             ),
@@ -109,9 +107,7 @@ def agent_run_health(conn: sqlite3.Connection, *, agent_id: int | None = None) -
                 if checkin["reporting_state"] == "reporting_recently"
             ),
             "stale_checkin_count": sum(
-                1
-                for checkin in checkins
-                if checkin["reporting_state"] == "stale"
+                1 for checkin in checkins if checkin["reporting_state"] == "stale"
             ),
             "total_checkin_count": len(checkins),
         },
@@ -179,8 +175,7 @@ def _token_posture_warnings(live_tokens: list[dict]) -> list[dict]:
                 "admin_scope",
                 "Admin scoped",
                 "danger",
-                "Live admin-scoped token: "
-                + _token_names(admin_tokens),
+                "Live admin-scoped token: " + _token_names(admin_tokens),
                 admin_tokens,
             )
         )
@@ -348,6 +343,7 @@ def _project_memberships(conn: sqlite3.Connection, user_id: int) -> list[dict]:
         (user_id,),
     ).fetchall()
     return [dict(row) for row in rows]
+
 
 def _space_memberships(conn: sqlite3.Connection, user_id: int) -> list[dict]:
     rows = conn.execute(

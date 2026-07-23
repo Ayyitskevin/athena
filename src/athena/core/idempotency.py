@@ -139,12 +139,9 @@ def claim_or_read(
     current = _now(now)
     with db.transaction(conn, immediate=True):
         authorization_revision = conn.execute(
-            "SELECT revision FROM idempotency_authorization_state "
-            "WHERE singleton = 1"
+            "SELECT revision FROM idempotency_authorization_state WHERE singleton = 1"
         ).fetchone()["revision"]
-        record = _legacy_actor_alias_record(
-            conn, key=key, identity=identity
-        )
+        record = _legacy_actor_alias_record(conn, key=key, identity=identity)
         if record is None:
             record = _record(conn, key=key, identity=identity)
 
@@ -256,8 +253,7 @@ def complete(
         if row is None:
             return "lost"
         authorization_revision = conn.execute(
-            "SELECT revision FROM idempotency_authorization_state "
-            "WHERE singleton = 1"
+            "SELECT revision FROM idempotency_authorization_state WHERE singleton = 1"
         ).fetchone()["revision"]
         if row["authorization_revision"] != authorization_revision:
             _authorization_changed(conn, key=key, identity=identity)
@@ -324,8 +320,6 @@ def mark_indeterminate(
         return cur.rowcount == 1
 
 
-def get_record(
-    conn: sqlite3.Connection, *, key: str, identity: str
-) -> dict | None:
+def get_record(conn: sqlite3.Connection, *, key: str, identity: str) -> dict | None:
     """Inspection helper for diagnostics and state-machine tests."""
     return _record(conn, key=key, identity=identity)

@@ -3,6 +3,7 @@
 Keeping config in one place (and env-driven) means the same code runs on your
 laptop and on a server without edits — you just point ATHENA_DB somewhere else.
 """
+
 import os
 from pathlib import Path
 
@@ -48,9 +49,7 @@ IDEMPOTENCY_TTL_SECONDS = int(
 IDEMPOTENCY_LEASE_SECONDS = int(
     os.environ.get("ATHENA_IDEMPOTENCY_LEASE_SECONDS", "60")
 )
-IDEMPOTENCY_WAIT_SECONDS = float(
-    os.environ.get("ATHENA_IDEMPOTENCY_WAIT_SECONDS", "5")
-)
+IDEMPOTENCY_WAIT_SECONDS = float(os.environ.get("ATHENA_IDEMPOTENCY_WAIT_SECONDS", "5"))
 IDEMPOTENCY_MAX_RESPONSE_BYTES = int(
     os.environ.get("ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES", str(1024 * 1024))
 )
@@ -66,9 +65,7 @@ TOKEN_RATE_LIMIT_PER_MINUTE = int(
 # A run check-in newer than this threshold is reported as ``reporting_recently``;
 # older rows are ``stale``. This is cooperative presence, not OS-process liveness:
 # expiry never completes, revokes, kills, or transfers a run.
-AGENT_RUN_STALE_SECONDS = int(
-    os.environ.get("ATHENA_AGENT_RUN_STALE_SECONDS", "90")
-)
+AGENT_RUN_STALE_SECONDS = int(os.environ.get("ATHENA_AGENT_RUN_STALE_SECONDS", "90"))
 if AGENT_RUN_STALE_SECONDS < 1:
     raise ValueError("ATHENA_AGENT_RUN_STALE_SECONDS must be positive")
 
@@ -142,9 +139,7 @@ AUTOMATION_INTERVAL_SECONDS = float(os.environ.get("ATHENA_AUTOMATION_INTERVAL",
 # upload. Note it is also bounded by MAX_REQUEST_BODY_BYTES (the whole-request cap
 # the middleware enforces first) — raise that too if you need larger attachments.
 ATTACH_DIR = Path(os.environ.get("ATHENA_ATTACH_DIR", "attachments"))
-ATTACH_MAX_BYTES = int(
-    os.environ.get("ATHENA_ATTACH_MAX_BYTES", str(10 * 1024 * 1024))
-)
+ATTACH_MAX_BYTES = int(os.environ.get("ATHENA_ATTACH_MAX_BYTES", str(10 * 1024 * 1024)))
 
 # OpenID Connect single sign-on. SSO is OFF unless all four connection settings are
 # present (see oidc_enabled): the IdP's issuer URL (its
@@ -170,6 +165,4 @@ def oidc_enabled() -> bool:
     """SSO is configured only when all four connection settings are present. Until
     then the routes 404 and the login page shows no SSO button — an unconfigured
     deploy behaves exactly as it did before."""
-    return all(
-        (OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URL)
-    )
+    return all((OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URL))

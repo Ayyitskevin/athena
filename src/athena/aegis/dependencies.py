@@ -17,6 +17,7 @@ So "blocked_by" is never its own stored row — it is a "blocks" row read from t
 target's side. "relates" is symmetric, so we normalize the pair order (smaller id
 first) to keep it a single row no matter which side asked.
 """
+
 from __future__ import annotations
 
 import sqlite3

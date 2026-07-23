@@ -7,6 +7,7 @@ surfaces that share one data-layer query: the data layer itself, the JSON
 bad input in the browser (unknown → no filter) but strict in the API (422), and
 it is carried through paging and export so a filtered view stays filtered.
 """
+
 import csv
 from io import StringIO
 
@@ -26,7 +27,9 @@ def _migrated_conn(db_file):
 
 def _seed_actors(conn):
     """A human (id 1) and an agent (id 2)."""
-    conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('h@e.com','Human',0)")
+    conn.execute(
+        "INSERT INTO users (email, name, is_agent) VALUES ('h@e.com','Human',0)"
+    )
     conn.execute("INSERT INTO users (email, name, is_agent) VALUES ('b@e.com','Bot',1)")
     conn.commit()
 
@@ -68,8 +71,12 @@ def test_actor_type_lens_composes_with_other_filters(tmp_path):
     conn = _migrated_conn(tmp_path / "compose.db")
     _seed_actors(conn)
     activity.record(conn, actor_id=2, verb="created", target_kind="issue", target_id=2)
-    activity.record(conn, actor_id=2, verb="commented", target_kind="issue", target_id=9)
-    rows = activity.list_activity(conn, actor_is_agent=True, target_kind="issue", target_id=2)
+    activity.record(
+        conn, actor_id=2, verb="commented", target_kind="issue", target_id=9
+    )
+    rows = activity.list_activity(
+        conn, actor_is_agent=True, target_kind="issue", target_id=2
+    )
     assert [r["verb"] for r in rows] == ["created"]
     conn.close()
 
@@ -88,7 +95,9 @@ def test_activity_api_actor_type_filter(tmp_path):
         assert {e["actor_name"] for e in human_feed} == {"Human"}
 
         # No lens → both actors.
-        assert {e["actor_name"] for e in client.get("/activity", headers=H1).json()} == {
+        assert {
+            e["actor_name"] for e in client.get("/activity", headers=H1).json()
+        } == {
             "Human",
             "Bot",
         }

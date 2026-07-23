@@ -43,7 +43,9 @@ class PageCommandError(Exception):
     the live validator in the 412's ``ETag`` header, exactly as issues do.
     """
 
-    def __init__(self, kind: str, detail: str, *, current_etag: str | None = None) -> None:
+    def __init__(
+        self, kind: str, detail: str, *, current_etag: str | None = None
+    ) -> None:
         super().__init__(detail)
         if kind not in _ERROR_KINDS:
             raise ValueError(f"unknown PageCommandError kind: {kind}")

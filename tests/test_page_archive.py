@@ -8,6 +8,7 @@ visibility gate, reachable from REST, the browser, and (via REST) MCP — the Me
 of issue archive. These pin the hide/restore behavior, attribution, atomicity, the
 search exclusion, idempotence, and transport parity.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, search

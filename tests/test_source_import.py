@@ -42,9 +42,7 @@ def _jira_payload():
                         "content": [
                             {
                                 "type": "paragraph",
-                                "content": [
-                                    {"type": "text", "text": "Blocks MIG-2"}
-                                ],
+                                "content": [{"type": "text", "text": "Blocks MIG-2"}],
                             }
                         ],
                     },
@@ -306,7 +304,9 @@ def test_confluence_mapper_outputs_valid_space_bundle_and_imports(tmp_path):
     manifest = portability.build_import_manifest(target, bundle)
     result = portability.replay_import_manifest(target, bundle, manifest)
 
-    imported = target.execute("SELECT title, body, parent_id FROM pages ORDER BY id").fetchall()
+    imported = target.execute(
+        "SELECT title, body, parent_id FROM pages ORDER BY id"
+    ).fetchall()
     target.close()
 
     assert manifest["ok"] is True
@@ -378,7 +378,11 @@ def test_confluence_mapper_preserves_code_macro_cdata_content():
         "</ac:plain-text-body></ac:structured-macro>"
     )
     bundle = source_import.map_confluence_space(
-        {"results": [_confluence_page("1", "Runbook", body={"storage": {"value": macro}})]}
+        {
+            "results": [
+                _confluence_page("1", "Runbook", body={"storage": {"value": macro}})
+            ]
+        }
     )
     assert "systemctl restart athena" in bundle["pages"][0]["body"]
 
@@ -429,17 +433,21 @@ def test_jira_mapper_scopes_to_one_project_and_skips_foreign_issues():
     payload = {
         "issues": [
             {
-                "id": "1", "key": "WEB-3",
+                "id": "1",
+                "key": "WEB-3",
                 "fields": {
-                    "project": {"key": "WEB", "name": "Web"}, "summary": "web issue",
+                    "project": {"key": "WEB", "name": "Web"},
+                    "summary": "web issue",
                     "status": {"name": "To Do"},
                     "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
                 },
             },
             {
-                "id": "2", "key": "API-3",
+                "id": "2",
+                "key": "API-3",
                 "fields": {
-                    "project": {"key": "API", "name": "Api"}, "summary": "api issue",
+                    "project": {"key": "API", "name": "Api"},
+                    "summary": "api issue",
                     "status": {"name": "To Do"},
                     "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
                 },
@@ -466,9 +474,11 @@ def test_jira_mapper_canonicalizes_issue_status_casing(tmp_path):
 
     def _issue(iid, key, casing):
         return {
-            "id": iid, "key": key,
+            "id": iid,
+            "key": key,
             "fields": {
-                "project": {"key": "OPS", "name": "Ops"}, "summary": key,
+                "project": {"key": "OPS", "name": "Ops"},
+                "summary": key,
                 "status": {"name": casing, "statusCategory": {"key": "done"}},
                 "reporter": {"emailAddress": "o@e.com", "displayName": "O"},
                 "created": "2025-01-01T00:00:00.000+0000",
@@ -487,7 +497,9 @@ def test_jira_mapper_canonicalizes_issue_status_casing(tmp_path):
     portability.replay_import_manifest(target, bundle, manifest)
     rows = target.execute("SELECT status, project_id FROM issues").fetchall()
     # The runtime consequence: BOTH imported issues resolve as done.
-    assert all(aegis_statuses.is_done(target, r["project_id"], r["status"]) for r in rows)
+    assert all(
+        aegis_statuses.is_done(target, r["project_id"], r["status"]) for r in rows
+    )
     target.close()
 
 

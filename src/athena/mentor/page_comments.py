@@ -5,6 +5,7 @@ and one author, and listing joins the author's name so the UI can show "who said
 it" without a second lookup. Author-ownership (only the author may edit/delete) is
 enforced at the boundary, not here — this module only writes.
 """
+
 from __future__ import annotations
 
 import sqlite3

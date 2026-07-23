@@ -8,6 +8,7 @@ webhook's per-subscriber health so an operator can actually see a misbehaving ru
 /admin and via the API. These tests pin exactly that: the failure is recorded and the
 cursor still advances (behavior preserved), and the record surfaces on both boundaries.
 """
+
 import logging
 
 from fastapi.testclient import TestClient
@@ -27,12 +28,18 @@ def test_failing_action_records_failure_and_still_advances_cursor(tmp_path, capl
     db_file = tmp_path / "fail.db"
     with TestClient(create_app(db_file)) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
-        client.post("/issues", json={"title": "x"}, headers=H1)  # emits a 'created' event
+        client.post(
+            "/issues", json={"title": "x"}, headers=H1
+        )  # emits a 'created' event
 
         conn = db.connect(db_file)
         rule = automation.create_rule(
-            conn, name="boom", trigger_verb="created", action_type="comment",
-            action_params={"body": "x"}, created_by=1,
+            conn,
+            name="boom",
+            trigger_verb="created",
+            action_type="comment",
+            action_params={"body": "x"},
+            created_by=1,
         )
         assert rule["failure_count"] == 0 and rule["last_error"] is None
 
@@ -63,8 +70,12 @@ def test_repeated_failures_accumulate_the_count(tmp_path):
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         conn = db.connect(db_file)
         rule = automation.create_rule(
-            conn, name="boom", trigger_verb="*", action_type="comment",
-            action_params={"body": "x"}, created_by=1,
+            conn,
+            name="boom",
+            trigger_verb="*",
+            action_type="comment",
+            action_params={"body": "x"},
+            created_by=1,
         )
         # Two matching events, each failing, bump the count to 2 (it is cumulative, like
         # a webhook's failure_count — not reset each pass).
@@ -82,8 +93,12 @@ def test_rule_failure_is_exposed_via_api(tmp_path):
         client.post("/issues", json={"title": "x"}, headers=H1)
         created = client.post(
             "/automation/rules",
-            json={"name": "boom", "trigger_verb": "created",
-                  "action_type": "comment", "action_params": {"body": "x"}},
+            json={
+                "name": "boom",
+                "trigger_verb": "created",
+                "action_type": "comment",
+                "action_params": {"body": "x"},
+            },
             headers=H1,
         ).json()
         # A fresh rule reports clean health over the API.
@@ -100,17 +115,15 @@ def test_rule_failure_is_exposed_via_api(tmp_path):
 
         assert created["failure_count"] == 0
         assert created["last_error"] is None and created["last_error_at"] is None
-        assert client.get(
-            "/automation/rules?failing_only=true", headers=H1
-        ).json() == []
+        assert (
+            client.get("/automation/rules?failing_only=true", headers=H1).json() == []
+        )
 
         conn = db.connect(db_file)
         automation.process_pending(conn, executor=_boom)
 
         listed = client.get("/automation/rules", headers=H1).json()
-        failing = client.get(
-            "/automation/rules?failing_only=true", headers=H1
-        ).json()
+        failing = client.get("/automation/rules?failing_only=true", headers=H1).json()
         assert [rule["id"] for rule in failing] == [created["id"]]
         row = next(r for r in listed if r["id"] == created["id"])
         assert row["failure_count"] == 1
@@ -124,18 +137,29 @@ def test_admin_page_shows_rule_failure_badge(tmp_path):
     with TestClient(create_app(db_file)) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         # Session login for the admin web surface.
-        client.post("/login", data={"email": "a@e.com", "password": "pw"},
-                    follow_redirects=False)
+        client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         client.post("/issues", json={"title": "x"}, headers=H1)
         conn = db.connect(db_file)
         automation.create_rule(
-            conn, name="boom", trigger_verb="created", action_type="comment",
-            action_params={"body": "x"}, created_by=1,
+            conn,
+            name="boom",
+            trigger_verb="created",
+            action_type="comment",
+            action_params={"body": "x"},
+            created_by=1,
         )
         # Clean rule: the page shows no failure badge.
         automation.create_rule(
-            conn, name="quiet", trigger_verb="commented", action_type="comment",
-            action_params={"body": "x"}, created_by=1,
+            conn,
+            name="quiet",
+            trigger_verb="commented",
+            action_type="comment",
+            action_params={"body": "x"},
+            created_by=1,
         )
 
         assert "⚠" not in client.get("/admin/automation").text

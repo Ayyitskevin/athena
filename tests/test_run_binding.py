@@ -8,6 +8,7 @@ tagged write by anyone else is a 403 that lands NOTHING (no row, no event), the
 owner keeps writing freely, untagged writes never bind, and the migration
 backfills historical runs to their earliest actor.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 

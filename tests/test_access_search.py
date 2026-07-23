@@ -6,6 +6,7 @@ them, on the REST cross-kind search, the REST issue search, and the web /find pa
 while admins, the creator, and members get the full ranked set. The shared term
 "Zephyr" lets one query reach all four documents so we can see exactly which survive.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
@@ -17,22 +18,60 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _scenario(client, db_file):
     """A hidden + a public issue, a hidden + a public page, all matching "Zephyr".
     Returns (db_conn, priv_project_id, priv_space_id)."""
-    pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-    op = client.post("/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR).json()["id"]
-    client.post("/issues", json={"title": "Zephyr alpha", "project_id": pp}, headers=H_CREATOR)
-    client.post("/issues", json={"title": "Zephyr beta", "project_id": op}, headers=H_CREATOR)
-    ps = client.post("/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR).json()["id"]
-    os_ = client.post("/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR).json()["id"]
-    client.post(f"/spaces/{ps}/pages", json={"title": "Zephyr gamma"}, headers=H_CREATOR)
-    client.post(f"/spaces/{os_}/pages", json={"title": "Zephyr delta"}, headers=H_CREATOR)
+    pp = client.post(
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+    ).json()["id"]
+    op = client.post(
+        "/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR
+    ).json()["id"]
+    client.post(
+        "/issues", json={"title": "Zephyr alpha", "project_id": pp}, headers=H_CREATOR
+    )
+    client.post(
+        "/issues", json={"title": "Zephyr beta", "project_id": op}, headers=H_CREATOR
+    )
+    ps = client.post(
+        "/spaces", json={"key": "SSP", "name": "SecretSpace"}, headers=H_CREATOR
+    ).json()["id"]
+    os_ = client.post(
+        "/spaces", json={"key": "OSP", "name": "OpenSpace"}, headers=H_CREATOR
+    ).json()["id"]
+    client.post(
+        f"/spaces/{ps}/pages", json={"title": "Zephyr gamma"}, headers=H_CREATOR
+    )
+    client.post(
+        f"/spaces/{os_}/pages", json={"title": "Zephyr delta"}, headers=H_CREATOR
+    )
 
     conn = db.connect(db_file)
     conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pp,))
@@ -42,7 +81,9 @@ def _scenario(client, db_file):
 
 
 def _login(client, email):
-    r = client.post("/login", data={"email": email, "password": "pw"}, follow_redirects=False)
+    r = client.post(
+        "/login", data={"email": email, "password": "pw"}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
@@ -54,18 +95,36 @@ def test_rest_cross_kind_search_gates_both_kinds(tmp_path):
         conn, pp, ps = _scenario(client, db_file)
 
         def titles(headers):
-            return {h["title"] for h in client.get("/search?q=Zephyr", headers=headers).json()}
+            return {
+                h["title"]
+                for h in client.get("/search?q=Zephyr", headers=headers).json()
+            }
 
         # Outsider sees only the public issue + public page.
         assert titles(H_OUTSIDER) == {"Zephyr beta", "Zephyr delta"}
         # Creator and admin see all four.
-        assert titles(H_CREATOR) == {"Zephyr alpha", "Zephyr beta", "Zephyr gamma", "Zephyr delta"}
-        assert titles(H_ADMIN) == {"Zephyr alpha", "Zephyr beta", "Zephyr gamma", "Zephyr delta"}
+        assert titles(H_CREATOR) == {
+            "Zephyr alpha",
+            "Zephyr beta",
+            "Zephyr gamma",
+            "Zephyr delta",
+        }
+        assert titles(H_ADMIN) == {
+            "Zephyr alpha",
+            "Zephyr beta",
+            "Zephyr gamma",
+            "Zephyr delta",
+        }
 
         # Granting membership on both private containers reveals the hidden hits.
         access.add_project_member(conn, pp, 3, added_by=2)
         access.add_space_member(conn, ps, 3, added_by=2)
-        assert titles(H_OUTSIDER) == {"Zephyr alpha", "Zephyr beta", "Zephyr gamma", "Zephyr delta"}
+        assert titles(H_OUTSIDER) == {
+            "Zephyr alpha",
+            "Zephyr beta",
+            "Zephyr gamma",
+            "Zephyr delta",
+        }
 
 
 def test_rest_issue_search_gates_private_issue(tmp_path):
@@ -75,7 +134,12 @@ def test_rest_issue_search_gates_private_issue(tmp_path):
         _scenario(client, db_file)
 
         def titles(headers=None):
-            return {h["title"] for h in client.get("/issues/search?q=Zephyr", headers=headers or {}).json()}
+            return {
+                h["title"]
+                for h in client.get(
+                    "/issues/search?q=Zephyr", headers=headers or {}
+                ).json()
+            }
 
         # The issue search (issues only) hides the private issue from outsider + anon.
         for h in (H_OUTSIDER, None):

@@ -112,9 +112,7 @@ def set_rule_enabled(
         return updated
 
 
-def delete_rule(
-    conn: sqlite3.Connection, *, actor_id: int, rule_id: int
-) -> bool:
+def delete_rule(conn: sqlite3.Connection, *, actor_id: int, rule_id: int) -> bool:
     """Delete a rule and record a 'deleted_automation_rule' event atomically. Returns True
     if one was removed, False if there was no such rule (so the caller can 404). No event
     is recorded when nothing was deleted. The rule is read first so the audit detail can

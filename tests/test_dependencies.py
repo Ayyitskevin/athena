@@ -17,6 +17,7 @@ These pin the CONTRACT of the feature, not just that a route returns 200:
   * the web close path WARNS instead of closing when a blocker is still open, and
     honours the confirm=1 override.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import dependencies, issues
@@ -34,7 +35,9 @@ def _seed_user(db_file, email="k@e.com", name="K"):
 
 
 def _make_issue(client, title, body=""):
-    return client.post("/issues", json={"title": title, "body": body}, headers=_H).json()
+    return client.post(
+        "/issues", json={"title": title, "body": body}, headers=_H
+    ).json()
 
 
 # --- data layer: normalization & integrity --------------------------------
@@ -101,12 +104,19 @@ def test_adding_same_edge_twice_is_a_noop(tmp_path):
         a = _make_issue(client, "A")["id"]
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
-        for relation, frm, to in [("blocks", a, b), ("relates", a, b), ("relates", b, a)]:
+        for relation, frm, to in [
+            ("blocks", a, b),
+            ("relates", a, b),
+            ("relates", b, a),
+        ]:
             # reason is None for every add; only the first of each identical edge
             # reports inserted=True (the relates re-add from the other side is a no-op).
-            assert dependencies.add_link(
-                conn, from_id=frm, to_id=to, relation=relation, created_by=1
-            )[0] is None
+            assert (
+                dependencies.add_link(
+                    conn, from_id=frm, to_id=to, relation=relation, created_by=1
+                )[0]
+                is None
+            )
         assert conn.execute("SELECT COUNT(*) FROM issue_links").fetchone()[0] == 2
         conn.close()
 
@@ -154,9 +164,12 @@ def test_unknown_relation_rejected(tmp_path):
         a = _make_issue(client, "A")["id"]
         b = _make_issue(client, "B")["id"]
         conn = db.connect(db_file)
-        assert dependencies.add_link(
-            conn, from_id=a, to_id=b, relation="nonsense", created_by=1
-        )[0] is not None
+        assert (
+            dependencies.add_link(
+                conn, from_id=a, to_id=b, relation="nonsense", created_by=1
+            )[0]
+            is not None
+        )
         conn.close()
 
 
@@ -232,9 +245,12 @@ def test_api_add_list_remove_roundtrip(tmp_path):
         assert rem.status_code == 200
         assert rem.json()["blocks"] == []
         # Removing again is a 404 (nothing left).
-        assert client.delete(
-            f"/issues/{a['id']}/links/blocks/{b['id']}", headers=_H
-        ).status_code == 404
+        assert (
+            client.delete(
+                f"/issues/{a['id']}/links/blocks/{b['id']}", headers=_H
+            ).status_code
+            == 404
+        )
 
 
 def test_api_unknown_target_ref_is_422(tmp_path):
@@ -375,7 +391,9 @@ def test_web_add_and_remove_link_roundtrip(tmp_path):
             follow_redirects=False,
         )
         assert add.status_code == 303
-        assert [x["id"] for x in client.get(f"/issues/{a['id']}/links").json()["blocks"]] == [b["id"]]
+        assert [
+            x["id"] for x in client.get(f"/issues/{a['id']}/links").json()["blocks"]
+        ] == [b["id"]]
         rem = client.post(
             f"/aegis/issues/{a['id']}/links/blocks/{b['id']}/delete",
             follow_redirects=False,

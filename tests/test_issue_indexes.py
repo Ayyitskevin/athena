@@ -6,6 +6,7 @@ archived_at were indexed, so those queries full-scanned the issues table. These 
 pin that the three indexes exist AND that SQLite's planner actually searches by them
 (SEARCH ... USING INDEX, not SCAN) — the behavioral intent, not just the schema.
 """
+
 from athena.core import db
 
 

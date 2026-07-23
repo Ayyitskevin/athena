@@ -28,9 +28,7 @@ _SAFE_CHECKIN_KEYS = {
 
 
 def _bootstrap_admin(client: TestClient) -> dict:
-    response = client.post(
-        "/users", json={"email": "admin@e.com", "name": "Admin"}
-    )
+    response = client.post("/users", json={"email": "admin@e.com", "name": "Admin"})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -198,9 +196,10 @@ def test_heartbeat_body_accepts_only_a_strict_run_id(tmp_path):
         )
         assert surrogate.status_code == 422, surrogate.text
 
-        assert client.put(
-            "/agent-runs/heartbeat", json={}, headers=headers
-        ).status_code == 422
+        assert (
+            client.put("/agent-runs/heartbeat", json={}, headers=headers).status_code
+            == 422
+        )
         for forbidden_field, value in (
             ("agent_id", agent["id"]),
             ("actor", {"id": agent["id"]}),
@@ -215,9 +214,7 @@ def test_heartbeat_body_accepts_only_a_strict_run_id(tmp_path):
             assert response.status_code == 422, (forbidden_field, response.text)
 
 
-def test_heartbeat_returns_conflict_when_agent_capacity_is_full(
-    tmp_path, monkeypatch
-):
+def test_heartbeat_returns_conflict_when_agent_capacity_is_full(tmp_path, monkeypatch):
     app = create_app(tmp_path / "heartbeat-capacity.db")
     with TestClient(app) as client:
         _bootstrap_admin(client)
@@ -235,9 +232,12 @@ def test_heartbeat_returns_conflict_when_agent_capacity_is_full(
         )
         monkeypatch.setattr(config, "AGENT_RUN_MAX_CHECKINS_PER_AGENT", 1)
         headers = _bearer(token)
-        assert client.put(
-            "/agent-runs/heartbeat", json={"run_id": "run-1"}, headers=headers
-        ).status_code == 200
+        assert (
+            client.put(
+                "/agent-runs/heartbeat", json={"run_id": "run-1"}, headers=headers
+            ).status_code
+            == 200
+        )
 
         full = client.put(
             "/agent-runs/heartbeat", json={"run_id": "run-2"}, headers=headers
@@ -246,9 +246,12 @@ def test_heartbeat_returns_conflict_when_agent_capacity_is_full(
         assert full.json()["detail"] == (
             "agent run check-in capacity reached; refresh an existing run_id"
         )
-        assert client.put(
-            "/agent-runs/heartbeat", json={"run_id": "run-1"}, headers=headers
-        ).status_code == 200
+        assert (
+            client.put(
+                "/agent-runs/heartbeat", json={"run_id": "run-1"}, headers=headers
+            ).status_code
+            == 200
+        )
 
 
 def test_repeated_heartbeat_puts_are_not_durable_idempotency_replays(

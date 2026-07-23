@@ -6,6 +6,7 @@ password hash once the attempt rate is exceeded, and (b) that the session cookie
 the Secure flag when the request arrives over HTTPS even if ATHENA_COOKIE_SECURE was
 never set — so a forgotten flag can't leak the session on a direct-TLS deploy.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -23,13 +24,19 @@ def test_login_is_throttled_per_ip_before_the_password_hash(tmp_path):
     with TestClient(app) as client:
         _seed(client)
         for _ in range(3):
-            r = client.post("/login", data={"email": "a@e.com", "password": "wrong"},
-                            follow_redirects=False)
+            r = client.post(
+                "/login",
+                data={"email": "a@e.com", "password": "wrong"},
+                follow_redirects=False,
+            )
             assert r.status_code == 401
         # Over the limit now — even the CORRECT password is refused with 429, proving the
         # throttle runs before credential verification (protects pbkdf2 CPU too).
-        blocked = client.post("/login", data={"email": "a@e.com", "password": "pw"},
-                              follow_redirects=False)
+        blocked = client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         assert blocked.status_code == 429
         assert int(blocked.headers["retry-after"]) >= 1
 
@@ -40,8 +47,11 @@ def test_login_throttle_off_when_limit_is_zero(tmp_path):
     with TestClient(app) as client:
         _seed(client)
         for _ in range(6):
-            r = client.post("/login", data={"email": "a@e.com", "password": "wrong"},
-                            follow_redirects=False)
+            r = client.post(
+                "/login",
+                data={"email": "a@e.com", "password": "wrong"},
+                follow_redirects=False,
+            )
             assert r.status_code == 401
 
 
@@ -58,14 +68,20 @@ def test_session_cookie_is_secure_over_https(tmp_path):
     app = create_app(tmp_path / "cookie.db")
     with TestClient(app, base_url="https://testserver") as client:
         _seed(client)
-        r = client.post("/login", data={"email": "a@e.com", "password": "pw"},
-                        follow_redirects=False)
+        r = client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         cookie = _session_setcookie(r)
         assert cookie is not None and "secure" in cookie.lower()
 
     with TestClient(app, base_url="http://testserver") as client:
-        r = client.post("/login", data={"email": "a@e.com", "password": "pw"},
-                        follow_redirects=False)
+        r = client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         cookie = _session_setcookie(r)
         assert cookie is not None and "secure" not in cookie.lower()
 

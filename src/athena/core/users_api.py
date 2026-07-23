@@ -307,8 +307,6 @@ def offboard(
     """Admin one-click offboard: demote the user to viewer, revoke every session,
     and revoke every token — one audited action. Refuses to strip the last admin."""
     try:
-        return agent_commands.offboard_user(
-            conn, actor=actor, target_user_id=user_id
-        )
+        return agent_commands.offboard_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

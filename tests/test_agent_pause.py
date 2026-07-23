@@ -8,6 +8,7 @@ actor-header paths, the web-session freeze, the audited atomic flip (no event on
 a no-op), the last-active-admin guard, admin-only authorization, and the MCP
 pause → refused → resume → working loop.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -28,7 +29,11 @@ def _bootstrap(client):
 def _agent(client, email="sol@e.com"):
     return client.post(
         "/users/onboard_agent",
-        json={"email": email, "name": email.split("@")[0], "scopes": ["read", "issue:write"]},
+        json={
+            "email": email,
+            "name": email.split("@")[0],
+            "scopes": ["read", "issue:write"],
+        },
         headers=H1,
     ).json()
 
@@ -49,9 +54,7 @@ def test_pause_freezes_every_token_action_and_resume_restores(tmp_path):
         bearer = {"Authorization": f"Bearer {onboarded['token']['token']}"}
 
         assert c.get("/users/me", headers=bearer).status_code == 200
-        paused = c.put(
-            f"/users/{agent_id}/paused", json={"paused": True}, headers=H1
-        )
+        paused = c.put(f"/users/{agent_id}/paused", json={"paused": True}, headers=H1)
         assert paused.status_code == 200
         assert paused.json()["paused_at"]
 
@@ -64,13 +67,13 @@ def test_pause_freezes_every_token_action_and_resume_restores(tmp_path):
             assert attempt.status_code == 403
             assert attempt.json()["detail"] == "account is paused"
 
-        resumed = c.put(
-            f"/users/{agent_id}/paused", json={"paused": False}, headers=H1
-        )
+        resumed = c.put(f"/users/{agent_id}/paused", json={"paused": False}, headers=H1)
         assert resumed.status_code == 200 and resumed.json()["paused_at"] is None
         # Nothing was destroyed: the SAME token works again immediately.
         assert c.get("/users/me", headers=bearer).status_code == 200
-        assert c.post("/issues", json={"title": "back"}, headers=bearer).status_code == 201
+        assert (
+            c.post("/issues", json={"title": "back"}, headers=bearer).status_code == 201
+        )
 
 
 def test_pause_freezes_the_trusted_header_path_and_web_sessions(tmp_path):
@@ -79,11 +82,20 @@ def test_pause_freezes_the_trusted_header_path_and_web_sessions(tmp_path):
         _bootstrap(c)
         c.post(
             "/users",
-            json={"email": "m@e.com", "name": "Mem", "password": "pw", "role": "member"},
+            json={
+                "email": "m@e.com",
+                "name": "Mem",
+                "password": "pw",
+                "role": "member",
+            },
             headers=H1,
         )
         # A live browser session first...
-        c.post("/login", data={"email": "m@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "m@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         assert "Sign out" in c.get("/").text
         # ...then the pause lands.
         assert (

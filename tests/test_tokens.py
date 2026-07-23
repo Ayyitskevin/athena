@@ -5,6 +5,7 @@ as exactly one user, the raw secret is shown once and never stored, revocation
 takes effect immediately, tokens are owner-scoped, and the X-Athena-Actor
 fallback can be switched off so only real tokens authenticate.
 """
+
 from fastapi.testclient import TestClient
 
 from athena import config
@@ -24,7 +25,11 @@ def _user(client, email="kevin@example.com", name="Kevin") -> int:
 
 def _mint(client, user_id, name="laptop") -> str:
     """Bootstrap a token via the actor-header fallback; return the raw secret."""
-    r = client.post("/tokens", json={"name": name, "scopes": ["admin"]}, headers={"X-Athena-Actor": str(user_id)})
+    r = client.post(
+        "/tokens",
+        json={"name": name, "scopes": ["admin"]},
+        headers={"X-Athena-Actor": str(user_id)},
+    )
     assert r.status_code == 201
     return r.json()["token"]
 
@@ -38,7 +43,9 @@ def test_token_authenticates_as_its_user(tmp_path):
         uid = _user(client)
         raw = _mint(client, uid)
         created = client.post(
-            "/issues", json={"title": "via token"}, headers={"Authorization": f"Bearer {raw}"}
+            "/issues",
+            json={"title": "via token"},
+            headers={"Authorization": f"Bearer {raw}"},
         )
         assert created.status_code == 201
         assert created.json()["created_by"] == uid
@@ -57,11 +64,12 @@ def test_raw_secret_returned_once_and_never_stored(tmp_path):
         assert listing.status_code == 200
         items = listing.json()
         assert len(items) == 1
-        assert "token" not in items[0]        # raw never echoed on list
-        assert "token_hash" not in items[0]   # hash never exposed either
+        assert "token" not in items[0]  # raw never echoed on list
+        assert "token_hash" not in items[0]  # hash never exposed either
 
         # The persisted value is the hash, not the raw token.
         from athena.core import db
+
         c = db.connect(tmp_path / "once.db")
         stored = c.execute("SELECT token_hash FROM api_tokens").fetchone()["token_hash"]
         c.close()
@@ -74,7 +82,9 @@ def test_unknown_token_is_401(tmp_path):
     with TestClient(app) as client:
         _user(client)  # a user exists, but this token was never issued
         r = client.post(
-            "/issues", json={"title": "x"}, headers={"Authorization": "Bearer ath_not-real"}
+            "/issues",
+            json={"title": "x"},
+            headers={"Authorization": "Bearer ath_not-real"},
         )
         assert r.status_code == 401
 
@@ -86,7 +96,9 @@ def test_revoked_token_stops_working_immediately(tmp_path):
     with TestClient(app) as client:
         uid = _user(client)
         raw = _mint(client, uid)
-        token_id = client.get("/tokens", headers={"Authorization": f"Bearer {raw}"}).json()[0]["id"]
+        token_id = client.get(
+            "/tokens", headers={"Authorization": f"Bearer {raw}"}
+        ).json()[0]["id"]
 
         revoked = client.delete(
             f"/tokens/{token_id}", headers={"Authorization": f"Bearer {raw}"}
@@ -94,7 +106,9 @@ def test_revoked_token_stops_working_immediately(tmp_path):
         assert revoked.status_code == 204
 
         after = client.post(
-            "/issues", json={"title": "after"}, headers={"Authorization": f"Bearer {raw}"}
+            "/issues",
+            json={"title": "after"},
+            headers={"Authorization": f"Bearer {raw}"},
         )
         assert after.status_code == 401
 
@@ -140,7 +154,9 @@ def test_actor_header_fallback_can_be_disabled(tmp_path, monkeypatch):
 
         # The real token still works.
         with_token = client.post(
-            "/issues", json={"title": "legit"}, headers={"Authorization": f"Bearer {raw}"}
+            "/issues",
+            json={"title": "legit"},
+            headers={"Authorization": f"Bearer {raw}"},
         )
         assert with_token.status_code == 201
 
@@ -150,5 +166,8 @@ def test_managing_tokens_requires_auth(tmp_path):
     # management is 401 (the bootstrap path needs the actor header on first use).
     app = create_app(tmp_path / "noauth.db")
     with TestClient(app) as client:
-        assert client.post("/tokens", json={"name": "x", "scopes": ["admin"]}).status_code == 401
+        assert (
+            client.post("/tokens", json={"name": "x", "scopes": ["admin"]}).status_code
+            == 401
+        )
         assert client.get("/tokens").status_code == 401

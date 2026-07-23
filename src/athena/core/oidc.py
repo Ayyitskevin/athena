@@ -9,6 +9,7 @@ HTTP/flow code calls these functions instead of writing SQL.
 `sub` is the IdP's stable, opaque user id (unlike email, it never changes), so the
 link keys on (issuer, subject) — never on email.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -38,9 +39,7 @@ def link_identity(
     return get_identity(conn, issuer=issuer, subject=subject)
 
 
-def get_identity(
-    conn: sqlite3.Connection, *, issuer: str, subject: str
-) -> dict | None:
+def get_identity(conn: sqlite3.Connection, *, issuer: str, subject: str) -> dict | None:
     row = conn.execute(
         "SELECT issuer, subject, user_id, created_at FROM oidc_identities "
         "WHERE issuer = ? AND subject = ?",

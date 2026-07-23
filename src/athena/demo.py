@@ -56,9 +56,7 @@ def _remove_owned_demo_files(db_path: Path, attach_dir: Path) -> None:
         pass
 
 
-def seed_demo(
-    db_path: str | Path, *, attach_dir: str | Path | None = None
-) -> dict:
+def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> dict:
     """Create and seed a brand-new synthetic workspace.
 
     The database and attachment directory must not already exist. Returns paths,
@@ -232,8 +230,7 @@ def seed_demo(
                     "# Review protocol\n\n"
                     "1. Read the boundary docs.\n"
                     "2. Inspect [[issue:%d]].\n"
-                    "3. Run the complete local gate."
-                    % demo_issue["id"]
+                    "3. Run the complete local gate." % demo_issue["id"]
                 ),
                 created_by=terra["id"],
             )
@@ -255,7 +252,11 @@ def seed_demo(
             conn,
             actor_id=sol["id"],
             name="demo-mcp",
-            scopes=[tokens.READ_SCOPE, tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE],
+            scopes=[
+                tokens.READ_SCOPE,
+                tokens.ISSUE_WRITE_SCOPE,
+                tokens.DOCS_WRITE_SCOPE,
+            ],
         )
 
         counts = {
@@ -360,7 +361,9 @@ def main(argv: list[str] | None = None) -> int:
 
     url = f"http://127.0.0.1:{args.port}"
     print(f"  URL:      {url}")
-    print("Press Ctrl+C to stop; delete the database and attachment directory afterward.")
+    print(
+        "Press Ctrl+C to stop; delete the database and attachment directory afterward."
+    )
     uvicorn.run(create_app(Path(seeded["db_path"])), host="127.0.0.1", port=args.port)
     return 0
 

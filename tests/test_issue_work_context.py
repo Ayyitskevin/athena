@@ -159,7 +159,9 @@ def test_rest_numeric_key_mcp_and_web_share_the_public_contract(tmp_path):
         # MCP deliberately goes through REST. Its only addition is the response
         # validator under _etag, so agents can retain the exact packet validator.
         token = client.post(
-            "/tokens", json={"name": "work-context", "scopes": ["admin"]}, headers=H_ADMIN
+            "/tokens",
+            json={"name": "work-context", "scopes": ["admin"]},
+            headers=H_ADMIN,
         ).json()["token"]
         client.headers.update({"Authorization": f"Bearer {token}"})
         mcp_packet = AthenaClient(client=client).get_issue_work_context(issue["key"])
@@ -188,20 +190,14 @@ def test_hidden_and_missing_roots_are_identical_404s_on_json_and_html(tmp_path):
         hidden_json = client.get(
             f"/issues/{hidden['id']}/work-context", headers=H_OUTSIDER
         )
-        missing_json = client.get(
-            "/issues/999999/work-context", headers=H_OUTSIDER
-        )
+        missing_json = client.get("/issues/999999/work-context", headers=H_OUTSIDER)
         assert hidden_json.status_code == missing_json.status_code == 404
-        assert hidden_json.json() == missing_json.json() == {
-            "detail": "no such issue"
-        }
+        assert hidden_json.json() == missing_json.json() == {"detail": "no such issue"}
         for response in (hidden_json, missing_json):
             assert response.headers["cache-control"] == "private, no-store"
             assert {"authorization", "x-athena-actor"} <= _vary(response)
 
-        hidden_html = client.get(
-            f"/aegis/issues/{hidden['id']}/work-context"
-        )
+        hidden_html = client.get(f"/aegis/issues/{hidden['id']}/work-context")
         missing_html = client.get("/aegis/issues/999999/work-context")
         assert hidden_html.status_code == missing_html.status_code == 404
         assert hidden_html.text == missing_html.text
@@ -226,19 +222,25 @@ def test_hidden_nested_resources_are_omitted_and_not_counted_until_granted(
             body=f"backlink [[issue:{root['id']}]]",
             project_id=secret_project["id"],
         )
-        assert client.put(
-            f"/issues/{hidden_issue['id']}/parent",
-            json={"parent_id": root["id"]},
-            headers=H_ADMIN,
-        ).status_code == 200
-        assert client.post(
-            f"/issues/{root['id']}/links",
-            json={
-                "relation": "blocked_by",
-                "target_ref": str(hidden_issue["id"]),
-            },
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.put(
+                f"/issues/{hidden_issue['id']}/parent",
+                json={"parent_id": root["id"]},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/issues/{root['id']}/links",
+                json={
+                    "relation": "blocked_by",
+                    "target_ref": str(hidden_issue["id"]),
+                },
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
 
         space = client.post(
             "/spaces",
@@ -253,30 +255,37 @@ def test_hidden_nested_resources_are_omitted_and_not_counted_until_granted(
             },
             headers=H_ADMIN,
         ).json()
-        assert client.patch(
-            f"/issues/{root['id']}",
-            json={
-                "body": (
-                    f"refs [[issue:{hidden_issue['id']}]] "
-                    f"[[page:{hidden_page['id']}]]"
-                )
-            },
-            headers=H_ADMIN,
-        ).status_code == 200
-        assert client.put(
-            f"/projects/{secret_project['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
-        assert client.put(
-            f"/spaces/{space['id']}/visibility",
-            json={"visibility": "private"},
-            headers=H_ADMIN,
-        ).status_code == 200
-
-        hidden_packet, _ = _context(
-            client, root["id"], headers=H_OUTSIDER
+        assert (
+            client.patch(
+                f"/issues/{root['id']}",
+                json={
+                    "body": (
+                        f"refs [[issue:{hidden_issue['id']}]] "
+                        f"[[page:{hidden_page['id']}]]"
+                    )
+                },
+                headers=H_ADMIN,
+            ).status_code
+            == 200
         )
+        assert (
+            client.put(
+                f"/projects/{secret_project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                f"/spaces/{space['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
+
+        hidden_packet, _ = _context(client, root["id"], headers=H_OUTSIDER)
         groups = [
             hidden_packet["hierarchy"]["children"],
             hidden_packet["dependencies"]["open_blockers"],
@@ -290,16 +299,22 @@ def test_hidden_nested_resources_are_omitted_and_not_counted_until_granted(
         assert "Classified page title" not in str(hidden_packet)
         assert "visible_open_blockers" not in hidden_packet["warnings"]
 
-        assert client.post(
-            f"/projects/{secret_project['id']}/members",
-            json={"user_id": 2},
-            headers=H_ADMIN,
-        ).status_code == 201
-        assert client.post(
-            f"/spaces/{space['id']}/members",
-            json={"user_id": 2},
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/projects/{secret_project['id']}/members",
+                json={"user_id": 2},
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                f"/spaces/{space['id']}/members",
+                json={"user_id": 2},
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
 
         granted, _ = _context(client, root["id"], headers=H_OUTSIDER)
         assert [item["id"] for item in granted["hierarchy"]["children"]["items"]] == [
@@ -347,11 +362,14 @@ def test_custom_done_status_remains_blocked_by_but_is_not_an_open_blocker(
             title="Delivery target",
             project_id=project["id"],
         )
-        assert client.post(
-            f"/issues/{root['id']}/links",
-            json={"relation": "blocked_by", "target_ref": blocker["key"]},
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/issues/{root['id']}/links",
+                json={"relation": "blocked_by", "target_ref": blocker["key"]},
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
 
         packet, _ = _context(client, root["key"])
         assert packet["dependencies"]["open_blockers"] == {
@@ -360,12 +378,11 @@ def test_custom_done_status_remains_blocked_by_but_is_not_an_open_blocker(
             "clipped": False,
         }
         assert packet["dependencies"]["blocked_by"]["visible_total"] == 1
-        assert packet["dependencies"]["blocked_by"]["items"][0]["status"] == (
-            "shipped"
+        assert packet["dependencies"]["blocked_by"]["items"][0]["status"] == ("shipped")
+        assert (
+            packet["dependencies"]["blocked_by"]["items"][0]["status_category"]
+            == "done"
         )
-        assert packet["dependencies"]["blocked_by"]["items"][0][
-            "status_category"
-        ] == "done"
         assert "visible_open_blockers" not in packet["warnings"]
 
 
@@ -499,45 +516,57 @@ def test_context_etag_is_stable_on_reads_and_tracks_included_context_changes(
         _, same = _context(client, root["id"])
         assert same == first
 
-        assert client.post(
-            f"/issues/{root['id']}/comments",
-            json={"body": "new decision"},
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/issues/{root['id']}/comments",
+                json={"body": "new decision"},
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
         _, after_comment = _context(client, root["id"])
         assert after_comment != first
         assert _context(client, root["id"])[1] == after_comment
 
-        assert client.patch(
-            f"/pages/{page['id']}",
-            json={"body": "version two"},
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/pages/{page['id']}",
+                json={"body": "version two"},
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
         _, after_page = _context(client, root["id"])
         assert after_page != after_comment
 
         referenced = _issue(client, title="New reference")
-        assert client.patch(
-            f"/issues/{root['id']}",
-            json={
-                "body": (
-                    f"plan [[page:{page['id']}]] "
-                    f"and work [[issue:{referenced['id']}]]"
-                )
-            },
-            headers=H_ADMIN,
-        ).status_code == 200
+        assert (
+            client.patch(
+                f"/issues/{root['id']}",
+                json={
+                    "body": (
+                        f"plan [[page:{page['id']}]] "
+                        f"and work [[issue:{referenced['id']}]]"
+                    )
+                },
+                headers=H_ADMIN,
+            ).status_code
+            == 200
+        )
         _, after_reference = _context(client, root["id"])
         assert after_reference != after_page
 
-        assert client.post(
-            f"/issues/{root['id']}/links",
-            json={
-                "relation": "blocked_by",
-                "target_ref": str(referenced["id"]),
-            },
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/issues/{root['id']}/links",
+                json={
+                    "relation": "blocked_by",
+                    "target_ref": str(referenced["id"]),
+                },
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
         _, after_dependency = _context(client, root["id"])
         assert after_dependency != after_reference
         assert _context(client, root["id"])[1] == after_dependency
@@ -549,11 +578,14 @@ def test_work_context_read_has_no_domain_side_effects(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         root = _issue(client, title="Read only")
-        assert client.post(
-            f"/issues/{root['id']}/comments",
-            json={"body": "evidence"},
-            headers=H_ADMIN,
-        ).status_code == 201
+        assert (
+            client.post(
+                f"/issues/{root['id']}/comments",
+                json={"body": "evidence"},
+                headers=H_ADMIN,
+            ).status_code
+            == 201
+        )
 
         conn = db.connect(db_file)
         domain_tables = (
@@ -627,9 +659,7 @@ def test_work_context_is_one_wal_snapshot_when_a_write_interleaves(
         # _contributors runs after the root/visibility reads and before comments.
         # Without the outer read transaction, this request would observe the newly
         # committed comment despite having resolved its root from an older state.
-        monkeypatch.setattr(
-            work_context, "_contributors", insert_after_root_lookup
-        )
+        monkeypatch.setattr(work_context, "_contributors", insert_after_root_lookup)
         in_flight, _ = _context(client, root["id"])
         assert interleaved is True
         assert in_flight["comments"] == {

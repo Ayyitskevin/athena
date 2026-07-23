@@ -67,9 +67,7 @@ def mint_token(
         return created
 
 
-def revoke_token(
-    conn: sqlite3.Connection, *, actor_id: int, token_id: int
-) -> bool:
+def revoke_token(conn: sqlite3.Connection, *, actor_id: int, token_id: int) -> bool:
     """Revoke a token the acting user owns and record a 'revoked_token' event
     atomically. Returns True if a live token was revoked, False otherwise (unknown id,
     another owner's token, or already revoked) so the caller can 404 honestly. No event

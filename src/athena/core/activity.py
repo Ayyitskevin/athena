@@ -417,7 +417,11 @@ def _run_summary(events: list[dict]) -> dict:
 
 
 def _starts_new_run(
-    prev: dict, prev_ts: datetime | None, cur: dict, cur_ts: datetime | None, gap_seconds: int
+    prev: dict,
+    prev_ts: datetime | None,
+    cur: dict,
+    cur_ts: datetime | None,
+    gap_seconds: int,
 ) -> bool:
     """Whether `cur` begins a NEW run after `prev`. An explicit run id is
     authoritative: if EITHER event carries one, they continue the same run only when
@@ -426,7 +430,9 @@ def _starts_new_run(
     Only when both events are untagged does the boundary fall back to the time gap."""
     prev_run, cur_run = prev["run_id"], cur["run_id"]
     if prev_run is not None or cur_run is not None:
-        return not (prev_run is not None and cur_run is not None and prev_run == cur_run)
+        return not (
+            prev_run is not None and cur_run is not None and prev_run == cur_run
+        )
     if prev_ts is None or cur_ts is None:
         # No measurable gap → keep them together rather than split on a bad stamp.
         return False
@@ -761,8 +767,7 @@ def can_see_complete_run(
     if not gate:
         return True
     visible = conn.execute(
-        "SELECT COUNT(*) FROM activity a WHERE a.run_id = ? "
-        f"AND {gate}",
+        f"SELECT COUNT(*) FROM activity a WHERE a.run_id = ? AND {gate}",
         (run_id, *gate_params),
     ).fetchone()[0]
     return visible == total
@@ -800,8 +805,7 @@ def distinct_target_kinds(
         if gate:
             where = f" WHERE {gate}"
     rows = conn.execute(
-        f"SELECT DISTINCT a.target_kind FROM activity a{where} "
-        "ORDER BY a.target_kind",
+        f"SELECT DISTINCT a.target_kind FROM activity a{where} ORDER BY a.target_kind",
         params,
     ).fetchall()
     return [row["target_kind"] for row in rows]

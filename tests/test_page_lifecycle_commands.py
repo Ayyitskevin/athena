@@ -7,6 +7,7 @@ one with no page_moved, or restore content with no page_restored. page_commands.
 These pin the atomicity gap the migration closes: when the recorder fails, the mutation
 rolls back with it — nothing half-lands.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -137,7 +138,9 @@ def test_restore_rolls_back_the_content_when_audit_fails(tmp_path):
     assert pages.get_page(conn, page["id"])["body"] == "v2 body"
     versions = pages.list_page_versions(conn, page["id"])
     conn.close()
-    assert [v["version"] for v in versions] == [1]  # only the edit's snapshot, no restore
+    assert [v["version"] for v in versions] == [
+        1
+    ]  # only the edit's snapshot, no restore
     assert _events(db_file, "page_restored") == []
 
 
@@ -152,9 +155,7 @@ def test_delete_rolls_back_the_page_and_dependents_when_audit_fails(tmp_path):
         # Give it a version (an edit) and a comment, so the delete has dependents whose
         # survival proves the whole delete rolled back — not just the page row.
         c.patch(f"/pages/{page['id']}", json={"body": "v2"}, headers=H1)
-        c.post(
-            f"/pages/{page['id']}/comments", json={"body": "hi"}, headers=H1
-        )
+        c.post(f"/pages/{page['id']}/comments", json={"body": "hi"}, headers=H1)
     conn = db.connect(db_file)
     original = page_activity.record_page_deleted
 
@@ -214,9 +215,9 @@ def test_create_move_restore_record_attributed_events(tmp_path):
         c.post(f"/pages/{child['id']}/versions/1/restore", headers=H1)
     # Each lifecycle verb landed, attributed to actor 1.
     assert [e["actor_id"] for e in _events(db_file, "page_created")] == [1, 1]
-    assert [(e["actor_id"], e["target_id"]) for e in _events(db_file, "page_moved")] == [
-        (1, child["id"])
-    ]
-    assert [(e["actor_id"], e["target_id"]) for e in _events(db_file, "page_restored")] == [
-        (1, child["id"])
-    ]
+    assert [
+        (e["actor_id"], e["target_id"]) for e in _events(db_file, "page_moved")
+    ] == [(1, child["id"])]
+    assert [
+        (e["actor_id"], e["target_id"]) for e in _events(db_file, "page_restored")
+    ] == [(1, child["id"])]

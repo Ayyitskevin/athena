@@ -11,6 +11,7 @@ it. None means "no gating" — an admin (who sees everything) or an internal cal
 and is distinct from an empty set ("sees no project", so only the backlog counts).
 The backlog (issues with no project) has nothing to gate on, so it is always counted.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -115,7 +116,10 @@ def active_sprints(
     is shown its whole count is visible too."""
     out: list[dict] = []
     for sprint in sprints.list_sprints(conn, state=sprints.ACTIVE):
-        if visible_project_ids is not None and sprint["project_id"] not in visible_project_ids:
+        if (
+            visible_project_ids is not None
+            and sprint["project_id"] not in visible_project_ids
+        ):
             continue
         project = projects.get_project(conn, sprint["project_id"])
         issue_count = conn.execute(
@@ -168,9 +172,9 @@ def totals(
     ).fetchone()["n"]
 
     if visible_project_ids is None:
-        project_count = conn.execute(
-            "SELECT COUNT(*) AS n FROM projects"
-        ).fetchone()["n"]
+        project_count = conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()[
+            "n"
+        ]
         active_sprint_count = conn.execute(
             "SELECT COUNT(*) AS n FROM sprints WHERE state = ?", (sprints.ACTIVE,)
         ).fetchone()["n"]

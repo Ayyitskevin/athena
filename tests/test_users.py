@@ -4,6 +4,7 @@ User management is authenticated after the first (bootstrap) user; the suite
 runs with the X-Athena-Actor fallback enabled (see conftest), so post-bootstrap
 calls authenticate as user 1.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -16,7 +17,9 @@ def test_create_then_fetch_and_list_user(tmp_path):
     app = create_app(tmp_path / "users.db")
     with TestClient(app) as client:
         # First user: bootstrap, no auth required.
-        created = client.post("/users", json={"email": "kevin@example.com", "name": "Kevin"})
+        created = client.post(
+            "/users", json={"email": "kevin@example.com", "name": "Kevin"}
+        )
         assert created.status_code == 201
         body = created.json()
         assert body["email"] == "kevin@example.com"
@@ -38,11 +41,15 @@ def test_duplicate_email_is_rejected(tmp_path):
     # API turns that into a clean 400 instead of a 500.
     app = create_app(tmp_path / "dup.db")
     with TestClient(app) as client:
-        first = client.post("/users", json={"email": "dupe@example.com", "name": "First"})
+        first = client.post(
+            "/users", json={"email": "dupe@example.com", "name": "First"}
+        )
         assert first.status_code == 201
         # Second create is post-bootstrap, so it authenticates as user 1.
         second = client.post(
-            "/users", json={"email": "dupe@example.com", "name": "Second"}, headers=_AUTH
+            "/users",
+            json={"email": "dupe@example.com", "name": "Second"},
+            headers=_AUTH,
         )
         assert second.status_code == 400
 
@@ -51,7 +58,9 @@ def test_unknown_user_is_404(tmp_path):
     # WHY: asking for a user that doesn't exist is a clean "not found", not a crash.
     app = create_app(tmp_path / "missing.db")
     with TestClient(app) as client:
-        client.post("/users", json={"email": "boot@example.com", "name": "Boot"})  # bootstrap
+        client.post(
+            "/users", json={"email": "boot@example.com", "name": "Boot"}
+        )  # bootstrap
         assert client.get("/users/999", headers=_AUTH).status_code == 404
 
 

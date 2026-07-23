@@ -22,6 +22,7 @@ or a thing created later). Existence is checked at read time, so a broken ref is
 shown as broken rather than silently dropped, and a target created later lights up
 its backlinks for free.
 """
+
 from __future__ import annotations
 
 import re
@@ -154,7 +155,9 @@ def resolve_title_ref(
     ).fetchall()
     if space_id is not None:
         in_space = [r for r in rows if r["space_id"] == space_id]
-        if in_space:  # prefer the source's own space; fall back to a global unique match
+        if (
+            in_space
+        ):  # prefer the source's own space; fall back to a global unique match
             rows = in_space
     if len(rows) == 1:
         row = rows[0]

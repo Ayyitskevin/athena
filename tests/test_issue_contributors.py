@@ -7,6 +7,7 @@ the new contributor so the delegation lands in their inbox; an unknown user is
 rejected; removing a non-contributor is a 404; and the web detail page exposes the
 add/remove forms.
 """
+
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -63,7 +64,9 @@ def test_delegate_issue_to_agent_keeps_assignee_and_audits(tmp_path):
         iid = _issue(client, "delegate")["id"]
         client.put(f"/issues/{iid}/assignee", json={"assignee_id": 1}, headers=H1)
 
-        delegated = client.post(f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1)
+        delegated = client.post(
+            f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1
+        )
         assert delegated.status_code == 201, delegated.text
         assert delegated.json()[0]["name"] == "Bot"
         assert delegated.json()[0]["is_agent"] is True
@@ -76,7 +79,10 @@ def test_delegate_issue_to_agent_keeps_assignee_and_audits(tmp_path):
             ).json()
         ]
         assert "delegated" in verbs and "added_contributor" not in verbs
-        assert any(n["verb"] == "delegated" for n in client.get("/notifications", headers=H2).json())
+        assert any(
+            n["verb"] == "delegated"
+            for n in client.get("/notifications", headers=H2).json()
+        )
 
 
 def test_delegate_requires_agent_user(tmp_path):
@@ -84,7 +90,9 @@ def test_delegate_requires_agent_user(tmp_path):
         _admin(client)
         _user2(client)
         iid = _issue(client, "human")["id"]
-        rejected = client.post(f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1)
+        rejected = client.post(
+            f"/issues/{iid}/delegate", json={"user_id": 2}, headers=H1
+        )
         assert rejected.status_code == 422
 
 
@@ -94,7 +102,9 @@ def test_add_is_idempotent(tmp_path):
         _user2(client)
         iid = _issue(client, "x")["id"]
         client.post(f"/issues/{iid}/contributors", json={"user_id": 2}, headers=H1)
-        again = client.post(f"/issues/{iid}/contributors", json={"user_id": 2}, headers=H1)
+        again = client.post(
+            f"/issues/{iid}/contributors", json={"user_id": 2}, headers=H1
+        )
         assert [c["user_id"] for c in again.json()] == [2]  # still just one
 
 
@@ -158,7 +168,10 @@ def test_remove_non_contributor_is_404(tmp_path):
         _admin(client)
         _user2(client)
         iid = _issue(client, "x")["id"]
-        assert client.delete(f"/issues/{iid}/contributors/2", headers=H1).status_code == 404
+        assert (
+            client.delete(f"/issues/{iid}/contributors/2", headers=H1).status_code
+            == 404
+        )
 
 
 def test_contributors_of_missing_issue_is_404(tmp_path):
@@ -192,7 +205,9 @@ def test_web_detail_add_and_remove_contributor(tmp_path):
         page = client.get(f"/aegis/issues/{iid}").text
         assert "Bob" in page
         assert f"/aegis/issues/{iid}/contributors/2/delete" in page
-        assert [c["name"] for c in client.get(f"/issues/{iid}/contributors").json()] == ["Bob"]
+        assert [
+            c["name"] for c in client.get(f"/issues/{iid}/contributors").json()
+        ] == ["Bob"]
 
         client.post(
             f"/aegis/issues/{iid}/contributors/2/delete",

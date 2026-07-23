@@ -143,12 +143,9 @@ def _related_group(
     visible_project_ids: set[int] | None,
     limit: int = GENERAL_LIMIT,
 ) -> dict[str, Any]:
-    gate, gate_params = _visibility_clause(
-        "i", visible_project_ids, "project_id"
-    )
+    gate, gate_params = _visibility_clause("i", visible_project_ids, "project_id")
     select_sql = (
-        f"SELECT {_RELATED_COLUMNS} FROM {from_sql} "
-        f"WHERE ({where_sql}) AND ({gate})"
+        f"SELECT {_RELATED_COLUMNS} FROM {from_sql} WHERE ({where_sql}) AND ({gate})"
     )
     return _bounded_group(
         conn,
@@ -167,9 +164,7 @@ def _hierarchy(
     visible_project_ids: set[int] | None,
 ) -> dict[str, Any]:
     parent = None
-    if issue.get("parent_id") and access.can_see_issue(
-        conn, actor, issue["parent_id"]
-    ):
+    if issue.get("parent_id") and access.can_see_issue(conn, actor, issue["parent_id"]):
         parent_issue = issues.get_issue(conn, issue["parent_id"])
         if parent_issue is not None:
             parent = _related_from_issue(conn, parent_issue)
@@ -298,8 +293,7 @@ def _comments(conn: sqlite3.Connection, issue_id: int) -> dict[str, Any]:
     ).fetchone()["n"]
     # Keep the newest bounded window, then present that window chronologically.
     rows = conn.execute(
-        f"SELECT * FROM ({select_sql} ORDER BY c.id DESC LIMIT ?) recent "
-        "ORDER BY id",
+        f"SELECT * FROM ({select_sql} ORDER BY c.id DESC LIMIT ?) recent ORDER BY id",
         (issue_id, GENERAL_LIMIT),
     ).fetchall()
     return {
@@ -509,9 +503,7 @@ def build_work_context(
             conn, issue["project_id"], issue["status"]
         )
 
-        dependencies = _dependencies(
-            conn, issue["id"], visible_project_ids
-        )
+        dependencies = _dependencies(conn, issue["id"], visible_project_ids)
         handoff_history = claim_handoffs.list_handoffs(conn, issue["id"])
         payload: dict[str, Any] = {
             "schema": SCHEMA,
@@ -531,9 +523,7 @@ def build_work_context(
                 "id": public_issue["id"],
                 "key": public_issue["key"],
                 "title": public_issue["title"],
-                "description": _excerpt(
-                    public_issue["body"], ISSUE_DESCRIPTION_LIMIT
-                ),
+                "description": _excerpt(public_issue["body"], ISSUE_DESCRIPTION_LIMIT),
                 "status": public_issue["status"],
                 "status_category": status_category,
                 "priority": public_issue["priority"],
@@ -548,9 +538,7 @@ def build_work_context(
             },
             "issue_etag": issue_etag,
             "warnings": [],
-            "hierarchy": _hierarchy(
-                conn, issue, actor, visible_project_ids
-            ),
+            "hierarchy": _hierarchy(conn, issue, actor, visible_project_ids),
             "dependencies": dependencies,
             "contributors": _contributors(conn, issue["id"]),
             "attachments": _attachments(conn, issue["id"]),

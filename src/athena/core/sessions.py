@@ -5,6 +5,7 @@ value, the database holds only its SHA-256 hash plus an expiry. Resolving a
 cookie hashes it and looks up a live (non-expired) row, mirroring core/tokens.py.
 Logout deletes the row, so a stolen-then-revoked cookie stops working at once.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -55,7 +56,10 @@ def resolve_session(conn: sqlite3.Connection, raw: str | None) -> dict | None:
     ).fetchone()
     if row is None:
         return None
-    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= utc_now():
+    if (
+        datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc)
+        <= utc_now()
+    ):
         return None
     user = dict(row)
     user.pop("expires_at", None)
@@ -76,7 +80,10 @@ def csrf_token_for(conn: sqlite3.Connection, raw: str | None) -> str | None:
     ).fetchone()
     if row is None:
         return None
-    if datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc) <= utc_now():
+    if (
+        datetime.strptime(row["expires_at"], _TS_FMT).replace(tzinfo=timezone.utc)
+        <= utc_now()
+    ):
         return None
     return row["csrf_token"] or None
 

@@ -18,9 +18,7 @@ def _bootstrap(client: TestClient) -> None:
 
 
 def _project(client: TestClient, name: str, key: str) -> int:
-    response = client.post(
-        "/projects", json={"name": name, "key": key}, headers=H1
-    )
+    response = client.post("/projects", json={"name": name, "key": key}, headers=H1)
     assert response.status_code == 201, response.text
     return response.json()["id"]
 
@@ -33,9 +31,7 @@ def _sprint(client: TestClient, project_id: int, name: str) -> int:
     return response.json()["id"]
 
 
-def _issue(
-    client: TestClient, project_id: int, *, status: str | None = None
-) -> dict:
+def _issue(client: TestClient, project_id: int, *, status: str | None = None) -> dict:
     payload = {"title": "placed issue", "project_id": project_id}
     if status is not None:
         payload["status"] = status
@@ -51,9 +47,7 @@ def _get_issue(client: TestClient, issue_id: int) -> dict:
 
 
 def _login(client: TestClient, email: str = "a@example.com") -> None:
-    response = client.post(
-        "/login", data={"email": email, "password": "secret"}
-    )
+    response = client.post("/login", data={"email": email, "password": "secret"})
     assert response.status_code == 200, response.text
     client.headers["X-CSRF-Token"] = client.cookies["athena_csrf"]
 
@@ -68,11 +62,14 @@ def test_patch_moves_directly_into_destination_project_sprint(tmp_path):
         source_sprint = _sprint(client, source, "Source sprint")
         destination_sprint = _sprint(client, destination, "Destination sprint")
         issue = _issue(client, source)
-        assert client.put(
-            f"/issues/{issue['id']}/sprint",
-            json={"sprint_id": source_sprint},
-            headers=H1,
-        ).status_code == 200
+        assert (
+            client.put(
+                f"/issues/{issue['id']}/sprint",
+                json={"sprint_id": source_sprint},
+                headers=H1,
+            ).status_code
+            == 200
+        )
 
         response = client.patch(
             f"/issues/{issue['id']}",

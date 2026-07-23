@@ -25,9 +25,7 @@ from urllib.request import (
 EXPECTED_HEALTH = {"status": "ok"}
 EXPECTED_READY = {"status": "ok", "database": "ok"}
 STARTUP_TIMEOUT_SECONDS = 15
-_LOOPBACK_OPENER = build_opener(
-    ProxyHandler({}), HTTPCookieProcessor(CookieJar())
-)
+_LOOPBACK_OPENER = build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar()))
 
 
 def _read_json(url: str, *, headers: dict[str, str] | None = None) -> dict:
@@ -151,9 +149,7 @@ def main() -> int:
                     css_type, css = _read_asset(
                         f"http://127.0.0.1:{port}/static/styles.css"
                     )
-                    metrics = _read_json(
-                        f"http://127.0.0.1:{port}/fleet/metrics"
-                    )
+                    metrics = _read_json(f"http://127.0.0.1:{port}/fleet/metrics")
                     metrics_type, metrics_page = _read_asset(
                         f"http://127.0.0.1:{port}/aegis/fleet-metrics"
                     )
@@ -167,9 +163,7 @@ def main() -> int:
                             },
                         )
                         if admin.get("id") != 1 or admin.get("role") != "admin":
-                            raise RuntimeError(
-                                f"unexpected bootstrap admin: {admin!r}"
-                            )
+                            raise RuntimeError(f"unexpected bootstrap admin: {admin!r}")
                         admin_bootstrapped = True
                     if not browser_authenticated:
                         _post_form(
@@ -195,7 +189,9 @@ def main() -> int:
                     last_error = f"unexpected health payloads: {health!r}, {ready!r}"
                     break
                 if not db_path.is_file():
-                    last_error = "ready app did not create the configured fresh database"
+                    last_error = (
+                        "ready app did not create the configured fresh database"
+                    )
                     break
                 if home_type != "text/html" or b"<title>Athena</title>" not in home:
                     last_error = "home page did not render the packaged Athena template"
@@ -205,20 +201,18 @@ def main() -> int:
                     break
                 if (
                     metrics.get("schema") != "athena.fleet_metrics.v1"
-                    or metrics.get("flow")
-                    != {"created": 0, "completed": 0, "net": 0}
-                    or metrics.get("cycle_time", {}).get("median_seconds")
-                    is not None
+                    or metrics.get("flow") != {"created": 0, "completed": 0, "net": 0}
+                    or metrics.get("cycle_time", {}).get("median_seconds") is not None
                 ):
-                    last_error = (
-                        "fresh database metrics did not return the exact no-data contract"
-                    )
+                    last_error = "fresh database metrics did not return the exact no-data contract"
                     break
                 if (
                     metrics_type != "text/html"
                     or b"<title>Fleet Throughput" not in metrics_page
                 ):
-                    last_error = "fleet metrics page did not render from packaged assets"
+                    last_error = (
+                        "fleet metrics page did not render from packaged assets"
+                    )
                     break
                 if (
                     active_work.get("schema") != "athena.fleet_active_work.v1"
@@ -246,9 +240,7 @@ def main() -> int:
                     or b"<title>Agent Mission Control" not in mission_page
                     or b"Active claimed work" not in mission_page
                 ):
-                    last_error = (
-                        "Mission Control did not render active work from packaged assets"
-                    )
+                    last_error = "Mission Control did not render active work from packaged assets"
                     break
                 success = True
                 break

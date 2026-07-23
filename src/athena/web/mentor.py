@@ -11,6 +11,7 @@ writes are open to ANY authenticated actor (a page has no creator-only lock — 
 a shared wiki and every edit is snapshotted into history), so the only gate is
 "are you signed in?" — there is no creator-or-assignee check like issues have.
 """
+
 from __future__ import annotations
 
 import html
@@ -20,7 +21,16 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.core import access, activity, attachments, identity, labels, links, notifications, users
+from athena.core import (
+    access,
+    activity,
+    attachments,
+    identity,
+    labels,
+    links,
+    notifications,
+    users,
+)
 from athena.core.deps import get_conn
 from athena.mentor import (
     page_activity,
@@ -46,7 +56,6 @@ def _signin_required(verb: str) -> HTMLResponse:
     )
 
 
-
 def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
     if user is None:
         return _signin_required(verb)
@@ -63,7 +72,9 @@ def _page_visible_or_response(conn, page_id, user):
     funnels through here so visibility can't be forgotten on one."""
     page = pages.get_page(conn, page_id)
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
-        return None, HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+        return None, HTMLResponse(
+            '<div class="error">Page not found.</div>', status_code=404
+        )
     return page, None
 
 
@@ -108,9 +119,7 @@ def spaces_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     all_spaces = spaces.list_spaces(conn, access.visible_space_filter(conn, user))
     # One page-count per space — cheap on the small lists Mentor holds, and it
     # comes from the real data layer (no cached counter to drift).
-    counts = {
-        s["id"]: pages.count_pages_in_space(conn, s["id"]) for s in all_spaces
-    }
+    counts = {s["id"]: pages.count_pages_in_space(conn, s["id"]) for s in all_spaces}
     can_write = user is not None and identity.can_write(user)
     return templates.TemplateResponse(
         request=request,
@@ -144,11 +153,18 @@ def create_space(
     key = key.strip().upper()
     name = name.strip()
     if not key:
-        return HTMLResponse('<div class="error">Space key is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Space key is required.</div>', status_code=400
+        )
     if not name:
-        return HTMLResponse('<div class="error">Space name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Space name is required.</div>', status_code=400
+        )
     if spaces.get_space_by_key(conn, key) is not None:
-        return HTMLResponse('<div class="error">A space with that key already exists.</div>', status_code=409)
+        return HTMLResponse(
+            '<div class="error">A space with that key already exists.</div>',
+            status_code=409,
+        )
 
     # The command owns the atomic insert AND its 'space_created' event.
     space = space_commands.create_space(
@@ -173,14 +189,18 @@ def delete_space(
 
     space = spaces.get_space(conn, space_id)
     if space is None:
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     # Shared visibility-first + creator-only rule (access.container_write_reason) — a
     # hidden space reads as "not found" (404), never "exists but not yours" (403).
     reason = access.container_write_reason(
         conn, user, kind="space", container_id=space_id, created_by=space["created_by"]
     )
     if reason == "not_visible":
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     if reason == "not_owner":
         return HTMLResponse(
             '<div class="blocked">Only the space creator may delete it.</div>',
@@ -216,7 +236,9 @@ def edit_space_form(
     # "not found", no leak. Same gate as the POST twin below; without it the GET
     # form leaked a hidden space's key/name/description to any signed-in member.
     if space is None or not access.can_see_space(conn, user, space_id):
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return templates.TemplateResponse(
         request=request, name="mentor/space_edit.html", context={"space": space}
     )
@@ -243,17 +265,24 @@ def edit_space(
     before = spaces.get_space(conn, space_id)
     # Can't edit a space you can't see — a private space reads as "not found", no leak.
     if before is None or not access.can_see_space(conn, user, space_id):
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     key = key.strip().upper()
     name = name.strip()
     if not key:
-        return HTMLResponse('<div class="error">Space key is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Space key is required.</div>', status_code=400
+        )
     if not name:
-        return HTMLResponse('<div class="error">Space name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Space name is required.</div>', status_code=400
+        )
     clash = spaces.get_space_by_key(conn, key)
     if clash is not None and clash["id"] != space_id:
         return HTMLResponse(
-            '<div class="error">A space with that key already exists.</div>', status_code=409
+            '<div class="error">A space with that key already exists.</div>',
+            status_code=409,
         )
 
     # The command owns the atomic update AND its 'space_edited' event (a no-op change
@@ -268,7 +297,9 @@ def edit_space(
             description=description.strip(),
         )
     except space_commands.SpaceCommandError:
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
 
 
@@ -285,7 +316,9 @@ def _authorize_space_manage(conn, space_id: int, user: dict):
     not manage is 403. The 401 (logged-out) check stays at each call site."""
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, user, space_id):
-        return None, HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return None, HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     if not identity.can_write(user):
         return None, _readonly_response()
     if space["created_by"] != user["id"] and not identity.is_admin(user):
@@ -319,7 +352,9 @@ def space_access(
     )
 
 
-@router.post("/mentor/spaces/{space_id}/visibility", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/mentor/spaces/{space_id}/visibility", dependencies=[Depends(verify_csrf)]
+)
 def space_set_visibility(
     request: Request,
     space_id: int,
@@ -426,7 +461,9 @@ def space_detail(
             request=request,
             name="mentor/spaces.html",
             context={
-                "spaces": spaces.list_spaces(conn, access.visible_space_filter(conn, user)),
+                "spaces": spaces.list_spaces(
+                    conn, access.visible_space_filter(conn, user)
+                ),
                 "counts": {},
                 "can_write": False,
                 "error": f"Space #{space_id} not found",
@@ -486,18 +523,24 @@ def create_page(
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
-        return HTMLResponse('<div class="error">Space not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
 
     title = title.strip()
     if not title:
-        return HTMLResponse('<div class="error">Page title is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Page title is required.</div>', status_code=400
+        )
 
     parent_id = parent_id.strip()
     if parent_id == "":
         parent: int | None = None
     else:
         if not parent_id.isdigit():
-            return HTMLResponse('<div class="error">Invalid parent page.</div>', status_code=400)
+            return HTMLResponse(
+                '<div class="error">Invalid parent page.</div>', status_code=400
+            )
         parent_page = pages.get_page(conn, int(parent_id))
         if parent_page is None or parent_page["space_id"] != space_id:
             return HTMLResponse(
@@ -509,8 +552,12 @@ def create_page(
     # The command owns the atomic insert AND its 'page_created' event (auto-watch +
     # mentions).
     page = page_commands.create_page(
-        conn, actor_id=user["id"], space_id=space_id, title=title,
-        body=body.strip() or "", parent_id=parent,
+        conn,
+        actor_id=user["id"],
+        space_id=space_id,
+        title=title,
+        body=body.strip() or "",
+        parent_id=parent,
     )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
@@ -569,7 +616,9 @@ def page_detail(
             "body_html": render_body(conn, page["body"], actor=user),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
-            "all_labels": labels.list_labels(conn),  # the shared vocabulary, for autocomplete
+            "all_labels": labels.list_labels(
+                conn
+            ),  # the shared vocabulary, for autocomplete
             "attachments": attachments.list_for(conn, "page", page_id),
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
@@ -637,7 +686,9 @@ def edit_page(
         return err
     title = title.strip()
     if not title:
-        return HTMLResponse('<div class="error">Title is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Title is required.</div>', status_code=400
+        )
 
     # The command owns the atomic snapshot+overwrite and its 'page_edited' event; the
     # browser form carries no If-Match, so this stays last-write-wins (the optimistic
@@ -678,7 +729,9 @@ def move_page(
         new_parent: int | None = None
     else:
         if not parent_id.isdigit():
-            return HTMLResponse('<div class="error">Invalid parent page.</div>', status_code=400)
+            return HTMLResponse(
+                '<div class="error">Invalid parent page.</div>', status_code=400
+            )
         new_parent = int(parent_id)
 
     # The command owns the atomic re-parent AND its 'page_moved' event. An illegal move
@@ -689,7 +742,9 @@ def move_page(
         )
     except page_commands.PageCommandError as exc:
         if exc.kind == "not_found":
-            return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+            return HTMLResponse(
+                '<div class="error">Page not found.</div>', status_code=404
+            )
         return HTMLResponse(
             f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
         )
@@ -796,7 +851,9 @@ def add_page_attachment(
     if not data:
         return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
     if len(data) > config.ATTACH_MAX_BYTES:
-        return HTMLResponse('<div class="error">File is too large.</div>', status_code=413)
+        return HTMLResponse(
+            '<div class="error">File is too large.</div>', status_code=413
+        )
     att = attachments.store(
         conn,
         target_kind="page",
@@ -838,7 +895,9 @@ def remove_page_attachment(
         return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "page" or att["target_id"] != page_id:
-        return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Attachment not found.</div>', status_code=404
+        )
     if att["uploaded_by"] != user["id"]:
         return HTMLResponse(
             '<div class="error">Only the uploader may remove this file.</div>',
@@ -948,7 +1007,9 @@ def add_page_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Comment cannot be empty.</div>', status_code=400
+        )
     # The command owns the insert AND its atomic 'page_commented' event (auto-watch + mentions).
     page_comment_commands.create_page_comment(
         conn, actor_id=user["id"], page_id=page_id, body=body
@@ -956,7 +1017,9 @@ def add_page_comment(
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
-def _own_page_comment_or_response(conn, page_id, comment_id, user, *, allow_admin=False):
+def _own_page_comment_or_response(
+    conn, page_id, comment_id, user, *, allow_admin=False
+):
     """Return the comment if it belongs to this page and the session user is its
     author; otherwise an HTMLResponse (404/403) to return as-is. Mirrors the API's
     author-ownership rule on the web write paths. allow_admin lets an admin through
@@ -964,8 +1027,12 @@ def _own_page_comment_or_response(conn, page_id, comment_id, user, *, allow_admi
     author-only."""
     existing = page_comments.get_comment(conn, comment_id)
     if existing is None or existing["page_id"] != page_id:
-        return None, HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
-    if existing["author_id"] != user["id"] and not (allow_admin and identity.is_admin(user)):
+        return None, HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
+    if existing["author_id"] != user["id"] and not (
+        allow_admin and identity.is_admin(user)
+    ):
         return None, HTMLResponse(
             '<div class="error">You can only change your own comments.</div>',
             status_code=403,
@@ -998,7 +1065,9 @@ def edit_page_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Comment cannot be empty.</div>', status_code=400
+        )
     # The command owns the edit AND its atomic 'page_comment_edited' event — this web
     # path previously rewrote the body with NO audit trail at all.
     try:
@@ -1008,7 +1077,9 @@ def edit_page_comment(
     except page_comment_commands.PageCommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
-        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -1031,7 +1102,9 @@ def delete_page_comment(
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
-    _, err = _own_page_comment_or_response(conn, page_id, comment_id, user, allow_admin=True)
+    _, err = _own_page_comment_or_response(
+        conn, page_id, comment_id, user, allow_admin=True
+    )
     if err is not None:
         return err
     # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
@@ -1039,7 +1112,9 @@ def delete_page_comment(
     if not page_comment_commands.delete_page_comment(
         conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id
     ):
-        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -1065,7 +1140,9 @@ def add_page_label(
         return err
     name = name.strip()
     if not name:
-        return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Label name is required.</div>', status_code=400
+        )
     label = labels.get_or_create_label(conn, name=name)
     if labels.add_label_to_page(conn, page_id, label["id"]):  # idempotent
         page_activity.record_page_label_added(

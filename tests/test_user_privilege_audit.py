@@ -6,6 +6,7 @@ privileges with zero trace. These tests pin that role/agent changes record a
 'changed_role' / 'marked_agent' event in the SAME transaction as the change, once
 per real change, with the last-admin guard and the admin-only gate preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, user_commands, users
@@ -64,7 +65,9 @@ def test_rest_role_noop_records_nothing(tmp_path):
         _bootstrap(c)
         u = _make_user(c, "m@e.com", role="member")
         assert (
-            c.put(f"/users/{u['id']}/role", json={"role": "member"}, headers=H_ADMIN).status_code
+            c.put(
+                f"/users/{u['id']}/role", json={"role": "member"}, headers=H_ADMIN
+            ).status_code
             == 200
         )
     assert _events(db_file, "changed_role") == []
@@ -76,16 +79,22 @@ def test_rest_agent_flag_is_audited(tmp_path):
         _bootstrap(c)
         u = _make_user(c, "m@e.com")
         assert (
-            c.put(f"/users/{u['id']}/agent", json={"is_agent": True}, headers=H_ADMIN).status_code
+            c.put(
+                f"/users/{u['id']}/agent", json={"is_agent": True}, headers=H_ADMIN
+            ).status_code
             == 200
         )
         # Re-marking is a no-op — records nothing the second time.
         assert (
-            c.put(f"/users/{u['id']}/agent", json={"is_agent": True}, headers=H_ADMIN).status_code
+            c.put(
+                f"/users/{u['id']}/agent", json={"is_agent": True}, headers=H_ADMIN
+            ).status_code
             == 200
         )
         assert (
-            c.put(f"/users/{u['id']}/agent", json={"is_agent": False}, headers=H_ADMIN).status_code
+            c.put(
+                f"/users/{u['id']}/agent", json={"is_agent": False}, headers=H_ADMIN
+            ).status_code
             == 200
         )
     assert len(_events(db_file, "marked_agent")) == 1
@@ -96,7 +105,10 @@ def test_last_admin_guard_rejects_and_records_nothing(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)  # the only admin, id 1
-        assert c.put("/users/1/role", json={"role": "member"}, headers=H_ADMIN).status_code == 409
+        assert (
+            c.put("/users/1/role", json={"role": "member"}, headers=H_ADMIN).status_code
+            == 409
+        )
     assert _events(db_file, "changed_role") == []
     assert users.get_user(db.connect(db_file), 1)["role"] == "admin"
 
@@ -107,10 +119,17 @@ def test_unknown_role_422_and_unknown_user_404(tmp_path):
         _bootstrap(c)
         u = _make_user(c, "m@e.com")
         assert (
-            c.put(f"/users/{u['id']}/role", json={"role": "wizard"}, headers=H_ADMIN).status_code
+            c.put(
+                f"/users/{u['id']}/role", json={"role": "wizard"}, headers=H_ADMIN
+            ).status_code
             == 422
         )
-        assert c.put("/users/999/role", json={"role": "admin"}, headers=H_ADMIN).status_code == 404
+        assert (
+            c.put(
+                "/users/999/role", json={"role": "admin"}, headers=H_ADMIN
+            ).status_code
+            == 404
+        )
     assert _events(db_file, "changed_role") == []
 
 
@@ -137,17 +156,27 @@ def test_web_role_change_audited_and_last_admin_guarded(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)  # a@e.com / pw, the only admin (id 1)
         u = _make_user(c, "m@e.com", role="member")
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
 
         # Demoting the last admin (id 1, still the only one) re-renders at 409.
         assert (
-            c.post("/admin/users/1/role", data={"role": "member"}, follow_redirects=False).status_code
+            c.post(
+                "/admin/users/1/role", data={"role": "member"}, follow_redirects=False
+            ).status_code
             == 409
         )
         # Promote the member -> 303 redirect, and it is audited.
         assert (
-            c.post(f"/admin/users/{u['id']}/role", data={"role": "admin"}, follow_redirects=False).status_code
+            c.post(
+                f"/admin/users/{u['id']}/role",
+                data={"role": "admin"},
+                follow_redirects=False,
+            ).status_code
             == 303
         )
 
@@ -160,10 +189,18 @@ def test_web_agent_toggle_is_audited(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         u = _make_user(c, "m@e.com")
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         assert (
-            c.post(f"/admin/users/{u['id']}/agent", data={"is_agent": "1"}, follow_redirects=False).status_code
+            c.post(
+                f"/admin/users/{u['id']}/agent",
+                data={"is_agent": "1"},
+                follow_redirects=False,
+            ).status_code
             == 303
         )
     assert len(_events(db_file, "marked_agent")) == 1

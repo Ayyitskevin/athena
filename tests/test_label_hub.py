@@ -5,6 +5,7 @@ payoff — a cross-entity view that gathers both. These pin the index (labels wi
 issue/page counts), the per-label detail (the tagged issues + pages, case-insensitive
 name, archived issues hidden), the 404, and that label chips link into it.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -21,15 +22,21 @@ def _issue(client, title="x"):
 
 
 def _label(client, name="urgent", color="#ff0000"):
-    return client.post("/labels", json={"name": name, "color": color}, headers=H1).json()["id"]
+    return client.post(
+        "/labels", json={"name": name, "color": color}, headers=H1
+    ).json()["id"]
 
 
 def _space(client):
-    return client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1).json()["id"]
+    return client.post(
+        "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1
+    ).json()["id"]
 
 
 def _page(client, sid, title="Doc"):
-    return client.post(f"/spaces/{sid}/pages", json={"title": title}, headers=H1).json()["id"]
+    return client.post(
+        f"/spaces/{sid}/pages", json={"title": title}, headers=H1
+    ).json()["id"]
 
 
 def _tag_issue(client, iid, lid):

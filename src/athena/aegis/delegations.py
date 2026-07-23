@@ -23,6 +23,7 @@ MAX_LIMIT = 100
 MAX_OFFSET = 2**63 - 1
 _BLOCKER_PREVIEW_LIMIT = 10
 
+
 # Project statuses own their category.  Backlog issues have no project-status row,
 # so fall back to the canonical built-in meanings.  The same fallback protects a
 # damaged/legacy project missing its seeded rows without hard-coding "done" as the
@@ -140,12 +141,8 @@ def _list_delegations(
     page_rows = rows[:limit]
     issue_ids = [int(row["id"]) for row in page_rows]
     labels_by_issue = labels.labels_for_issues(conn, issue_ids)
-    blockers_by_issue = _blocker_previews(
-        conn, issue_ids, subject_visible_project_ids
-    )
-    handoffs_by_issue = claim_handoffs.open_handoffs_for_issues(
-        conn, issue_ids
-    )
+    blockers_by_issue = _blocker_previews(conn, issue_ids, subject_visible_project_ids)
+    handoffs_by_issue = claim_handoffs.open_handoffs_for_issues(conn, issue_ids)
     items = []
     self_view = viewer["id"] == subject["id"]
     for row in page_rows:
@@ -195,9 +192,7 @@ def _visibility_sql(
     )
 
 
-def _visible_to(
-    project_id: int | None, visible_project_ids: set[int] | None
-) -> bool:
+def _visible_to(project_id: int | None, visible_project_ids: set[int] | None) -> bool:
     return (
         project_id is None
         or visible_project_ids is None
@@ -274,9 +269,7 @@ def _to_item(
     open_claim_handoff: dict | None,
 ) -> dict:
     issue_id = int(row["id"])
-    visible_to_subject = _visible_to(
-        row["project_id"], subject_visible_project_ids
-    )
+    visible_to_subject = _visible_to(row["project_id"], subject_visible_project_ids)
     warnings: list[str] = []
     if not visible_to_subject:
         warnings.append("subject_cannot_see_issue")

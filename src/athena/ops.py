@@ -35,7 +35,9 @@ def _applied_migrations(conn: sqlite3.Connection) -> set[str]:
     try:
         rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
     except sqlite3.Error as exc:
-        raise ValueError("database is not migrated: schema_migrations is missing") from exc
+        raise ValueError(
+            "database is not migrated: schema_migrations is missing"
+        ) from exc
     return {row["version"] for row in rows}
 
 
@@ -84,8 +86,7 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
     missing = [version for version in required if version not in applied]
     if missing:
         raise ValueError(
-            "database is missing migrations: "
-            f"{_format_missing_migrations(missing)}"
+            f"database is missing migrations: {_format_missing_migrations(missing)}"
         )
 
     action = (
@@ -172,10 +173,7 @@ def backup_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--retention-glob",
-        help=(
-            "file-name glob used with --keep; defaults to "
-            "<source-db-stem>-*.db"
-        ),
+        help=("file-name glob used with --keep; defaults to <source-db-stem>-*.db"),
     )
     args = parser.parse_args(argv)
     if args.keep is None and args.retention_glob is not None:
@@ -273,7 +271,9 @@ def export_run_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
     parser.add_argument("run_id", help="run id to export")
-    parser.add_argument("artifact_path", type=Path, help="Destination JSON artifact path")
+    parser.add_argument(
+        "artifact_path", type=Path, help="Destination JSON artifact path"
+    )
     parser.add_argument(
         "--overwrite",
         action="store_true",

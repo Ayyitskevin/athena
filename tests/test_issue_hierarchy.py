@@ -5,6 +5,7 @@ issue and via a children endpoint; an issue can't be its own parent and cycles a
 rejected; parent changes are audited and write-gated; and the detail page shows the
 parent link, the children, and a done-rollup.
 """
+
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -33,7 +34,9 @@ def test_set_get_clear_parent(tmp_path):
         parent = _issue(client, "epic")
         child = _issue(client, "task")
         r = client.put(
-            f"/issues/{child['id']}/parent", json={"parent_id": parent["id"]}, headers=H1
+            f"/issues/{child['id']}/parent",
+            json={"parent_id": parent["id"]},
+            headers=H1,
         )
         assert r.status_code == 200 and r.json()["parent_id"] == parent["id"]
         kids = client.get(f"/issues/{parent['id']}/children").json()
@@ -91,13 +94,17 @@ def test_parent_change_is_audited(tmp_path):
         parent = _issue(client, "epic")
         child = _issue(client, "task")
         client.put(
-            f"/issues/{child['id']}/parent", json={"parent_id": parent["id"]}, headers=H1
+            f"/issues/{child['id']}/parent",
+            json={"parent_id": parent["id"]},
+            headers=H1,
         )
         acts = client.get(
             f"/activity?target_kind=issue&target_id={child['id']}", headers=H1
         ).json()
         assert any(a["verb"] == "set_parent" for a in acts)
-        client.put(f"/issues/{child['id']}/parent", json={"parent_id": None}, headers=H1)
+        client.put(
+            f"/issues/{child['id']}/parent", json={"parent_id": None}, headers=H1
+        )
         acts2 = client.get(
             f"/activity?target_kind=issue&target_id={child['id']}", headers=H1
         ).json()
@@ -143,7 +150,11 @@ def test_web_detail_shows_parent_and_rollup(tmp_path):
         c1 = _issue(client, "one")
         c2 = _issue(client, "two")
         for c in (c1, c2):
-            client.put(f"/issues/{c['id']}/parent", json={"parent_id": parent["id"]}, headers=H1)
+            client.put(
+                f"/issues/{c['id']}/parent",
+                json={"parent_id": parent["id"]},
+                headers=H1,
+            )
         client.patch(f"/issues/{c1['id']}", json={"status": "done"}, headers=H1)
 
         page = client.get(f"/aegis/issues/{parent['id']}").text

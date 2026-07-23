@@ -8,6 +8,7 @@ browser with a cookie; /auth/callback refuses a state that doesn't match the coo
 fails closed when the token/policy is rejected — and on success mints a session
 exactly like a password login. Plus the login-state data layer's single-use + expiry.
 """
+
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
@@ -28,7 +29,9 @@ def _enable_oidc(monkeypatch, *, allowed_domains=()):
     monkeypatch.setattr(config, "OIDC_ISSUER", "https://idp.example.com")
     monkeypatch.setattr(config, "OIDC_CLIENT_ID", "athena-client")
     monkeypatch.setattr(config, "OIDC_CLIENT_SECRET", "shh")
-    monkeypatch.setattr(config, "OIDC_REDIRECT_URL", "https://app.example.com/auth/callback")
+    monkeypatch.setattr(
+        config, "OIDC_REDIRECT_URL", "https://app.example.com/auth/callback"
+    )
     monkeypatch.setattr(config, "OIDC_ALLOWED_DOMAINS", allowed_domains)
 
 
@@ -54,9 +57,12 @@ def _begin_login(client):
 def test_routes_404_when_sso_disabled(tmp_path):
     with TestClient(create_app(tmp_path / "off.db")) as client:
         assert client.get("/login/sso", follow_redirects=False).status_code == 404
-        assert client.get(
-            "/auth/callback?code=x&state=y", follow_redirects=False
-        ).status_code == 404
+        assert (
+            client.get(
+                "/auth/callback?code=x&state=y", follow_redirects=False
+            ).status_code
+            == 404
+        )
 
 
 # --- /login/sso begins the flow ---------------------------------------------
@@ -92,9 +98,15 @@ def test_callback_provisions_user_and_mints_session(tmp_path, monkeypatch):
     db_file = tmp_path / "ok.db"
     with TestClient(create_app(db_file)) as client:
         _enable_oidc(monkeypatch)
-        _stub_idp(monkeypatch, claims={
-            "sub": "u-1", "email": "new@acme.com", "email_verified": True, "name": "New",
-        })
+        _stub_idp(
+            monkeypatch,
+            claims={
+                "sub": "u-1",
+                "email": "new@acme.com",
+                "email_verified": True,
+                "name": "New",
+            },
+        )
         state, _ = _begin_login(client)
 
         done = client.get(
@@ -108,9 +120,12 @@ def test_callback_provisions_user_and_mints_session(tmp_path, monkeypatch):
         try:
             user = users.get_user_by_email(conn, "new@acme.com")
             assert user is not None and user["role"] == users.MEMBER_ROLE
-            assert oidc.find_user_by_identity(
-                conn, issuer=config.OIDC_ISSUER, subject="u-1"
-            )["id"] == user["id"]
+            assert (
+                oidc.find_user_by_identity(
+                    conn, issuer=config.OIDC_ISSUER, subject="u-1"
+                )["id"]
+                == user["id"]
+            )
         finally:
             conn.close()
 
@@ -120,7 +135,10 @@ def test_callback_rejects_state_cookie_mismatch(tmp_path, monkeypatch):
     # refused — the login-CSRF defense.
     with TestClient(create_app(tmp_path / "csrf.db")) as client:
         _enable_oidc(monkeypatch)
-        _stub_idp(monkeypatch, claims={"sub": "x", "email": "a@acme.com", "email_verified": True})
+        _stub_idp(
+            monkeypatch,
+            claims={"sub": "x", "email": "a@acme.com", "email_verified": True},
+        )
         _begin_login(client)  # sets the cookie to the real state
         bad = client.get(
             "/auth/callback?code=abc&state=not-the-cookie-state", follow_redirects=False
@@ -132,12 +150,18 @@ def test_callback_rejects_state_cookie_mismatch(tmp_path, monkeypatch):
 def test_callback_rejects_unknown_or_consumed_state(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path / "consumed.db")) as client:
         _enable_oidc(monkeypatch)
-        _stub_idp(monkeypatch, claims={"sub": "x", "email": "a@acme.com", "email_verified": True})
+        _stub_idp(
+            monkeypatch,
+            claims={"sub": "x", "email": "a@acme.com", "email_verified": True},
+        )
         state, _ = _begin_login(client)
         # First callback succeeds and consumes the state.
-        assert client.get(
-            f"/auth/callback?code=abc&state={state}", follow_redirects=False
-        ).status_code == 303
+        assert (
+            client.get(
+                f"/auth/callback?code=abc&state={state}", follow_redirects=False
+            ).status_code
+            == 303
+        )
         # The browser still presents the same state value, but it's been used — refuse.
         client.cookies.set("athena_oidc_state", state)
         replay = client.get(
@@ -164,9 +188,14 @@ def test_callback_fails_closed_on_unverified_email(tmp_path, monkeypatch):
     db_file = tmp_path / "unverified.db"
     with TestClient(create_app(db_file)) as client:
         _enable_oidc(monkeypatch)
-        _stub_idp(monkeypatch, claims={
-            "sub": "u", "email": "a@acme.com", "email_verified": False,
-        })
+        _stub_idp(
+            monkeypatch,
+            claims={
+                "sub": "u",
+                "email": "a@acme.com",
+                "email_verified": False,
+            },
+        )
         state, _ = _begin_login(client)
         failed = client.get(
             f"/auth/callback?code=abc&state={state}", follow_redirects=False

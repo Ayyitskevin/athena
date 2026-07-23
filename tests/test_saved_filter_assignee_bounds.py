@@ -68,7 +68,9 @@ def test_normalize_assignee_accepts_only_omitted_or_bounded_ids(value, expected)
     ],
 )
 def test_normalize_assignee_rejects_values_that_would_coerce_or_widen(value):
-    with pytest.raises(saved_filters.InvalidFilterCriteria, match="invalid assignee filter"):
+    with pytest.raises(
+        saved_filters.InvalidFilterCriteria, match="invalid assignee filter"
+    ):
         saved_filters.normalize_criteria({"assignee_id": value})
 
 
@@ -203,7 +205,11 @@ def test_web_canonicalizes_ascii_decimal_assignee_ids(tmp_path):
         _admin(client)
         csrf = _login(client)
         for index, (raw, expected) in enumerate(
-            (("0", 0), ("01", 1), (str(issues.MAX_SQLITE_INTEGER), issues.MAX_SQLITE_INTEGER))
+            (
+                ("0", 0),
+                ("01", 1),
+                (str(issues.MAX_SQLITE_INTEGER), issues.MAX_SQLITE_INTEGER),
+            )
         ):
             response = client.post(
                 "/aegis/filters",
@@ -293,12 +299,12 @@ def test_legacy_invalid_rows_remain_readable_and_fail_closed(tmp_path):
         run = client.get(f"/filters/{canonical}/issues", headers=H1)
         assert [row["id"] for row in run.json()] == [issue["id"]]
         assert issue["title"] in client.get(f"/aegis/filters/{canonical}").text
-        assert issue["title"] in client.get(
-            f"/aegis/filters/{canonical}?q=target"
-        ).text
+        assert issue["title"] in client.get(f"/aegis/filters/{canonical}?q=target").text
 
 
-def test_list_issues_rejects_invalid_direct_filter_ids_without_sqlite_coercion(tmp_path):
+def test_list_issues_rejects_invalid_direct_filter_ids_without_sqlite_coercion(
+    tmp_path,
+):
     conn = db.connect(tmp_path / "direct-query.db")
     db.migrate(conn)
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'Alice')")

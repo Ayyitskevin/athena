@@ -10,6 +10,7 @@ typo'd verb/condition key or a malformed action is a 422 here, never a row that 
 can't fire. The engine that consumes these rows (the background loop) lives in
 aegis/automation.py; this is only the management surface.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -140,7 +141,5 @@ def remove(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     # The command records the deletion atomically (naming the rule going away).
-    if not automation_commands.delete_rule(
-        conn, actor_id=actor["id"], rule_id=rule_id
-    ):
+    if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
         raise HTTPException(status_code=404, detail="no such rule")

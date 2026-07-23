@@ -244,9 +244,7 @@ def test_stale_boundary_and_expired_claim_never_look_observed(tmp_path):
         ("never-checked-in", "not_reported", "checkin_missing"),
     ],
 )
-def test_missing_run_evidence_is_explicit(
-    tmp_path, run_id, expected_state, reason
-):
+def test_missing_run_evidence_is_explicit(tmp_path, run_id, expected_state, reason):
     conn = _migrated(tmp_path / f"missing-{expected_state}.db")
     seeded = _seed_claim(conn, run_id=run_id)
     _set_claim_window(conn, seeded)
@@ -308,16 +306,17 @@ def test_unavailable_holder_states_are_explicit(tmp_path):
     assert ineligible_item["attention_reasons"] == ["holder_ineligible"]
 
     tokenless = prepared("Tokenless", "run-tokenless")
-    assert tokens.revoke_token(
-        conn, user_id=tokenless["agent_id"], token_id=tokenless["token_id"]
-    ) is True
+    assert (
+        tokens.revoke_token(
+            conn, user_id=tokenless["agent_id"], token_id=tokenless["token_id"]
+        )
+        is True
+    )
     tokenless_item = fleet_work.build_active_work(
         conn, agent_id=tokenless["agent_id"], now=NOW
     )["items"][0]
     assert tokenless_item["holder"]["live_issue_write_token_count"] == 0
-    assert tokenless_item["attention_reasons"] == [
-        "no_live_issue_write_token"
-    ]
+    assert tokenless_item["attention_reasons"] == ["no_live_issue_write_token"]
 
 
 def test_project_visibility_drift_changes_current_holder_eligibility(tmp_path):
@@ -344,9 +343,10 @@ def test_project_visibility_drift_changes_current_holder_eligibility(tmp_path):
     assert hidden["holder"]["eligible_for_issue"] is False
     assert hidden["attention_reasons"] == ["holder_ineligible"]
 
-    assert access.add_project_member(
-        conn, project["id"], seeded["agent_id"], added_by=1
-    ) is True
+    assert (
+        access.add_project_member(conn, project["id"], seeded["agent_id"], added_by=1)
+        is True
+    )
     assert access.can_see_issue(conn, holder, seeded["issue_id"]) is True
     restored = fleet_work.build_active_work(conn, now=NOW)["items"][0]
     assert restored["holder"]["eligible_for_issue"] is True
@@ -407,8 +407,7 @@ def test_live_token_lookup_uses_partial_holder_index(tmp_path):
         [seeded["agent_id"]]
     )
     plan = " ".join(
-        row["detail"]
-        for row in conn.execute("EXPLAIN QUERY PLAN " + statement, params)
+        row["detail"] for row in conn.execute("EXPLAIN QUERY PLAN " + statement, params)
     )
     assert "idx_api_tokens_live_user" in plan
     assert "SCAN token" not in plan
@@ -450,10 +449,13 @@ def test_projection_is_read_only_and_one_wal_snapshot(tmp_path, monkeypatch):
     second = fleet_work.build_active_work(reader, now=NOW)
     assert second == first
     assert reader.total_changes == before_changes
-    assert tuple(
-        reader.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        for table in tables
-    ) == before_counts
+    assert (
+        tuple(
+            reader.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in tables
+        )
+        == before_counts
+    )
 
     original = fleet_work._live_issue_write_token_counts
     interleaved = False
@@ -467,8 +469,7 @@ def test_projection_is_read_only_and_one_wal_snapshot(tmp_path, monkeypatch):
                 (project["id"],),
             )
             writer.execute(
-                "UPDATE api_tokens SET revoked_at = datetime('now') "
-                "WHERE id = ?",
+                "UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?",
                 (seeded["token_id"],),
             )
             writer.execute(
@@ -600,9 +601,7 @@ def test_projection_is_bounded_filterable_and_rejects_coercion(tmp_path):
     assert len(limited["items"]) == 1
     assert limited["clipped"] is True
     filtered = fleet_work.build_active_work(conn, agent_id=second["agent_id"])
-    assert [item["holder"]["id"] for item in filtered["items"]] == [
-        second["agent_id"]
-    ]
+    assert [item["holder"]["id"] for item in filtered["items"]] == [second["agent_id"]]
     for invalid in (True, "1", 1.0, 0, fleet_work.MAX_LIMIT + 1):
         with pytest.raises(ValueError):
             fleet_work.build_active_work(conn, limit=invalid)
@@ -705,9 +704,7 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
             "agent_id=" + ("9" * 100),
         )
         for query in invalid_queries:
-            invalid = client.get(
-                f"/fleet/active-work?{query}", headers=admin_headers
-            )
+            invalid = client.get(f"/fleet/active-work?{query}", headers=admin_headers)
             assert invalid.status_code == 422
             assert invalid.headers["cache-control"] == "private, no-store"
 
@@ -742,9 +739,9 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
             "Evidence exists, but current path routes cannot address this run ID."
             in page.text
         )
-        active_work_html = page.text.split(
-            '<h2 id="fleet-active-work-heading">', 1
-        )[1].split('<section class="dashboard-card agent-checkins">', 1)[0]
+        active_work_html = page.text.split('<h2 id="fleet-active-work-heading">', 1)[
+            1
+        ].split('<section class="dashboard-card agent-checkins">', 1)[0]
         assert "/admin/agents/runs/run/unsafe" not in active_work_html
         assert "SECRET_SHOULD_NOT_BE_IN_THE_FLEET_PROJECTION" not in page.text
         assert seeded["raw_token"] not in page.text
@@ -789,9 +786,7 @@ def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
         for invalid in (True, "10", 10.0, 0, fleet_work.MAX_LIMIT + 1):
             with pytest.raises(ToolError):
                 asyncio.run(
-                    server.call_tool(
-                        "get_fleet_active_work", {"limit": invalid}
-                    )
+                    server.call_tool("get_fleet_active_work", {"limit": invalid})
                 )
 
         invalid_agent_ids = (
@@ -804,7 +799,5 @@ def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
         for invalid in invalid_agent_ids:
             with pytest.raises(ToolError):
                 asyncio.run(
-                    server.call_tool(
-                        "get_fleet_active_work", {"agent_id": invalid}
-                    )
+                    server.call_tool("get_fleet_active_work", {"agent_id": invalid})
                 )

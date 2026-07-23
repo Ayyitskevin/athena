@@ -12,6 +12,7 @@ The lifecycle rules are enforced here, not in the schema:
   * a sprint can't be deleted while issues are still in it (the caller's 409, backed
     by the issues.sprint_id foreign key).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -116,9 +117,7 @@ def update_sprint(
     if not sets:
         return get_sprint(conn, sprint_id)
     params.append(sprint_id)
-    cur = conn.execute(
-        f"UPDATE sprints SET {', '.join(sets)} WHERE id = ?", params
-    )
+    cur = conn.execute(f"UPDATE sprints SET {', '.join(sets)} WHERE id = ?", params)
     conn.commit()
     if cur.rowcount == 0:
         return None

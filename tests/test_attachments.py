@@ -6,6 +6,7 @@ download with the right bytes), the client's filename can never become a path
 forced to be saved (not rendered inline), size/emptiness are enforced, only the
 uploader can delete, viewers can't upload, and every change is audited.
 """
+
 from athena import config
 from athena.main import create_app
 from fastapi.testclient import TestClient
@@ -106,7 +107,9 @@ def test_page_attachment_roundtrip(tmp_path):
     app, _ = _app(tmp_path, "page.db")
     with TestClient(app) as client:
         _admin(client)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Doc"}, headers=H1
         ).json()
@@ -126,9 +129,7 @@ def test_delete_is_uploader_only_and_audited(tmp_path):
     with TestClient(app) as client:
         _admin(client)
         # A second user (member) who is NOT the uploader.
-        client.post(
-            "/users", json={"email": "b@e.com", "name": "B"}, headers=H1
-        )
+        client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)
         issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
         att = client.post(
             f"/issues/{issue['id']}/attachments", files=_file(), headers=H1
@@ -136,7 +137,9 @@ def test_delete_is_uploader_only_and_audited(tmp_path):
 
         # User 2 cannot delete user 1's attachment.
         assert (
-            client.delete(f"/attachments/{att['id']}", headers={"X-Athena-Actor": "2"}).status_code
+            client.delete(
+                f"/attachments/{att['id']}", headers={"X-Athena-Actor": "2"}
+            ).status_code
             == 403
         )
         # The uploader can; afterwards it's gone.
@@ -197,7 +200,9 @@ def test_web_page_attachment_upload_renders(tmp_path):
     app, _ = _app(tmp_path, "webpg.db")
     with TestClient(app) as client:
         csrf = _login(client)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H1
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Doc"}, headers=H1
         ).json()
@@ -215,7 +220,9 @@ def test_upload_to_missing_target_404(tmp_path):
     with TestClient(app) as client:
         _admin(client)
         assert (
-            client.post("/issues/999/attachments", files=_file(), headers=H1).status_code
+            client.post(
+                "/issues/999/attachments", files=_file(), headers=H1
+            ).status_code
             == 404
         )
         assert (

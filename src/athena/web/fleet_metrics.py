@@ -48,9 +48,7 @@ def fleet_metrics_page(
         query = fleet_metrics.parse_query_pairs(
             list(request.query_params.multi_items()), today=utc_today
         )
-        projection = fleet_metrics.build_fleet_metrics(
-            conn, query, actor=viewer
-        )
+        projection = fleet_metrics.build_fleet_metrics(conn, query, actor=viewer)
     except fleet_metrics.FleetMetricsError as exc:
         status_code = 404 if exc.kind == "not_found" else 400
         heading = (

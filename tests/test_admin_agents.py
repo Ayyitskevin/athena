@@ -137,9 +137,7 @@ def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):
                 name="old-review-bot",
                 scopes=[tokens.READ_SCOPE],
             )
-            assert tokens.revoke_token(
-                conn, user_id=agent["id"], token_id=old["id"]
-            )
+            assert tokens.revoke_token(conn, user_id=agent["id"], token_id=old["id"])
 
             project = projects.create_project(
                 conn, name="Launch", key="LAN", created_by=admin["id"]
@@ -286,9 +284,12 @@ def test_agent_run_health_requires_admin(tmp_path):
 
         assert client.get("/admin/agents/runs").status_code == 401
         assert client.get("/activity/agent-runs").status_code == 401
-        assert client.get(
-            "/activity/agent-runs", headers={"X-Athena-Actor": str(member["id"])}
-        ).status_code == 403
+        assert (
+            client.get(
+                "/activity/agent-runs", headers={"X-Athena-Actor": str(member["id"])}
+            ).status_code
+            == 403
+        )
 
         _login(client, "member@e.com")
         denied = client.get("/admin/agents/runs")
@@ -380,7 +381,10 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
         assert "run agent-goal:child" in body
         assert "/aegis/activity/runs/agent-goal/lineage" in body
         assert "/admin/agents/runs/agent-goal/replay.json" in body
-        assert "athena-export-run /var/lib/athena/athena.db agent-goal /exports/agent-goal.replay.json" in body
+        assert (
+            "athena-export-run /var/lib/athena/athena.db agent-goal /exports/agent-goal.replay.json"
+            in body
+        )
         assert (
             "athena-export-run /var/lib/athena/athena.db agent-goal:child "
             "/exports/agent-goal-child.replay.json"
@@ -410,16 +414,12 @@ def test_agent_run_health_rolls_up_tagged_and_heuristic_runs(tmp_path):
         assert human_replay.status_code == 404
 
 
-def test_agent_run_health_surfaces_bounded_checkins_separately(
-    tmp_path, monkeypatch
-):
+def test_agent_run_health_surfaces_bounded_checkins_separately(tmp_path, monkeypatch):
     db_path = tmp_path / "agent_run_checkins.db"
     app = create_app(db_path)
     with TestClient(app) as client:
         admin = _bootstrap_admin(client)
-        active_bot = _create_user(
-            client, "active@e.com", "Active Bot", is_agent=True
-        )
+        active_bot = _create_user(client, "active@e.com", "Active Bot", is_agent=True)
         heartbeat_only_bot = _create_user(
             client, "heartbeat@e.com", "Heartbeat Only Bot", is_agent=True
         )
@@ -603,8 +603,7 @@ def test_agent_run_health_surfaces_bounded_checkins_separately(
         assert "old-activity-run" in body
         assert "2026-07-13 11:00:00 UTC" in body
         assert (
-            "Check-ins do not finish runs, revoke credentials, or transfer work"
-            in body
+            "Check-ins do not finish runs, revoke credentials, or transfer work" in body
         )
         assert observed_limits == [100, 100, 100]
         assert observed_latest_filters == [None, heartbeat_only_bot["id"], None]
@@ -615,9 +614,7 @@ def test_agent_run_health_shares_one_clock_and_wal_snapshot(tmp_path, monkeypatc
     app = create_app(db_path)
     with TestClient(app) as client:
         _bootstrap_admin(client)
-        agent = _create_user(
-            client, "snapshot@e.com", "Snapshot Bot", is_agent=True
-        )
+        agent = _create_user(client, "snapshot@e.com", "Snapshot Bot", is_agent=True)
 
         setup = db.connect(db_path)
         try:
@@ -664,9 +661,7 @@ def test_agent_run_health_shares_one_clock_and_wal_snapshot(tmp_path, monkeypatc
             writer = db.connect(db_path)
             try:
                 # WAL permits this write while the cockpit keeps its read snapshot.
-                agent_run_commands.heartbeat(
-                    writer, actor=actor, run_id="a-after"
-                )
+                agent_run_commands.heartbeat(writer, actor=actor, run_id="a-after")
             finally:
                 writer.close()
             return rows
@@ -690,13 +685,9 @@ def test_agent_run_health_shares_one_clock_and_wal_snapshot(tmp_path, monkeypatc
 
         assert clocks == [observed_at, observed_at]
         assert [row["run_id"] for row in health["checkins"]] == ["z-before"]
-        assert [row["run_id"] for row in health["latest_checkins"]] == [
-            "z-before"
-        ]
+        assert [row["run_id"] for row in health["latest_checkins"]] == ["z-before"]
         assert health["checkins"][0]["reporting_state"] == "reporting_recently"
-        assert health["latest_checkins"][0]["reporting_state"] == (
-            "reporting_recently"
-        )
+        assert health["latest_checkins"][0]["reporting_state"] == ("reporting_recently")
         assert health["totals"]["latest_reporting_recently_count"] == 1
 
         after = db.connect(db_path)

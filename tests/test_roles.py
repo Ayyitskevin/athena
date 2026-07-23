@@ -6,6 +6,7 @@ Athena has three coarse roles:
 - member: can perform normal writes but not administer users.
 - viewer: can authenticate and read, but cannot mutate state.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -62,7 +63,9 @@ def test_only_admin_can_create_users_after_bootstrap(tmp_path):
 
         listing = client.get("/users", headers={"X-Athena-Actor": str(member["id"])})
         assert listing.status_code == 403
-        own = client.get(f"/users/{member['id']}", headers={"X-Athena-Actor": str(member["id"])})
+        own = client.get(
+            f"/users/{member['id']}", headers={"X-Athena-Actor": str(member["id"])}
+        )
         assert own.status_code == 200
 
 
@@ -84,7 +87,9 @@ def test_viewer_can_read_but_cannot_write_api_resources(tmp_path):
         issue = client.post(
             "/issues", json={"title": "readable"}, headers=_AUTH_ADMIN
         ).json()
-        readable = client.get(f"/issues/{issue['id']}", headers={"X-Athena-Actor": str(viewer["id"])})
+        readable = client.get(
+            f"/issues/{issue['id']}", headers={"X-Athena-Actor": str(viewer["id"])}
+        )
         assert readable.status_code == 200
 
         create_issue = client.post(
@@ -174,12 +179,16 @@ def test_migration_promotes_existing_first_user_to_admin(tmp_path):
     conn.execute(
         "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))"
     )
-    conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))")
+    conn.execute(
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+    )
     conn.execute("INSERT INTO users (email, name) VALUES ('first@e.com', 'First')")
     conn.execute("INSERT INTO users (email, name) VALUES ('second@e.com', 'Second')")
     for path in db.MIGRATIONS_DIR.glob("*.sql"):
         if path.name != "0019_user_roles.sql":
-            conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (path.name,))
+            conn.execute(
+                "INSERT INTO schema_migrations (version) VALUES (?)", (path.name,)
+            )
     conn.commit()
 
     applied = db.migrate(conn)

@@ -13,6 +13,7 @@ These tests encode the contract that matters, not just that functions run:
   * the web detail pages render live references as links and broken ones visibly,
     and they escape author text (no XSS through a body).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues
@@ -145,7 +146,12 @@ def test_resolve_title_ref_unique_match(tmp_path):
     sp = _space(conn)
     pg = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
     ref = links.resolve_title_ref(conn, "design doc")
-    assert ref == {"kind": "page", "id": pg["id"], "title": "Design Doc", "exists": True}
+    assert ref == {
+        "kind": "page",
+        "id": pg["id"],
+        "title": "Design Doc",
+        "exists": True,
+    }
 
 
 def test_resolve_title_ref_ambiguous_is_unresolved(tmp_path):
@@ -170,8 +176,12 @@ def test_resolve_title_ref_prefers_source_space(tmp_path):
     b = spaces.create_space(conn, key="OPS", name="Ops", created_by=1)
     in_a = pages.create_page(conn, space_id=a["id"], title="Runbook", created_by=1)
     in_b = pages.create_page(conn, space_id=b["id"], title="Runbook", created_by=1)
-    assert links.resolve_title_ref(conn, "Runbook", space_id=a["id"])["id"] == in_a["id"]
-    assert links.resolve_title_ref(conn, "Runbook", space_id=b["id"])["id"] == in_b["id"]
+    assert (
+        links.resolve_title_ref(conn, "Runbook", space_id=a["id"])["id"] == in_a["id"]
+    )
+    assert (
+        links.resolve_title_ref(conn, "Runbook", space_id=b["id"])["id"] == in_b["id"]
+    )
 
 
 def test_resolve_title_ref_excludes_archived(tmp_path):
@@ -191,7 +201,9 @@ def test_title_ref_records_backlink_within_space(tmp_path):
     conn = _migrated_conn(tmp_path / "t5.db")
     _seed_user(conn)
     sp = _space(conn)
-    target = pages.create_page(conn, space_id=sp["id"], title="Design Doc", created_by=1)
+    target = pages.create_page(
+        conn, space_id=sp["id"], title="Design Doc", created_by=1
+    )
     src = pages.create_page(
         conn, space_id=sp["id"], title="Src", body="see [[Design Doc]]", created_by=1
     )
@@ -306,7 +318,9 @@ def test_render_broken_typed_ref_is_not_relinked_as_title(tmp_path):
     _seed_user(conn)
     _space(conn)
     html = str(render_body(conn, "dangling [[page:404]]"))
-    assert html.count("xref") == 1  # only the one broken typed ref, no phantom title link
+    assert (
+        html.count("xref") == 1
+    )  # only the one broken typed ref, no phantom title link
     assert "[[page:404]]" in html
 
 
@@ -402,7 +416,9 @@ def test_page_backlinks_endpoint(tmp_path):
     with TestClient(app) as client:
         _seed_api_user(tmp_path / "pgapi.db")
         h = {"X-Athena-Actor": "1"}
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "p"}, headers=h
         ).json()
@@ -494,7 +510,9 @@ def test_page_detail_renders_backlinks(tmp_path):
     with TestClient(app) as client:
         _web_login(client)
         h = {"X-Athena-Actor": "1"}
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Doc"}, headers=h
         ).json()

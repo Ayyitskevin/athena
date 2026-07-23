@@ -12,6 +12,7 @@ tests exercise each, plus the subtle cases: an issue owner who loses access when
 project goes private, creating/moving into a hidden project, and linking to a hidden
 issue (an existence oracle, now closed).
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import access, db
@@ -23,14 +24,40 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _private_project_with_issue(client, db_file):
-    pid = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-    iid = client.post("/issues", json={"title": "Hidden", "project_id": pid}, headers=H_CREATOR).json()["id"]
+    pid = client.post(
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+    ).json()["id"]
+    iid = client.post(
+        "/issues", json={"title": "Hidden", "project_id": pid}, headers=H_CREATOR
+    ).json()["id"]
     conn = db.connect(db_file)
     conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pid,))
     conn.commit()
@@ -45,25 +72,69 @@ def test_issue_writes_require_visibility(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         pid, iid = _private_project_with_issue(client, db_file)
-        lid = client.post("/labels", json={"name": "x", "color": "#ff0000"}, headers=H_CREATOR).json()["id"]
+        lid = client.post(
+            "/labels", json={"name": "x", "color": "#ff0000"}, headers=H_CREATOR
+        ).json()["id"]
 
         # modify-gated writes: an outsider who can't see it gets 404 (not 403 — no leak).
-        assert client.patch(f"/issues/{iid}", json={"title": "x"}, headers=H_OUTSIDER).status_code == 404
-        assert client.post(f"/issues/{iid}/archive", headers=H_OUTSIDER).status_code == 404
-        assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"title": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(f"/issues/{iid}/archive", headers=H_OUTSIDER).status_code == 404
+        )
+        assert (
+            client.post(
+                f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         # visibility-only writes (comments) are also 404 for the outsider.
-        assert client.post(f"/issues/{iid}/comments", json={"body": "hi"}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.post(
+                f"/issues/{iid}/comments", json={"body": "hi"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         # The project creator (who can see it AND owns the issue) writes fine, including
         # the modify-gated label attach.
-        assert client.patch(f"/issues/{iid}", json={"title": "ok"}, headers=H_CREATOR).status_code == 200
-        assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_CREATOR).status_code == 201
-        assert client.post(f"/issues/{iid}/comments", json={"body": "hi"}, headers=H_CREATOR).status_code == 201
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"title": "ok"}, headers=H_CREATOR
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_CREATOR
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                f"/issues/{iid}/comments", json={"body": "hi"}, headers=H_CREATOR
+            ).status_code
+            == 201
+        )
         # Admin's god view grants VISIBILITY, and the admin override in
         # issues.can_act_on grants MODIFY too — the operator lever works even on
         # issues the admin doesn't own. (That the two gates are distinct is proven
         # by the member below, who gains visibility but not modify.)
-        assert client.post(f"/issues/{iid}/comments", json={"body": "adm"}, headers=H_ADMIN).status_code == 201
-        assert client.post(f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_ADMIN).status_code == 201
+        assert (
+            client.post(
+                f"/issues/{iid}/comments", json={"body": "adm"}, headers=H_ADMIN
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                f"/issues/{iid}/labels", json={"label_id": lid}, headers=H_ADMIN
+            ).status_code
+            == 201
+        )
 
         # Membership grants VISIBILITY: the 404 turns into a 403 on a modify-gated write
         # (the member can now see it but isn't its creator/assignee), and a comment —
@@ -71,8 +142,18 @@ def test_issue_writes_require_visibility(tmp_path):
         # visibility gate, distinct from the modify gate.
         conn = db.connect(db_file)
         access.add_project_member(conn, pid, 3, added_by=2)
-        assert client.patch(f"/issues/{iid}", json={"title": "y"}, headers=H_OUTSIDER).status_code == 403
-        assert client.post(f"/issues/{iid}/comments", json={"body": "yo"}, headers=H_OUTSIDER).status_code == 201
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"title": "y"}, headers=H_OUTSIDER
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                f"/issues/{iid}/comments", json={"body": "yo"}, headers=H_OUTSIDER
+            ).status_code
+            == 201
+        )
 
 
 def test_issue_owner_loses_write_when_project_goes_private(tmp_path):
@@ -83,13 +164,31 @@ def test_issue_owner_loses_write_when_project_goes_private(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         # Admin owns a public project; the outsider creates (and is assigned) an issue.
-        pid = client.post("/projects", json={"name": "P", "key": "P"}, headers=H_ADMIN).json()["id"]
-        iid = client.post("/issues", json={"title": "mine", "project_id": pid}, headers=H_OUTSIDER).json()["id"]
-        assert client.patch(f"/issues/{iid}", json={"title": "still mine"}, headers=H_OUTSIDER).status_code == 200
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H_ADMIN
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "mine", "project_id": pid}, headers=H_OUTSIDER
+        ).json()["id"]
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"title": "still mine"}, headers=H_OUTSIDER
+            ).status_code
+            == 200
+        )
         # Admin flips the project private without adding the outsider.
-        client.put(f"/projects/{pid}/visibility", json={"visibility": "private"}, headers=H_ADMIN)
+        client.put(
+            f"/projects/{pid}/visibility",
+            json={"visibility": "private"},
+            headers=H_ADMIN,
+        )
         # The outsider is the issue's creator+assignee, but can no longer see it → 404.
-        assert client.patch(f"/issues/{iid}", json={"title": "nope"}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.patch(
+                f"/issues/{iid}", json={"title": "nope"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
 
 
 def test_create_and_move_into_private_project_blocked(tmp_path):
@@ -99,12 +198,29 @@ def test_create_and_move_into_private_project_blocked(tmp_path):
         pid, _ = _private_project_with_issue(client, db_file)
         # Creating an issue in a project you can't see looks like the project doesn't
         # exist (422), no leak.
-        assert client.post("/issues", json={"title": "x", "project_id": pid}, headers=H_OUTSIDER).status_code == 422
+        assert (
+            client.post(
+                "/issues", json={"title": "x", "project_id": pid}, headers=H_OUTSIDER
+            ).status_code
+            == 422
+        )
         # Nor can you move a backlog issue you own INTO it.
-        biid = client.post("/issues", json={"title": "b"}, headers=H_OUTSIDER).json()["id"]
-        assert client.put(f"/issues/{biid}/project", json={"project_id": pid}, headers=H_OUTSIDER).status_code == 422
+        biid = client.post("/issues", json={"title": "b"}, headers=H_OUTSIDER).json()[
+            "id"
+        ]
+        assert (
+            client.put(
+                f"/issues/{biid}/project", json={"project_id": pid}, headers=H_OUTSIDER
+            ).status_code
+            == 422
+        )
         # The creator (who can see it) can create in it.
-        assert client.post("/issues", json={"title": "y", "project_id": pid}, headers=H_CREATOR).status_code == 201
+        assert (
+            client.post(
+                "/issues", json={"title": "y", "project_id": pid}, headers=H_CREATOR
+            ).status_code
+            == 201
+        )
 
 
 def test_link_to_hidden_issue_blocked(tmp_path):
@@ -114,7 +230,9 @@ def test_link_to_hidden_issue_blocked(tmp_path):
         pid, hidden = _private_project_with_issue(client, db_file)
         # The outsider owns a backlog issue and tries to declare a dependency on the
         # hidden one by id — same 422 as a nonexistent target (no existence oracle).
-        biid = client.post("/issues", json={"title": "b"}, headers=H_OUTSIDER).json()["id"]
+        biid = client.post("/issues", json={"title": "b"}, headers=H_OUTSIDER).json()[
+            "id"
+        ]
         r = client.post(
             f"/issues/{biid}/links",
             json={"relation": "blocks", "target_ref": str(hidden)},
@@ -123,7 +241,9 @@ def test_link_to_hidden_issue_blocked(tmp_path):
         assert r.status_code == 422
         # The creator can see the hidden issue, so linking their own backlog issue to it
         # works.
-        cbiid = client.post("/issues", json={"title": "cb"}, headers=H_CREATOR).json()["id"]
+        cbiid = client.post("/issues", json={"title": "cb"}, headers=H_CREATOR).json()[
+            "id"
+        ]
         ok = client.post(
             f"/issues/{cbiid}/links",
             json={"relation": "blocks", "target_ref": str(hidden)},
@@ -146,27 +266,56 @@ def test_container_writes_require_visibility_without_leak(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         pid, _ = _private_project_with_issue(client, db_file)
-        sid = client.post("/spaces", json={"key": "SEC", "name": "Hush"}, headers=H_CREATOR).json()["id"]
+        sid = client.post(
+            "/spaces", json={"key": "SEC", "name": "Hush"}, headers=H_CREATOR
+        ).json()["id"]
         conn = db.connect(db_file)
         conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (sid,))
         conn.commit()
 
         # Outsider: every container write reads as "no such thing" — 404, never 403.
-        assert client.patch(f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.patch(
+                f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         assert client.delete(f"/projects/{pid}", headers=H_OUTSIDER).status_code == 404
-        assert client.post(f"/projects/{pid}/statuses", json={"name": "qa", "category": "doing"}, headers=H_OUTSIDER).status_code == 404
-        assert client.delete(f"/projects/{pid}/statuses/qa", headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.post(
+                f"/projects/{pid}/statuses",
+                json={"name": "qa", "category": "doing"},
+                headers=H_OUTSIDER,
+            ).status_code
+            == 404
+        )
+        assert (
+            client.delete(
+                f"/projects/{pid}/statuses/qa", headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         assert client.delete(f"/spaces/{sid}", headers=H_OUTSIDER).status_code == 404
 
         # Membership grants visibility: the same writes now 403 (visible, not the
         # creator) — the earlier 404 was the visibility gate, not the creator gate.
         access.add_project_member(conn, pid, 3, added_by=2)
         access.add_space_member(conn, sid, 3, added_by=2)
-        assert client.patch(f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER).status_code == 403
+        assert (
+            client.patch(
+                f"/projects/{pid}", json={"name": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 403
+        )
         assert client.delete(f"/spaces/{sid}", headers=H_OUTSIDER).status_code == 403
 
         # The creator still modifies and deletes normally.
-        assert client.patch(f"/projects/{pid}", json={"name": "Renamed"}, headers=H_CREATOR).status_code == 200
+        assert (
+            client.patch(
+                f"/projects/{pid}", json={"name": "Renamed"}, headers=H_CREATOR
+            ).status_code
+            == 200
+        )
         assert client.delete(f"/spaces/{sid}", headers=H_CREATOR).status_code == 204
 
 
@@ -180,14 +329,29 @@ def test_sprint_writes_require_visibility_without_leak(tmp_path):
         pid, _ = _private_project_with_issue(client, db_file)
         # An outsider can't manage sprints AND gets 404 (not 403) — the private project's
         # existence doesn't leak through a sprint-write attempt.
-        assert client.post(f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.post(
+                f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         # The creator can.
-        assert client.post(f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_CREATOR).status_code == 201
+        assert (
+            client.post(
+                f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_CREATOR
+            ).status_code
+            == 201
+        )
         # A member who CAN see the project but isn't its creator gets the honest 403 —
         # sprint management stays creator-only, and they already know it exists.
         conn = db.connect(db_file)
         access.add_project_member(conn, pid, 3, added_by=2)
-        assert client.post(f"/projects/{pid}/sprints", json={"name": "S2"}, headers=H_OUTSIDER).status_code == 403
+        assert (
+            client.post(
+                f"/projects/{pid}/sprints", json={"name": "S2"}, headers=H_OUTSIDER
+            ).status_code
+            == 403
+        )
 
 
 # --- Page / space writes ---------------------------------------------------
@@ -197,20 +361,54 @@ def test_page_writes_require_visibility(tmp_path):
     db_file = tmp_path / "pw.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        sid = client.post("/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR).json()["id"]
-        pid = client.post(f"/spaces/{sid}/pages", json={"title": "P", "body": "v1"}, headers=H_CREATOR).json()["id"]
+        sid = client.post(
+            "/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR
+        ).json()["id"]
+        pid = client.post(
+            f"/spaces/{sid}/pages", json={"title": "P", "body": "v1"}, headers=H_CREATOR
+        ).json()["id"]
         conn = db.connect(db_file)
         conn.execute("UPDATE spaces SET visibility = 'private' WHERE id = ?", (sid,))
         conn.commit()
 
         # Every page write 404s for an outsider on a hidden page/space.
-        assert client.patch(f"/pages/{pid}", json={"body": "x"}, headers=H_OUTSIDER).status_code == 404
-        assert client.post(f"/pages/{pid}/comments", json={"body": "x"}, headers=H_OUTSIDER).status_code == 404
-        assert client.post(f"/spaces/{sid}/pages", json={"title": "new"}, headers=H_OUTSIDER).status_code == 404
-        assert client.patch(f"/spaces/{sid}", json={"name": "x"}, headers=H_OUTSIDER).status_code == 404
+        assert (
+            client.patch(
+                f"/pages/{pid}", json={"body": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                f"/pages/{pid}/comments", json={"body": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
+        assert (
+            client.post(
+                f"/spaces/{sid}/pages", json={"title": "new"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
+        assert (
+            client.patch(
+                f"/spaces/{sid}", json={"name": "x"}, headers=H_OUTSIDER
+            ).status_code
+            == 404
+        )
         # The creator edits fine.
-        assert client.patch(f"/pages/{pid}", json={"body": "ok"}, headers=H_CREATOR).status_code == 200
+        assert (
+            client.patch(
+                f"/pages/{pid}", json={"body": "ok"}, headers=H_CREATOR
+            ).status_code
+            == 200
+        )
         # Mentor is a shared wiki: a MEMBER (who can see it) may edit — membership opens
         # the write to 200, not just past the 404 (unlike issues, no per-row modify lock).
         access.add_space_member(conn, sid, 3, added_by=2)
-        assert client.patch(f"/pages/{pid}", json={"body": "member"}, headers=H_OUTSIDER).status_code == 200
+        assert (
+            client.patch(
+                f"/pages/{pid}", json={"body": "member"}, headers=H_OUTSIDER
+            ).status_code
+            == 200
+        )

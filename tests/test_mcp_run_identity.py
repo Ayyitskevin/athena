@@ -14,6 +14,7 @@ contract returned headers no MCP tool could transmit. These tests pin the fix:
   * the MCP server exposes begin_run/current_run, and its entrypoint defaults
     to a fresh mcp-<hex> run id so sessions are attributed BY DEFAULT.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 

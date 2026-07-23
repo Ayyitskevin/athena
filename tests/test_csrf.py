@@ -18,6 +18,7 @@ NOT) apply:
     no token — they must keep working untouched;
   * logout is itself a state-changing POST, so it is protected too.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -27,7 +28,10 @@ def _login(client):
     """Bootstrap user 1, log the browser in, and hand back the CSRF token the
     server set in the readable cookie. Leaves client.headers clean so each test
     controls how (or whether) it presents the token."""
-    client.post("/users", json={"email": "kevin@example.com", "name": "Kevin", "password": "secret"})
+    client.post(
+        "/users",
+        json={"email": "kevin@example.com", "name": "Kevin", "password": "secret"},
+    )
     client.post("/login", data={"email": "kevin@example.com", "password": "secret"})
     return client.cookies.get("athena_csrf")
 
@@ -111,8 +115,12 @@ def test_api_token_route_needs_no_csrf(tmp_path):
     app = create_app(tmp_path / "api.db")
     with TestClient(app) as client:
         # seed user 1 so the actor header resolves to a real user
-        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "secret"})
-        r = client.post("/issues", json={"title": "via api"}, headers={"X-Athena-Actor": "1"})
+        client.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "secret"}
+        )
+        r = client.post(
+            "/issues", json={"title": "via api"}, headers={"X-Athena-Actor": "1"}
+        )
         assert r.status_code == 201
 
 
@@ -127,7 +135,9 @@ def test_logout_is_csrf_protected(tmp_path):
         assert client.post("/logout").status_code == 403
         assert client.get("/").text.count("Sign out") == 1  # still logged in
         # With the token → logout proceeds.
-        r = client.post("/logout", headers={"X-CSRF-Token": token}, follow_redirects=False)
+        r = client.post(
+            "/logout", headers={"X-CSRF-Token": token}, follow_redirects=False
+        )
         assert r.status_code == 303
 
 

@@ -9,6 +9,7 @@ The salt and iteration count travel with the hash, so we can verify old hashes
 even after raising the cost later. Verification is constant-time to avoid
 leaking how much of the hash matched.
 """
+
 from __future__ import annotations
 
 import hashlib

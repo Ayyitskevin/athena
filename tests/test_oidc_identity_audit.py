@@ -7,6 +7,7 @@ a first-login link records a 'linked_identity' event and a settings unlink recor
 'unlinked_identity' event, in the SAME transaction as the change, attributed to (and
 recorded against) the user whose account it is, with the self-service authz preserved.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db, oidc, oidc_commands, sessions, users
@@ -32,7 +33,12 @@ def test_first_login_link_is_audited_and_self_attributed(tmp_path):
     from athena.core import oidc_flow
 
     conn = _conn(tmp_path)
-    claims = {"sub": "s1", "email": "new@acme.com", "email_verified": True, "name": "New"}
+    claims = {
+        "sub": "s1",
+        "email": "new@acme.com",
+        "email_verified": True,
+        "name": "New",
+    }
     user = oidc_flow.provision_or_link(conn, issuer=ISS, claims=claims)
 
     ev = _events(conn, "linked_identity")
@@ -65,9 +71,10 @@ def test_command_unlink_noop_records_nothing(tmp_path):
     conn = _conn(tmp_path)
     uid = users.create_user(conn, email="a@e.com", name="A", password="pw")["id"]
     # Nothing linked → nothing removed → no event.
-    assert oidc_commands.unlink_identity(
-        conn, actor_id=uid, issuer=ISS, subject="ghost"
-    ) is False
+    assert (
+        oidc_commands.unlink_identity(conn, actor_id=uid, issuer=ISS, subject="ghost")
+        is False
+    )
     assert _events(conn, "unlinked_identity") == []
     conn.close()
 
@@ -103,7 +110,11 @@ def test_web_unlink_is_audited_and_self_attributed(tmp_path):
         assert done.status_code == 303
 
     conn = db.connect(db_file)
-    ev = [e for e in activity.list_activity(conn, limit=200) if e["verb"] == "unlinked_identity"]
+    ev = [
+        e
+        for e in activity.list_activity(conn, limit=200)
+        if e["verb"] == "unlinked_identity"
+    ]
     assert len(ev) == 1
     assert ev[0]["actor_id"] == uid and ev[0]["target_id"] == uid
     assert ISS in ev[0]["detail"]
@@ -116,8 +127,12 @@ def test_web_unlink_of_another_users_identity_records_nothing(tmp_path):
     db_file = tmp_path / "web_authz.db"
     with TestClient(create_app(db_file)) as client:
         conn = db.connect(db_file)
-        attacker = users.create_user(conn, email="att@e.com", name="Att", password="pw")["id"]
-        victim = users.create_user(conn, email="vic@e.com", name="Vic", password="pw")["id"]
+        attacker = users.create_user(
+            conn, email="att@e.com", name="Att", password="pw"
+        )["id"]
+        victim = users.create_user(conn, email="vic@e.com", name="Vic", password="pw")[
+            "id"
+        ]
         oidc.link_identity(conn, issuer=ISS, subject="victim-sub", user_id=victim)
         conn.close()
         _login_as(client, db_file, attacker)
@@ -130,8 +145,12 @@ def test_web_unlink_of_another_users_identity_records_nothing(tmp_path):
         assert denied.status_code == 404
 
     conn = db.connect(db_file)
-    assert oidc.find_user_by_identity(conn, issuer=ISS, subject="victim-sub") is not None
+    assert (
+        oidc.find_user_by_identity(conn, issuer=ISS, subject="victim-sub") is not None
+    )
     assert [
-        e for e in activity.list_activity(conn, limit=200) if e["verb"] == "unlinked_identity"
+        e
+        for e in activity.list_activity(conn, limit=200)
+        if e["verb"] == "unlinked_identity"
     ] == []
     conn.close()

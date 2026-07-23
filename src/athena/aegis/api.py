@@ -571,7 +571,9 @@ def show(
     # a 404, indistinguishable from a missing one, so visibility never leaks via
     # existence. Backlog issues (no project) read like a public one.
     issue = issues.get_by_ref(conn, ref)
-    if issue is None or not access.can_see_project_or_backlog(conn, actor, issue["project_id"]):
+    if issue is None or not access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    ):
         raise HTTPException(status_code=404, detail="no such issue")
     return _tagged_issue(conn, issue, response)
 
@@ -607,7 +609,8 @@ class IssueStateOut(BaseModel):
 def issue_state(
     issue_id: int,
     as_of: int | None = Query(
-        None, description="reconstruct state as of this activity event id (default: now)"
+        None,
+        description="reconstruct state as of this activity event id (default: now)",
     ),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -986,7 +989,11 @@ def edit_comment(
     # silent content rewrite.
     try:
         return comment_commands.edit_comment(
-            conn, actor_id=actor["id"], issue_id=issue_id, comment_id=comment_id, body=body
+            conn,
+            actor_id=actor["id"],
+            issue_id=issue_id,
+            comment_id=comment_id,
+            body=body,
         )
     except comment_commands.CommentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
@@ -1190,7 +1197,10 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
     if project is None:
         raise HTTPException(status_code=404, detail="no such project")
     reason = access.container_write_reason(
-        conn, actor, kind="project", container_id=project_id,
+        conn,
+        actor,
+        kind="project",
+        container_id=project_id,
         created_by=project["created_by"],
     )
     if reason == "not_visible":
@@ -1264,14 +1274,10 @@ def delete_project(
     # sprint would fail the bare DELETE at the FK and surface as a 500 — permanently
     # undeletable. Refuse cleanly (409), same block-don't-cascade rule as issues.
     if sprints.list_sprints(conn, project_id=project_id):
-        raise HTTPException(
-            status_code=409, detail="delete its sprints first"
-        )
+        raise HTTPException(status_code=409, detail="delete its sprints first")
     # The command owns the delete AND its atomic 'deleted_project' event, which
     # outlives the vanished container so the trail keeps who removed it.
-    project_commands.delete_project(
-        conn, actor_id=actor["id"], project_id=project_id
-    )
+    project_commands.delete_project(conn, actor_id=actor["id"], project_id=project_id)
 
 
 # --- Project access control: privacy toggle + membership ------------------
@@ -1283,7 +1289,9 @@ def delete_project(
 # anyone who can SEE the project can see who's in it.
 
 
-def _project_for_privacy(conn: sqlite3.Connection, project_id: int, actor: dict) -> dict:
+def _project_for_privacy(
+    conn: sqlite3.Connection, project_id: int, actor: dict
+) -> dict:
     """Fetch a project whose privacy/membership the actor may MANAGE, or raise: 404 if
     no such project OR one the actor can't see, 403 if it's visible but the actor is
     neither its creator nor an admin. The wider twin of _project_for_write (creator-
@@ -1368,14 +1376,21 @@ def add_project_member(
     member = users.get_user(conn, payload.user_id)
     if member is None:
         raise HTTPException(status_code=422, detail="no such user")
-    if access.add_project_member(conn, project_id, payload.user_id, added_by=actor["id"]):
+    if access.add_project_member(
+        conn, project_id, payload.user_id, added_by=actor["id"]
+    ):
         project_activity.record_project_member_added(
-            conn, actor_id=actor["id"], project_id=project_id, member_name=member["name"]
+            conn,
+            actor_id=actor["id"],
+            project_id=project_id,
+            member_name=member["name"],
         )
     return access.list_project_members(conn, project_id)
 
 
-@projects_router.delete("/{project_id}/members/{user_id}", response_model=list[MemberOut])
+@projects_router.delete(
+    "/{project_id}/members/{user_id}", response_model=list[MemberOut]
+)
 def remove_project_member(
     project_id: int,
     user_id: int,
@@ -1653,7 +1668,9 @@ def list_issue_contributors(
     return contributors.list_contributors(conn, issue_id)
 
 
-@router.post("/{issue_id}/contributors", response_model=list[ContributorOut], status_code=201)
+@router.post(
+    "/{issue_id}/contributors", response_model=list[ContributorOut], status_code=201
+)
 def add_issue_contributor(
     issue_id: int,
     payload: ContributorAdd,
@@ -1670,7 +1687,9 @@ def add_issue_contributor(
         raise _issue_command_http_error(exc) from exc
 
 
-@router.post("/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201)
+@router.post(
+    "/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201
+)
 def delegate_issue_to_agent(
     issue_id: int,
     payload: ContributorAdd,
@@ -1693,7 +1712,9 @@ def delegate_issue_to_agent(
         raise _issue_command_http_error(exc) from exc
 
 
-@router.delete("/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut])
+@router.delete(
+    "/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut]
+)
 def remove_issue_contributor(
     issue_id: int,
     user_id: int,
@@ -1735,9 +1756,7 @@ def get_issue_lease(
     response.headers.update(_PRIVATE_LEASE_HEADERS)
     lease = leases.get_lease(conn, issue_id)
     if lease is not None:
-        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(
-            conn, issue_id
-        )
+        lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
     return lease
 
 

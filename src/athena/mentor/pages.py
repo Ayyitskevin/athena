@@ -7,6 +7,7 @@ page_versions (the page's history), so the live `pages` row is always the presen
 and page_versions is the past. The cross-space tree rule (a parent must share the
 page's space) is enforced at the API boundary, not here.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -42,14 +43,23 @@ def create_page(
         "updated_by, updated_at, run_id) "
         "SELECT next_id, ?, ?, ?, ?, ?, ?, datetime('now'), ? "
         "FROM activity_target_id_sequences WHERE target_kind = 'page'",
-        (space_id, parent_id, title, body, created_by, created_by,
-         run_context.get_run_id()),
+        (
+            space_id,
+            parent_id,
+            title,
+            body,
+            created_by,
+            created_by,
+            run_context.get_run_id(),
+        ),
     )
     page_id = cur.lastrowid
     # Index any [[issue:N]]/[[page:N]] references this page's body makes, and its
     # title + body for full-text search — inside the same transaction (commit=False)
     # so the derived indexes never reflect a rolled-back create.
-    links.sync_links(conn, source_kind="page", source_id=page_id, body=body, commit=False)
+    links.sync_links(
+        conn, source_kind="page", source_id=page_id, body=body, commit=False
+    )
     search.index_document(conn, kind="page", source_id=page_id, commit=False)
     if commit:
         conn.commit()
@@ -181,9 +191,12 @@ def update_page(
                 conn.rollback()  # nothing to change — no new revision, release the lock
             return page
 
-        next_version = conn.execute(
-            "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
-        ).fetchone()["n"] + 1
+        next_version = (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM page_versions WHERE page_id = ?", (page_id,)
+            ).fetchone()["n"]
+            + 1
+        )
         # The snapshot carries the SUPERSEDED revision's own run_id (like its edited_by
         # and created_at) — the run that authored this content, not the run doing the
         # superseding. NULL when that revision was a human write or predates 0052.
@@ -216,8 +229,11 @@ def update_page(
         # carries [[...]] tokens); search whenever title or body moved.
         if "body" in fields:
             links.sync_links(
-                conn, source_kind="page", source_id=page_id,
-                body=fields["body"], commit=False,
+                conn,
+                source_kind="page",
+                source_id=page_id,
+                body=fields["body"],
+                commit=False,
             )
         if "title" in fields or "body" in fields:
             search.index_document(conn, kind="page", source_id=page_id, commit=False)

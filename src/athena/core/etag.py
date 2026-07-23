@@ -56,9 +56,7 @@ class IfMatch:
             or self._weak_tag_count != 0
             or len(self._strong_tags) != 1
         ):
-            raise InvalidIfMatch(
-                "If-Match must contain exactly one strong entity tag"
-            )
+            raise InvalidIfMatch("If-Match must contain exactly one strong entity tag")
         return next(iter(self._strong_tags))
 
 

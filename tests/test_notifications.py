@@ -5,6 +5,7 @@ of its target EXCEPT the actor; creators/commenters/assignees start watching
 automatically; the inbox lists and clears per user; and the web surface (inbox
 page, nav badge, watch toggle) reflects it.
 """
+
 from athena.core import activity, db, notifications
 from athena.main import create_app
 from fastapi.testclient import TestClient
@@ -87,10 +88,16 @@ def test_watcher_notified_actor_not(tmp_path):
             ).status_code
             == 204
         )
-        client.patch(f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=H1)
+        client.patch(
+            f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=H1
+        )
         # The watcher (user2) is notified; the actor (user1) is not.
-        assert client.get("/notifications/unread_count", headers=H2).json()["count"] == 1
-        assert client.get("/notifications/unread_count", headers=H1).json()["count"] == 0
+        assert (
+            client.get("/notifications/unread_count", headers=H2).json()["count"] == 1
+        )
+        assert (
+            client.get("/notifications/unread_count", headers=H1).json()["count"] == 0
+        )
         item = client.get("/notifications", headers=H2).json()[0]
         assert item["verb"] == "changed_status" and item["target_id"] == issue["id"]
 
@@ -101,7 +108,9 @@ def test_assignment_auto_watches_and_notifies_assignee(tmp_path):
         _bootstrap(client)
         _make_user2(client)
         issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
-        client.put(f"/issues/{issue['id']}/assignee", json={"assignee_id": 2}, headers=H1)
+        client.put(
+            f"/issues/{issue['id']}/assignee", json={"assignee_id": 2}, headers=H1
+        )
         items = client.get("/notifications", headers=H2).json()
         assert any(i["verb"] == "assigned" for i in items)
 
@@ -114,7 +123,9 @@ def test_commenter_autowatches_and_creator_is_notified(tmp_path):
         issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
         # user2 comments -> user1 (creator/watcher) notified; user2 now auto-watches.
         client.post(f"/issues/{issue['id']}/comments", json={"body": "hi"}, headers=H2)
-        assert client.get("/notifications/unread_count", headers=H1).json()["count"] == 1
+        assert (
+            client.get("/notifications/unread_count", headers=H1).json()["count"] == 1
+        )
         # user1 replies -> user2 (now watching) notified.
         client.post(f"/issues/{issue['id']}/comments", json={"body": "re"}, headers=H1)
         assert any(
@@ -133,8 +144,12 @@ def test_watch_validation_and_unwatch(tmp_path):
             ).status_code
             == 422  # not a watchable kind
         )
-        assert client.delete("/watches/issue/9", headers=H1).status_code == 404  # not watching
-        client.post("/watches", json={"target_kind": "issue", "target_id": 9}, headers=H1)
+        assert (
+            client.delete("/watches/issue/9", headers=H1).status_code == 404
+        )  # not watching
+        client.post(
+            "/watches", json={"target_kind": "issue", "target_id": 9}, headers=H1
+        )
         assert client.delete("/watches/issue/9", headers=H1).status_code == 204
 
 
@@ -143,16 +158,24 @@ def test_mark_read_via_api(tmp_path):
     with TestClient(app) as client:
         _bootstrap(client)
         _make_user2(client)
-        issue = client.post("/issues", json={"title": "x"}, headers=H2).json()  # user2 creates+watches
-        client.patch(f"/issues/{issue['id']}", json={"status": "done"}, headers=H2)  # actor user2, no notif
+        issue = client.post(
+            "/issues", json={"title": "x"}, headers=H2
+        ).json()  # user2 creates+watches
+        client.patch(
+            f"/issues/{issue['id']}", json={"status": "done"}, headers=H2
+        )  # actor user2, no notif
         # user1 watches, user2 acts -> user1 notified.
         client.post(
-            "/watches", json={"target_kind": "issue", "target_id": issue["id"]}, headers=H1
+            "/watches",
+            json={"target_kind": "issue", "target_id": issue["id"]},
+            headers=H1,
         )
         client.post(f"/issues/{issue['id']}/comments", json={"body": "c"}, headers=H2)
         nid = client.get("/notifications", headers=H1).json()[0]["id"]
         assert client.post(f"/notifications/{nid}/read", headers=H1).status_code == 204
-        assert client.get("/notifications/unread_count", headers=H1).json()["count"] == 0
+        assert (
+            client.get("/notifications/unread_count", headers=H1).json()["count"] == 0
+        )
 
 
 # --- web --------------------------------------------------------------------
@@ -169,8 +192,12 @@ def test_web_inbox_and_nav_badge(tmp_path):
         _bootstrap(client)
         csrf = _login(client)  # session = user1
         _make_user2(client)
-        issue = client.post("/issues", json={"title": "ship"}, headers=H1).json()  # user1 watches
-        client.post(f"/issues/{issue['id']}/comments", json={"body": "hi"}, headers=H2)  # notifies user1
+        issue = client.post(
+            "/issues", json={"title": "ship"}, headers=H1
+        ).json()  # user1 watches
+        client.post(
+            f"/issues/{issue['id']}/comments", json={"body": "hi"}, headers=H2
+        )  # notifies user1
         # The nav badge shows on any page once there's an unread notification.
         assert 'class="badge"' in client.get("/").text
         # The inbox page lists the event.

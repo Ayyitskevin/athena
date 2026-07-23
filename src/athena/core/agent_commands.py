@@ -112,9 +112,7 @@ def onboard_agent(
     email = email.strip()
     name = name.strip()
     if not email or not name:
-        raise AgentCommandError(
-            "agent email and name are required", status_code=422
-        )
+        raise AgentCommandError("agent email and name are required", status_code=422)
     try:
         normalized = tokens.normalize_scopes(scopes)
     except ValueError as exc:
@@ -262,9 +260,7 @@ def offboard_user(
         if target is None:
             raise AgentCommandError("no such user", status_code=404)
         if target["role"] == users.ADMIN_ROLE and users.count_admins(conn) <= 1:
-            raise AgentCommandError(
-                "cannot offboard the last admin", status_code=409
-            )
+            raise AgentCommandError("cannot offboard the last admin", status_code=409)
         users.set_role(conn, target_user_id, users.VIEWER_ROLE, commit=False)
         revoked_sessions = sessions.revoke_all_sessions(
             conn, target_user_id, commit=False

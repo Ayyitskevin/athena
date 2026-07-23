@@ -27,7 +27,9 @@ from athena.core.identity import optional_actor, require_token_scope, write_acto
 router = APIRouter(prefix="/attachments", tags=["core"])
 
 
-def _can_see_attachment(conn: sqlite3.Connection, actor: dict | None, att: dict) -> bool:
+def _can_see_attachment(
+    conn: sqlite3.Connection, actor: dict | None, att: dict
+) -> bool:
     """Whether the actor may see this attachment, resolved through its container's
     visibility — an issue attachment is gated by can_see_issue, a page attachment by
     can_see_page. The single place the cross-cutting attachment endpoints (which can't

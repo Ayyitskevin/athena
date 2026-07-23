@@ -6,6 +6,7 @@ assigning resolves the user's display name, unassigning (null) is always valid,
 assigning to a user that doesn't exist is a 422 (the FK never raises a 500),
 assigning on a missing issue is a 404, and every write path needs an actor.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db

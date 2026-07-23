@@ -95,8 +95,7 @@ def test_project_export_bundle_captures_project_content_without_secrets(tmp_path
         conn, issue_id=issue_a["id"], author_id=member, body="comment"
     )
     conn.execute(
-        "INSERT INTO issue_contributors (issue_id, user_id, added_by) "
-        "VALUES (?, ?, ?)",
+        "INSERT INTO issue_contributors (issue_id, user_id, added_by) VALUES (?, ?, ?)",
         (issue_a["id"], bot, owner),
     )
     conn.execute(
@@ -271,13 +270,19 @@ def test_export_cli_writes_json_and_refuses_overwrite(tmp_path, capsys):
     conn.close()
     bundle_path = tmp_path / "exports" / "project.json"
 
-    assert ops.export_main([str(db_file), "project", str(project["id"]), str(bundle_path)]) == 0
+    assert (
+        ops.export_main([str(db_file), "project", str(project["id"]), str(bundle_path)])
+        == 0
+    )
     out = capsys.readouterr()
     assert "Exported project" in out.out
     bundle = json.loads(bundle_path.read_text())
     assert bundle["project"]["name"] == "CLI"
 
-    assert ops.export_main([str(db_file), "project", str(project["id"]), str(bundle_path)]) == 1
+    assert (
+        ops.export_main([str(db_file), "project", str(project["id"]), str(bundle_path)])
+        == 1
+    )
     out = capsys.readouterr()
     assert "export path already exists" in out.err
 

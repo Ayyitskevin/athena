@@ -114,9 +114,7 @@ def set_webhook_active(
         return updated
 
 
-def delete_webhook(
-    conn: sqlite3.Connection, *, actor_id: int, webhook_id: int
-) -> bool:
+def delete_webhook(conn: sqlite3.Connection, *, actor_id: int, webhook_id: int) -> bool:
     """Delete a webhook and record a 'deleted_webhook' event atomically. Returns True
     if one was removed, False if there was no such webhook (so the caller can 404). No
     event is recorded when nothing was deleted. The webhook is read first so the audit

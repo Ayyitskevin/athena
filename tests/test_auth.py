@@ -6,6 +6,7 @@ indistinguishable, a session cookie authenticates the browser, logout revokes it
 server-side at once, an expired session stops working, and the UI write path
 (create issue) is gated on being logged in.
 """
+
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
@@ -34,7 +35,9 @@ def test_password_is_stored_hashed_never_plaintext(tmp_path):
         assert "password_hash" not in out
 
         c = db.connect(tmp_path / "hash.db")
-        stored = c.execute("SELECT password_hash FROM users").fetchone()["password_hash"]
+        stored = c.execute("SELECT password_hash FROM users").fetchone()[
+            "password_hash"
+        ]
         c.close()
         assert stored is not None
         assert "hunter2" not in stored
@@ -146,9 +149,7 @@ def test_issue_creation_is_gated_on_login(tmp_path):
 
         # The issue exists and is stamped to the logged-in user.
         c = db.connect(tmp_path / "gate.db")
-        row = c.execute(
-            "SELECT created_by FROM issues WHERE title = 'mine'"
-        ).fetchone()
+        row = c.execute("SELECT created_by FROM issues WHERE title = 'mine'").fetchone()
         c.close()
         assert row["created_by"] == user["id"]
 
@@ -273,6 +274,6 @@ def test_switching_accounts_invalidates_the_first_account_session(tmp_path):
         b_cookie = client.cookies.get(config.SESSION_COOKIE)
 
         c = db.connect(tmp_path / "switch.db")
-        assert sessions.resolve_session(c, a_cookie) is None      # A's session gone
+        assert sessions.resolve_session(c, a_cookie) is None  # A's session gone
         assert sessions.resolve_session(c, b_cookie)["email"] == "b@e.com"
         c.close()

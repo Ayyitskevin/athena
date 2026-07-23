@@ -7,6 +7,7 @@ delete_space fold each write and its audit into one db.transaction. These pin th
 atomicity the migration closes: when the recorder fails, the mutation rolls back with
 it — nothing half-lands — plus create/edit/delete record attributed events end to end.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -50,9 +51,7 @@ def test_create_rolls_back_the_space_when_audit_fails(tmp_path):
     space_activity.record_space_created = boom
     try:
         try:
-            space_commands.create_space(
-                conn, actor_id=1, key="ENG", name="Eng"
-            )
+            space_commands.create_space(conn, actor_id=1, key="ENG", name="Eng")
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass
@@ -136,12 +135,12 @@ def test_create_edit_delete_record_attributed_events(tmp_path):
             == 200
         )
         assert c.delete(f"/spaces/{sp['id']}", headers=H1).status_code == 204
-    assert [(e["actor_id"], e["target_id"]) for e in _events(db_file, "space_created")] == [
-        (1, sp["id"])
-    ]
-    assert [(e["actor_id"], e["target_id"]) for e in _events(db_file, "space_edited")] == [
-        (1, sp["id"])
-    ]
+    assert [
+        (e["actor_id"], e["target_id"]) for e in _events(db_file, "space_created")
+    ] == [(1, sp["id"])]
+    assert [
+        (e["actor_id"], e["target_id"]) for e in _events(db_file, "space_edited")
+    ] == [(1, sp["id"])]
     # The delete records the space's name AS OF deletion time (it was renamed first).
     assert [
         (e["actor_id"], e["target_id"], e["detail"])

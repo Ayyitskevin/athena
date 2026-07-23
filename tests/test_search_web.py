@@ -11,6 +11,7 @@ These tests encode what matters for the human page, not just a 200:
     no-match query says so;
   * reading is open — no login required, matching every other web read.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import search
@@ -34,7 +35,9 @@ def test_find_renders_ranked_hits_across_kinds_with_links(tmp_path):
         iss = client.post(
             "/issues", json={"title": "Telemetry export", "body": "metrics"}, headers=h
         ).json()
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages",
             json={"title": "Telemetry guide", "body": "dashboards"},
@@ -73,7 +76,8 @@ def test_find_blank_query_shows_prompt_not_results(tmp_path):
     with TestClient(app) as client:
         _seed_user(tmp_path / "blank.db")
         client.post(
-            "/issues", json={"title": "secret thing", "body": ""},
+            "/issues",
+            json={"title": "secret thing", "body": ""},
             headers={"X-Athena-Actor": "1"},
         )
         body = client.get("/find").text
@@ -86,7 +90,8 @@ def test_find_no_match_says_so(tmp_path):
     with TestClient(app) as client:
         _seed_user(tmp_path / "nomatch.db")
         client.post(
-            "/issues", json={"title": "apples", "body": ""},
+            "/issues",
+            json={"title": "apples", "body": ""},
             headers={"X-Athena-Actor": "1"},
         )
         body = client.get("/find", params={"q": "zzzznothing"}).text
@@ -108,15 +113,21 @@ def test_find_shows_scope_filter_and_context(tmp_path):
     with TestClient(app) as client:
         _seed_user(tmp_path / "ctx.db")
         h = {"X-Athena-Actor": "1"}
-        proj = client.post("/projects", json={"name": "Web", "key": "WEB"}, headers=h).json()
+        proj = client.post(
+            "/projects", json={"name": "Web", "key": "WEB"}, headers=h
+        ).json()
         iss = client.post(
             "/issues",
             json={"title": "obelisk export", "project_id": proj["id"]},
             headers=h,
         ).json()
         client.patch(f"/issues/{iss['id']}", json={"status": "done"}, headers=h)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "obelisk guide"}, headers=h)
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "obelisk guide"}, headers=h
+        )
 
         body = client.get("/find", params={"q": "obelisk"}).text
         assert "search-scope" in body  # the All/Issues/Pages filter is present
@@ -133,8 +144,12 @@ def test_find_scope_narrows_to_one_kind(tmp_path):
         _seed_user(tmp_path / "scope.db")
         h = {"X-Athena-Actor": "1"}
         client.post("/issues", json={"title": "widget alpha"}, headers=h)
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
-        client.post(f"/spaces/{sp['id']}/pages", json={"title": "widget beta"}, headers=h)
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
+        client.post(
+            f"/spaces/{sp['id']}/pages", json={"title": "widget beta"}, headers=h
+        )
         body = client.get("/find", params={"q": "widget", "kind": "issue"}).text
         assert "widget alpha" in body and "widget beta" not in body
 

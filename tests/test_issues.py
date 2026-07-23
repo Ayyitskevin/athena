@@ -4,6 +4,7 @@ Issues are created *by* someone. The creator is the actor on the request
 (the `X-Athena-Actor` header), not a value the caller puts in the body — so
 these tests drive creation through that header.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,7 +15,9 @@ from athena.main import create_app
 
 def _seed_user(db_file):
     conn = db.connect(db_file)
-    conn.execute("INSERT INTO users (email, name) VALUES (?, ?)", ("kevin@example.com", "Kevin"))
+    conn.execute(
+        "INSERT INTO users (email, name) VALUES (?, ?)", ("kevin@example.com", "Kevin")
+    )
     conn.commit()
     conn.close()
 
@@ -55,7 +58,9 @@ def test_unknown_actor_is_rejected(tmp_path):
     # pass to write. (It identifies, it doesn't yet authenticate; see identity.py.)
     app = create_app(tmp_path / "bad.db")
     with TestClient(app) as client:
-        r = client.post("/issues", json={"title": "orphan"}, headers={"X-Athena-Actor": "999"})
+        r = client.post(
+            "/issues", json={"title": "orphan"}, headers={"X-Athena-Actor": "999"}
+        )
         assert r.status_code == 401
 
 
@@ -258,8 +263,12 @@ def test_list_is_paginated_and_bounded(tmp_path):
         assert first_two.status_code == 200
         assert [i["id"] for i in first_two.json()] == ids[:2]
         # offset walks the pages, same stable order.
-        assert [i["id"] for i in client.get("/issues?limit=2&offset=2").json()] == ids[2:4]
-        assert [i["id"] for i in client.get("/issues?limit=2&offset=4").json()] == ids[4:]
+        assert [i["id"] for i in client.get("/issues?limit=2&offset=2").json()] == ids[
+            2:4
+        ]
+        assert [i["id"] for i in client.get("/issues?limit=2&offset=4").json()] == ids[
+            4:
+        ]
 
         # The cap is enforced at the boundary — no unbounded/garbage page sizes.
         assert client.get("/issues?limit=0").status_code == 422
@@ -267,10 +276,7 @@ def test_list_is_paginated_and_bounded(tmp_path):
         assert client.get("/issues?limit=101").status_code == 422
         assert client.get("/issues?offset=-1").status_code == 422
         assert client.get(f"/issues?offset={issues.MAX_OFFSET}").status_code == 200
-        assert (
-            client.get(f"/issues?offset={issues.MAX_OFFSET + 1}").status_code
-            == 422
-        )
+        assert client.get(f"/issues?offset={issues.MAX_OFFSET + 1}").status_code == 422
 
 
 def test_list_data_layer_rejects_unbindable_offset(tmp_path):

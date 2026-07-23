@@ -67,7 +67,11 @@ def test_bounded_created_at_keeps_honest_past_and_clamps_the_rest():
         == "2020-05-05 12:00:00"
     )
     # Everything a hostile or corrupt bundle can carry clamps to the import instant:
-    assert portability._bounded_created_at("3000-01-01 00:00:00", fb, ceiling) == fb  # future
-    assert portability._bounded_created_at("not-a-date", fb, ceiling) == fb  # unparseable
+    assert (
+        portability._bounded_created_at("3000-01-01 00:00:00", fb, ceiling) == fb
+    )  # future
+    assert (
+        portability._bounded_created_at("not-a-date", fb, ceiling) == fb
+    )  # unparseable
     assert portability._bounded_created_at(None, fb, ceiling) == fb  # non-string
     assert portability._bounded_created_at(1234567890, fb, ceiling) == fb  # non-string

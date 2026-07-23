@@ -18,6 +18,7 @@ This module owns three things:
 It lives in the aegis lane and leans on its neighbours (issues, labels) to run a
 filter; it never reaches outside the module.
 """
+
 from __future__ import annotations
 
 import json

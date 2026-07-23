@@ -4,6 +4,7 @@ The append-only activity log proves actions; this table proves only that an agen
 credential checked in recently. Fresh/stale is derived from server timestamps at read
 time. It is never a terminal state, process-health oracle, or takeover lease.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

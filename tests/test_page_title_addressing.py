@@ -11,6 +11,7 @@ Two halves, both proven here:
 The [[Title]] wiki-link resolution + inline render live in test_links.py; this file is
 the transport (REST) contract for the fetch-by-title lookup and the MCP tool behind it.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
@@ -33,7 +34,9 @@ def test_by_title_unique_match(tmp_path):
     app = create_app(tmp_path / "u.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "u.db")
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Design Doc"}, headers=_h()
         ).json()
@@ -49,8 +52,12 @@ def test_by_title_returns_all_matches_and_narrows_by_space(tmp_path):
     app = create_app(tmp_path / "amb.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "amb.db")
-        eng = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()).json()
-        ops = client.post("/spaces", json={"key": "OPS", "name": "Ops"}, headers=_h()).json()
+        eng = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()
+        ).json()
+        ops = client.post(
+            "/spaces", json={"key": "OPS", "name": "Ops"}, headers=_h()
+        ).json()
         a = client.post(
             f"/spaces/{eng['id']}/pages", json={"title": "Runbook"}, headers=_h()
         ).json()
@@ -71,7 +78,9 @@ def test_by_title_excludes_archived(tmp_path):
     app = create_app(tmp_path / "arch.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "arch.db")
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Old Doc"}, headers=_h()
         ).json()
@@ -95,22 +104,31 @@ def test_by_title_hides_pages_in_private_spaces(tmp_path):
     with TestClient(app) as client:
         _seed_user(tmp_path / "priv.db", email="owner@e.com", name="Owner")  # id 1
         _seed_user(tmp_path / "priv.db", email="other@e.com", name="Other")  # id 2
-        sp = client.post("/spaces", json={"key": "SEC", "name": "Sec"}, headers=_h("1")).json()
+        sp = client.post(
+            "/spaces", json={"key": "SEC", "name": "Sec"}, headers=_h("1")
+        ).json()
         client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Secret Plan"}, headers=_h("1")
         )
         client.put(
-            f"/spaces/{sp['id']}/visibility", json={"visibility": "private"}, headers=_h("1")
+            f"/spaces/{sp['id']}/visibility",
+            json={"visibility": "private"},
+            headers=_h("1"),
         )
         # The owner (a member) sees it; an outsider gets an empty list, not the page.
         assert client.get(
             "/pages/by-title", params={"title": "Secret Plan"}, headers=_h("1")
         ).json()
-        assert client.get(
-            "/pages/by-title", params={"title": "Secret Plan"}, headers=_h("2")
-        ).json() == []
+        assert (
+            client.get(
+                "/pages/by-title", params={"title": "Secret Plan"}, headers=_h("2")
+            ).json()
+            == []
+        )
         # Anonymous also sees nothing.
-        assert client.get("/pages/by-title", params={"title": "Secret Plan"}).json() == []
+        assert (
+            client.get("/pages/by-title", params={"title": "Secret Plan"}).json() == []
+        )
 
 
 def test_by_title_route_does_not_shadow_numeric_page_fetch(tmp_path):
@@ -119,11 +137,15 @@ def test_by_title_route_does_not_shadow_numeric_page_fetch(tmp_path):
     app = create_app(tmp_path / "order.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "order.db")
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_h()
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Doc"}, headers=_h()
         ).json()
         by_id = client.get(f"/pages/{pg['id']}")
         assert by_id.status_code == 200 and by_id.json()["id"] == pg["id"]
         by_title = client.get("/pages/by-title", params={"title": "Doc"})
-        assert by_title.status_code == 200 and [p["id"] for p in by_title.json()] == [pg["id"]]
+        assert by_title.status_code == 200 and [p["id"] for p in by_title.json()] == [
+            pg["id"]
+        ]

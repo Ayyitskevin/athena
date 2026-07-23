@@ -10,6 +10,7 @@ browser, and (via REST) MCP. These pin: the ETag round-trips, a stale tag gets a
 412 with the current tag, malformed/absent conditions behave per RFC, the audit is
 atomic with the row, and the shared MCP client reaches the guarded write.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import activity, db
@@ -29,9 +30,7 @@ def _bootstrap(client):
 
 
 def _space(client, key="ENG", name="Eng"):
-    return client.post(
-        "/spaces", json={"key": key, "name": name}, headers=H1
-    ).json()
+    return client.post("/spaces", json={"key": key, "name": name}, headers=H1).json()
 
 
 def _page(client, space_id, title="Doc", body="one"):
@@ -141,7 +140,9 @@ def test_unconditional_edit_records_page_edited_once(tmp_path):
         page = _page(c, sp["id"])
         # No If-Match header: still a valid edit (backward compatible), audited once.
         assert (
-            c.patch(f"/pages/{page['id']}", json={"body": "edited"}, headers=H1).status_code
+            c.patch(
+                f"/pages/{page['id']}", json={"body": "edited"}, headers=H1
+            ).status_code
             == 200
         )
     edited = _events(db_file, "page_edited")
@@ -165,9 +166,7 @@ def test_edit_command_rolls_back_the_event_when_audit_fails(tmp_path):
     page_activity.record_page_edited = boom
     try:
         try:
-            page_commands.edit_page(
-                conn, actor_id=1, page_id=page["id"], body="doomed"
-            )
+            page_commands.edit_page(conn, actor_id=1, page_id=page["id"], body="doomed")
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass

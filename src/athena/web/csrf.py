@@ -16,6 +16,7 @@ requests carry no ambient cookie to forge, so they need no CSRF token and this
 dependency is wired only onto the web (cookie) routes. When no session is present,
 the dependency is a no-op and the route's own auth (a 401) still applies.
 """
+
 from __future__ import annotations
 
 import secrets

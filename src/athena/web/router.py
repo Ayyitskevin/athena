@@ -3,6 +3,7 @@
 The actual page rendering logic lives here. The Jinja2Templates instance
 is configured in main.py (per wiring contract) and injected via init_templates.
 """
+
 from __future__ import annotations
 
 import html
@@ -190,7 +191,11 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             "backlog_count": dashboard.backlog_count(conn),
             "active_sprints": dashboard.active_sprints(conn, vis),
             # The user's own plate only makes sense when we know who they are.
-            "my_issues": dashboard.my_open_issues(conn, user["id"], visible_project_ids=vis) if user else [],
+            "my_issues": dashboard.my_open_issues(
+                conn, user["id"], visible_project_ids=vis
+            )
+            if user
+            else [],
             "my_delegation_inbox": delegation_inbox,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
@@ -305,10 +310,18 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             # The filter dropdowns must not enumerate a private project (its statuses
             # or its name) to someone who can't see it.
             "all_statuses": sorted(
-                {i["status"] for i in issues.list_issues(conn, visible_project_ids=access.visible_project_filter(conn, user))}
+                {
+                    i["status"]
+                    for i in issues.list_issues(
+                        conn,
+                        visible_project_ids=access.visible_project_filter(conn, user),
+                    )
+                }
             ),
             "all_labels": labels.list_labels(conn),
-            "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
+            "all_projects": projects.list_projects(
+                conn, access.visible_project_filter(conn, user)
+            ),
             "scope_urls": {
                 "all": find_url(scope=None, page_num=1),
                 "issue": find_url(scope="issue", page_num=1),
@@ -357,9 +370,7 @@ def mark_inbox_read(
 
 
 @router.post("/inbox/read-all", dependencies=[Depends(verify_csrf)])
-def mark_inbox_all_read(
-    request: Request, conn: sqlite3.Connection = Depends(get_conn)
-):
+def mark_inbox_all_read(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     """Mark every notification read, then back to the inbox."""
     user = getattr(request.state, "user", None)
     if user is None:
@@ -382,6 +393,7 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         conn, visible_project_ids=access.visible_project_filter(conn, user)
     )
     from collections import Counter
+
     status_counts = Counter(issue["status"] for issue in all_issues)
     # Recent issues (newest first)
     recent_issues = sorted(
@@ -517,7 +529,9 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # Sprint-filter options. A sprint belongs to one project, so each option is
     # labelled with its project's key to disambiguate same-named sprints across
     # projects (e.g. "ATH · Sprint 1"). One pass over projects builds the key map.
-    all_projects = projects.list_projects(conn, access.visible_project_filter(conn, user))
+    all_projects = projects.list_projects(
+        conn, access.visible_project_filter(conn, user)
+    )
     project_keys = {p["id"]: p["key"] for p in all_projects}
     # project_keys holds exactly the projects this viewer may see, so keeping only
     # sprints whose project is in it drops sprints in private projects the viewer can't
@@ -542,14 +556,20 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         }
     )
 
-    template = "aegis/partials/issues_table.html" if request.headers.get("HX-Request") else "aegis/issues.html"
+    template = (
+        "aegis/partials/issues_table.html"
+        if request.headers.get("HX-Request")
+        else "aegis/issues.html"
+    )
     return _templates.TemplateResponse(
         request=request,
         name=template,
         context={
             "issues": paged,
             "status_filter": status_filter or "",
-            "all_statuses": _statuses_in_use(conn, access.visible_project_filter(conn, user)),
+            "all_statuses": _statuses_in_use(
+                conn, access.visible_project_filter(conn, user)
+            ),
             "priority_filter": priority_filter,
             "priorities": issues.PRIORITIES,
             "assignee_filter": assignee_raw,
@@ -593,11 +613,17 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     return _templates.TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
-        context={"all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user))},
+        context={
+            "all_projects": projects.list_projects(
+                conn, access.visible_project_filter(conn, user)
+            )
+        },
     )
 
 
-@router.post("/aegis/issues", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)]
+)
 def create_issue(
     request: Request,
     title: str = Form(""),
@@ -628,7 +654,9 @@ def create_issue(
         project: int | None = None
     else:
         if not project_id.isdigit():
-            return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
+            return HTMLResponse(
+                '<div class="error">No such project.</div>', status_code=400
+            )
         project = int(project_id)
     try:
         issue = issue_commands.create_issue(
@@ -644,7 +672,7 @@ def create_issue(
     # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>',
-        headers={"HX-Redirect": f'/aegis/issues/{issue["id"]}'},
+        headers={"HX-Redirect": f"/aegis/issues/{issue['id']}"},
     )
 
 
@@ -671,7 +699,9 @@ def _issue_visible_or_404(conn, issue_id, user):
     if issue is None or not access.can_see_project_or_backlog(
         conn, user, issue["project_id"]
     ):
-        return None, HTMLResponse('<div class="error">Issue not found.</div>', status_code=404)
+        return None, HTMLResponse(
+            '<div class="error">Issue not found.</div>', status_code=404
+        )
     return issue, None
 
 
@@ -765,9 +795,7 @@ def change_issue_status(
                 extra={"blocked_warning": blockers, "pending_status": status},
             )
     try:
-        issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, status=status
-        )
+        issue_commands.update_issue(conn, actor=user, issue_id=issue_id, status=status)
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
@@ -802,7 +830,9 @@ def change_issue_priority(
 
 
 @router.get("/aegis/issues/{ref}", response_class=HTMLResponse)
-def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(get_conn)):
+def issue_detail(
+    request: Request, ref: str, conn: sqlite3.Connection = Depends(get_conn)
+):
     """Show a single issue, addressable by numeric id ("12") or project key
     ("ATH-12"). get_by_ref resolves either form; everything past it keys off the
     issue's real numeric id (backlinks/comments/labels stay numeric)."""
@@ -812,14 +842,21 @@ def issue_detail(request: Request, ref: str, conn: sqlite3.Connection = Depends(
     # An issue in a private project the viewer can't see is treated exactly like a
     # missing one — same 404, so privacy never leaks through the existence of a ref.
     # Backlog issues (no project) read like a public one.
-    if not issue or not access.can_see_project_or_backlog(conn, user, issue["project_id"]):
+    if not issue or not access.can_see_project_or_backlog(
+        conn, user, issue["project_id"]
+    ):
         # not-found state: render empty list page with error (minimal). Carry a
         # real 404 status — a missing issue is not a 200, and the API surface for
         # the same id returns 404, so the browser path must not disagree.
         return _templates.TemplateResponse(
             request=request,
             name="aegis/issues.html",
-            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue {ref} not found"},
+            context={
+                "issues": [],
+                "status_filter": "",
+                "search": "",
+                "error": f"Issue {ref} not found",
+            },
             status_code=404,
         )
 
@@ -876,9 +913,7 @@ def _render_issue_detail(
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
         "contributors": contributors.list_contributors(conn, issue_id),
-        "open_claim_handoff": claim_handoffs.get_open_handoff(
-            conn, issue_id
-        ),
+        "open_claim_handoff": claim_handoffs.get_open_handoff(conn, issue_id),
         "issue_labels": labels.labels_for_issue(conn, issue_id),
         "all_labels": labels.list_labels(conn),
         "all_projects": visible_projects,
@@ -944,7 +979,12 @@ def issue_history_view(
         return _templates.TemplateResponse(
             request=request,
             name="aegis/issues.html",
-            context={"issues": [], "status_filter": "", "search": "", "error": f"Issue {ref} not found"},
+            context={
+                "issues": [],
+                "status_filter": "",
+                "search": "",
+                "error": f"Issue {ref} not found",
+            },
             status_code=404,
         )
     as_of = _int_or_none(request.query_params.get("as_of"))
@@ -1005,7 +1045,9 @@ def change_issue_assignee(
         try:
             target = int(assignee_id)
         except ValueError:
-            return HTMLResponse('<div class="error">Invalid user.</div>', status_code=400)
+            return HTMLResponse(
+                '<div class="error">Invalid user.</div>', status_code=400
+            )
 
     try:
         issue_commands.update_issue(
@@ -1040,7 +1082,9 @@ def change_issue_project(
     if project_id == "":
         target: int | None = None
     elif not project_id.isdigit():
-        return HTMLResponse('<div class="error">No such project.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=400
+        )
     else:
         target = int(project_id)
 
@@ -1093,9 +1137,7 @@ def change_issue_placement(
     if sprint_id == "":
         sprint_target: int | None = None
     elif not sprint_id.isdigit():
-        return HTMLResponse(
-            '<div class="error">No such sprint.</div>', status_code=400
-        )
+        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
     else:
         sprint_target = int(sprint_id)
 
@@ -1175,7 +1217,9 @@ def change_issue_parent(
         # a HIDDEN issue is caught by the command's see-the-parent check, which
         # collapses to the same "No such parent issue." — no existence probe.
         if parent is None:
-            return HTMLResponse('<div class="error">No such parent issue.</div>', status_code=400)
+            return HTMLResponse(
+                '<div class="error">No such parent issue.</div>', status_code=400
+            )
         parent_id = parent["id"]
     # The command owns the see-the-parent check, self/cycle validation, the write,
     # and the atomic audit event — the same one the REST route calls.
@@ -1206,7 +1250,9 @@ def add_issue_label(
         )
     name = name.strip()
     if not name:
-        return HTMLResponse('<div class="error">Label name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Label name is required.</div>', status_code=400
+        )
     # Find-or-create the label (web vocabulary convenience), then the command owns
     # the gate, the attach, and its atomic 'labeled' event — the same REST calls.
     label = labels.get_or_create_label(conn, name=name)
@@ -1219,7 +1265,10 @@ def add_issue_label(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/labels/{label_id}/delete", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues/{issue_id}/labels/{label_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
 def remove_issue_label(
     request: Request,
     issue_id: int,
@@ -1247,7 +1296,9 @@ def remove_issue_label(
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/contributors", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues/{issue_id}/contributors", dependencies=[Depends(verify_csrf)]
+)
 def add_issue_contributor(
     request: Request,
     issue_id: int,
@@ -1454,7 +1505,9 @@ def add_issue_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Comment cannot be empty.</div>', status_code=400
+        )
 
     # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
     comment_commands.create_comment(
@@ -1471,13 +1524,23 @@ def _own_comment_or_response(conn, issue_id, comment_id, user, *, allow_admin=Fa
     stays author-only."""
     existing = comments.get_comment(conn, comment_id)
     if existing is None or existing["issue_id"] != issue_id:
-        return None, HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
-    if existing["author_id"] != user["id"] and not (allow_admin and identity.is_admin(user)):
-        return None, HTMLResponse('<div class="error">You can only change your own comments.</div>', status_code=403)
+        return None, HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
+    if existing["author_id"] != user["id"] and not (
+        allow_admin and identity.is_admin(user)
+    ):
+        return None, HTMLResponse(
+            '<div class="error">You can only change your own comments.</div>',
+            status_code=403,
+        )
     return existing, None
 
 
-@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/edit", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues/{issue_id}/comments/{comment_id}/edit",
+    dependencies=[Depends(verify_csrf)],
+)
 def edit_issue_comment(
     request: Request,
     issue_id: int,
@@ -1503,21 +1566,32 @@ def edit_issue_comment(
         return err
     body = body.strip()
     if not body:
-        return HTMLResponse('<div class="error">Comment cannot be empty.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Comment cannot be empty.</div>', status_code=400
+        )
     # The command owns the edit AND its atomic 'comment_edited' event — this web path
     # previously rewrote the body with NO audit trail at all.
     try:
         comment_commands.edit_comment(
-            conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id, body=body
+            conn,
+            actor_id=user["id"],
+            issue_id=issue_id,
+            comment_id=comment_id,
+            body=body,
         )
     except comment_commands.CommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
         # silent "success" redirect.
-        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/comments/{comment_id}/delete", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues/{issue_id}/comments/{comment_id}/delete",
+    dependencies=[Depends(verify_csrf)],
+)
 def delete_issue_comment(
     request: Request,
     issue_id: int,
@@ -1537,7 +1611,9 @@ def delete_issue_comment(
     _, err = _issue_visible_or_404(conn, issue_id, user)
     if err is not None:
         return err
-    _, err = _own_comment_or_response(conn, issue_id, comment_id, user, allow_admin=True)
+    _, err = _own_comment_or_response(
+        conn, issue_id, comment_id, user, allow_admin=True
+    )
     if err is not None:
         return err
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
@@ -1545,11 +1621,15 @@ def delete_issue_comment(
     if not comment_commands.delete_comment(
         conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id
     ):
-        return HTMLResponse('<div class="error">Comment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Comment not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
-@router.post("/aegis/issues/{issue_id}/attachments", dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/issues/{issue_id}/attachments", dependencies=[Depends(verify_csrf)]
+)
 def add_issue_attachment(
     request: Request,
     issue_id: int,
@@ -1573,7 +1653,9 @@ def add_issue_attachment(
     if not data:
         return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
     if len(data) > config.ATTACH_MAX_BYTES:
-        return HTMLResponse('<div class="error">File is too large.</div>', status_code=413)
+        return HTMLResponse(
+            '<div class="error">File is too large.</div>', status_code=413
+        )
     att = attachments.store(
         conn,
         target_kind="issue",
@@ -1620,7 +1702,9 @@ def remove_issue_attachment(
         return err
     att = attachments.get(conn, attachment_id)
     if att is None or att["target_kind"] != "issue" or att["target_id"] != issue_id:
-        return HTMLResponse('<div class="error">Attachment not found.</div>', status_code=404)
+        return HTMLResponse(
+            '<div class="error">Attachment not found.</div>', status_code=404
+        )
     if att["uploaded_by"] != user["id"]:
         return HTMLResponse(
             '<div class="error">Only the uploader may remove this file.</div>',

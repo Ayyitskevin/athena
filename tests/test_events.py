@@ -9,6 +9,7 @@ These encode the contract that matters for a *consumer* draining a stream:
   * the same filters as the activity feed narrow the stream (kind/target/verb),
     and a target without its kind is rejected.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -161,7 +162,9 @@ def test_events_filter_by_kind(tmp_path):
     app = create_app(tmp_path / "kind.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "kind.db")
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=H).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=H
+        ).json()
         client.post(f"/spaces/{sp['id']}/pages", json={"title": "Doc"}, headers=H)
         _make_issue(client, "an issue")
 
@@ -177,7 +180,9 @@ def test_events_filter_by_verb(tmp_path):
         _seed_user(tmp_path / "verb.db")
         issue = _make_issue(client, "movable")
         # A status change records a distinct verb alongside the create.
-        client.patch(f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=H)
+        client.patch(
+            f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=H
+        )
 
         created = client.get("/events?verb=created", headers=H).json()["events"]
         assert created and all(e["verb"] == "created" for e in created)
@@ -202,9 +207,9 @@ def test_events_filter_one_target(tmp_path):
         b = _make_issue(client, "B")
         client.patch(f"/issues/{b['id']}", json={"status": "done"}, headers=H)
 
-        events = client.get(
-            f"/events?kind=issue&target={a['id']}", headers=H
-        ).json()["events"]
+        events = client.get(f"/events?kind=issue&target={a['id']}", headers=H).json()[
+            "events"
+        ]
         assert events and all(e["target_id"] == a["id"] for e in events)
 
 
@@ -215,13 +220,17 @@ def test_events_filter_by_actor_type(tmp_path):
     db_file = tmp_path / "actortype.db"
     app = create_app(db_file)
     with TestClient(app) as client:
-        _seed_user(db_file)   # id 1, human "A"
+        _seed_user(db_file)  # id 1, human "A"
         _seed_agent(db_file)  # id 2, agent "Bot"
         _make_issue(client, "by-human")  # actor 1
-        client.post("/issues", json={"title": "by-agent"}, headers={"X-Athena-Actor": "2"})
+        client.post(
+            "/issues", json={"title": "by-agent"}, headers={"X-Athena-Actor": "2"}
+        )
 
         agents = client.get("/events?actor_type=agent", headers=H).json()
-        assert agents["events"] and all(e["actor_name"] == "Bot" for e in agents["events"])
+        assert agents["events"] and all(
+            e["actor_name"] == "Bot" for e in agents["events"]
+        )
         # The cursor envelope still tracks under the lens.
         assert agents["next_after"] == agents["events"][-1]["id"]
 

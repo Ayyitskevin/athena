@@ -7,6 +7,7 @@ and the open-blocker close warning) rendered a linked hidden issue's key/title/s
 (3) the issue-detail page rendered a hidden PARENT issue's key/title. All now gate by
 the container's visibility, returning the same 404 / omission a missing target gets.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import dependencies, issues
@@ -19,9 +20,31 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 # --- Attachment download / delete ------------------------------------------
@@ -31,8 +54,12 @@ def test_issue_attachment_download_gated(tmp_path):
     db_file = tmp_path / "ia.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        iid = client.post("/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR).json()["id"]
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "Hidden", "project_id": pp}, headers=H_CREATOR
+        ).json()["id"]
         aid = client.post(
             f"/issues/{iid}/attachments",
             files={"file": ("secret.txt", b"top secret bytes", "text/plain")},
@@ -61,8 +88,12 @@ def test_page_attachment_download_gated(tmp_path):
     db_file = tmp_path / "pa.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        sid = client.post("/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR).json()["id"]
-        pid = client.post(f"/spaces/{sid}/pages", json={"title": "P"}, headers=H_CREATOR).json()["id"]
+        sid = client.post(
+            "/spaces", json={"key": "SEC", "name": "Secret"}, headers=H_CREATOR
+        ).json()["id"]
+        pid = client.post(
+            f"/spaces/{sid}/pages", json={"title": "P"}, headers=H_CREATOR
+        ).json()["id"]
         aid = client.post(
             f"/pages/{pid}/attachments",
             files={"file": ("doc.txt", b"private page file", "text/plain")},
@@ -82,7 +113,9 @@ def test_public_attachment_still_open(tmp_path):
     db_file = tmp_path / "pub.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        iid = client.post("/issues", json={"title": "Loose"}, headers=H_CREATOR).json()["id"]  # backlog
+        iid = client.post("/issues", json={"title": "Loose"}, headers=H_CREATOR).json()[
+            "id"
+        ]  # backlog
         aid = client.post(
             f"/issues/{iid}/attachments",
             files={"file": ("a.txt", b"public", "text/plain")},
@@ -99,12 +132,24 @@ def test_dependency_link_summary_hides_private_target(tmp_path):
     db_file = tmp_path / "dl.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        hidden = client.post("/issues", json={"title": "SecretBlocker", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        host = client.post("/issues", json={"title": "Host"}, headers=H_CREATOR).json()["id"]  # backlog, public
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        hidden = client.post(
+            "/issues",
+            json={"title": "SecretBlocker", "project_id": pp},
+            headers=H_CREATOR,
+        ).json()["id"]
+        host = client.post("/issues", json={"title": "Host"}, headers=H_CREATOR).json()[
+            "id"
+        ]  # backlog, public
         # The creator (who can see both) records that the public host is blocked BY the
         # hidden issue (so the hidden one is an open blocker of host).
-        client.post(f"/issues/{host}/links", json={"relation": "blocked_by", "target_ref": str(hidden)}, headers=H_CREATOR)
+        client.post(
+            f"/issues/{host}/links",
+            json={"relation": "blocked_by", "target_ref": str(hidden)},
+            headers=H_CREATOR,
+        )
         conn = db.connect(db_file)
         conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (pp,))
         conn.commit()
@@ -124,7 +169,9 @@ def test_dependency_link_summary_hides_private_target(tmp_path):
         # Data layer: open_blockers filters by the viewer too.
         creator, outsider = users.get_user(conn, 2), users.get_user(conn, 3)
         # hidden blocks host, and hidden is not done → it's an open blocker of host.
-        assert hidden in [b["id"] for b in dependencies.open_blockers(conn, host, actor=creator)]
+        assert hidden in [
+            b["id"] for b in dependencies.open_blockers(conn, host, actor=creator)
+        ]
         assert dependencies.open_blockers(conn, host, actor=outsider) == []
 
 
@@ -132,9 +179,17 @@ def test_issue_detail_hides_private_parent(tmp_path):
     db_file = tmp_path / "pp.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
-        pp = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-        parent = client.post("/issues", json={"title": "SecretParent", "project_id": pp}, headers=H_CREATOR).json()["id"]
-        child = client.post("/issues", json={"title": "Child"}, headers=H_CREATOR).json()["id"]  # backlog, public
+        pp = client.post(
+            "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+        ).json()["id"]
+        parent = client.post(
+            "/issues",
+            json={"title": "SecretParent", "project_id": pp},
+            headers=H_CREATOR,
+        ).json()["id"]
+        child = client.post(
+            "/issues", json={"title": "Child"}, headers=H_CREATOR
+        ).json()["id"]  # backlog, public
         conn = db.connect(db_file)
         issues.set_parent(conn, child, parent)
         conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (pp,))

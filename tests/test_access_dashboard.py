@@ -6,6 +6,7 @@ the backlog (no project) always counts and admins see everything. These exercise
 aggregations directly with a viewer's visibility set, plus one web check that the
 anonymous dashboard never names a private project.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import dashboard
@@ -18,9 +19,31 @@ H_OUTSIDER = {"X-Athena-Actor": "3"}
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "admin@e.com", "name": "Admin", "password": "pw"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "c@e.com", "name": "Creator", "password": "pw", "role": "member"}, headers=H_ADMIN)
-    client.post("/users", json={"email": "o@e.com", "name": "Outsider", "password": "pw", "role": "member"}, headers=H_ADMIN)
+    client.post(
+        "/users",
+        json={"email": "admin@e.com", "name": "Admin", "password": "pw"},
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "c@e.com",
+            "name": "Creator",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
+    client.post(
+        "/users",
+        json={
+            "email": "o@e.com",
+            "name": "Outsider",
+            "password": "pw",
+            "role": "member",
+        },
+        headers=H_ADMIN,
+    )
 
 
 def _issue(client, title, *, project_id=None, priority="medium", headers=H_CREATOR):
@@ -31,7 +54,9 @@ def _issue(client, title, *, project_id=None, priority="medium", headers=H_CREAT
 
 
 def _active_sprint(client, pid):
-    sid = client.post(f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_CREATOR).json()["id"]
+    sid = client.post(
+        f"/projects/{pid}/sprints", json={"name": "S"}, headers=H_CREATOR
+    ).json()["id"]
     client.post(f"/sprints/{sid}/start", headers=H_CREATOR)
     return sid
 
@@ -39,8 +64,12 @@ def _active_sprint(client, pid):
 def _scenario(client, db_file):
     """Private project SEC (2 issues + active sprint), public project OPN (1 issue +
     active sprint), one backlog issue. Returns (db_conn, priv_pid, pub_pid)."""
-    priv = client.post("/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR).json()["id"]
-    pub = client.post("/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR).json()["id"]
+    priv = client.post(
+        "/projects", json={"name": "Secret", "key": "SEC"}, headers=H_CREATOR
+    ).json()["id"]
+    pub = client.post(
+        "/projects", json={"name": "Open", "key": "OPN"}, headers=H_CREATOR
+    ).json()["id"]
     _issue(client, "Hidden A", project_id=priv, priority="high")
     _issue(client, "Hidden B", project_id=priv, priority="high")
     _issue(client, "Public one", project_id=pub, priority="low")
@@ -84,12 +113,20 @@ def test_status_and_priority_counts_exclude_hidden(tmp_path):
         out_status = dashboard.status_counts(conn, _vis(conn, 3))
         assert out_status == [{"status": "open", "count": 2}]
         # Admin sees all four open issues.
-        assert dashboard.status_counts(conn, _vis(conn, 1)) == [{"status": "open", "count": 4}]
+        assert dashboard.status_counts(conn, _vis(conn, 1)) == [
+            {"status": "open", "count": 4}
+        ]
 
         # Priority: the two hidden 'high' issues vanish for the outsider.
-        out_prio = {p["priority"]: p["count"] for p in dashboard.priority_counts(conn, _vis(conn, 3))}
+        out_prio = {
+            p["priority"]: p["count"]
+            for p in dashboard.priority_counts(conn, _vis(conn, 3))
+        }
         assert out_prio == {"low": 1, "medium": 1, "high": 0, "urgent": 0}
-        admin_prio = {p["priority"]: p["count"] for p in dashboard.priority_counts(conn, _vis(conn, 1))}
+        admin_prio = {
+            p["priority"]: p["count"]
+            for p in dashboard.priority_counts(conn, _vis(conn, 1))
+        }
         assert admin_prio == {"low": 1, "medium": 1, "high": 2, "urgent": 0}
 
 
@@ -101,7 +138,9 @@ def test_project_and_sprint_views_exclude_hidden(tmp_path):
 
         out_projects = dashboard.project_open_counts(conn, _vis(conn, 3))
         assert [p["key"] for p in out_projects] == ["OPN"]
-        assert {p["key"] for p in dashboard.project_open_counts(conn, _vis(conn, 1))} == {"SEC", "OPN"}
+        assert {
+            p["key"] for p in dashboard.project_open_counts(conn, _vis(conn, 1))
+        } == {"SEC", "OPN"}
 
         out_flight = dashboard.active_sprints(conn, _vis(conn, 3))
         assert [s["project_name"] for s in out_flight] == ["Open"]
@@ -117,8 +156,12 @@ def test_my_open_issues_drops_assignments_in_hidden_projects(tmp_path):
         hidden = client.get("/issues", headers=H_ADMIN).json()
         priv_iid = next(i["id"] for i in hidden if i["title"] == "Hidden A")
         pub_iid = next(i["id"] for i in hidden if i["title"] == "Public one")
-        client.put(f"/issues/{priv_iid}/assignee", json={"assignee_id": 3}, headers=H_CREATOR)
-        client.put(f"/issues/{pub_iid}/assignee", json={"assignee_id": 3}, headers=H_CREATOR)
+        client.put(
+            f"/issues/{priv_iid}/assignee", json={"assignee_id": 3}, headers=H_CREATOR
+        )
+        client.put(
+            f"/issues/{pub_iid}/assignee", json={"assignee_id": 3}, headers=H_CREATOR
+        )
 
         mine = dashboard.my_open_issues(conn, 3, visible_project_ids=_vis(conn, 3))
         # Only the public assignment shows; the hidden-project one is gone.

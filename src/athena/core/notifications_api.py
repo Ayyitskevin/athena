@@ -71,9 +71,7 @@ def mark_read(
 ) -> None:
     # 404 if it isn't an unread notification belonging to this actor — a user can
     # only touch their own inbox.
-    if not notifications.mark_read(
-        conn, actor["id"], notification_id, actor=actor
-    ):
+    if not notifications.mark_read(conn, actor["id"], notification_id, actor=actor):
         raise HTTPException(status_code=404, detail="no such unread notification")
 
 

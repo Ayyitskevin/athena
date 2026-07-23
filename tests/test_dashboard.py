@@ -5,6 +5,7 @@ for the counting SQL, and the web route just lays them out. These tests pin the
 aggregations that matter (active-only counts, zero-filled priorities, the backlog
 row, what's in flight, the signed-in user's open plate) and that the page renders.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import dashboard
@@ -15,24 +16,36 @@ H1 = {"X-Athena-Actor": "1"}  # the bootstrap admin
 
 
 def _bootstrap(client):
-    client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"}, headers=H1)
+    client.post(
+        "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}, headers=H1
+    )
 
 
 def _login(client, email="a@e.com", name="A", password="pw"):
-    client.post("/users", json={"email": email, "name": name, "password": password}, headers=H1)
-    r = client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
+    client.post(
+        "/users", json={"email": email, "name": name, "password": password}, headers=H1
+    )
+    r = client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
     assert r.status_code == 303, r.text
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
 def _project(client, name="Ops", key="OPS"):
-    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()["id"]
+    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()[
+        "id"
+    ]
 
 
 def _issue(client, title="x", *, assignee_id=None, **fields):
-    iid = client.post("/issues", json={"title": title, **fields}, headers=H1).json()["id"]
+    iid = client.post("/issues", json={"title": title, **fields}, headers=H1).json()[
+        "id"
+    ]
     if assignee_id is not None:
-        r = client.put(f"/issues/{iid}/assignee", json={"assignee_id": assignee_id}, headers=H1)
+        r = client.put(
+            f"/issues/{iid}/assignee", json={"assignee_id": assignee_id}, headers=H1
+        )
         assert r.status_code == 200, r.text
     return iid
 
@@ -45,6 +58,7 @@ def _set_status(client, iid, status):
 # ---------------------------------------------------------------------------
 # Data layer — the aggregations, asserted on a real connection to the same db.
 # ---------------------------------------------------------------------------
+
 
 def test_totals_count_only_active_issues(tmp_path):
     db_file = tmp_path / "totals.db"
@@ -142,7 +156,9 @@ def test_my_open_issues_excludes_done_and_unassigned(tmp_path):
     db_file = tmp_path / "mine.db"
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)  # user 1
-        client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)  # user 2
+        client.post(
+            "/users", json={"email": "b@e.com", "name": "B"}, headers=H1
+        )  # user 2
         mine_open = _issue(client, "mine open", assignee_id=1)
         mine_done = _issue(client, "mine done", assignee_id=1)
         _set_status(client, mine_done, "done")
@@ -176,7 +192,9 @@ def test_active_sprints_list_in_flight_with_counts(tmp_path):
         pid = _project(client)
         # A planned sprint that we never start — must NOT show as in flight.
         client.post(f"/projects/{pid}/sprints", json={"name": "Later"}, headers=H1)
-        active = client.post(f"/projects/{pid}/sprints", json={"name": "Now"}, headers=H1).json()["id"]
+        active = client.post(
+            f"/projects/{pid}/sprints", json={"name": "Now"}, headers=H1
+        ).json()["id"]
         client.post(f"/sprints/{active}/start", headers=H1)
         iid = _issue(client, "in sprint", project_id=pid)
         r = client.put(f"/issues/{iid}/sprint", json={"sprint_id": active}, headers=H1)
@@ -195,12 +213,19 @@ def test_active_sprint_count_excludes_archived_issues(tmp_path):
     with TestClient(create_app(db_file)) as client:
         _bootstrap(client)
         pid = _project(client)
-        sid = client.post(f"/projects/{pid}/sprints", json={"name": "Now"}, headers=H1).json()["id"]
+        sid = client.post(
+            f"/projects/{pid}/sprints", json={"name": "Now"}, headers=H1
+        ).json()["id"]
         client.post(f"/sprints/{sid}/start", headers=H1)
         live = _issue(client, "live", project_id=pid)
         gone = _issue(client, "gone", project_id=pid)
         for iid in (live, gone):
-            assert client.put(f"/issues/{iid}/sprint", json={"sprint_id": sid}, headers=H1).status_code == 200
+            assert (
+                client.put(
+                    f"/issues/{iid}/sprint", json={"sprint_id": sid}, headers=H1
+                ).status_code
+                == 200
+            )
         # Archiving an issue keeps its sprint_id, so a naive COUNT(*) would still
         # see it — the dashboard's active-only count must not.
         client.post(f"/issues/{gone}/archive", headers=H1)
@@ -213,6 +238,7 @@ def test_active_sprint_count_excludes_archived_issues(tmp_path):
 # ---------------------------------------------------------------------------
 # Web route — the page renders the numbers and respects who's looking.
 # ---------------------------------------------------------------------------
+
 
 def test_dashboard_renders_for_anonymous(tmp_path):
     with TestClient(create_app(tmp_path / "anon.db")) as client:

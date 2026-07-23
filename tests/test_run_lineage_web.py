@@ -5,6 +5,7 @@ These encode that the page renders the ancestor trail (goal→…→run), the fo
 events, and the spawned-run tree; that an unknown/unseeable run is a 404; and that a run
 card links to its lineage. Reads are open, like the rest of the activity views.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.main import create_app

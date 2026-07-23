@@ -723,9 +723,7 @@ class AthenaClient:
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
 
-    def find_pages_by_title(
-        self, title: str, *, space_id: int | None = None
-    ) -> Any:
+    def find_pages_by_title(self, title: str, *, space_id: int | None = None) -> Any:
         """Look up pages by their TITLE instead of a numeric id — the address an agent
         can recall. Returns every exact (case-insensitive) match (titles aren't unique),
         so the caller can disambiguate; pass space_id to narrow to one space."""
@@ -750,9 +748,7 @@ class AthenaClient:
 
     def get_page_version(self, page_id: int, version: int) -> Any:
         """One historical revision's title + body."""
-        return self._result(
-            self._client.get(f"/pages/{page_id}/versions/{version}")
-        )
+        return self._result(self._client.get(f"/pages/{page_id}/versions/{version}"))
 
     def restore_page_version(
         self, page_id: int, version: int, *, idempotency_key: str | None = None
@@ -765,9 +761,7 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
-    def archive_page(
-        self, page_id: int, *, idempotency_key: str | None = None
-    ) -> Any:
+    def archive_page(self, page_id: int, *, idempotency_key: str | None = None) -> Any:
         return self._mutate(
             self._client.post,
             f"/pages/{page_id}/archive",
@@ -877,9 +871,7 @@ class AthenaClient:
     def list_automation_failures(self) -> Any:
         """List only automation rules with recorded action failures (admin only)."""
         return self._result(
-            self._client.get(
-                "/automation/rules", params={"failing_only": True}
-            )
+            self._client.get("/automation/rules", params={"failing_only": True})
         )
 
     def set_user_paused(self, user_id: int, paused: bool) -> Any:

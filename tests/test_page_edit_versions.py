@@ -13,6 +13,7 @@ The contract these encode — why each rule earns its place:
     (missing -> 404), needs at least one field (-> 422), and refuses a blank
     title (-> 422) — the live page can never be edited into a nameless state.
 """
+
 import sqlite3
 import threading
 
@@ -42,7 +43,9 @@ def _space_with_page(conn, *, title="Runbook", body="v1 text", created_by=1):
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.execute("INSERT INTO users (email, name) VALUES ('b@e.com', 'B')")
     conn.commit()
-    space = spaces.create_space(conn, key="ENG", name="Engineering", created_by=created_by)
+    space = spaces.create_space(
+        conn, key="ENG", name="Engineering", created_by=created_by
+    )
     page = pages.create_page(
         conn, space_id=space["id"], title=title, body=body, created_by=created_by
     )
@@ -89,7 +92,9 @@ def test_each_version_keeps_its_own_author(tmp_path):
     # snapshot of the original must stay attributed to Ann even though Bob caused it.
     conn = _migrated_conn(tmp_path / "blame.db")
     page = _space_with_page(conn, created_by=1)  # user 1 = Ann
-    pages.update_page(conn, page["id"], editor_id=2, body="bob's rewrite")  # user 2 = Bob
+    pages.update_page(
+        conn, page["id"], editor_id=2, body="bob's rewrite"
+    )  # user 2 = Bob
     history = pages.list_page_versions(conn, page["id"])
     assert history[0]["edited_by"] == 1  # the superseded original was Ann's
     live = pages.get_page(conn, page["id"])
@@ -115,7 +120,9 @@ def test_each_version_keeps_its_authoring_run(tmp_path):
     history = pages.list_page_versions(conn, page["id"])
     assert history[0]["version"] == 1
     assert history[0]["run_id"] == "run-alpha"  # the superseded content's run, not beta
-    assert pages.get_page(conn, page["id"])["run_id"] == "run-beta"  # live row = this edit
+    assert (
+        pages.get_page(conn, page["id"])["run_id"] == "run-beta"
+    )  # live row = this edit
 
 
 def test_human_write_records_no_run(tmp_path):
@@ -138,7 +145,9 @@ def test_version_run_id_surfaced_over_rest(tmp_path):
         conn.commit()
         conn.close()
         h = {"X-Athena-Actor": "1", "X-Athena-Run": "run-rest"}
-        sp = client.post("/spaces", json={"key": "ENG", "name": "Eng"}, headers=h).json()
+        sp = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=h
+        ).json()
         pg = client.post(
             f"/spaces/{sp['id']}/pages", json={"title": "Doc", "body": "v1"}, headers=h
         ).json()
@@ -225,7 +234,8 @@ def test_failed_update_rolls_back_the_version_snapshot(tmp_path):
 def _make_space_and_page(client, db_file, *, body="v1 text"):
     _seed_two_users(db_file)
     space = client.post(
-        "/spaces", json={"key": "ENG", "name": "Engineering"},
+        "/spaces",
+        json={"key": "ENG", "name": "Engineering"},
         headers={"X-Athena-Actor": "1"},
     ).json()
     page = client.post(

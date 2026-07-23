@@ -7,6 +7,7 @@ filter, routed through list_issues, correctly hid them). search now excludes arc
 issues by source, consistently on both the no-filter and filtered paths, with an explicit
 opt-in to search the archive.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issue_search, issues
@@ -30,7 +31,9 @@ def test_archived_issue_is_hidden_from_search_but_findable_on_opt_in(tmp_path):
 
     conn = db.connect(db_file)
     # Indexed on creation → a plain search finds it on both paths.
-    assert _has(issue_search.search_issues(conn, "Payment"), iid)  # aegis no-filter branch
+    assert _has(
+        issue_search.search_issues(conn, "Payment"), iid
+    )  # aegis no-filter branch
     assert _has(search.search(conn, "Payment", kind="issue"), iid)  # core search
 
     # Archive it — it must drop out of search, like every other list.
@@ -41,7 +44,9 @@ def test_archived_issue_is_hidden_from_search_but_findable_on_opt_in(tmp_path):
     assert not _has(issue_search.search_issues(conn, "Payment", status="open"), iid)
 
     # The archive is still searchable on an explicit opt-in.
-    assert _has(search.search(conn, "Payment", kind="issue", include_archived=True), iid)
+    assert _has(
+        search.search(conn, "Payment", kind="issue", include_archived=True), iid
+    )
 
     # Restoring it brings it back to ordinary search.
     issues.set_archived(conn, iid, False)

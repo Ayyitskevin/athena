@@ -20,6 +20,7 @@ Trust model, made explicit so it can't quietly erode:
 
 HTTP uses stdlib urllib (like core/webhooks), so SSO adds only PyJWT to the deps.
 """
+
 from __future__ import annotations
 
 import base64
@@ -42,9 +43,15 @@ logger = logging.getLogger(__name__)
 # accepting HS* while we hand jwt.decode the IdP's PUBLIC key would let anyone who
 # knows that public key forge a token. JWKS keys are RSA/EC, so this is also correct.
 _ID_TOKEN_ALGORITHMS = [
-    "RS256", "RS384", "RS512",
-    "ES256", "ES384", "ES512",
-    "PS256", "PS384", "PS512",
+    "RS256",
+    "RS384",
+    "RS512",
+    "ES256",
+    "ES384",
+    "ES512",
+    "PS256",
+    "PS384",
+    "PS512",
 ]
 
 # Scopes we request: openid (required) + email/profile so we can provision a user.

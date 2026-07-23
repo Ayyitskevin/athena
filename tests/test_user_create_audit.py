@@ -9,6 +9,7 @@ on the unauthenticated bootstrap of the first user and on an SSO first-login. Th
 internal 'Automation' system actor is deliberately NOT audited (it is plumbing, not a
 person joining), and the password hash never reaches the detail.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import automation
@@ -34,7 +35,9 @@ def test_bootstrap_first_user_is_self_attributed(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         # The very first user is created with NO authentication (nobody exists yet).
-        r = c.post("/users", json={"email": "boss@e.com", "name": "Boss", "password": "pw"})
+        r = c.post(
+            "/users", json={"email": "boss@e.com", "name": "Boss", "password": "pw"}
+        )
         assert r.status_code == 201, r.text
         uid = r.json()["id"]
 
@@ -49,7 +52,9 @@ def test_bootstrap_first_user_is_self_attributed(tmp_path):
 def test_admin_created_user_is_attributed_to_the_admin(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
-        c.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})  # admin, id 1
+        c.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}
+        )  # admin, id 1
         r = c.post(
             "/users",
             json={"email": "m@e.com", "name": "M", "role": "member"},
@@ -70,9 +75,13 @@ def test_admin_created_user_is_attributed_to_the_admin(tmp_path):
 def test_duplicate_email_records_nothing(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
-        c.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})  # id 1
+        c.post(
+            "/users", json={"email": "a@e.com", "name": "A", "password": "pw"}
+        )  # id 1
         # Re-using the email is a 400 and must leave no created_user event behind.
-        dup = c.post("/users", json={"email": "a@e.com", "name": "Dup"}, headers=H_ADMIN)
+        dup = c.post(
+            "/users", json={"email": "a@e.com", "name": "Dup"}, headers=H_ADMIN
+        )
         assert dup.status_code == 400
     # Only the bootstrap admin's create was recorded.
     assert len(_events(db_file, "created_user")) == 1
@@ -97,11 +106,20 @@ def test_web_admin_create_is_audited(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         c.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
-        c.post("/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         created = c.post(
             "/admin/users",
-            data={"email": "new@e.com", "name": "New", "password": "pw", "role": "viewer"},
+            data={
+                "email": "new@e.com",
+                "name": "New",
+                "password": "pw",
+                "role": "viewer",
+            },
             follow_redirects=False,
         )
         assert created.status_code == 303, created.text
@@ -116,10 +134,19 @@ def test_web_admin_create_is_audited(tmp_path):
 def test_sso_first_login_provision_is_self_attributed(tmp_path):
     conn = db.connect(tmp_path / "sso.db")
     db.migrate(conn)
-    claims = {"sub": "s1", "email": "new@acme.com", "email_verified": True, "name": "New"}
-    user = oidc_flow.provision_or_link(conn, issuer="https://idp.example.com", claims=claims)
+    claims = {
+        "sub": "s1",
+        "email": "new@acme.com",
+        "email_verified": True,
+        "name": "New",
+    }
+    user = oidc_flow.provision_or_link(
+        conn, issuer="https://idp.example.com", claims=claims
+    )
 
-    ev = [e for e in activity.list_activity(conn, limit=50) if e["verb"] == "created_user"]
+    ev = [
+        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "created_user"
+    ]
     assert len(ev) == 1
     # The person signing in provisions their OWN account — actor and target are the user.
     assert ev[0]["actor_id"] == user["id"] and ev[0]["target_id"] == user["id"]

@@ -7,6 +7,7 @@ a comment addressed under the wrong issue is a 404, an empty edit is a 422, and
 every write needs an actor. The 403 tests are the load-bearing ones — they prove
 ownership is actually enforced, not just advertised.
 """
+
 from fastapi.testclient import TestClient
 
 from athena.core import db
@@ -163,9 +164,15 @@ def test_non_author_cannot_delete_comment(tmp_path):
 def _seed_admin_and_two_members(db_file):
     # user 1 = admin (moderator), user 2 = member (author), user 3 = member (bystander)
     conn = db.connect(db_file)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('mod@e.com', 'Mod', 'admin')")
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('ann@e.com', 'Ann', 'member')")
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('bob@e.com', 'Bob', 'member')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('mod@e.com', 'Mod', 'admin')"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('ann@e.com', 'Ann', 'member')"
+    )
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('bob@e.com', 'Bob', 'member')"
+    )
     conn.commit()
     conn.close()
 
@@ -202,7 +209,9 @@ def test_admin_can_delete_another_users_comment_but_member_cannot(tmp_path):
         (issue_id,),
     ).fetchone()
     conn.close()
-    assert latest["actor_id"] == 1  # the moderation is on the record, stamped to the admin
+    assert (
+        latest["actor_id"] == 1
+    )  # the moderation is on the record, stamped to the admin
 
 
 def test_admin_cannot_edit_another_users_comment(tmp_path):
@@ -220,7 +229,10 @@ def test_admin_cannot_edit_another_users_comment(tmp_path):
             headers={"X-Athena-Actor": "1"},  # the admin — still refused on edit
         )
         assert r.status_code == 403
-        assert client.get(f"/issues/{issue_id}/comments").json()[0]["body"] == "ann's words"
+        assert (
+            client.get(f"/issues/{issue_id}/comments").json()[0]["body"]
+            == "ann's words"
+        )
 
 
 def test_delete_missing_comment_is_404(tmp_path):

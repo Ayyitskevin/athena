@@ -9,6 +9,7 @@ because it is genuinely cross-cutting; it deliberately uses the /aegis/labels UR
 space (the REST /labels path is the JSON vocabulary the autocomplete reads, so the
 HTML hub must not shadow it).
 """
+
 from __future__ import annotations
 
 import sqlite3

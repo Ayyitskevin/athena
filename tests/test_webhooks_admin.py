@@ -7,6 +7,7 @@ it WITHOUT losing the cursor; resuming also clears a stale backoff so a fixed
 endpoint retries promptly; the PATCH endpoint is admin-only; and the admin page
 registers (secret shown once), toggles, and deletes.
 """
+
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -31,13 +32,17 @@ class _Poster:
 def _conn(db_file):
     conn = db.connect(db_file)
     db.migrate(conn)
-    conn.execute("INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')")
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')"
+    )
     conn.commit()
     return conn
 
 
 def _login(client, email="a@e.com", password="pw"):
-    client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
+    client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
     client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
 
 
@@ -66,7 +71,10 @@ def test_resume_clears_a_stale_backoff(tmp_path):
     activity.record(conn, actor_id=1, verb="created", target_kind="issue", target_id=1)
 
     # A failure arms backoff: still active, but gated until next_attempt_at.
-    assert webhooks.deliver_pending(conn, poster=_Poster(ok=False, error="boom"), now=NOW) == 0
+    assert (
+        webhooks.deliver_pending(conn, poster=_Poster(ok=False, error="boom"), now=NOW)
+        == 0
+    )
     failed = webhooks.get_webhook(conn, wid)
     assert failed["failure_count"] == 1 and failed["next_attempt_at"] is not None
     # At the same instant it stays gated — nothing delivers yet.
@@ -99,14 +107,21 @@ def test_patch_toggles_active(tmp_path):
         assert paused.status_code == 200 and paused.json()["active"] == 0
         resumed = client.patch(f"/webhooks/{wid}", json={"active": True}, headers=H1)
         assert resumed.json()["active"] == 1
-        assert client.patch("/webhooks/999", json={"active": False}, headers=H1).status_code == 404
+        assert (
+            client.patch(
+                "/webhooks/999", json={"active": False}, headers=H1
+            ).status_code
+            == 404
+        )
 
 
 def test_patch_is_admin_only(tmp_path):
     with TestClient(create_app(tmp_path / "guard.db")) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         member = client.post(
-            "/users", json={"email": "m@e.com", "name": "M", "role": "member"}, headers=H1
+            "/users",
+            json={"email": "m@e.com", "name": "M", "role": "member"},
+            headers=H1,
         ).json()
         wid = client.post("/webhooks", json={"url": HOOK}, headers=H1).json()["id"]
         denied = client.patch(
@@ -131,7 +146,9 @@ def test_admin_webhooks_register_toggle_delete(tmp_path):
 
         # Register → the signing secret is shown exactly once.
         created = client.post(
-            "/admin/webhooks", data={"url": HOOK, "event_kind": ""}, follow_redirects=False
+            "/admin/webhooks",
+            data={"url": HOOK, "event_kind": ""},
+            follow_redirects=False,
         )
         assert created.status_code == 201
         assert "token-secret" in created.text and "shown once" in created.text
@@ -139,7 +156,9 @@ def test_admin_webhooks_register_toggle_delete(tmp_path):
         wid = _only_webhook_id(db_file)
         # Pause from the UI.
         toggled = client.post(
-            f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False
+            f"/admin/webhooks/{wid}/active",
+            data={"active": "0"},
+            follow_redirects=False,
         )
         assert toggled.status_code == 303
         assert _webhook_active(db_file, wid) == 0
@@ -174,7 +193,9 @@ def test_web_register_reapplies_the_ssrf_guard(tmp_path):
         _login(client)
         for bad in ("http://127.0.0.1/x", "http://169.254.169.254/latest/meta-data"):
             resp = client.post(
-                "/admin/webhooks", data={"url": bad, "event_kind": ""}, follow_redirects=False
+                "/admin/webhooks",
+                data={"url": bad, "event_kind": ""},
+                follow_redirects=False,
             )
             assert resp.status_code == 400, bad
             assert "token-secret" not in resp.text  # no secret minted
@@ -197,7 +218,9 @@ def test_member_cannot_toggle_or_delete_webhook(tmp_path):
 
         _login(client, "m@e.com", "pw")  # a valid member session + CSRF token
         toggle = client.post(
-            f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False
+            f"/admin/webhooks/{wid}/active",
+            data={"active": "0"},
+            follow_redirects=False,
         )
         assert toggle.status_code == 403
         delete = client.post(f"/admin/webhooks/{wid}/delete", follow_redirects=False)
@@ -218,15 +241,26 @@ def test_csrf_required_on_webhook_web_routes(tmp_path):
         _login(client)
         client.headers.pop("X-CSRF-Token", None)  # drop the token the helper set
 
-        assert client.post(
-            "/admin/webhooks", data={"url": HOOK}, follow_redirects=False
-        ).status_code == 403
-        assert client.post(
-            f"/admin/webhooks/{wid}/active", data={"active": "0"}, follow_redirects=False
-        ).status_code == 403
-        assert client.post(
-            f"/admin/webhooks/{wid}/delete", follow_redirects=False
-        ).status_code == 403
+        assert (
+            client.post(
+                "/admin/webhooks", data={"url": HOOK}, follow_redirects=False
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                f"/admin/webhooks/{wid}/active",
+                data={"active": "0"},
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                f"/admin/webhooks/{wid}/delete", follow_redirects=False
+            ).status_code
+            == 403
+        )
         # Nothing changed: exactly the one REST-created webhook, still active.
         assert _webhook_count(db_file) == 1
         assert _webhook_active(db_file, wid) == 1
@@ -243,7 +277,9 @@ def _only_webhook_id(db_file):
 def _webhook_active(db_file, wid):
     conn = db.connect(db_file)
     try:
-        return conn.execute("SELECT active FROM webhooks WHERE id = ?", (wid,)).fetchone()["active"]
+        return conn.execute(
+            "SELECT active FROM webhooks WHERE id = ?", (wid,)
+        ).fetchone()["active"]
     finally:
         conn.close()
 

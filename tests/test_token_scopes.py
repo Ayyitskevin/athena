@@ -54,7 +54,9 @@ def test_read_only_token_can_read_but_cannot_write(tmp_path):
         assert denied.status_code == 403
         assert denied.json()["detail"] == "token scope required: issue:write"
 
-        remint = client.post("/tokens", json={"name": "escape", "scopes": ["admin"]}, headers=auth)
+        remint = client.post(
+            "/tokens", json={"name": "escape", "scopes": ["admin"]}, headers=auth
+        )
         assert remint.status_code == 403
         assert remint.json()["detail"] == "token scope required: admin"
 
@@ -67,7 +69,9 @@ def test_read_only_token_cannot_mutate_personal_state(tmp_path):
     app = create_app(tmp_path / "scope_personal.db")
     with TestClient(app) as client:
         _bootstrap_admin(client)
-        issue = client.post("/issues", json={"title": "watchable"}, headers=_AUTH_ADMIN).json()
+        issue = client.post(
+            "/issues", json={"title": "watchable"}, headers=_AUTH_ADMIN
+        ).json()
         reader = _bearer(_mint(client, scopes=["read"], name="reader")["token"])
         writer = _bearer(_mint(client, scopes=["issue:write"], name="writer")["token"])
 
@@ -86,7 +90,10 @@ def test_read_only_token_cannot_mutate_personal_state(tmp_path):
             assert resp.json()["detail"] == "token scope required: a write scope"
 
         # A write-capable token (issue:write) may do the same personal writes.
-        assert client.post("/filters", json={"name": "ok"}, headers=writer).status_code == 201
+        assert (
+            client.post("/filters", json={"name": "ok"}, headers=writer).status_code
+            == 201
+        )
         assert client.post("/watches", json=watch, headers=writer).status_code == 204
         assert client.post("/notifications/read_all", headers=writer).status_code == 200
 
@@ -137,7 +144,9 @@ def test_docs_write_token_cannot_write_issues(tmp_path):
         assert issue.json()["detail"] == "token scope required: issue:write"
 
 
-def test_admin_scope_preserves_full_token_access_and_omitted_scopes_are_refused(tmp_path):
+def test_admin_scope_preserves_full_token_access_and_omitted_scopes_are_refused(
+    tmp_path,
+):
     app = create_app(tmp_path / "scope_admin.db")
     with TestClient(app) as client:
         _bootstrap_admin(client)

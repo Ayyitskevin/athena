@@ -6,6 +6,7 @@ own APIRouter, mounted by main.py. A thin client over the saved_filters/issue_se
 data layers — it owns no data. The shared label helper and template accessor are
 imported from web.router.
 """
+
 from __future__ import annotations
 
 import html
@@ -41,7 +42,9 @@ def _describe_criteria(conn, criteria: dict, actor: dict | None) -> str:
         parts.append(f"priority: {criteria['priority']}")
     if criteria.get("assignee_id") is not None:
         user = users.get_user(conn, criteria["assignee_id"])
-        parts.append(f"assignee: {user['name'] if user else '#' + str(criteria['assignee_id'])}")
+        parts.append(
+            f"assignee: {user['name'] if user else '#' + str(criteria['assignee_id'])}"
+        )
     if criteria.get("label"):
         parts.append(f"label: {criteria['label']}")
     if criteria.get("project"):
@@ -102,13 +105,17 @@ def filters_list(request: Request, conn: sqlite3.Connection = Depends(get_conn))
             "prefill": prefill,
             "priorities": issues.PRIORITIES,
             "all_labels": labels.list_labels(conn),
-            "all_projects": projects.list_projects(conn, access.visible_project_filter(conn, user)),
+            "all_projects": projects.list_projects(
+                conn, access.visible_project_filter(conn, user)
+            ),
             "all_users": users.list_users(conn),
         },
     )
 
 
-@router.post("/aegis/filters", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)])
+@router.post(
+    "/aegis/filters", response_class=HTMLResponse, dependencies=[Depends(verify_csrf)]
+)
 def create_filter(
     request: Request,
     name: str = Form(""),
@@ -133,7 +140,9 @@ def create_filter(
         )
     name = name.strip()
     if not name:
-        return HTMLResponse('<div class="error">Filter name is required.</div>', status_code=400)
+        return HTMLResponse(
+            '<div class="error">Filter name is required.</div>', status_code=400
+        )
     try:
         criteria = saved_filters.normalize_criteria(
             {
@@ -151,9 +160,13 @@ def create_filter(
         )
     reason = saved_filters.validate_criteria(criteria)
     if reason is not None:
-        return HTMLResponse(f'<div class="error">{html.escape(reason)}.</div>', status_code=400)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(reason)}.</div>', status_code=400
+        )
     try:
-        saved_filters.create_filter(conn, owner_id=user["id"], name=name, criteria=criteria)
+        saved_filters.create_filter(
+            conn, owner_id=user["id"], name=name, criteria=criteria
+        )
     except sqlite3.IntegrityError:
         return HTMLResponse(
             '<div class="error">You already have a filter with that name.</div>',

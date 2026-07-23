@@ -11,6 +11,7 @@ Three security properties pinned here:
     (the dummy-verify path), so "no such account" is not a timing oracle beside
     a docstring promising "never reveal which".
 """
+
 from pathlib import Path
 import re
 
@@ -84,9 +85,9 @@ def test_successful_login_transparently_upgrades_an_old_hash(tmp_path, monkeypat
     monkeypatch.setattr(passwords, "_ITERATIONS", 2_000)
     user = users.verify_credentials(conn, email="a@e.com", password="pw")
     assert user is not None and user["id"] == 1
-    upgraded = conn.execute(
-        "SELECT password_hash FROM users WHERE id = 1"
-    ).fetchone()["password_hash"]
+    upgraded = conn.execute("SELECT password_hash FROM users WHERE id = 1").fetchone()[
+        "password_hash"
+    ]
     assert "$2000$" in upgraded and upgraded != old_stored
 
     # The upgraded hash still verifies, and no further rewrite happens.
@@ -119,7 +120,9 @@ def test_failed_login_never_rewrites_the_hash(tmp_path, monkeypatch):
 # --- timing parity (dummy verify) ------------------------------------------
 
 
-def test_unknown_email_and_passwordless_account_burn_a_dummy_verify(tmp_path, monkeypatch):
+def test_unknown_email_and_passwordless_account_burn_a_dummy_verify(
+    tmp_path, monkeypatch
+):
     conn = _conn(tmp_path)
     users.create_user(conn, email="api-only@e.com", name="Bot")  # no password
 
@@ -151,11 +154,16 @@ def test_web_login_still_works_and_upgrades(tmp_path, monkeypatch):
         c.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         monkeypatch.setattr(passwords, "_ITERATIONS", 2_000)
         r = c.post(
-            "/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
         )
         assert r.status_code == 303
     conn = db.connect(tmp_path / "web.db")
-    assert "$2000$" in conn.execute(
-        "SELECT password_hash FROM users WHERE id = 1"
-    ).fetchone()["password_hash"]
+    assert (
+        "$2000$"
+        in conn.execute("SELECT password_hash FROM users WHERE id = 1").fetchone()[
+            "password_hash"
+        ]
+    )
     conn.close()

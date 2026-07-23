@@ -262,13 +262,17 @@ def map_jira_project(
             label_links.append({"issue_id": issue_id, "label_id": label["id"]})
 
         for comment in _jira_comments(fields.get("comment")):
-            author = _jira_user(comment.get("author") if isinstance(comment, dict) else None)
+            author = _jira_user(
+                comment.get("author") if isinstance(comment, dict) else None
+            )
             comments.append(
                 {
                     "id": comment_id,
                     "issue_id": issue_id,
                     "author_id": users.id_for(author),
-                    "body": _body_to_text(comment.get("body") if isinstance(comment, dict) else ""),
+                    "body": _body_to_text(
+                        comment.get("body") if isinstance(comment, dict) else ""
+                    ),
                     "created_at": _string_or_now(
                         comment.get("created") if isinstance(comment, dict) else None,
                         now,
@@ -309,7 +313,9 @@ def map_jira_project(
     labels = sorted(labels_by_name.values(), key=lambda row: row["id"])
     project["created_by"] = owner_id
     project["created_at"] = min((row["created_at"] for row in issue_rows), default=now)
-    project["issue_counter"] = max((row["project_seq"] or 0 for row in issue_rows), default=0)
+    project["issue_counter"] = max(
+        (row["project_seq"] or 0 for row in issue_rows), default=0
+    )
     report.set_count("issues", len(issue_rows))
     report.set_count("comments", len(comments))
     report.set_count("issue_links", len(issue_links))
@@ -455,14 +461,20 @@ def map_confluence_space(
                 {
                     "id": version_id,
                     "page_id": page_id,
-                    "version": int(version.get("number") or version.get("version") or version_id),
-                    "title": str(version.get("title") or page.get("title") or f"Page {page_id}"),
+                    "version": int(
+                        version.get("number") or version.get("version") or version_id
+                    ),
+                    "title": str(
+                        version.get("title") or page.get("title") or f"Page {page_id}"
+                    ),
                     "body": _rewrite_confluence_page_refs(
                         _html_to_text(_confluence_version_body(version)),
                         page_id_by_source,
                         page_id_by_title,
                     ),
-                    "edited_by": users.id_for(_confluence_user(version.get("by") or version.get("author"))),
+                    "edited_by": users.id_for(
+                        _confluence_user(version.get("by") or version.get("author"))
+                    ),
                     "created_at": _string_or_now(
                         version.get("when") or version.get("created_at"),
                         now,
@@ -487,8 +499,14 @@ def map_confluence_space(
                 {
                     "id": comment_id,
                     "page_id": page_id,
-                    "author_id": users.id_for(_confluence_user(comment.get("author") or comment.get("created_by"))),
-                    "body": _html_to_text(comment.get("body") or comment.get("value") or ""),
+                    "author_id": users.id_for(
+                        _confluence_user(
+                            comment.get("author") or comment.get("created_by")
+                        )
+                    ),
+                    "body": _html_to_text(
+                        comment.get("body") or comment.get("value") or ""
+                    ),
                     "created_at": _string_or_now(
                         comment.get("created_at") or comment.get("createdDate"),
                         now,
@@ -544,7 +562,9 @@ def _break_page_parent_cycles(pages_out: list[dict], report: _MappingReport) -> 
         node = by_id.get(page["parent_id"]) if page["parent_id"] is not None else None
         while node is not None:
             if node["id"] == page["id"]:
-                page["parent_id"] = None  # page sits on its own ancestor chain → a cycle
+                page["parent_id"] = (
+                    None  # page sits on its own ancestor chain → a cycle
+                )
                 report.note_unmapped(
                     "pages[].ancestors", "cyclic parent chain was broken"
                 )
@@ -552,7 +572,9 @@ def _break_page_parent_cycles(pages_out: list[dict], report: _MappingReport) -> 
             if node["id"] in seen:
                 break  # a cycle not involving `page`; broken from one of its own members
             seen.add(node["id"])
-            node = by_id.get(node["parent_id"]) if node["parent_id"] is not None else None
+            node = (
+                by_id.get(node["parent_id"]) if node["parent_id"] is not None else None
+            )
 
 
 def _bundle_base(kind: str, root_id: int, source: str, now: str) -> dict:
@@ -593,7 +615,9 @@ def _jira_project_info(
     fields = first_issue.get("fields") if isinstance(first_issue, dict) else {}
     fields = fields if isinstance(fields, dict) else {}
     project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
-    raw_key = project_key or project.get("key") or _jira_key_prefix(first_issue.get("key"))
+    raw_key = (
+        project_key or project.get("key") or _jira_key_prefix(first_issue.get("key"))
+    )
     key = _clean_key(str(raw_key or "IMP"))
     return {
         "id": 1,
@@ -686,7 +710,9 @@ def _jira_labels(labels: Any) -> list[str]:
 
 
 def _jira_comments(comment_field: Any) -> list[dict]:
-    if isinstance(comment_field, dict) and isinstance(comment_field.get("comments"), list):
+    if isinstance(comment_field, dict) and isinstance(
+        comment_field.get("comments"), list
+    ):
         return [c for c in comment_field["comments"] if isinstance(c, dict)]
     if isinstance(comment_field, list):
         return [c for c in comment_field if isinstance(c, dict)]
@@ -713,7 +739,9 @@ def _jira_links(
             continue
         link_type = row.get("type") if isinstance(row.get("type"), dict) else {}
         if isinstance(row.get("outwardIssue"), dict):
-            target = issue_id_by_key.get(str(row["outwardIssue"].get("key", "")).upper())
+            target = issue_id_by_key.get(
+                str(row["outwardIssue"].get("key", "")).upper()
+            )
             if target is None:
                 report.note_unmapped(
                     "issues[].fields.issuelinks",
@@ -786,7 +814,9 @@ def _confluence_created_by(page: dict) -> dict | None:
 
 def _confluence_updated_by(page: dict) -> dict | None:
     version = page.get("version") if isinstance(page.get("version"), dict) else {}
-    return _confluence_user(version.get("by") or page.get("lastUpdatedBy") or _confluence_created_by(page))
+    return _confluence_user(
+        version.get("by") or page.get("lastUpdatedBy") or _confluence_created_by(page)
+    )
 
 
 def _confluence_created_at(page: dict) -> Any:
@@ -894,7 +924,9 @@ def _confluence_body_refs(
     rewritten_body: str,
     page_id_by_source: dict[str, int],
 ) -> set[int]:
-    refs = {ref_id for kind, ref_id in links.extract_refs(rewritten_body) if kind == "page"}
+    refs = {
+        ref_id for kind, ref_id in links.extract_refs(rewritten_body) if kind == "page"
+    }
     for match in _RESOURCE_ID_RE.findall(source):
         mapped = page_id_by_source.get(match)
         if mapped is not None:
@@ -909,7 +941,10 @@ def _confluence_storage_ref_ids(
     report: "_MappingReport",
 ) -> set[int]:
     refs: set[int] = set()
-    for raw_id in [*_RESOURCE_ID_RE.findall(source), *_RI_CONTENT_ID_RE.findall(source)]:
+    for raw_id in [
+        *_RESOURCE_ID_RE.findall(source),
+        *_RI_CONTENT_ID_RE.findall(source),
+    ]:
         mapped = page_id_by_source.get(raw_id)
         if mapped is None:
             report.note_unmapped(
@@ -1004,7 +1039,9 @@ def _confluence_unmapped_field_reason(key: str) -> str:
     if key in {"_links", "_expandable", "extensions"}:
         return "Confluence presentation metadata is not mapped into Athena V1 bundles"
     if key in {"descendants", "children"}:
-        return "Confluence child expansion metadata is not mapped into Athena V1 bundles"
+        return (
+            "Confluence child expansion metadata is not mapped into Athena V1 bundles"
+        )
     return "Confluence page property is not mapped into Athena V1 bundles"
 
 
@@ -1028,7 +1065,10 @@ def _user_from_mapping(value: Any) -> dict | None:
     if value is None:
         return None
     if isinstance(value, str):
-        return {"email": value if "@" in value else f"{_slug(value)}@import.local", "name": value}
+        return {
+            "email": value if "@" in value else f"{_slug(value)}@import.local",
+            "name": value,
+        }
     if not isinstance(value, dict):
         return None
     email = (
@@ -1069,8 +1109,14 @@ def _adf_to_text(node: Any) -> str:
     if node_type == "mention":
         attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
         return str(attrs.get("text") or attrs.get("displayName") or "")
-    children = [_adf_to_text(child) for child in node.get("content", []) if child is not None]
-    separator = "\n\n" if node_type in {"doc", "paragraph", "bulletList", "orderedList", "listItem"} else ""
+    children = [
+        _adf_to_text(child) for child in node.get("content", []) if child is not None
+    ]
+    separator = (
+        "\n\n"
+        if node_type in {"doc", "paragraph", "bulletList", "orderedList", "listItem"}
+        else ""
+    )
     return separator.join(part for part in children if part)
 
 
@@ -1120,7 +1166,7 @@ class _TextHTMLParser(HTMLParser):
         # text — the macro's language/formatting is flattened, but the code itself is
         # preserved rather than lost) on its own lines.
         if data.startswith("CDATA["):
-            self._parts.append("\n" + data[len("CDATA["):] + "\n")
+            self._parts.append("\n" + data[len("CDATA[") :] + "\n")
 
     def handle_data(self, data: str) -> None:
         self._parts.append(data)
