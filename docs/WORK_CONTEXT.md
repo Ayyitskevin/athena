@@ -229,11 +229,14 @@ Two strong, opaque validators appear, and they are not interchangeable:
 2. The JSON body's `issue_etag` validates the root issue's public singleton
    representation. Copy this value exactly into `If-Match`/`if_match`
    for `PATCH /issues/{id}` and the guarded `PUT` assignee, project, and sprint
-   issue mutations.
+   issue mutations, and for both acquisition and same-holder renewal through
+   `POST /issues/{id}/claim` or MCP `claim_issue`.
 
 Never send the context `_etag` as an issue write precondition. Conversely,
 `issue_etag` does not validate the nested context. Both values include their
-quotes and must be treated as opaque.
+quotes and must be treated as opaque. A guarded claim accepts exactly one strong
+root issue tag; the context `_etag`, weak tags, wildcards, and tag lists do not
+stand in for it.
 
 This endpoint currently returns the context tag as a response validator but
 does not implement conditional `If-None-Match`/`304` reads. The browser
@@ -276,7 +279,7 @@ Reading this packet:
 - does not turn recent activity or run ids into a heartbeat; and
 - does not certify that events, context, or a future operation are replay-safe.
 
-Use Athena's write commands and `issue_etag` for guarded mutations, its
+Use Athena's write commands and `issue_etag` for guarded mutations and claims, its
 cooperative run check-ins for explicitly labeled self-reports, and its run replay
 artifact contract for replay analysis. None of those meanings are inferred by
 Agent Work Context.

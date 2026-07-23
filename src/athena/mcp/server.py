@@ -26,7 +26,7 @@ from typing import Annotated
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
-from athena.aegis import delegations, fleet_metrics, fleet_work, issues
+from athena.aegis import delegations, fleet_metrics, fleet_work, issues, lease_commands
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -35,6 +35,10 @@ IdempotencyKey = Annotated[
     str,
     Field(min_length=1, max_length=255, pattern=r"^[\x21-\x7E]+$"),
 ]
+ClaimYieldNote = Annotated[
+    str, Field(max_length=lease_commands.MAX_CLAIM_YIELD_NOTE_CHARS)
+]
+
 
 RunId = Annotated[
     str,
@@ -485,16 +489,38 @@ def build_server(client: AthenaClient) -> FastMCP:
     @mutation_tool
     def claim_issue(
         issue_id: int,
+        if_match: str,
         lease_seconds: int | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Claim a delegated issue — take its exclusive lease so no other agent works it
-        (accept). Fails with 409 if another agent already holds an active lease; re-claiming
-        your own lease renews the window. lease_seconds sets how long the claim holds before
-        it must be renewed (default 30 min); a lease that expires is reclaimable, so a
-        crashed agent never pins the work. Pair with complete_issue when done."""
+        """Claim or renew an issue only against the exact root issue revision reviewed.
+        First call get_issue and copy its _etag, or copy issue_etag from
+        get_issue_work_context; never use the work-context packet's top-level _etag.
+        Missing or non-exact tags fail, stale tags return 412 with the current tag, and a
+        different live holder remains a 409. lease_seconds defaults to 30 minutes."""
         return client.claim_issue(
-            issue_id, lease_seconds=lease_seconds, idempotency_key=idempotency_key
+            issue_id,
+            if_match=if_match,
+            lease_seconds=lease_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def yield_claim(
+        issue_id: int,
+        reason: lease_commands.ClaimYieldReason,
+        note: ClaimYieldNote | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> None:
+        """Honestly release your own active claim without asserting completion. Choose
+        needs_input, blocked, or capacity and optionally add a bounded note. The
+        run-stamped audit event preserves the reason; Athena does not change assignment,
+        contributors, status, dependencies, or automatically reassign the issue."""
+        return client.yield_claim(
+            issue_id,
+            reason=reason,
+            note=note,
+            idempotency_key=idempotency_key,
         )
 
     @mutation_tool

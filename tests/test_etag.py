@@ -74,6 +74,23 @@ def test_weak_tags_are_valid_but_never_strong_match():
     assert mixed.matches('"same"')
 
 
+def test_exact_strong_tag_requires_one_actual_strong_entity_tag():
+    assert parse_if_match([' "current" ']).single_strong_tag() == '"current"'
+    assert parse_if_match([', "current", ,']).single_strong_tag() == '"current"'
+
+    for values in (
+        ["*"],
+        [""],
+        ['W/"current"'],
+        ['"current", "other"'],
+        ['"current", "current"'],
+        ['W/"ignored", "current"'],
+        ['"current"', '"other"'],
+    ):
+        with pytest.raises(InvalidIfMatch, match="exactly one strong entity tag"):
+            parse_if_match(values).single_strong_tag()
+
+
 def test_commas_and_backslashes_inside_opaque_tags_are_not_list_separators():
     condition = parse_if_match(['"one,two\\three", "other"'])
 

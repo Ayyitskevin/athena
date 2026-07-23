@@ -109,7 +109,17 @@ MUTATION_CASES = [
         "claim_issue",
         "POST",
         "/issues/7/claim",
-        lambda c, k: c.claim_issue(7, idempotency_key=k),
+        lambda c, k: c.claim_issue(
+            7, if_match='"issue-v1"', idempotency_key=k
+        ),
+    ),
+    (
+        "yield_claim",
+        "POST",
+        "/issues/7/yield",
+        lambda c, k: c.yield_claim(
+            7, reason="blocked", note="waiting", idempotency_key=k
+        ),
     ),
     (
         "complete_claim",
@@ -222,13 +232,15 @@ MUTATION_CASES = [
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
-IF_MATCH_TOOL_NAMES = {
+REQUIRED_IF_MATCH_TOOL_NAMES = {"claim_issue"}
+OPTIONAL_IF_MATCH_TOOL_NAMES = {
     "update_issue",
     "set_issue_placement",
     "assign_issue",
     "set_issue_sprint",
     "update_page",
 }
+IF_MATCH_TOOL_NAMES = REQUIRED_IF_MATCH_TOOL_NAMES | OPTIONAL_IF_MATCH_TOOL_NAMES
 MCP_MUTATION_CASES = [
     ("create_issue", {"title": "x"}),
     ("update_issue", {"issue_id": 7}),
@@ -238,7 +250,8 @@ MCP_MUTATION_CASES = [
     ),
     ("assign_issue", {"issue_id": 7}),
     ("delegate_issue", {"issue_id": 7, "agent_user_id": 9}),
-    ("claim_issue", {"issue_id": 7}),
+    ("claim_issue", {"issue_id": 7, "if_match": '"issue-v1"'}),
+    ("yield_claim", {"issue_id": 7, "reason": "blocked", "note": "waiting"}),
     ("complete_claim", {"issue_id": 7}),
     ("decline_delegation", {"issue_id": 7}),
     ("comment_on_issue", {"issue_id": 7, "body": "x"}),
@@ -276,6 +289,8 @@ class _MCPRecordingAthenaClient:
     def __getattr__(self, name):
         def record(*args, **kwargs):
             self.calls.append((name, args, kwargs))
+            if name == "yield_claim":
+                return None
             return [] if name == "delegate_issue" else {}
 
         return record
@@ -313,10 +328,26 @@ def test_every_client_mutation_forwards_only_explicit_idempotency_keys(
         assert invoke(client, key) == {"ok": True}
         recorded_method, recorded_path, kwargs = transport.calls.pop()
         assert (recorded_method, recorded_path) == (method, path), name
-        if expected_headers is None:
-            assert "headers" not in kwargs, name
+        expected = dict(expected_headers or {})
+        if name == "claim_issue":
+            expected["If-Match"] = '"issue-v1"'
+        if expected:
+            assert kwargs["headers"] == expected, name
         else:
-            assert kwargs["headers"] == expected_headers, name
+            assert "headers" not in kwargs, name
+
+
+def test_yield_client_forwards_reason_and_note():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    assert client.yield_claim(
+        7, reason="blocked", note="waiting"
+    ) == {"ok": True}
+
+    method, path, kwargs = transport.calls.pop()
+    assert (method, path) == ("POST", "/issues/7/yield")
+    assert kwargs["json"] == {"reason": "blocked", "note": "waiting"}
 
 
 def test_mutation_helper_merges_existing_headers_case_insensitively():
@@ -990,6 +1021,32 @@ def test_guarded_mcp_issue_mutations_forward_if_match(tool_name, arguments):
 
 
 @pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("claim_issue", {"issue_id": 7}),
+        ("yield_claim", {"issue_id": 7, "reason": "other"}),
+        (
+            "yield_claim",
+            {"issue_id": 7, "reason": "blocked", "note": "x" * 501},
+        ),
+    ],
+)
+def test_mcp_claim_and_yield_schema_rejects_before_dispatch(tool_name, arguments):
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+    with pytest.raises(ToolError):
+        asyncio.run(server.call_tool(tool_name, arguments))
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
     "invalid_key",
     ["", "contains space", "é", "x" * 256],
 )
@@ -1135,6 +1192,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "delegate_issue",
             "get_issue_lease",
             "claim_issue",
+            "yield_claim",
             "complete_claim",
             "decline_delegation",
             "comment_on_issue",
@@ -1249,12 +1307,31 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         for tool_name in names - MUTATION_TOOL_NAMES:
             assert "idempotency_key" not in tools[tool_name].inputSchema["properties"]
 
-        for tool_name in IF_MATCH_TOOL_NAMES:
+        for tool_name in OPTIONAL_IF_MATCH_TOOL_NAMES:
             schema = tools[tool_name].inputSchema
             assert "if_match" in schema["properties"]
             assert "if_match" not in set(schema.get("required", []))
+        for tool_name in REQUIRED_IF_MATCH_TOOL_NAMES:
+            schema = tools[tool_name].inputSchema
+            assert "if_match" in schema["properties"]
+            assert "if_match" in set(schema.get("required", []))
         for tool_name in names - IF_MATCH_TOOL_NAMES:
             assert "if_match" not in tools[tool_name].inputSchema["properties"]
+
+        yield_schema = tools["yield_claim"].inputSchema
+        assert {"issue_id", "reason"} <= set(yield_schema["required"])
+        assert "note" not in set(yield_schema["required"])
+        assert set(yield_schema["properties"]["reason"]["enum"]) == {
+            "needs_input",
+            "blocked",
+            "capacity",
+        }
+        note_string = next(
+            option
+            for option in yield_schema["properties"]["note"]["anyOf"]
+            if option["type"] == "string"
+        )
+        assert note_string["maxLength"] == 500
 
         # Read-only operator tools are wired through FastMCP, not merely client helpers.
         asyncio.run(server.call_tool("get_agent_run_health", {}))
@@ -1330,5 +1407,76 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         assert health["checkins"][0]["agent_id"] == agent["id"]
         assert health["latest_checkins"][0]["run_id"] == "mcp-run"
         assert health["totals"]["latest_reporting_recently_count"] == 1
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_mcp_guarded_claim_and_yield_reach_shared_command(tmp_path):
+    pytest.importorskip("mcp")
+    import asyncio
+    import json
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    tc, ath = _client(tmp_path, "mcp-claim-yield.db")
+    try:
+        server = build_server(ath)
+        issue = ath.create_issue(title="MCP guarded claim")
+        reviewed = ath.get_issue(str(issue["id"]))
+
+        ath.set_run("mcp-yield-run")
+        asyncio.run(
+            server.call_tool(
+                "claim_issue",
+                {"issue_id": issue["id"], "if_match": reviewed["_etag"]},
+            )
+        )
+        assert ath.get_issue_lease(issue["id"])["holder_id"] == 1
+
+        asyncio.run(
+            server.call_tool(
+                "yield_claim",
+                {
+                    "issue_id": issue["id"],
+                    "reason": "needs_input",
+                    "note": "operator decision",
+                },
+            )
+        )
+        assert ath.get_issue_lease(issue["id"]) is None
+        yielded = [
+            event
+            for event in ath.recent_events(kind="issue")["events"]
+            if event["verb"] == "claim_yielded"
+        ]
+        assert len(yielded) == 1
+        assert yielded[0]["run_id"] == "mcp-yield-run"
+
+        stale_issue = ath.create_issue(title="MCP stale claim")
+        stale = ath.get_issue(str(stale_issue["id"]))
+        ath.update_issue(
+            stale_issue["id"],
+            title="changed",
+            if_match=stale["_etag"],
+        )
+        current = ath.get_issue(str(stale_issue["id"]))
+        with pytest.raises(ToolError) as rejected:
+            asyncio.run(
+                server.call_tool(
+                    "claim_issue",
+                    {
+                        "issue_id": stale_issue["id"],
+                        "if_match": stale["_etag"],
+                    },
+                )
+            )
+        payload = json.loads(
+            str(rejected.value).split("ATHENA_ERROR_JSON=", 1)[1]
+        )
+        assert payload["status_code"] == 412
+        assert payload["code"] == "precondition_failed"
+        assert payload["current_etag"] == current["_etag"]
     finally:
         tc.__exit__(None, None, None)
