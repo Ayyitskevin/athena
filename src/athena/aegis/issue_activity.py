@@ -237,14 +237,16 @@ def record_status_change(
     issue = issues.get_issue(conn, issue_id)
     if issue is None:
         raise ValueError("issue lifecycle target is unavailable")
-    resolved_before_project_id = (
-        issue["project_id"]
-        if before_project_id is _INFER_PROJECT
-        else before_project_id
-    )
-    resolved_after_project_id = (
-        issue["project_id"] if after_project_id is _INFER_PROJECT else after_project_id
-    )
+    if before_project_id is _INFER_PROJECT:
+        resolved_before_project_id: int | None = issue["project_id"]
+    else:
+        assert before_project_id is None or isinstance(before_project_id, int)
+        resolved_before_project_id = before_project_id
+    if after_project_id is _INFER_PROJECT:
+        resolved_after_project_id: int | None = issue["project_id"]
+    else:
+        assert after_project_id is None or isinstance(after_project_id, int)
+        resolved_after_project_id = after_project_id
     before_category = _status_category(conn, resolved_before_project_id, before)
     after_category = _status_category(conn, resolved_after_project_id, after)
     if before == after and before_category == after_category:
@@ -386,6 +388,7 @@ def record_project_change(
     project_ids = {before, after}
     try:
         if after is None:
+            assert before is not None
             old = projects.get_project(conn, before)
             activity.record(
                 conn,

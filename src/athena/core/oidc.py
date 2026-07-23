@@ -36,7 +36,9 @@ def link_identity(
     )
     if commit:
         conn.commit()
-    return get_identity(conn, issuer=issuer, subject=subject)
+    identity = get_identity(conn, issuer=issuer, subject=subject)
+    assert identity is not None
+    return identity
 
 
 def get_identity(conn: sqlite3.Connection, *, issuer: str, subject: str) -> dict | None:

@@ -94,6 +94,30 @@ def _set_csrf_cookie(response, csrf: str, *, request: Request) -> None:
     )
 
 
+def _session_csrf_token(conn: sqlite3.Connection, raw: str) -> str:
+    """Return the token created with ``raw``, failing loudly on invariant drift."""
+    token = sessions.csrf_token_for(conn, raw)
+    if token is None:
+        raise RuntimeError("new session is missing its CSRF token")
+    return token
+
+
+def _oidc_settings() -> tuple[str, str, str, str] | None:
+    """Return a complete OIDC configuration, or ``None`` when SSO is disabled."""
+    issuer = config.OIDC_ISSUER
+    client_id = config.OIDC_CLIENT_ID
+    client_secret = config.OIDC_CLIENT_SECRET
+    redirect_url = config.OIDC_REDIRECT_URL
+    if (
+        issuer is None
+        or client_id is None
+        or client_secret is None
+        or redirect_url is None
+    ):
+        return None
+    return issuer, client_id, client_secret, redirect_url
+
+
 def _is_cross_site_post(request: Request) -> bool:
     """True when the request carries an Origin whose host differs from ours — a cross-site
     form POST, the login-CSRF vector. A browser ALWAYS sends Origin on a cross-origin POST,
@@ -157,7 +181,7 @@ def login(
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:
         # One opaque message — never reveal whether the email exists.
-        response = templates.TemplateResponse(
+        failure_response = templates.TemplateResponse(
             request=request,
             name="login.html",
             context={
@@ -175,10 +199,10 @@ def login(
         # symmetric (one indexed SELECT either way), so it stays inline.
         target = users.get_user_by_email(conn, email)
         if target is not None:
-            response.background = BackgroundTask(
+            failure_response.background = BackgroundTask(
                 _record_login_failure, request.app.state.db_path, target["id"]
             )
-        return response
+        return failure_response
 
     # Rotate the session at the auth boundary: tear down whatever session the
     # browser arrived with before minting the new one. create_session already
@@ -190,10 +214,10 @@ def login(
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
     # 303 so the browser re-requests /aegis with GET, carrying the new cookie.
-    response = RedirectResponse("/aegis", status_code=303)
-    _set_session_cookie(response, raw, request=request)
-    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw), request=request)
-    return response
+    login_response = RedirectResponse("/aegis", status_code=303)
+    _set_session_cookie(login_response, raw, request=request)
+    _set_csrf_cookie(login_response, _session_csrf_token(conn, raw), request=request)
+    return login_response
 
 
 @router.post("/logout", dependencies=[Depends(verify_csrf)])
@@ -239,13 +263,15 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     the browser to the IdP. 404 when SSO isn't configured, so an unconfigured deploy
     exposes nothing."""
     templates = get_templates()
-    if not config.oidc_enabled():
+    settings = _oidc_settings()
+    if settings is None:
         return HTMLResponse("Not found", status_code=404)
+    issuer, client_id, _client_secret, redirect_url = settings
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse("/aegis", status_code=303)
 
     try:
-        discovery = oidc_flow.discover(config.OIDC_ISSUER)
+        discovery = oidc_flow.discover(issuer)
     except (oidc_flow.OidcError, urllib.error.URLError, ValueError):
         return _sso_error(
             request, templates, "SSO is unavailable right now.", status=502
@@ -258,8 +284,8 @@ def login_sso(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
 
     url = oidc_flow.build_authorization_url(
         discovery["authorization_endpoint"],
-        client_id=config.OIDC_CLIENT_ID,
-        redirect_uri=config.OIDC_REDIRECT_URL,
+        client_id=client_id,
+        redirect_uri=redirect_url,
         state=state,
         nonce=nonce,
         code_challenge=oidc_flow.pkce_challenge(verifier),
@@ -275,8 +301,10 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     code, validate the ID token, map it to a user, and mint a session — the same
     session a password login produces."""
     templates = get_templates()
-    if not config.oidc_enabled():
+    settings = _oidc_settings()
+    if settings is None:
         return HTMLResponse("Not found", status_code=404)
+    issuer, client_id, client_secret, redirect_url = settings
 
     params = request.query_params
     if params.get("error"):
@@ -298,25 +326,25 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
         return _sso_error(request, templates, "SSO sign-in expired. Please try again.")
 
     try:
-        discovery = oidc_flow.discover(config.OIDC_ISSUER)
+        discovery = oidc_flow.discover(issuer)
         token = oidc_flow.exchange_code(
             discovery["token_endpoint"],
             code=code,
-            redirect_uri=config.OIDC_REDIRECT_URL,
-            client_id=config.OIDC_CLIENT_ID,
-            client_secret=config.OIDC_CLIENT_SECRET,
+            redirect_uri=redirect_url,
+            client_id=client_id,
+            client_secret=client_secret,
             code_verifier=pending["code_verifier"],
         )
         claims = oidc_flow.verify_id_token(
             token["id_token"],
             jwks_uri=discovery["jwks_uri"],
-            issuer=config.OIDC_ISSUER,
-            client_id=config.OIDC_CLIENT_ID,
+            issuer=issuer,
+            client_id=client_id,
             nonce=pending["nonce"],
         )
         user = oidc_flow.provision_or_link(
             conn,
-            issuer=config.OIDC_ISSUER,
+            issuer=issuer,
             claims=claims,
             allowed_domains=config.OIDC_ALLOWED_DOMAINS,
         )
@@ -333,8 +361,8 @@ def auth_callback(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     # Mint the session exactly as a password login does (rotate, then issue).
     sessions.destroy_session(conn, request.cookies.get(config.SESSION_COOKIE))
     raw = sessions.create_session(conn, user["id"])
-    response = RedirectResponse("/aegis", status_code=303)
-    _set_session_cookie(response, raw, request=request)
-    _set_csrf_cookie(response, sessions.csrf_token_for(conn, raw), request=request)
-    response.delete_cookie(_OIDC_STATE_COOKIE, path="/")
-    return response
+    login_response = RedirectResponse("/aegis", status_code=303)
+    _set_session_cookie(login_response, raw, request=request)
+    _set_csrf_cookie(login_response, _session_csrf_token(conn, raw), request=request)
+    login_response.delete_cookie(_OIDC_STATE_COOKIE, path="/")
+    return login_response

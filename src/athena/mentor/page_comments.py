@@ -33,9 +33,13 @@ def add_comment(
         "INSERT INTO page_comments (page_id, author_id, body) VALUES (?, ?, ?)",
         (page_id, author_id, body),
     )
+    comment_id = cur.lastrowid
+    assert comment_id is not None
     if commit:
         conn.commit()
-    return get_comment(conn, cur.lastrowid)
+    comment = get_comment(conn, comment_id)
+    assert comment is not None
+    return comment
 
 
 def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict | None:

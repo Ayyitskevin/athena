@@ -179,9 +179,13 @@ def create_rule(
             created_by,
         ),
     )
+    rule_id = cur.lastrowid
+    assert rule_id is not None
     if commit:
         conn.commit()
-    return get_rule(conn, cur.lastrowid)
+    rule = get_rule(conn, rule_id)
+    assert rule is not None
+    return rule
 
 
 def get_rule(conn: sqlite3.Connection, rule_id: int) -> dict | None:
@@ -531,7 +535,9 @@ def run_pass(db_path: str | Path) -> int:
         def executor(c: sqlite3.Connection, rule: dict, event: dict) -> None:
             if actor["id"] is None:
                 actor["id"] = system_actor_id(c)
-            execute_action(c, rule, event, actor_id=actor["id"])
+            actor_id = actor["id"]
+            assert actor_id is not None
+            execute_action(c, rule, event, actor_id=actor_id)
 
         return process_pending(conn, executor=executor, skip_actor_id=actor["id"])
     finally:

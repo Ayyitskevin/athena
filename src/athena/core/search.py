@@ -24,6 +24,7 @@ the source row wins and a reindex repairs the index.
 from __future__ import annotations
 
 import sqlite3
+from typing import TypedDict, cast
 
 from athena.core import access
 
@@ -32,13 +33,20 @@ from athena.core import access
 # the boundary instead of surfacing as an sqlite3 OverflowError.
 MAX_OFFSET = 2**63 - 1
 
+
 # The searchable kinds and how to read each one's text: the table, its title column
 # (None for a comment, which has no title of its own), and its body column. Issues and
 # pages carry title + body; issue/page comments carry only a body (the FTS title is
 # indexed empty and the hit borrows its PARENT's title at read time, see _enrich).
 # Values are fixed literals, never caller input, so building a query string from them is
 # safe. The two comment kinds make discussion searchable alongside the docs it annotates.
-_SOURCE = {
+class _SourceSpec(TypedDict):
+    table: str
+    title: str | None
+    body: str
+
+
+_SOURCE: dict[str, _SourceSpec] = {
     "issue": {"table": "issues", "title": "title", "body": "body"},
     "page": {"table": "pages", "title": "title", "body": "body"},
     "issue_comment": {"table": "comments", "title": None, "body": "body"},
@@ -327,7 +335,7 @@ def search(
         sql += f"AND source_id IN ({placeholders}) "
         params.extend(ids)
     if actor is not _UNGATED:
-        clause, vis_params = _visibility_clause(conn, actor)
+        clause, vis_params = _visibility_clause(conn, cast(dict | None, actor))
         if clause:
             sql += clause
             params.extend(vis_params)

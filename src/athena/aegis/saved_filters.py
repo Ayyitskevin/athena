@@ -72,6 +72,7 @@ def normalize_criteria(raw: dict | None) -> dict:
             out[key] = text
     assignee = raw.get("assignee_id")
     if assignee is not None and str(assignee).strip() != "":
+        parsed_assignee: int | None
         if type(assignee) is int:
             parsed_assignee = assignee
         elif isinstance(assignee, str):
@@ -190,8 +191,12 @@ def create_filter(
         "INSERT INTO saved_filters (owner_id, name, criteria) VALUES (?, ?, ?)",
         (owner_id, name, payload),
     )
+    filter_id = cur.lastrowid
+    assert filter_id is not None
     conn.commit()
-    return get_filter(conn, cur.lastrowid)
+    saved_filter = get_filter(conn, filter_id)
+    assert saved_filter is not None
+    return saved_filter
 
 
 def get_filter(conn: sqlite3.Connection, filter_id: int) -> dict | None:

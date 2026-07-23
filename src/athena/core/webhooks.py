@@ -439,11 +439,12 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     ):
         super().__init__(host, port, timeout=timeout, context=context)
         self._pinned_ip = pinned_ip
+        self._ssl_context = context
 
     def connect(self) -> None:
         sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        self.sock = self._ssl_context.wrap_socket(sock, server_hostname=self.host)
 
 
 def urllib_poster(timeout: float) -> Poster:

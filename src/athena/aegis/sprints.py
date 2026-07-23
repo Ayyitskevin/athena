@@ -49,8 +49,12 @@ def create_sprint(
         "VALUES (?, ?, ?, ?, ?)",
         (project_id, name, goal, start_date, end_date),
     )
+    sprint_id = cur.lastrowid
+    assert sprint_id is not None
     conn.commit()
-    return get_sprint(conn, cur.lastrowid)
+    sprint = get_sprint(conn, sprint_id)
+    assert sprint is not None
+    return sprint
 
 
 def get_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:

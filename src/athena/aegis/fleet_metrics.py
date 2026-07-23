@@ -87,6 +87,15 @@ class ActorRowPayload(TypedDict):
     unknown_completions: int
 
 
+class _ActorAccumulator(TypedDict):
+    actor_id: int
+    actor_name: str
+    completions: int
+    human_completions: int
+    agent_completions: int
+    unknown_completions: int
+
+
 class CoveragePayload(TypedDict):
     visible_candidate_events: int
     included_typed_events: int
@@ -432,19 +441,26 @@ def _cycle_seconds(
 def _actor_rows(
     completions: list[dict[str, Any]], actor_limit: int
 ) -> tuple[list[ActorRowPayload], ActorTypePayload, int]:
-    grouped: dict[int, dict[str, Any]] = {}
+    grouped: dict[int, _ActorAccumulator] = {}
     type_totals: ActorTypePayload = {"human": 0, "agent": 0, "unknown": 0}
     for row in completions:
-        kind = row["actor_kind"]
-        if kind not in ("human", "agent"):
+        raw_kind = row["actor_kind"]
+        kind: Literal["human", "agent", "unknown"]
+        if raw_kind == "human":
+            kind = "human"
+            type_totals["human"] += 1
+        elif raw_kind == "agent":
+            kind = "agent"
+            type_totals["agent"] += 1
+        else:
             kind = "unknown"
-        type_totals[kind] += 1
+            type_totals["unknown"] += 1
         actor_id = int(row["actor_id"])
         item = grouped.setdefault(
             actor_id,
             {
                 "actor_id": actor_id,
-                "actor_name": row["actor_name"] or "Unknown actor",
+                "actor_name": str(row["actor_name"] or "Unknown actor"),
                 "completions": 0,
                 "human_completions": 0,
                 "agent_completions": 0,
@@ -452,19 +468,38 @@ def _actor_rows(
             },
         )
         item["completions"] += 1
-        item[f"{kind}_completions"] += 1
+        if kind == "human":
+            item["human_completions"] += 1
+        elif kind == "agent":
+            item["agent_completions"] += 1
+        else:
+            item["unknown_completions"] += 1
 
     result: list[ActorRowPayload] = []
     for item in grouped.values():
-        kinds = [
-            kind
-            for kind in ("human", "agent", "unknown")
-            if item[f"{kind}_completions"]
-        ]
+        present_kinds = sum(
+            count > 0
+            for count in (
+                item["human_completions"],
+                item["agent_completions"],
+                item["unknown_completions"],
+            )
+        )
         actor_type: Literal["human", "agent", "mixed", "unknown"]
-        actor_type = kinds[0] if len(kinds) == 1 else "mixed"
-        item["actor_type"] = actor_type
-        result.append(item)
+        if present_kinds > 1:
+            actor_type = "mixed"
+        elif item["human_completions"]:
+            actor_type = "human"
+        elif item["agent_completions"]:
+            actor_type = "agent"
+        else:
+            actor_type = "unknown"
+        result.append(
+            {
+                **item,
+                "actor_type": actor_type,
+            }
+        )
     result.sort(key=lambda item: (-item["completions"], item["actor_id"]))
     return result[:actor_limit], type_totals, len(result)
 
@@ -527,12 +562,10 @@ def build_fleet_metrics(
                 coverage["excluded_restricted_events"] += 1
                 continue
             if row["fact_event_id"] is None:
-                key = (
-                    "excluded_orphan_events"
-                    if row["current_issue_id"] is None
-                    else "excluded_legacy_events"
-                )
-                coverage[key] += 1
+                if row["current_issue_id"] is None:
+                    coverage["excluded_orphan_events"] += 1
+                else:
+                    coverage["excluded_legacy_events"] += 1
                 continue
             if (
                 row["fact_version"] != 1
@@ -571,15 +604,14 @@ def build_fleet_metrics(
         actor_rows, actor_type_totals, actor_rows_available = _actor_rows(
             completions, query.actor_limit
         )
-        excluded_keys = (
-            "excluded_legacy_events",
-            "excluded_imported_events",
-            "excluded_restricted_events",
-            "excluded_orphan_events",
-            "excluded_malformed_events",
-            "cycle_samples_excluded",
+        coverage["complete"] = not (
+            coverage["excluded_legacy_events"]
+            or coverage["excluded_imported_events"]
+            or coverage["excluded_restricted_events"]
+            or coverage["excluded_orphan_events"]
+            or coverage["excluded_malformed_events"]
+            or coverage["cycle_samples_excluded"]
         )
-        coverage["complete"] = not any(coverage[key] for key in excluded_keys)
         completed = len(completions)
         cycle_median = float(median(cycle_samples)) if cycle_samples else None
         return {
