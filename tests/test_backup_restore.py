@@ -371,3 +371,97 @@ def test_doctor_cli_rejects_attachment_path_that_is_not_directory(tmp_path, caps
 
     out = capsys.readouterr()
     assert "attachment path is not a directory" in out.err
+
+
+def test_doctor_rejects_symlinked_attachment_root_before_probe(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    attach_dir = tmp_path / "attachments"
+    attach_dir.symlink_to(outside, target_is_directory=True)
+
+    assert ops.doctor_main([str(source), "--attach-dir", str(attach_dir)]) == 1
+
+    out = capsys.readouterr()
+    assert "attachment path is not a directory" in out.err
+    assert list(outside.iterdir()) == []
+
+
+def test_restore_cleans_candidate_when_recovery_staging_fails(tmp_path, monkeypatch):
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    original_summary = _database_summary(target)
+    real_stage = backup._stage_sqlite_database
+    calls = 0
+
+    def fail_recovery_stage(source_path, destination_path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected recovery staging failure")
+        return real_stage(source_path, destination_path)
+
+    monkeypatch.setattr(backup, "_stage_sqlite_database", fail_recovery_stage)
+    with pytest.raises(OSError, match="injected recovery staging failure"):
+        backup.restore_database(snapshot, target, force=True)
+
+    assert calls == 2
+    assert _database_summary(target) == original_summary
+    assert not list(tmp_path.glob(f".{target.name}.*.tmp"))
+
+
+def test_restore_recovers_when_sidecar_cleanup_partially_fails(tmp_path, monkeypatch):
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    original_summary = _database_summary(target)
+    real_remove = backup._remove_sqlite_sidecars
+    attempts = 0
+
+    def _fail_after_one_unlink(path):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            wal = path.with_name(f"{path.name}-wal")
+            shm = path.with_name(f"{path.name}-shm")
+            wal.write_bytes(b"stale-wal")
+            shm.write_bytes(b"stale-shm")
+            wal.unlink()
+            raise PermissionError("injected sidecar cleanup failure")
+        real_remove(path)
+
+    monkeypatch.setattr(backup, "_remove_sqlite_sidecars", _fail_after_one_unlink)
+    with pytest.raises(PermissionError, match="injected sidecar cleanup failure"):
+        backup.restore_database(snapshot, target, force=True)
+
+    assert attempts == 2
+    assert _database_summary(target) == original_summary
+    assert not target.with_name(f"{target.name}-wal").exists()
+    assert not target.with_name(f"{target.name}-shm").exists()
+    assert not list(tmp_path.glob(f".{target.name}.*.tmp"))
+
+
+def test_restore_fsyncs_recovery_name_before_target_mutation(tmp_path, monkeypatch):
+    source = _seed_database(tmp_path / "source.db", email="saved@example.com")
+    snapshot = backup.backup_database(source, tmp_path / "source.backup.db")
+    target = _seed_database(tmp_path / "target.db", email="stale@example.com")
+    real_fsync_directory = backup._fsync_directory
+    real_remove = backup._remove_sqlite_sidecars
+    events = []
+
+    def _record_fsync(path):
+        events.append(("fsync", path))
+        real_fsync_directory(path)
+
+    def _record_sidecars(path):
+        events.append(("sidecars", path))
+        real_remove(path)
+
+    monkeypatch.setattr(backup, "_fsync_directory", _record_fsync)
+    monkeypatch.setattr(backup, "_remove_sqlite_sidecars", _record_sidecars)
+
+    backup.restore_database(snapshot, target, force=True)
+
+    assert events[0] == ("fsync", target.parent)
+    assert events[1] == ("sidecars", target)

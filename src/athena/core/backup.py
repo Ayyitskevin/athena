@@ -112,20 +112,26 @@ def restore_database(
         raise FileExistsError(f"target database already exists: {target}")
 
     staged = _stage_sqlite_database(source, target)
-    recovery = _stage_sqlite_database(target, target) if target.exists() else None
+    recovery: Path | None = None
     preserve_recovery = False
     try:
-        _remove_sqlite_sidecars(target)
+        recovery = _stage_sqlite_database(target, target) if target.exists() else None
+        if recovery is not None:
+            # The recovery name itself must survive a host crash before we remove
+            # WAL/SHM or replace the target. A file fsync alone does not persist the
+            # containing directory entry.
+            _fsync_directory(recovery.parent)
         try:
+            _remove_sqlite_sidecars(target)
             _replace_staged_database(staged, target)
-        except Exception:
+        except BaseException:
             if recovery is None:
                 raise
             try:
                 _remove_sqlite_sidecars(target)
                 _restore_recovery_database(recovery, target)
                 recovery = None
-            except Exception as recovery_error:
+            except BaseException as recovery_error:
                 preserve_recovery = True
                 raise RuntimeError(
                     "restore failed and automatic recovery also failed; "
@@ -162,7 +168,7 @@ def _stage_sqlite_database(source: Path, destination: Path) -> Path:
                     )
         _fsync_file(temporary)
         return temporary
-    except Exception:
+    except BaseException:
         temporary.unlink(missing_ok=True)
         raise
 

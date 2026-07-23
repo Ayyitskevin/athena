@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 import sqlite3
+import stat
 import sys
 import tempfile
 
@@ -68,9 +69,13 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
 
 
 def _check_attachment_dir(db_path: Path, attach_dir: Path) -> str:
-    if not attach_dir.exists():
-        raise FileNotFoundError(f"attachment directory does not exist: {attach_dir}")
-    if not attach_dir.is_dir():
+    try:
+        metadata = attach_dir.lstat()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"attachment directory does not exist: {attach_dir}"
+        ) from None
+    if not stat.S_ISDIR(metadata.st_mode):
         raise NotADirectoryError(f"attachment path is not a directory: {attach_dir}")
 
     with tempfile.NamedTemporaryFile(
