@@ -38,9 +38,7 @@ _MAX_BUNDLE_ROWS = 500_000  # total rows across every top-level array
 _MAX_IMPORTED_VERB_LEN = 80
 _IMPORT_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-_PROJECT_COLS = (
-    "id, name, key, description, created_by, created_at, issue_counter, visibility"
-)
+_PROJECT_COLS = "id, name, key, description, created_by, created_at, issue_counter, visibility, block_agent_closes_when_blocked"
 _SPACE_COLS = "id, key, name, description, created_by, created_at, visibility"
 _USER_COLS = "id, email, name, role, is_agent, created_at"
 _ISSUE_COLS = (
@@ -645,8 +643,8 @@ def _replay_project_import(
     cur = conn.execute(
         "INSERT INTO projects "
         "(id, name, key, description, created_by, created_at, issue_counter, visibility, "
-        "activity_scope_key) "
-        "SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ? "
+        "block_agent_closes_when_blocked, activity_scope_key) "
+        "SELECT next_id, ?, ?, ?, ?, ?, ?, ?, ?, ? "
         "FROM activity_target_id_sequences WHERE target_kind = 'project'",
         (
             project["name"],
@@ -656,6 +654,7 @@ def _replay_project_import(
             project["created_at"],
             issue_counter,
             project.get("visibility", "public"),
+            1 if project.get("block_agent_closes_when_blocked", False) else 0,
             secrets.token_hex(16),
         ),
     )
@@ -1556,6 +1555,11 @@ def _validate_project_bundle(bundle: dict) -> None:
     _require_fields(project, ("id", "name", "key", "created_by"), "project")
     if project["id"] != root_id:
         raise ValueError("bundle.project.id must match bundle.root_id")
+    blocked_close_policy = project.get("block_agent_closes_when_blocked", False)
+    if not isinstance(blocked_close_policy, bool):
+        raise ValueError(
+            "bundle.project.block_agent_closes_when_blocked must be a boolean"
+        )
 
     for key in (
         "statuses",
@@ -2104,6 +2108,10 @@ def _dict(row: sqlite3.Row) -> dict:
     out = dict(row)
     if "is_agent" in out:
         out["is_agent"] = bool(out["is_agent"])
+    if "block_agent_closes_when_blocked" in out:
+        out["block_agent_closes_when_blocked"] = bool(
+            out["block_agent_closes_when_blocked"]
+        )
     return out
 
 

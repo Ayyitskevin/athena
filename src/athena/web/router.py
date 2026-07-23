@@ -82,8 +82,11 @@ def _issue_command_response(
         "forbidden": 403,
         "not_found": 404,
         "invalid": 400,
+        "conflict": 409,
     }[exc.kind]
-    css_class = "blocked" if exc.kind in {"unauthorized", "forbidden"} else "error"
+    css_class = (
+        "blocked" if exc.kind in {"unauthorized", "forbidden", "conflict"} else "error"
+    )
     return HTMLResponse(
         f'<div class="{css_class}">{html.escape(exc.detail.capitalize())}.</div>',
         status_code=status_code,
@@ -773,9 +776,9 @@ def change_issue_status(
     303-redirects back to the issue so the page reloads with the new state.
 
     Closing (status -> done) an issue that still has OPEN blockers re-renders the
-    page with an advisory warning instead of applying the change, unless the form
-    carries confirm=1 ("Mark done anyway"). The warning is a nudge, not a lock —
-    dependencies in this product are advisory — so a second submit goes through."""
+    page with a visibility-safe warning. The default project behavior remains an
+    advisory confirmation. When the optional project policy is enabled, agents are
+    refused and an eligible human must explicitly request the audited override."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -785,7 +788,19 @@ def change_issue_status(
     issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    if statuses.is_done(conn, issue["project_id"], status) and not confirm.strip():
+    closing = not statuses.is_done(
+        conn, issue["project_id"], issue["status"]
+    ) and statuses.is_done(conn, issue["project_id"], status)
+    project = (
+        projects.get_project(conn, issue["project_id"])
+        if issue["project_id"] is not None
+        else None
+    )
+    policy_enabled = bool(
+        project and project.get("block_agent_closes_when_blocked", False)
+    )
+    confirming = confirm.strip() == "1"
+    if closing and not confirming and not policy_enabled:
         # Gate the blocker warning by the viewer: a blocker in a private project they
         # can't see is omitted, so its key/title never leaks through the close warning.
         blockers = dependencies.open_blockers(conn, issue_id, actor=user)
@@ -798,8 +813,28 @@ def change_issue_status(
                 extra={"blocked_warning": blockers, "pending_status": status},
             )
     try:
-        issue_commands.update_issue(conn, actor=user, issue_id=issue_id, status=status)
+        issue_commands.update_issue(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            status=status,
+            override_blocked_close=confirming,
+        )
     except issue_commands.IssueCommandError as exc:
+        if exc.code == issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE:
+            blockers = dependencies.open_blockers(conn, issue_id, actor=user)
+            return _render_issue_detail(
+                request,
+                conn,
+                issue,
+                extra={
+                    "blocked_policy_warning": True,
+                    "blocked_warning": blockers,
+                    "pending_status": status,
+                    "allow_blocked_override": not bool(user.get("is_agent")),
+                },
+                status_code=409,
+            )
         return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 

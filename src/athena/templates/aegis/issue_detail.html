@@ -21,18 +21,29 @@
     </div>
 </div>
 
-{% if blocked_warning %}
+{% if blocked_policy_warning or blocked_warning %}
 <div class="warning blocked-warning">
-    <strong>Heads up:</strong> this issue is still blocked by
+    {% if blocked_policy_warning %}
+    <strong>Close refused:</strong> this project's workflow policy protects issues with unresolved blockers.
+    {% else %}
+    <strong>Heads up:</strong> this issue is still blocked.
+    {% endif %}
+    {% if blocked_warning %}
+    <span>Visible unresolved blockers:</span>
     {% for b in blocked_warning %}
         <a href="/aegis/issues/{{ b.id }}" class="xref">{{ b.key or "#" ~ b.id }}</a> ({{ b.status }}){% if not loop.last %}, {% endif %}
     {% endfor %}.
+    {% endif %}
+    {% if not blocked_policy_warning or allow_blocked_override %}
     <form method="post" action="/aegis/issues/{{ issue.id }}/status" class="confirm-done">
         {% include "partials/csrf.html" %}
         <input type="hidden" name="status" value="{{ pending_status }}">
         <input type="hidden" name="confirm" value="1">
-        <button type="submit" class="button small">Mark done anyway</button>
+        <button type="submit" class="button small">{{ "Override policy and mark done" if blocked_policy_warning else "Mark done anyway" }}</button>
     </form>
+    {% elif blocked_policy_warning %}
+    <span class="note-small">Agent actors cannot override this policy.</span>
+    {% endif %}
 </div>
 {% endif %}
 

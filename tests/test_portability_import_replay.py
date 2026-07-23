@@ -65,6 +65,7 @@ def _project_bundle(tmp_path):
         created_by=owner,
         description="import source",
     )
+    projects.set_blocked_close_policy(source, project["id"], enabled=True)
     access.add_project_member(source, project["id"], member, owner)
     sprint = sprints.create_sprint(source, project_id=project["id"], name="Launch")
     parent = issues.create_issue(
@@ -202,6 +203,7 @@ def test_project_import_allocates_past_deleted_reserved_ids(tmp_path):
 
 def test_project_import_replays_manifest_and_rewrites_internal_refs(tmp_path):
     bundle = _project_bundle(tmp_path)
+    assert bundle["project"]["block_agent_closes_when_blocked"] is True
     target, owner, member, bot = _prepare_project_target(tmp_path / "target.db")
     manifest = portability.build_import_manifest(target, bundle)
 
@@ -218,6 +220,7 @@ def test_project_import_replays_manifest_and_rewrites_internal_refs(tmp_path):
     target.close()
 
     assert result["schema"] == portability.IMPORT_RESULT_SCHEMA
+    assert imported_project["block_agent_closes_when_blocked"] == 1
     assert result["status"] == "imported"
     assert result["created"]["projects"] == 1
     assert result["created"]["issues"] == 2
@@ -242,6 +245,22 @@ def test_project_import_replays_manifest_and_rewrites_internal_refs(tmp_path):
     assert f"[[page:{external_page_id}]]" in parent["body"]
     assert child["parent_id"] == parent["id"]
     assert child["sprint_id"] is not None
+
+
+def test_project_import_defaults_legacy_bundle_policy_to_disabled(tmp_path):
+    # WHY: the policy field is an additive V1 extension. Bundles produced before
+    # migration 0060 must remain importable without accidentally opting in.
+    bundle = _project_bundle(tmp_path)
+    assert bundle["project"].pop("block_agent_closes_when_blocked") is True
+    target, *_ = _prepare_project_target(tmp_path / "target-legacy-policy.db")
+    manifest = portability.build_import_manifest(target, bundle)
+
+    portability.replay_import_manifest(target, bundle, manifest)
+
+    imported = projects.get_project_by_key(target, "RPL")
+    assert imported is not None
+    assert imported["block_agent_closes_when_blocked"] is False
+    target.close()
 
 
 def test_project_import_rebuilds_links_activity_and_search(tmp_path):

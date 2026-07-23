@@ -292,6 +292,36 @@ def record_status_change(
         raise
 
 
+def record_blocked_close_override(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    issue_project_ids: Collection[int | None] | None = None,
+    commit: bool = True,
+) -> None:
+    """Record an explicit human override of a project's blocked-close policy.
+
+    The detail is intentionally empty: the policy denial and this event must not
+    copy the identities of blockers an otherwise eligible issue writer cannot
+    see. Project moves pass both containers so the access envelope cannot weaken
+    while the override, status transition, and issue row share one transaction.
+    """
+    activity.record(
+        conn,
+        actor_id=actor_id,
+        verb="overrode_blocked_issue_close",
+        target_kind="issue",
+        target_id=issue_id,
+        issue_project_ids=(
+            _project_ids_for_issues(conn, issue_id)
+            if issue_project_ids is None
+            else issue_project_ids
+        ),
+        commit=commit,
+    )
+
+
 def record_priority_change(
     conn: sqlite3.Connection,
     *,

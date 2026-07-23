@@ -22,6 +22,7 @@ from athena.aegis import (
     issue_activity,
     issue_etags,
     issues,
+    projects,
     sprints,
     statuses,
 )
@@ -57,11 +58,13 @@ class IssueCommandError(Exception):
         detail: str,
         *,
         current_etag: str | None = None,
+        code: str | None = None,
     ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
         self.current_etag = current_etag
+        self.code = code
 
 
 class _UnsetType:
@@ -73,6 +76,8 @@ UNSET = _UnsetType()
 # The only internal actor allowed to bypass per-issue creator/assignee policy.
 # It has no password or token and is created by the in-process automation engine.
 AUTOMATION_ACTOR_EMAIL = "automation@athena.system"
+BLOCKED_CLOSE_POLICY_ERROR_CODE = "blocked_issue_close_policy"
+BLOCKED_CLOSE_POLICY_ERROR_DETAIL = "blocked issue close policy denied this update"
 
 
 def _require_issue_writer(actor: dict | None) -> dict:
@@ -252,6 +257,7 @@ def update_issue(
     project_id: int | None | _UnsetType = UNSET,
     sprint_id: int | None | _UnsetType = UNSET,
     if_match: list[str] | None = None,
+    override_blocked_close: bool = False,
 ) -> dict:
     """Update editable issue fields and all resulting audit facts atomically."""
     actor = _require_issue_writer(actor)
@@ -268,6 +274,7 @@ def update_issue(
         project_id=project_id,
         sprint_id=sprint_id,
         if_match=if_match,
+        override_blocked_close=override_blocked_close,
     )
 
 
@@ -309,6 +316,7 @@ def update_issue_as_automation(
         project_id=UNSET,
         sprint_id=UNSET,
         if_match=None,
+        override_blocked_close=False,
     )
 
 
@@ -328,6 +336,23 @@ def _nullable_int_value(name: str, value: int | None | _UnsetType) -> int | None
     return value
 
 
+def _blocked_close_policy_enabled(
+    conn: sqlite3.Connection, project_id: int | None
+) -> bool:
+    if project_id is None:
+        return False
+    project = projects.get_project(conn, project_id)
+    return bool(project and project.get("block_agent_closes_when_blocked", False))
+
+
+def _reject_blocked_close_policy() -> None:
+    raise IssueCommandError(
+        "conflict",
+        BLOCKED_CLOSE_POLICY_ERROR_DETAIL,
+        code=BLOCKED_CLOSE_POLICY_ERROR_CODE,
+    )
+
+
 def _update_issue(
     conn: sqlite3.Connection,
     *,
@@ -342,13 +367,27 @@ def _update_issue(
     project_id: int | None | _UnsetType,
     sprint_id: int | None | _UnsetType,
     if_match: list[str] | None,
+    override_blocked_close: bool,
 ) -> dict:
     with db.transaction(conn, immediate=True):
-        before = (
-            _writable_issue(conn, actor, issue_id)
-            if enforce_actor_policy
-            else issues.get_issue(conn, issue_id)
-        )
+        before: dict | None
+        snapshot_is_agent = bool(actor.get("is_agent"))
+        live_actor = users.get_user(conn, actor["id"])
+        if live_actor is None:
+            raise IssueCommandError("forbidden", "actor is no longer available")
+        actor = {**actor, **live_actor}
+        if actor.get("paused_at"):
+            raise IssueCommandError("forbidden", "account is paused")
+        if enforce_actor_policy:
+            actor = _require_issue_writer(actor)
+            before = _writable_issue(conn, actor, issue_id)
+        else:
+            if actor.get("email") != AUTOMATION_ACTOR_EMAIL or not actor.get(
+                "is_agent"
+            ):
+                raise IssueCommandError("forbidden", "automation actor required")
+            before = issues.get_issue(conn, issue_id)
+        actor_is_agent = snapshot_is_agent or bool(actor.get("is_agent"))
         if before is None:
             raise IssueCommandError("not_found", "no such issue")
 
@@ -369,6 +408,10 @@ def _update_issue(
         }
         if not provided:
             raise IssueCommandError("invalid", "no fields to update")
+        if not isinstance(override_blocked_close, bool):
+            raise IssueCommandError(
+                "invalid", "override_blocked_close must be a boolean"
+            )
 
         project_value = _nullable_int_value("project_id", project_id)
         final_project_id = (
@@ -421,6 +464,34 @@ def _update_issue(
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
         # writers holding the same tag cannot both pass and mutate.
         _check_issue_precondition(conn, before, if_match)
+
+        final_status = status_value or before["status"]
+        if (
+            project_changed
+            and status_value is None
+            and not statuses.is_valid(conn, final_project_id, final_status)
+        ):
+            final_status = statuses.first_status(conn, final_project_id)
+        closing = not statuses.is_done(
+            conn, before["project_id"], before["status"]
+        ) and statuses.is_done(conn, final_project_id, final_status)
+        source_policy_enabled = _blocked_close_policy_enabled(
+            conn, before["project_id"]
+        )
+        final_policy_enabled = _blocked_close_policy_enabled(conn, final_project_id)
+        protected_close = closing and (source_policy_enabled or final_policy_enabled)
+        agent_policy_escape = (
+            actor_is_agent
+            and project_changed
+            and source_policy_enabled
+            and not final_policy_enabled
+        )
+        blocked_policy_operation = protected_close or agent_policy_escape
+        policy_override_used = False
+        if blocked_policy_operation and dependencies.open_blockers(conn, issue_id):
+            if actor_is_agent or not override_blocked_close:
+                _reject_blocked_close_policy()
+            policy_override_used = closing
 
         if "project_id" in provided:
             updated = issues.set_project(
@@ -521,6 +592,14 @@ def _update_issue(
                 include_before_detail=not project_caused_sprint_clear,
                 commit=False,
                 issue_project_ids=transition_project_ids,
+            )
+        if policy_override_used:
+            issue_activity.record_blocked_close_override(
+                conn,
+                actor_id=actor["id"],
+                issue_id=issue_id,
+                issue_project_ids=transition_project_ids,
+                commit=False,
             )
         issue_activity.record_edited(
             conn,

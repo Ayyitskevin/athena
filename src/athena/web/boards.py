@@ -60,17 +60,17 @@ def _board_url(
     status: str,
     project: str,
     sprint: str,
-    move_conflict: bool = False,
+    move_conflict: str | None = None,
 ) -> str:
-    """Build the board URL shared by successful and stale native moves."""
+    """Build the board URL shared by successful and refused native moves."""
     query = {
         "search": search,
         "status": status,
         "project": project,
         "sprint": sprint,
     }
-    if move_conflict:
-        query["move_conflict"] = "stale"
+    if move_conflict is not None:
+        query["move_conflict"] = move_conflict
     return f"/aegis/boards?{urlencode(query)}"
 
 
@@ -82,7 +82,7 @@ def _render_board(
     status_filter: str,
     project_filter: str,
     sprint_filter: str,
-    move_conflict: bool = False,
+    move_conflict: str | None = None,
 ):
     """Render one visibility-safe, placement-filtered fleet board.
 
@@ -224,7 +224,10 @@ def boards(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     status_filter = (request.query_params.get("status") or "").strip()
     project_filter = (request.query_params.get("project") or "").strip()
     sprint_filter = (request.query_params.get("sprint") or "").strip()
-    move_conflict = request.query_params.get("move_conflict") == "stale"
+    requested_conflict = request.query_params.get("move_conflict")
+    move_conflict = (
+        requested_conflict if requested_conflict in {"stale", "policy"} else None
+    )
     return _render_board(
         request,
         conn,
@@ -268,11 +271,10 @@ def board_move_issue(
     A move that isn't allowed or doesn't apply — the actor can't write this issue, or
     the target status isn't valid for the issue's project (boards can mix projects
     with different status sets) — leaves the board UNCHANGED, so the card simply snaps
-    back. A stale move is different: it fails closed and refreshes the board with an
-    explicit conflict notice instead of overwriting the newer issue state. This
-    quick-move path deliberately skips the open-blockers advisory nudge the detail
-    page shows: dependencies are advisory, and that warning belongs on the focused
-    view, not a quick board move."""
+    back. Stale and blocked-close-policy refusals are different: both fail closed
+    and refresh the board with an explicit conflict notice. The board never offers
+    the human policy-override control; that deliberate exception remains on the
+    focused issue view."""
     search, status = search.strip(), status.strip()
     project, sprint = project.strip(), sprint.strip()
     # Validate before the write: a forged, malformed filter must not mutate an issue
@@ -289,8 +291,8 @@ def board_move_issue(
     # The board deliberately snaps back on ordinary rejected moves. The shared
     # command is still the one owner of visibility, role/scope, can-act-on policy,
     # status validation, precondition comparison, write, and audit. This adapter
-    # makes only a stale precondition visible because silently snapping back would
-    # hide a lost-update hazard from the operator.
+    # makes stale-precondition and hard-policy refusals visible because silently
+    # snapping back would hide an operationally relevant conflict.
     try:
         issue_commands.update_issue(
             conn,
@@ -306,7 +308,7 @@ def board_move_issue(
                 status=status,
                 project=project,
                 sprint=sprint,
-                move_conflict=True,
+                move_conflict="stale",
             )
             if request.headers.get("HX-Request"):
                 response_headers = {"HX-Redirect": conflict_url}
@@ -318,6 +320,24 @@ def board_move_issue(
                     headers=response_headers,
                 )
             return RedirectResponse(conflict_url, status_code=303)
+        if exc.code == issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE:
+            policy_url = _board_url(
+                search=search,
+                status=status,
+                project=project,
+                sprint=sprint,
+                move_conflict="policy",
+            )
+            if request.headers.get("HX-Request"):
+                return HTMLResponse(
+                    "",
+                    status_code=409,
+                    headers={
+                        "HX-Redirect": policy_url,
+                        "Cache-Control": "private, no-store",
+                    },
+                )
+            return RedirectResponse(policy_url, status_code=303)
     if request.headers.get("HX-Request"):
         return _render_board(
             request,

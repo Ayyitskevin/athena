@@ -29,8 +29,8 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   parent/fork lineage, run reconstruction, replay export, webhooks, Mission
   Control, active-work state, and throughput metrics.
 - **Intervene** includes token revocation, one-command offboard, audited
-  per-agent pause, and holder/admin claim controls. Durable budgets, approvals,
-  and optional project-specific hard workflow gates remain outside that claim.
+  per-agent pause, holder/admin claim controls, and optional project blocked-close
+  gates. Durable budgets and approvals remain outside that claim.
 
 Phase 1 closed the original attribution and delegated-completion breaks. Items
 that remain intentionally open are still unchecked below.
@@ -136,7 +136,7 @@ agents that contribute here.
 - [x] Mechanical guardrails: Ruff lint and formatting checks, static import
       contracts, mypy across every runtime module in `src/athena`, and a
       full-source coverage gate with configured line and branch floors.
-- [ ] Optional per-project hard workflow gates for agent actors (block closing
+- [x] Optional per-project hard workflow gates for agent actors (block closing
       blocked issues at the command layer, not just as web advisory).
 
 Checked boxes record repository implementation, not release status. They do not

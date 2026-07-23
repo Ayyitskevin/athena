@@ -19,8 +19,31 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import project_activity, projects
-from athena.core import db
+from athena.aegis import project_activity, project_etags, projects
+from athena.core import access, db, etag, identity, tokens, users
+
+_POLICY_ERROR_KINDS = (
+    "not_found",
+    "forbidden",
+    "precondition_required",
+    "invalid_precondition",
+    "precondition_too_large",
+    "precondition_failed",
+)
+
+
+class ProjectPolicyCommandError(Exception):
+    """A framework-neutral project-governance rejection."""
+
+    def __init__(
+        self, kind: str, detail: str, *, current_etag: str | None = None
+    ) -> None:
+        super().__init__(detail)
+        if kind not in _POLICY_ERROR_KINDS:
+            raise ValueError(f"unknown ProjectPolicyCommandError kind: {kind}")
+        self.kind = kind
+        self.detail = detail
+        self.current_etag = current_etag
 
 
 def create_project(
@@ -119,3 +142,86 @@ def delete_project(conn: sqlite3.Connection, *, actor_id: int, project_id: int) 
             key=project["key"],
         )
         return projects.delete_project(conn, project_id, commit=False)
+
+
+def set_blocked_close_policy(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    project_id: int,
+    enabled: bool,
+    if_match: list[str] | None,
+) -> dict:
+    """Set the optional blocked-close policy under one guarded write lock.
+
+    Authorization is command-owned and evaluated from live rows: only a human
+    project creator or human admin with a write-capable role may configure the
+    policy. A hidden project remains indistinguishable from a missing one.
+
+    The exact reviewed project representation is required through If-Match. The
+    precondition check, flag mutation, audit event, visibility envelope,
+    notifications, and ambient run lineage all commit or roll back together.
+    """
+    with db.transaction(conn, immediate=True):
+        project = projects.get_project(conn, project_id)
+        live_actor = users.get_user(conn, actor["id"])
+        effective_actor = {**actor, **live_actor} if live_actor is not None else None
+        if project is None or not access.can_see_project(
+            conn, effective_actor, project_id
+        ):
+            raise ProjectPolicyCommandError("not_found", "no such project")
+        if (
+            effective_actor is None
+            or effective_actor.get("is_agent")
+            or effective_actor.get("paused_at")
+            or not identity.can_write(effective_actor)
+            or not identity.token_has_scope(effective_actor, tokens.ISSUE_WRITE_SCOPE)
+            or (
+                project["created_by"] != effective_actor["id"]
+                and effective_actor.get("role") != users.ADMIN_ROLE
+            )
+        ):
+            raise ProjectPolicyCommandError(
+                "forbidden",
+                "only a human project creator or human admin may configure this policy",
+            )
+
+        current = project_etags.current_etag(project)
+        if if_match is None:
+            raise ProjectPolicyCommandError(
+                "precondition_required",
+                "If-Match with the current project ETag is required",
+                current_etag=current,
+            )
+        try:
+            condition = etag.parse_if_match(if_match)
+            reviewed_etag = condition.single_strong_tag()
+        except etag.IfMatchTooLarge as exc:
+            raise ProjectPolicyCommandError(
+                "precondition_too_large", str(exc), current_etag=current
+            ) from exc
+        except etag.InvalidIfMatch as exc:
+            raise ProjectPolicyCommandError(
+                "invalid_precondition", str(exc), current_etag=current
+            ) from exc
+        if reviewed_etag != current:
+            raise ProjectPolicyCommandError(
+                "precondition_failed",
+                "If-Match precondition failed",
+                current_etag=current,
+            )
+
+        if project["block_agent_closes_when_blocked"] == enabled:
+            return project
+        updated = projects.set_blocked_close_policy(
+            conn, project_id, enabled=enabled, commit=False
+        )
+        assert updated is not None
+        project_activity.record_project_blocked_close_policy_changed(
+            conn,
+            actor_id=effective_actor["id"],
+            project_id=project_id,
+            enabled=enabled,
+            commit=False,
+        )
+        return updated

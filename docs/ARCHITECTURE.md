@@ -150,7 +150,8 @@ check without importing application code.
 - **Phase 4 — Fleet wiring & polish** *(largely done, landed alongside 2-3)*:
   MCP server, outbound webhooks, event and bounded UTC schedule automation rules,
   durable per-slot/per-target schedule receipts with synthetic activity lineage,
-  cross-module search,
+  command-owned optional project gates for blocked agent closes, cross-module
+  search,
   backups/restore/doctor, run replay & lineage export, idempotent writes,
   per-token and anonymous rate limits, OIDC SSO, cooperative run check-ins,
   self-service delegation pickup, and agent admin dashboards. Remaining:

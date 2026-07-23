@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from athena import config
 from athena.aegis import (
@@ -38,6 +38,7 @@ from athena.aegis import (
     leases,
     project_activity,
     project_commands,
+    project_etags,
     projects,
     sprints,
     statuses,
@@ -86,6 +87,9 @@ class IssueUpdate(BaseModel):
     priority: Priority | None = None
     project_id: int | None = None
     sprint_id: int | None = None
+    # A human-only, explicit acknowledgment of the protected project's
+    # blocked-close policy. Agent actors can never use this flag.
+    override_blocked_close: StrictBool = False
 
 
 class AssigneeUpdate(BaseModel):
@@ -124,6 +128,8 @@ class BulkResult(BaseModel):
     # The human-readable reason this issue was skipped (e.g. "no such status for
     # this project"), or null when it succeeded.
     error: str | None = None
+    # Stable machine-readable refusal code when the command provides one.
+    code: str | None = None
 
 
 class BulkUpdateOut(BaseModel):
@@ -155,6 +161,10 @@ class ProjectEdit(BaseModel):
     description: str | None = None
 
 
+class ProjectPolicyUpdate(BaseModel):
+    block_agent_closes_when_blocked: StrictBool
+
+
 class ProjectOut(BaseModel):
     id: int
     name: str
@@ -165,6 +175,10 @@ class ProjectOut(BaseModel):
     # 'public' (anyone may read) or 'private' (creator, admins, and members only).
     # Defaults 'public' for every project until explicitly flipped.
     visibility: str = "public"
+
+    # Disabled by default: projects preserve today's close behavior until a human
+    # creator/admin explicitly opts in.
+    block_agent_closes_when_blocked: bool = False
 
 
 class VisibilityUpdate(BaseModel):
@@ -319,6 +333,10 @@ _LEASE_GENERATION_HTTP = {
     "invalid_lease_generation": (422, "invalid_lease_generation"),
     "lease_generation_mismatch": (409, "lease_generation_mismatch"),
 }
+_ISSUE_POLICY_HTTP = {
+    issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE: 409,
+}
+
 
 _PRIVATE_LEASE_HEADERS = {
     "Cache-Control": "private, no-store",
@@ -359,6 +377,13 @@ def _issue_command_error_response(
         return JSONResponse(
             status_code=status_code,
             content={"detail": exc.detail, "code": code},
+            headers=_PRIVATE_LEASE_HEADERS,
+        )
+    policy_status = _ISSUE_POLICY_HTTP.get(exc.code or "")
+    if policy_status is not None:
+        return JSONResponse(
+            status_code=policy_status,
+            content={"detail": exc.detail, "code": exc.code},
             headers=_PRIVATE_LEASE_HEADERS,
         )
     raise _issue_command_http_error(exc) from exc
@@ -781,15 +806,10 @@ def _apply_bulk_update(
         )
         if key in provided
     }
-    try:
-        issue_commands.update_issue(
-            conn, actor=actor, issue_id=issue_id, **command_fields
-        )
-    except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+    issue_commands.update_issue(conn, actor=actor, issue_id=issue_id, **command_fields)
 
 
-@router.post("/bulk", response_model=BulkUpdateOut)
+@router.post("/bulk", response_model=BulkUpdateOut, response_model_exclude_unset=True)
 def bulk_update(
     payload: BulkUpdate,
     actor: dict = Depends(issue_write_actor),
@@ -821,9 +841,17 @@ def bulk_update(
     for issue_id in dict.fromkeys(payload.ids):  # dedupe, preserve first-seen order
         try:
             _apply_bulk_update(conn, issue_id, provided, actor)
-            results.append({"id": issue_id, "ok": True})
-        except HTTPException as exc:
-            results.append({"id": issue_id, "ok": False, "error": str(exc.detail)})
+            results.append({"id": issue_id, "ok": True, "error": None})
+        except issue_commands.IssueCommandError as exc:
+            result = {
+                "id": issue_id,
+                "ok": False,
+                "error": exc.detail,
+            }
+            if exc.code is not None:
+                result["code"] = exc.code
+            results.append(result)
+
     updated = sum(1 for r in results if r["ok"])
     return {"updated": updated, "failed": len(results) - updated, "results": results}
 
@@ -1121,6 +1149,52 @@ def remove_link(
         raise _issue_command_http_error(exc) from exc
 
 
+_PROJECT_POLICY_PRECONDITION_HTTP = {
+    "precondition_required": (428, "precondition_required"),
+    "invalid_precondition": (400, "invalid_if_match"),
+    "precondition_too_large": (431, "if_match_too_large"),
+    "precondition_failed": (412, "precondition_failed"),
+}
+
+_PROJECT_POLICY_STATUS = {
+    "not_found": 404,
+    "forbidden": 403,
+    "precondition_required": 428,
+    "invalid_precondition": 400,
+    "precondition_too_large": 431,
+    "precondition_failed": 412,
+}
+
+
+def _tagged_project(project: dict, response: Response) -> dict:
+    """Return the public project representation and matching strong ETag."""
+    public, current = project_etags.resource_and_etag(project)
+    response.headers["ETag"] = current
+    return public
+
+
+def _project_policy_error_response(
+    exc: project_commands.ProjectPolicyCommandError,
+) -> JSONResponse:
+    """Map guarded policy failures without weakening project visibility."""
+    spec = _PROJECT_POLICY_PRECONDITION_HTTP.get(exc.kind)
+    if spec is not None:
+        status_code, code = spec
+        headers = {}
+        if exc.current_etag is not None:
+            headers["ETag"] = exc.current_etag
+        if exc.kind == "precondition_required":
+            headers["Cache-Control"] = "no-store"
+        return JSONResponse(
+            status_code=status_code,
+            content={"detail": exc.detail, "code": code},
+            headers=headers,
+        )
+    raise HTTPException(
+        status_code=_PROJECT_POLICY_STATUS[exc.kind], detail=exc.detail
+    ) from exc
+
+
 # --- Projects: a top-level grouping of issues -----------------------------
 
 
@@ -1164,6 +1238,7 @@ def create_project(
 @projects_router.get("/{project_id}", response_model=ProjectOut)
 def show_project(
     project_id: int,
+    response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1173,7 +1248,30 @@ def show_project(
     # show_space already applied.
     if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
-    return project
+    return _tagged_project(project, response)
+
+
+@projects_router.put("/{project_id}/policy", response_model=ProjectOut)
+def set_project_policy(
+    project_id: int,
+    payload: ProjectPolicyUpdate,
+    request: Request,
+    response: Response,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | JSONResponse:
+    """Configure blocked-close governance from an exact reviewed project state."""
+    try:
+        updated = project_commands.set_blocked_close_policy(
+            conn,
+            actor=actor,
+            project_id=project_id,
+            enabled=payload.block_agent_closes_when_blocked,
+            if_match=_if_match_values(request),
+        )
+    except project_commands.ProjectPolicyCommandError as exc:
+        return _project_policy_error_response(exc)
+    return _tagged_project(updated, response)
 
 
 def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -> dict:
