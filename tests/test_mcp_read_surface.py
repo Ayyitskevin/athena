@@ -11,7 +11,6 @@ app, and the FastMCP tool for whoami.
 
 import json
 
-import pytest
 from fastapi.testclient import TestClient
 
 from athena.main import create_app
