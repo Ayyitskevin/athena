@@ -612,9 +612,10 @@ def _jira_project_info(
     project_key: str | None,
     project_name: str | None,
 ) -> dict:
-    fields = first_issue.get("fields") if isinstance(first_issue, dict) else {}
-    fields = fields if isinstance(fields, dict) else {}
-    project = fields.get("project") if isinstance(fields.get("project"), dict) else {}
+    raw_fields = first_issue.get("fields") if isinstance(first_issue, dict) else None
+    fields = raw_fields if isinstance(raw_fields, dict) else {}
+    raw_project = fields.get("project")
+    project = raw_project if isinstance(raw_project, dict) else {}
     raw_key = (
         project_key or project.get("key") or _jira_key_prefix(first_issue.get("key"))
     )
@@ -728,8 +729,9 @@ def _jira_links(
         return []
     current_key = _jira_issue_key(issue, "IMP", 0)
     current_id = issue_id_by_key.get(current_key)
-    fields = issue.get("fields") if isinstance(issue.get("fields"), dict) else {}
-    rows = fields.get("issuelinks") if isinstance(fields, dict) else []
+    raw_fields = issue.get("fields")
+    fields = raw_fields if isinstance(raw_fields, dict) else {}
+    rows = fields.get("issuelinks")
     if current_id is None or not isinstance(rows, list):
         return []
 
@@ -737,11 +739,11 @@ def _jira_links(
     for row in rows:
         if not isinstance(row, dict):
             continue
-        link_type = row.get("type") if isinstance(row.get("type"), dict) else {}
-        if isinstance(row.get("outwardIssue"), dict):
-            target = issue_id_by_key.get(
-                str(row["outwardIssue"].get("key", "")).upper()
-            )
+        raw_link_type = row.get("type")
+        link_type = raw_link_type if isinstance(raw_link_type, dict) else {}
+        outward_issue = row.get("outwardIssue")
+        if isinstance(outward_issue, dict):
+            target = issue_id_by_key.get(str(outward_issue.get("key", "")).upper())
             if target is None:
                 report.note_unmapped(
                     "issues[].fields.issuelinks",
@@ -752,8 +754,9 @@ def _jira_links(
                 out.append((current_id, target, "blocks"))
             else:
                 out.append((current_id, target, "relates"))
-        if isinstance(row.get("inwardIssue"), dict):
-            target = issue_id_by_key.get(str(row["inwardIssue"].get("key", "")).upper())
+        inward_issue = row.get("inwardIssue")
+        if isinstance(inward_issue, dict):
+            target = issue_id_by_key.get(str(inward_issue.get("key", "")).upper())
             if target is None:
                 report.note_unmapped(
                     "issues[].fields.issuelinks",
@@ -808,24 +811,28 @@ def _confluence_space_info(
 
 
 def _confluence_created_by(page: dict) -> dict | None:
-    history = page.get("history") if isinstance(page.get("history"), dict) else {}
+    raw_history = page.get("history")
+    history = raw_history if isinstance(raw_history, dict) else {}
     return _confluence_user(history.get("createdBy") or page.get("createdBy"))
 
 
 def _confluence_updated_by(page: dict) -> dict | None:
-    version = page.get("version") if isinstance(page.get("version"), dict) else {}
+    raw_version = page.get("version")
+    version = raw_version if isinstance(raw_version, dict) else {}
     return _confluence_user(
         version.get("by") or page.get("lastUpdatedBy") or _confluence_created_by(page)
     )
 
 
 def _confluence_created_at(page: dict) -> Any:
-    history = page.get("history") if isinstance(page.get("history"), dict) else {}
+    raw_history = page.get("history")
+    history = raw_history if isinstance(raw_history, dict) else {}
     return history.get("createdDate") or page.get("created_at")
 
 
 def _confluence_updated_at(page: dict) -> Any:
-    version = page.get("version") if isinstance(page.get("version"), dict) else {}
+    raw_version = page.get("version")
+    version = raw_version if isinstance(raw_version, dict) else {}
     return version.get("when") or page.get("updated_at") or _confluence_created_at(page)
 
 
@@ -893,7 +900,8 @@ def _confluence_version_body(version: dict) -> str:
 
 
 def _confluence_labels(page: dict) -> list[str]:
-    metadata = page.get("metadata") if isinstance(page.get("metadata"), dict) else {}
+    raw_metadata = page.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     labels = page.get("labels") or metadata.get("labels")
     if isinstance(labels, dict):
         labels = labels.get("results")
@@ -1107,7 +1115,8 @@ def _adf_to_text(node: Any) -> str:
     if node_type == "hardBreak":
         return "\n"
     if node_type == "mention":
-        attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+        raw_attrs = node.get("attrs")
+        attrs = raw_attrs if isinstance(raw_attrs, dict) else {}
         return str(attrs.get("text") or attrs.get("displayName") or "")
     children = [
         _adf_to_text(child) for child in node.get("content", []) if child is not None

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from typing import TypeGuard
 
 from athena.aegis import projects, statuses
 from athena.core import issue_identity, links, search, users
@@ -107,7 +108,9 @@ def create_issue(
                 project_seq,
             ),
         )
-        issue_id = int(cur.lastrowid)
+        row_id = cur.lastrowid
+        assert row_id is not None
+        issue_id = row_id
         # Derived rows belong to the same unit as their source. The command layer
         # may keep all three uncommitted until it appends the required audit event.
         links.sync_links(
@@ -124,7 +127,9 @@ def create_issue(
         raise
     if commit:
         conn.commit()
-    return get_issue(conn, issue_id)
+    issue = get_issue(conn, issue_id)
+    assert issue is not None
+    return issue
 
 
 def update_issue(
@@ -502,7 +507,7 @@ def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
 MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
-def is_filter_id(value: object) -> bool:
+def is_filter_id(value: object) -> TypeGuard[int]:
     """Whether value is an exact integer id SQLite can bind safely.
 
     ``bool`` is deliberately excluded even though it subclasses ``int``: filter

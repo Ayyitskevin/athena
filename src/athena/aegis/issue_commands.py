@@ -544,6 +544,7 @@ def set_issue_archived(
     with db.transaction(conn, immediate=True):
         before = _writable_issue(conn, actor, issue_id)
         updated = issues.set_archived(conn, issue_id, archived, commit=False)
+        assert updated is not None
         issue_activity.record_archive_change(
             conn,
             actor_id=actor["id"],
@@ -577,6 +578,7 @@ def set_issue_parent(
         if reason is not None:
             raise IssueCommandError("invalid", reason)
         updated = issues.set_parent(conn, issue_id, parent_id, commit=False)
+        assert updated is not None
         issue_activity.record_parent_change(
             conn,
             actor_id=actor["id"],

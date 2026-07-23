@@ -239,6 +239,7 @@ def set_user_paused(
             target_id=target_user_id,
             commit=False,
         )
+        assert updated is not None
     return updated
 
 

@@ -149,6 +149,7 @@ def create_space(
     err = _write_required(user, "create spaces")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     key = key.strip().upper()
     name = name.strip()
@@ -186,6 +187,7 @@ def delete_space(
     err = _write_required(user, "delete spaces")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     space = spaces.get_space(conn, space_id)
     if space is None:
@@ -261,6 +263,7 @@ def edit_space(
     err = _write_required(user, "edit spaces")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     before = spaces.get_space(conn, space_id)
     # Can't edit a space you can't see — a private space reads as "not found", no leak.
@@ -491,7 +494,9 @@ def space_detail(
             # tighter than Mentor's open write model), and it's disabled while the
             # space still holds pages (the API would refuse that delete with 409).
             "can_write": can_write,
-            "can_delete": can_write and user["id"] == space["created_by"],
+            "can_delete": user is not None
+            and can_write
+            and user["id"] == space["created_by"],
             "page_count": len(page_rows),
             "include_archived": include_archived,
             "activity": activity.list_activity(
@@ -518,6 +523,7 @@ def create_page(
     err = _write_required(user, "create pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     # Can't add a page to a space you can't see — a private space reads as "not found".
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
@@ -680,6 +686,7 @@ def edit_page(
     err = _write_required(user, "edit pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
@@ -719,6 +726,7 @@ def move_page(
     err = _write_required(user, "move pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     page, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
@@ -764,6 +772,7 @@ def delete_page(
     err = _write_required(user, "delete pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     page, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
@@ -795,6 +804,7 @@ def archive_page(
     err = _write_required(user, "archive pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -819,6 +829,7 @@ def unarchive_page(
     err = _write_required(user, "restore pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -844,6 +855,7 @@ def add_page_attachment(
     err = _write_required(user, "attach files")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -890,6 +902,7 @@ def remove_page_attachment(
     err = _write_required(user, "remove files")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -968,6 +981,7 @@ def restore_version(
     err = _write_required(user, "restore pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
 
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
@@ -1002,6 +1016,7 @@ def add_page_comment(
     err = _write_required(user, "comment")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -1057,6 +1072,7 @@ def edit_page_comment(
     err = _write_required(user, "edit comments")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -1099,6 +1115,7 @@ def delete_page_comment(
     err = _write_required(user, "delete comments")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -1135,6 +1152,7 @@ def add_page_label(
     err = _write_required(user, "label pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
@@ -1167,6 +1185,7 @@ def remove_page_label(
     err = _write_required(user, "label pages")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     # 404 a missing OR hidden page, symmetric with add_page_label (and the REST detach).
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:

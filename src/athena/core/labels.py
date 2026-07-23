@@ -34,7 +34,11 @@ def create_label(
     color = normalize_color(color)
     cur = conn.execute("INSERT INTO labels (name, color) VALUES (?, ?)", (name, color))
     conn.commit()
-    return get_label(conn, cur.lastrowid)
+    label_id = cur.lastrowid
+    assert label_id is not None
+    label = get_label(conn, label_id)
+    assert label is not None
+    return label
 
 
 def get_label(conn: sqlite3.Connection, label_id: int) -> dict | None:

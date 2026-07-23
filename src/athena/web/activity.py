@@ -178,7 +178,7 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     )
     runs = (
         activity.reconstruct_runs(conn, actor_id=actor_id, actor=user)
-        if selected_actor is not None
+        if selected_actor is not None and actor_id is not None
         else []
     )
     return get_templates().TemplateResponse(

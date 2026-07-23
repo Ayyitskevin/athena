@@ -138,12 +138,12 @@ def _project_issue_state(
     issue = issues.get_issue(conn, issue_id)
     if issue is None:
         return None
-    if actor is not _UNGATED and not access.can_see_complete_issue_history(
-        conn, actor, issue_id
-    ):
-        raise IncompleteIssueHistory(
-            "complete issue history is not available to this actor"
-        )
+    if actor is not _UNGATED:
+        assert actor is None or isinstance(actor, dict)
+        if not access.can_see_complete_issue_history(conn, actor, issue_id):
+            raise IncompleteIssueHistory(
+                "complete issue history is not available to this actor"
+            )
     newest_first = activity.list_activity(
         conn,
         target_kind="issue",

@@ -167,7 +167,7 @@ def show_fleet_metrics(
     response: Response,
     actor: dict | None = Depends(_fleet_metrics_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> fleet_metrics.FleetMetricsPayload:
     """Return one bounded metrics snapshot for the request actor."""
 
     response.headers.update(_PRIVATE_HEADERS)

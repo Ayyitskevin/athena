@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
+from typing import cast
 
 from athena.core import activity, db, run_context
 from athena.core._util import atomic_write_json
@@ -100,7 +101,7 @@ def _build_run_replay_artifact(
         raise ValueError("run id is required")
 
     if actor is not _DEFAULT_ACTOR and not activity.can_see_complete_run(
-        conn, normalized, actor
+        conn, normalized, cast(dict | None, actor)
     ):
         return None
 

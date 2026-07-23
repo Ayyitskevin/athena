@@ -66,6 +66,7 @@ def download(
     if att is None or not _can_see_attachment(conn, actor, att):
         raise HTTPException(status_code=404, detail="no such attachment")
     stored = attachments.get_stored_name(conn, attachment_id)
+    assert stored is not None
     path = attachments.disk_path(config.ATTACH_DIR, stored)
     if not path.exists():
         raise HTTPException(status_code=404, detail="attachment file is missing")

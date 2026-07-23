@@ -304,6 +304,7 @@ def create_token(
     err = _write_required(user, "create tokens")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     name = name.strip()
     if not name:
         return templates.TemplateResponse(
@@ -342,6 +343,7 @@ def revoke_token(
     err = _write_required(user, "revoke tokens")
     if err is not None:
         return err
+    assert user is not None, "_write_required accepted a missing user"
     if not token_commands.revoke_token(conn, actor_id=user["id"], token_id=token_id):
         return HTMLResponse(
             '<div class="error">No such live token.</div>', status_code=404
@@ -401,6 +403,7 @@ def agents_admin(
     err = _admin_required(user)
     if err is not None:
         return err
+    assert user is not None, "_admin_required accepted a missing user"
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
     notice = None
@@ -444,6 +447,7 @@ def onboard_agent(
     err = _admin_required(user)
     if err is not None:
         return err
+    assert user is not None, "_admin_required accepted a missing user"
     # Validation (blank email/name, missing scopes) lives in the command — the
     # except branch below renders its message inline.
     try:
@@ -640,6 +644,7 @@ def create_user(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     email = email.strip()
     name = name.strip()
     if not email or not name:
@@ -731,6 +736,7 @@ def update_user_role(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     try:
         user_commands.set_user_role(
             conn, actor_id=actor["id"], target_user_id=user_id, role=role
@@ -770,6 +776,7 @@ def update_user_agent(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" to mark as agent, anything else to
     # mark as human), so the button is a deterministic toggle, not a read-then-flip.
     try:
@@ -827,6 +834,7 @@ def create_webhook(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     url = url.strip()
     # Same SSRF guard the REST API applies — refuse a private/loopback/malformed URL
     # at the boundary rather than at delivery time.
@@ -869,6 +877,7 @@ def toggle_webhook(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" resume, anything else pause) — a
     # deterministic toggle. Resuming clears the backoff so it retries promptly. The
     # command records the flip atomically.
@@ -897,6 +906,7 @@ def delete_webhook(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     if not webhook_commands.delete_webhook(
         conn, actor_id=actor["id"], webhook_id=webhook_id
     ):
@@ -990,6 +1000,7 @@ def create_rule(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
 
     name = name.strip()
     conditions: dict = {}
@@ -1053,6 +1064,7 @@ def toggle_rule(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" enable, anything else pause) — a
     # deterministic toggle that keeps the rule (and its place in fire order). The
     # command records the flip atomically.
@@ -1079,6 +1091,7 @@ def delete_rule(
     err = _admin_required(actor)
     if err is not None:
         return err
+    assert actor is not None, "_admin_required accepted a missing user"
     if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
         return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)

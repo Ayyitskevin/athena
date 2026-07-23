@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from typing import cast
 
 from athena.core import access
 
@@ -223,7 +224,9 @@ def list_notifications(
     if unread_only:
         where += " AND n.read_at IS NULL"
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where += f" AND {gate}"
             params.extend(gate_params)
@@ -249,7 +252,9 @@ def unread_count(
             "WHERE user_id = ? AND read_at IS NULL",
             (user_id,),
         ).fetchone()["n"]
-    gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+    gate, gate_params = access.event_visibility_clause(
+        conn, cast(dict | None, actor), alias="a"
+    )
     where = "WHERE n.user_id = ? AND n.read_at IS NULL"
     params: list = [user_id]
     if gate:
@@ -273,7 +278,9 @@ def mark_read(
     where = "WHERE id = ? AND user_id = ? AND read_at IS NULL"
     params: list = [notification_id, user_id]
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)
@@ -295,7 +302,9 @@ def mark_all_read(
     where = "WHERE user_id = ? AND read_at IS NULL"
     params: list = [user_id]
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where += f" AND event_id IN (SELECT a.id FROM activity a WHERE {gate})"
             params.extend(gate_params)

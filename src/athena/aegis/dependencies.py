@@ -144,8 +144,10 @@ def _others(
     _UNGATED keeps everything (internal callers)."""
     out = []
     for i in ids:
-        if actor is not _UNGATED and not access.can_see_issue(conn, actor, i):
-            continue
+        if actor is not _UNGATED:
+            assert actor is None or isinstance(actor, dict)
+            if not access.can_see_issue(conn, actor, i):
+                continue
         issue = issues.get_issue(conn, i)
         if issue is not None:
             out.append(_summary(issue))

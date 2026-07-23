@@ -57,12 +57,12 @@ def search_issues(
     hidden issue can't slip through either path."""
     if not query or not query.strip():
         return []
-    gate = {} if actor is _UNGATED else {"actor": actor}
-    list_gate = (
-        {}
-        if actor is _UNGATED
-        else {"visible_project_ids": access.visible_project_filter(conn, actor)}
-    )
+    viewer: dict | None = None
+    visible_project_ids: set[int] | None = None
+    if actor is not _UNGATED:
+        assert actor is None or isinstance(actor, dict)
+        viewer = actor
+        visible_project_ids = access.visible_project_filter(conn, viewer)
 
     if project is not None and not isinstance(project, str):
         return []
@@ -77,8 +77,15 @@ def search_issues(
     )
     if not has_filter:
         # No structured constraint — a plain issue-scoped search.
+        if actor is _UNGATED:
+            return search.search(conn, query, kind="issue", limit=limit, offset=offset)
         return search.search(
-            conn, query, kind="issue", limit=limit, offset=offset, **gate
+            conn,
+            query,
+            kind="issue",
+            limit=limit,
+            offset=offset,
+            actor=viewer,
         )
 
     # Resolve the structured filter to a concrete set of issue ids via the one
@@ -104,11 +111,15 @@ def search_issues(
         backlog=backlog,
         search=text_filter,
         ids=label_ids,
-        **list_gate,
+        visible_project_ids=visible_project_ids,
     )
     allowed = [i["id"] for i in filtered]
     if not allowed:
         return []
+    if actor is _UNGATED:
+        return search.search(
+            conn, query, kind="issue", ids=allowed, limit=limit, offset=offset
+        )
     return search.search(
-        conn, query, kind="issue", ids=allowed, limit=limit, offset=offset, **gate
+        conn, query, kind="issue", ids=allowed, limit=limit, offset=offset, actor=viewer
     )

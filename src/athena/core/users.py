@@ -59,7 +59,11 @@ def create_user(
     )
     if commit:
         conn.commit()
-    return get_user(conn, cur.lastrowid)
+    user_id = cur.lastrowid
+    assert user_id is not None
+    user = get_user(conn, user_id)
+    assert user is not None
+    return user
 
 
 def _row_to_user(row: sqlite3.Row) -> dict:

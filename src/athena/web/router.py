@@ -58,8 +58,10 @@ def init_templates(templates: Jinja2Templates) -> None:
     _templates = templates
 
 
-def get_templates() -> Jinja2Templates | None:
+def get_templates() -> Jinja2Templates:
     """The configured templates instance, for other web routers (e.g. auth)."""
+    if _templates is None:
+        raise RuntimeError("web templates have not been initialized")
     return _templates
 
 
@@ -158,7 +160,7 @@ def _statuses_in_use(conn, visible_project_ids: set[int] | None = None) -> list[
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request):
     """Simple landing page. No dynamic data yet — just the foundation."""
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="home.html",
     )
@@ -180,7 +182,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     delegation_inbox = (
         delegations.list_delegations(conn, user, limit=8) if user else None
     )
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
         context={
@@ -294,7 +296,7 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             }
         )
 
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="search.html",
         context={
@@ -349,7 +351,7 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             if it["target_kind"] == "issue"
             else f"/mentor/pages/{it['target_id']}"
         )
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request, name="inbox.html", context={"items": items}
     )
 
@@ -401,7 +403,7 @@ def aegis(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     )[:5]
 
     can_write = user is not None and identity.can_write(user)
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis.html",
         context={
@@ -561,7 +563,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         if request.headers.get("HX-Request")
         else "aegis/issues.html"
     )
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name=template,
         context={
@@ -610,7 +612,7 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     user = getattr(request.state, "user", None)
     if user is not None and not identity.can_write(user):
         return _readonly_response()
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
         context={
@@ -721,7 +723,7 @@ def edit_issue_form(
     issue, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
         context={"issue": issue},
@@ -848,7 +850,7 @@ def issue_detail(
         # not-found state: render empty list page with error (minimal). Carry a
         # real 404 status — a missing issue is not a 200, and the API surface for
         # the same id returns 404, so the browser path must not disagree.
-        return _templates.TemplateResponse(
+        return get_templates().TemplateResponse(
             request=request,
             name="aegis/issues.html",
             context={
@@ -878,7 +880,7 @@ def _render_issue_detail(
     issue_id = issue["id"]
     user = getattr(request.state, "user", None)
     can_write = user is not None and identity.can_write(user)
-    can_modify = can_write and issues.can_act_on(conn, issue, user)
+    can_modify = user is not None and can_write and issues.can_act_on(conn, issue, user)
     comment_rows = comments.list_comments(conn, issue_id)
     for comment in comment_rows:
         comment["body_html"] = render_comment(conn, comment["body"])
@@ -954,7 +956,7 @@ def _render_issue_detail(
     }
     if extra:
         context.update(extra)
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_detail.html",
         context=context,
@@ -976,7 +978,7 @@ def issue_history_view(
     if not issue or not access.can_see_project_or_backlog(
         conn, user, issue["project_id"]
     ):
-        return _templates.TemplateResponse(
+        return get_templates().TemplateResponse(
             request=request,
             name="aegis/issues.html",
             context={
@@ -1006,7 +1008,7 @@ def issue_history_view(
     events = activity.list_activity(
         conn, target_kind="issue", target_id=issue["id"], actor=user
     )
-    return _templates.TemplateResponse(
+    return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_history.html",
         context={

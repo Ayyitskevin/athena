@@ -54,6 +54,7 @@ def create_page(
         ),
     )
     page_id = cur.lastrowid
+    assert page_id is not None
     # Index any [[issue:N]]/[[page:N]] references this page's body makes, and its
     # title + body for full-text search — inside the same transaction (commit=False)
     # so the derived indexes never reflect a rolled-back create.
@@ -63,7 +64,9 @@ def create_page(
     search.index_document(conn, kind="page", source_id=page_id, commit=False)
     if commit:
         conn.commit()
-    return get_page(conn, page_id)
+    page = get_page(conn, page_id)
+    assert page is not None
+    return page
 
 
 def get_page(conn: sqlite3.Connection, page_id: int) -> dict | None:
@@ -378,7 +381,7 @@ def validate_move(
     parent = get_page(conn, new_parent_id)
     if parent is None or parent["space_id"] != page["space_id"]:
         return "Parent must be a page in this space."
-    node = parent
+    node: dict | None = parent
     seen: set[int] = set()
     while node is not None:
         if node["id"] == page["id"]:

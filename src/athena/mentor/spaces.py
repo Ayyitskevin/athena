@@ -32,9 +32,12 @@ def create_space(
         (key, name, description, created_by),
     )
     space_id = cur.lastrowid
+    assert space_id is not None
     if commit:
         conn.commit()
-    return get_space(conn, space_id)
+    space = get_space(conn, space_id)
+    assert space is not None
+    return space
 
 
 def get_space(conn: sqlite3.Connection, space_id: int) -> dict | None:
@@ -86,7 +89,8 @@ def update_space(
     duplicate first and returns a clean 409. The key is normalized to UPPERCASE here
     too, so "eng" and "ENG" stay one identity exactly as create does. ``commit=False``
     composes this inside the audited edit command's transaction."""
-    sets, params = [], []
+    sets: list[str] = []
+    params: list[object] = []
     if key is not None:
         sets.append("key = ?")
         params.append(key.upper())

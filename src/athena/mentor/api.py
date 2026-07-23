@@ -622,7 +622,7 @@ def edit_page(
     response: Response,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Editing is open to any authenticated actor, mirroring create (a page has no
     # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
     # history anyway) — but only on a page they can see. 404 if missing or hidden.
@@ -659,7 +659,7 @@ def move_page(
     payload: ParentUpdate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Re-parent a page within its space. Open to any authenticated actor, like
     # edit (no creator lock) — but only on a page they can see. 404 if the page is
     # missing or hidden; 422 if the new parent is invalid (another space, the page
@@ -702,7 +702,7 @@ def archive_page(
     page_id: int,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Soft-delete: hides the page from the tree/nav/search but preserves it (and its
     # history and comments), reversible via unarchive — the non-destructive
     # alternative to DELETE. Open like edit, only on a page the actor can see. 404 if
@@ -722,7 +722,7 @@ def unarchive_page(
     page_id: int,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Restore an archived page to the active tree/nav/search via the same command;
     # records "page_unarchived" only if it was actually archived. 404 if missing or
     # hidden.
@@ -959,7 +959,7 @@ def restore_version(
     version: int,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Restoring is an EDIT, not a destruction (the current content is preserved as
     # a new version), so it's open to any authenticated actor like edit/move — not
     # creator-locked the way delete is — but only on a page the actor can see. 404 if

@@ -166,7 +166,9 @@ def start_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        return sprints.start_sprint(conn, sprint_id)
+        sprint = sprints.start_sprint(conn, sprint_id)
+        assert sprint is not None
+        return sprint
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -179,7 +181,9 @@ def complete_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        return sprints.complete_sprint(conn, sprint_id)
+        sprint = sprints.complete_sprint(conn, sprint_id)
+        assert sprint is not None
+        return sprint
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

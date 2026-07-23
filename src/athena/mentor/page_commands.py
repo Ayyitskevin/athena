@@ -106,6 +106,7 @@ def edit_page(
             commit=False,
         )
         # after is never None here: the page existed under the same write lock.
+        assert after is not None
         page_activity.record_page_edited(
             conn, actor_id=actor_id, before=before, after=after, commit=False
         )
@@ -162,6 +163,7 @@ def move_page(
         moved, reason = pages.move(conn, page, new_parent_id, commit=False)
         if reason is not None:
             raise PageCommandError("invalid", reason)
+        assert moved is not None
         page_activity.record_page_moved(
             conn,
             actor_id=actor_id,
@@ -245,6 +247,7 @@ def set_page_archived(
         if before is None:
             raise PageCommandError("not_found", "no such page")
         after = pages.set_archived(conn, page_id, archived, commit=False)
+        assert after is not None
         page_activity.record_page_archive_change(
             conn,
             actor_id=actor_id,

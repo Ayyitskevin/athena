@@ -57,12 +57,15 @@ def create_project(
         (name, key.upper(), description, created_by, secrets.token_hex(16)),
     )
     project_id = cur.lastrowid
+    assert project_id is not None
     # Give the new project the default status set, so it has a working lifecycle
     # immediately and can be customized from there.
     statuses.seed_defaults(conn, project_id, commit=False)
     if commit:
         conn.commit()
-    return get_project(conn, project_id)
+    project = get_project(conn, project_id)
+    assert project is not None
+    return project
 
 
 def get_project(conn: sqlite3.Connection, project_id: int) -> dict | None:
@@ -126,7 +129,8 @@ def update_project(
     it does NOT renumber anything, because the per-project sequence is independent
     of the prefix. ``commit=False`` lets the audited command fold the edit and its
     'edited_project' event into one transaction."""
-    sets, params = [], []
+    sets: list[str] = []
+    params: list[object] = []
     if name is not None:
         sets.append("name = ?")
         params.append(name)

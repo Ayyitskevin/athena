@@ -60,7 +60,7 @@ projects_router = APIRouter(prefix="/projects", tags=["aegis"])
 # Priority is still a fixed global lifecycle (validated at the boundary). Status is
 # now PER-PROJECT (aegis/statuses), so it can't be a static Literal — it's a free
 # string validated against the target project's status set in the handlers below.
-Priority = Literal[issues.PRIORITIES]
+Priority = Literal["low", "medium", "high", "urgent"]
 
 
 class IssueCreate(BaseModel):
@@ -683,7 +683,7 @@ def update(
     response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Only the fields the client actually sent are touched. The shared command is
     # the one owner of authorization, validation, write, projections, and audit.
     fields = payload.model_dump(exclude_unset=True)
@@ -708,7 +708,7 @@ def set_assignee(
     response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # The shared command owns current-assignee authorization, target-user
     # validation, the nullable row update, auto-watch, notifications, and audit.
     try:
@@ -836,7 +836,7 @@ def set_sprint(
     response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # The command owns source authorization, final-project validation, persistence,
     # audit, notifications, and the hidden-sprint existence-oracle boundary.
     try:
@@ -860,7 +860,7 @@ def set_project(
     response: Response,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # The command owns destination visibility, key allocation, status remapping,
     # incompatible-sprint clearing, persistence, and every resulting audit fact.
     try:
@@ -1330,6 +1330,7 @@ def set_project_visibility(
     if visibility == project["visibility"]:
         return project
     updated = projects.set_visibility(conn, project_id, visibility)
+    assert updated is not None
     # Going private: record the creator as an explicit member so they appear in the
     # roster (they always keep access via created_by regardless — this is for the UI).
     if visibility == "private":
@@ -1871,6 +1872,7 @@ def complete_issue_claim(
             generation=payload.generation if payload is not None else None,
         )
         response.headers.update(_PRIVATE_LEASE_HEADERS)
+        return None
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
 

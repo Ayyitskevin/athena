@@ -84,6 +84,7 @@ def register_webhook(
         finalized = webhooks.reset_cursor(
             conn, created["id"], webhooks.current_tip(conn), commit=False
         )
+        assert finalized is not None
         return {**finalized, "secret": created["secret"]}
 
 

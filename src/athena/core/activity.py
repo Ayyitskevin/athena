@@ -14,6 +14,7 @@ from collections.abc import Collection
 from datetime import datetime
 from io import StringIO
 import sqlite3
+from typing import cast
 
 from athena.core import access, notifications, run_context
 
@@ -149,7 +150,7 @@ def record(
             else:
                 resolved_project_ids = {row["project_id"]}
         elif target_kind == "issue":
-            resolved_project_ids = set(issue_project_ids)
+            resolved_project_ids = set(cast(Collection[int | None], issue_project_ids))
         elif target_kind == "project":
             resolved_project_ids = {target_id}
         else:
@@ -187,11 +188,13 @@ def record(
                 0 if scope_is_complete else 1,
             ),
         )
+        event_id = cur.lastrowid
+        assert event_id is not None
         conn.executemany(
             "INSERT INTO activity_visibility_projects "
             "(event_id, project_scope_key) VALUES (?, ?)",
             [
-                (cur.lastrowid, project_scope_key)
+                (event_id, project_scope_key)
                 for project_scope_key in sorted(resolved_scope_keys)
             ],
         )
@@ -200,7 +203,7 @@ def record(
         # event, its access envelope, and notifications land or roll back together.
         notifications.notify_watchers(
             conn,
-            event_id=cur.lastrowid,
+            event_id=event_id,
             actor_id=actor_id,
             target_kind=target_kind,
             target_id=target_id,
@@ -211,7 +214,9 @@ def record(
         if commit or opened_transaction:
             conn.rollback()
         raise
-    return get_activity(conn, cur.lastrowid)
+    recorded = get_activity(conn, event_id)
+    assert recorded is not None
+    return recorded
 
 
 def get_activity(conn: sqlite3.Connection, activity_id: int) -> dict | None:
@@ -252,7 +257,9 @@ def list_activity(
     clauses: list[str] = []
     params: list = []
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             clauses.append(gate)
             params.extend(gate_params)
@@ -341,7 +348,9 @@ def list_events(
     clauses: list[str] = []
     params: list = []
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             clauses.append(gate)
             params.extend(gate_params)
@@ -488,7 +497,9 @@ def reconstruct_runs(
     prev_ts: datetime | None = None
     for event in ascending:
         ts = _parse_ts(event["created_at"])
-        if current and _starts_new_run(prev, prev_ts, event, ts, gap_seconds):
+        if current and _starts_new_run(
+            cast(dict, prev), prev_ts, event, ts, gap_seconds
+        ):
             runs.append(_run_summary(current))
             current = []
         current.append(event)
@@ -526,7 +537,9 @@ def _gated_run_events(
     clauses = ["a.run_id = ?"]
     params: list = [run_id]
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             clauses.append(gate)
             params.extend(gate_params)
@@ -659,7 +672,9 @@ def _visible_event_in_run(
     clauses = ["a.run_id = ?", "a.id = ?"]
     params: list = [run_id, event_id]
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             clauses.append(gate)
             params.extend(gate_params)
@@ -683,7 +698,9 @@ def _fork_prefix_events(
     clauses = ["a.run_id = ?", "a.id <= ?"]
     params: list = [run_id, event_id]
     if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, gate_params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             clauses.append(gate)
             params.extend(gate_params)
@@ -782,7 +799,9 @@ def distinct_verbs(
     where = ""
     params: list = []
     if actor is not _UNGATED:
-        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where = f" WHERE {gate}"
     rows = conn.execute(
@@ -801,7 +820,9 @@ def distinct_target_kinds(
     where = ""
     params: list = []
     if actor is not _UNGATED:
-        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where = f" WHERE {gate}"
     rows = conn.execute(
@@ -820,7 +841,9 @@ def distinct_actors(
     where = ""
     params: list = []
     if actor is not _UNGATED:
-        gate, params = access.event_visibility_clause(conn, actor, alias="a")
+        gate, params = access.event_visibility_clause(
+            conn, cast(dict | None, actor), alias="a"
+        )
         if gate:
             where = f" WHERE {gate}"
     rows = conn.execute(

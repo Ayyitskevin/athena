@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+from typing import TypeGuard
 
 # A claim lasts this long by default before it must be renewed (re-claimed). Long enough
 # for a real work session, short enough that an abandoned claim frees the work within the
@@ -27,7 +28,7 @@ MAX_LEASE_SECONDS = 86_400  # 24 hours
 GENERATION_HEX_CHARS = 32
 
 
-def is_valid_generation(value: object) -> bool:
+def is_valid_generation(value: object) -> TypeGuard[str]:
     """Whether value is one canonical opaque lease-generation token."""
     return (
         isinstance(value, str)
@@ -94,7 +95,9 @@ def upsert_lease(
     )
     if commit:
         conn.commit()
-    return get_lease(conn, issue_id)
+    lease = get_lease(conn, issue_id)
+    assert lease is not None
+    return lease
 
 
 def delete_lease(

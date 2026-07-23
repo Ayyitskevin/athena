@@ -91,6 +91,7 @@ def update_project(
             description=description,
             commit=False,
         )
+        assert updated is not None
         summary = _edit_summary(before, updated)
         if summary:
             project_activity.record_project_edited(
