@@ -205,7 +205,10 @@ def test_scope_validation_and_normalization(tmp_path):
         assert invalid.status_code == 422
 
 
-def test_token_scope_migration_defaults_existing_tokens_to_admin(tmp_path):
+def test_token_scope_migration_defaults_existing_tokens_to_admin(
+    tmp_path, migration_inventory_through
+):
+    migration_inventory_through("0020_token_scopes.sql")
     db_file = tmp_path / "scope_migration.db"
     conn = db.connect(db_file)
     conn.execute(

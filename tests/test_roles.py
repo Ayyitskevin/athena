@@ -173,7 +173,10 @@ def test_viewer_web_controls_hidden_and_writes_rejected(tmp_path):
         assert viewer["id"] != 1
 
 
-def test_migration_promotes_existing_first_user_to_admin(tmp_path):
+def test_migration_promotes_existing_first_user_to_admin(
+    tmp_path, migration_inventory_through
+):
+    migration_inventory_through("0019_user_roles.sql")
     db_file = tmp_path / "roles_migration.db"
     conn = db.connect(db_file)
     conn.execute(

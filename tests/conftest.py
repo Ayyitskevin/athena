@@ -15,7 +15,7 @@ effect immediately.
 import pytest
 
 from athena import config
-from athena.core import passwords
+from athena.core import db, passwords
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +46,23 @@ def isolated_attachment_dir(tmp_path, monkeypatch):
     # Attachments write blobs to config.ATTACH_DIR; point it at a per-test temp dir
     # so uploads never land in the repo and tests can't see each other's files.
     monkeypatch.setattr(config, "ATTACH_DIR", tmp_path / "attachments")
+
+
+@pytest.fixture
+def migration_inventory_through(tmp_path, monkeypatch):
+    """Expose one real, contiguous historical migration inventory to a test."""
+    source = db.MIGRATIONS_DIR
+
+    def limit(last_version: str):
+        destination = tmp_path / "migration-inventory"
+        destination.mkdir()
+        for migration in sorted(source.glob("*.sql")):
+            if migration.name <= last_version:
+                (destination / migration.name).write_bytes(migration.read_bytes())
+        monkeypatch.setattr(db, "MIGRATIONS_DIR", destination)
+        return destination
+
+    return limit
 
 
 @pytest.fixture(autouse=True)

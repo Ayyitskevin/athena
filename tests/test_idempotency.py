@@ -703,7 +703,10 @@ def test_invalid_and_oversized_keys_are_rejected_without_claim(tmp_path):
         conn.close()
 
 
-def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(tmp_path):
+def test_v1_receipts_migrate_fail_closed_and_discard_cached_bytes(
+    tmp_path, migration_inventory_through
+):
+    migration_inventory_through("0043_durable_idempotency.sql")
     db_path = tmp_path / "legacy.db"
     conn = db.connect(db_path)
     db.migrate(conn)

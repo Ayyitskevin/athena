@@ -206,7 +206,10 @@ def test_create_label_rejects_css_color_injection(tmp_path):
         assert client.get("/labels").json() == []
 
 
-def test_label_color_migration_sanitizes_existing_rows(tmp_path):
+def test_label_color_migration_sanitizes_existing_rows(
+    tmp_path, migration_inventory_through
+):
+    migration_inventory_through("0018_label_color_safety.sql")
     # WHY: older installs could already have unsafe color text persisted before
     # validation existed. The forward migration must make those rows safe too.
     db_file = tmp_path / "label_color_migration.db"
