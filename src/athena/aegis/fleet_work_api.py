@@ -66,6 +66,7 @@ class ActiveWorkHolderOut(_StrictModel):
 class ActiveWorkLeaseOut(_StrictModel):
     claimed_at: str
     expires_at: str
+    generation: str
     claim_state: Literal["active", "expired"]
 
 
@@ -94,6 +95,31 @@ class ActiveWorkBlockersOut(_StrictModel):
     clipped: bool
 
 
+class ClaimHandoffEventOut(_StrictModel):
+    event_id: int
+    actor_id: int
+    actor_name: str
+    created_at: str
+    run_id: str | None
+
+
+class OpenClaimHandoffOut(_StrictModel):
+    handoff_token: str
+    issue_id: int
+    lease_generation: str
+    schema_version: Literal[1]
+    state: Literal["awaiting_resume"]
+    reason: Literal["needs_input", "blocked", "capacity"]
+    note: str | None
+    attempted_work: str
+    evidence: list[str]
+    blocking_question: str
+    resume_instructions: str
+    yielded: ClaimHandoffEventOut
+    resumed: None
+    advisory_untrusted: Literal[True]
+
+
 AttentionReason = Literal[
     "issue_archived",
     "issue_done",
@@ -106,6 +132,7 @@ AttentionReason = Literal[
     "checkin_missing",
     "checkin_stale",
     "visible_open_blockers",
+    "open_claim_handoff",
 ]
 
 
@@ -115,6 +142,7 @@ class ActiveWorkItemOut(_StrictModel):
     lease: ActiveWorkLeaseOut
     run: ActiveWorkRunOut
     open_blockers: ActiveWorkBlockersOut
+    open_claim_handoff: OpenClaimHandoffOut | None
     attention_state: Literal["observed", "needs_attention"]
     attention_reasons: list[AttentionReason]
 

@@ -651,12 +651,14 @@ def record_issue_claimed(
     actor_id: int,
     issue_id: int,
     expires_at: str,
+    generation: str,
     renewed: bool,
     commit: bool = True,
 ) -> None:
     """Record that an actor took (or renewed) the exclusive lease on an issue — the
     coordination fact that stops a second agent from silently pulling the same work. The
-    detail carries the lease expiry so the trail shows how long the claim was good for.
+    detail carries the lease generation and expiry so the trail identifies the exact
+    possession and shows how long the claim was good for.
     A renewal (the holder re-claiming) records 'lease_renewed' rather than 'claimed', so
     the run history distinguishes taking the work from extending the window. ``commit=False``
     folds it into the claim command's transaction."""
@@ -666,7 +668,7 @@ def record_issue_claimed(
         verb="lease_renewed" if renewed else "claimed",
         target_kind="issue",
         target_id=issue_id,
-        detail=f"until {expires_at}",
+        detail=f"generation {generation}; until {expires_at}",
         commit=commit,
     )
 
@@ -676,6 +678,7 @@ def record_claim_completed(
     *,
     actor_id: int,
     issue_id: int,
+    generation: str,
     commit: bool = True,
 ) -> None:
     """Record that the leaseholder released the issue by completing its claimed work —
@@ -687,6 +690,7 @@ def record_claim_completed(
         verb="claim_completed",
         target_kind="issue",
         target_id=issue_id,
+        detail=f"generation {generation}",
         commit=commit,
     )
 
@@ -696,19 +700,61 @@ def record_claim_yielded(
     *,
     actor_id: int,
     issue_id: int,
+    generation: str,
+    handoff_token: str,
     reason: str,
-    note: str | None,
+    blocking_question: str,
     commit: bool = True,
-) -> None:
+) -> dict:
     """Record an honest release that does not assert completion or reassignment."""
-    detail = reason if note is None else f"{reason}: {note}"
-    activity.record(
+    question_excerpt = blocking_question[:200]
+    detail = (
+        f"generation {generation}; handoff {handoff_token}; "
+        f"{reason}: {question_excerpt}"
+    )
+    try:
+        event = activity.record(
+            conn,
+            actor_id=actor_id,
+            verb="claim_yielded",
+            target_kind="issue",
+            target_id=issue_id,
+            detail=detail,
+            commit=False,
+        )
+        notifications.process_mentions(
+            conn,
+            event_id=event["id"],
+            actor_id=actor_id,
+            text=blocking_question,
+            commit=False,
+        )
+    except BaseException:
+        if commit:
+            conn.rollback()
+        raise
+    if commit:
+        conn.commit()
+    return event
+
+
+def record_claim_handoff_resumed(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    handoff_token: str,
+    generation: str,
+    commit: bool = True,
+) -> dict:
+    """Record explicit receipt of a handoff without claiming its blocker is solved."""
+    return activity.record(
         conn,
         actor_id=actor_id,
-        verb="claim_yielded",
+        verb="claim_handoff_resumed",
         target_kind="issue",
         target_id=issue_id,
-        detail=detail,
+        detail=f"handoff {handoff_token}; generation {generation}",
         commit=commit,
     )
 
@@ -718,6 +764,7 @@ def record_delegation_declined(
     *,
     actor_id: int,
     issue_id: int,
+    released_generation: str | None = None,
     commit: bool = True,
 ) -> None:
     """Record that an actor declined a delegation handed to them (removing itself from the
@@ -729,6 +776,11 @@ def record_delegation_declined(
         verb="delegation_declined",
         target_kind="issue",
         target_id=issue_id,
+        detail=(
+            ""
+            if released_generation is None
+            else f"released generation {released_generation}"
+        ),
         commit=commit,
     )
 

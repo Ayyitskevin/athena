@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena.aegis import claim_handoffs
 from athena.core import access, db, labels
 
 
@@ -142,6 +143,9 @@ def _list_delegations(
     blockers_by_issue = _blocker_previews(
         conn, issue_ids, subject_visible_project_ids
     )
+    handoffs_by_issue = claim_handoffs.open_handoffs_for_issues(
+        conn, issue_ids
+    )
     items = []
     self_view = viewer["id"] == subject["id"]
     for row in page_rows:
@@ -151,6 +155,7 @@ def _list_delegations(
             subject_visible_project_ids,
             labels_by_issue.get(issue_id, []),
             blockers_by_issue.get(issue_id, {"items": [], "count": 0}),
+            handoffs_by_issue.get(issue_id),
         )
         # Defense in depth: a self-service response must never serialize content after
         # a visibility mismatch. The shared transaction should make this unreachable
@@ -266,6 +271,7 @@ def _to_item(
     subject_visible_project_ids: set[int] | None,
     issue_labels: list[dict],
     blocker_info: dict,
+    open_claim_handoff: dict | None,
 ) -> dict:
     issue_id = int(row["id"])
     visible_to_subject = _visible_to(
@@ -280,6 +286,8 @@ def _to_item(
         warnings.append("no_accountable_assignee")
     if blocker_info["count"]:
         warnings.append("visible_open_blockers")
+    if open_claim_handoff is not None:
+        warnings.append("open_claim_handoff")
 
     key = None
     if row["project_key"] and row["project_seq"] is not None:
@@ -310,5 +318,6 @@ def _to_item(
         "visible_open_blocker_count": blocker_info["count"],
         "visible_open_blockers_truncated": blocker_info["count"]
         > len(blocker_info["items"]),
+        "open_claim_handoff": open_claim_handoff,
         "warnings": warnings,
     }

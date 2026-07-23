@@ -101,7 +101,7 @@ def _seed_claim(
     )
     context_token = run_context.set_run_id(run_id)
     try:
-        lease_commands.claim_issue(
+        lease = lease_commands.claim_issue(
             conn,
             actor=_user(conn, agent_id),
             issue_id=issue["id"],
@@ -116,6 +116,7 @@ def _seed_claim(
         "token_id": int(token["id"]),
         "raw_token": token["token"],
         "run_id": run_id,
+        "generation": lease["generation"],
     }
 
 
@@ -512,6 +513,7 @@ def test_repeated_claim_is_one_item_and_restart_safe(tmp_path):
             actor=_user(conn, seeded["agent_id"]),
             issue_id=seeded["issue_id"],
             if_match=[_issue_tag(conn, seeded["issue_id"])],
+            generation=seeded["generation"],
             lease_seconds=3600,
         )
     finally:
@@ -535,7 +537,9 @@ def test_newest_same_timestamp_renewal_selects_new_run(tmp_path):
         conn,
         seeded,
         claimed_at="2026-07-21 11:00:00",
-        expires_at="2026-07-21 23:59:59",
+        # Keep the real command-time lease active; the second call below resets
+        # the projection clock after renewal.
+        expires_at="2099-07-21 23:59:59",
     )
 
     run_token = run_context.set_run_id("run-new")
@@ -545,6 +549,7 @@ def test_newest_same_timestamp_renewal_selects_new_run(tmp_path):
             actor=_user(conn, seeded["agent_id"]),
             issue_id=seeded["issue_id"],
             if_match=[_issue_tag(conn, seeded["issue_id"])],
+            generation=seeded["generation"],
             lease_seconds=3600,
         )
     finally:

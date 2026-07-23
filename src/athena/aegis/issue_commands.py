@@ -36,6 +36,9 @@ ErrorKind = Literal[
     "invalid_precondition",
     "precondition_too_large",
     "precondition_failed",
+    "lease_generation_required",
+    "invalid_lease_generation",
+    "lease_generation_mismatch",
 ]
 
 

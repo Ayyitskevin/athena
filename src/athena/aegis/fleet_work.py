@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import issues
+from athena.aegis import claim_handoffs, issues
 from athena.core import agent_run_checkins, db
 
 
@@ -130,6 +130,7 @@ def build_active_work(
             "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
             "u.email AS holder_email, u.role AS holder_role, "
             "u.paused_at AS holder_paused_at, l.claimed_at, l.expires_at, "
+            "l.generation, "
             "i.title AS issue_title, i.status AS issue_status, i.priority, "
             "i.project_id, i.project_seq, i.assignee_id, i.archived_at, "
             "p.key AS project_key, p.name AS project_name, "
@@ -174,6 +175,7 @@ def build_active_work(
         holder_ids = [int(row["holder_id"]) for row in rows]
         live_token_counts = _live_issue_write_token_counts(conn, holder_ids)
         blockers = _open_blocker_summaries(conn, issue_ids)
+        handoffs = claim_handoffs.open_handoffs_for_issues(conn, issue_ids)
         run_ids = {row["run_id"] for row in rows if row["run_id"] is not None}
         replay_ready = _replay_ready_run_ids(conn, run_ids)
 
@@ -186,6 +188,7 @@ def build_active_work(
                     int(row["issue_id"]),
                     {"items": [], "visible_total": 0, "clipped": False},
                 ),
+                open_claim_handoff=handoffs.get(int(row["issue_id"])),
                 live_issue_write_token_count=live_token_counts.get(
                     int(row["holder_id"]), 0
                 ),
@@ -234,6 +237,7 @@ def _item(
     *,
     observed_at: datetime,
     blocker_info: dict,
+    open_claim_handoff: dict | None,
     live_issue_write_token_count: int,
     replay_ready: bool,
 ) -> dict:
@@ -277,6 +281,8 @@ def _item(
         attention_reasons.append("checkin_stale")
     if blocker_info["visible_total"]:
         attention_reasons.append("visible_open_blockers")
+    if open_claim_handoff is not None:
+        attention_reasons.append("open_claim_handoff")
 
     issue_key = None
     if row["project_key"] is not None and row["project_seq"] is not None:
@@ -307,6 +313,7 @@ def _item(
         "lease": {
             "claimed_at": row["claimed_at"],
             "expires_at": row["expires_at"],
+            "generation": row["generation"],
             "claim_state": claim_state,
         },
         "run": {
@@ -319,6 +326,7 @@ def _item(
             "evidence_links_available": _run_links_available(run_id, replay_ready),
         },
         "open_blockers": blocker_info,
+        "open_claim_handoff": open_claim_handoff,
         "attention_state": (
             "needs_attention" if attention_reasons else "observed"
         ),

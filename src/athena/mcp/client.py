@@ -398,6 +398,7 @@ class AthenaClient:
         issue_id: int,
         *,
         if_match: str,
+        generation: str | None = None,
         lease_seconds: int | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
@@ -405,7 +406,10 @@ class AthenaClient:
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/claim",
-            json=self._params(lease_seconds=lease_seconds),
+            json=self._params(
+                lease_seconds=lease_seconds,
+                generation=generation,
+            ),
             if_match=if_match,
             idempotency_key=idempotency_key,
         )
@@ -414,7 +418,12 @@ class AthenaClient:
         self,
         issue_id: int,
         *,
+        generation: str,
         reason: str,
+        attempted_work: str,
+        evidence: list[str],
+        blocking_question: str,
+        resume_instructions: str,
         note: str | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
@@ -422,28 +431,66 @@ class AthenaClient:
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/yield",
-            json=self._params(reason=reason, note=note),
+            json=self._params(
+                generation=generation,
+                reason=reason,
+                attempted_work=attempted_work,
+                evidence=evidence,
+                blocking_question=blocking_question,
+                resume_instructions=resume_instructions,
+                note=note,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+    def resume_claim_handoff(
+        self,
+        issue_id: int,
+        handoff_token: str,
+        *,
+        generation: str,
+        resume_note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Acknowledge receipt of a handoff as the exact current leaseholder."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/claim-handoffs/{handoff_token}/resume",
+            json=self._params(
+                generation=generation,
+                resume_note=resume_note,
+            ),
             idempotency_key=idempotency_key,
         )
 
     def complete_claim(
-        self, issue_id: int, *, idempotency_key: str | None = None
+        self,
+        issue_id: int,
+        *,
+        generation: str,
+        idempotency_key: str | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete)."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/complete",
+            json={"generation": generation},
             idempotency_key=idempotency_key,
         )
 
     def decline_delegation(
-        self, issue_id: int, *, idempotency_key: str | None = None
+        self,
+        issue_id: int,
+        *,
+        generation: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Any:
         """Decline a delegation handed to you (decline): remove yourself from the
         contributor set so the work is visibly refused and can be re-routed."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/decline",
+            json=self._params(generation=generation),
             idempotency_key=idempotency_key,
         )
 

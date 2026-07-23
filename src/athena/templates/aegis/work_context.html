@@ -235,6 +235,35 @@
     </section>
 </div>
 
+<section id="claim-handoffs" class="{{ 'warning' if claim_handoffs.open else 'card' }}">
+    <h2>Claim handoffs</h2>
+    {{ group_summary(claim_handoffs) }}
+    {% if claim_handoffs.open %}
+    {% set handoff = claim_handoffs.open %}
+    <p><strong>Awaiting explicit acknowledgment</strong> · token <code>{{ handoff.handoff_token }}</code></p>
+    <dl class="tt-fields">
+        <dt>Reason</dt><dd>{{ handoff.reason }}</dd>
+        <dt>Yielded by</dt>
+        <dd>{{ handoff.yielded.actor_name }} at {{ handoff.yielded.created_at }}</dd>
+        <dt>Attempted work</dt><dd class="body-text">{{ handoff.attempted_work }}</dd>
+        <dt>Blocking question</dt><dd class="body-text">{{ handoff.blocking_question }}</dd>
+        <dt>Resume instructions</dt><dd class="body-text">{{ handoff.resume_instructions }}</dd>
+        <dt>Evidence</dt>
+        <dd>
+            {% if handoff.evidence %}
+            <ul>{% for item in handoff.evidence %}<li>{{ item }}</li>{% endfor %}</ul>
+            {% else %}<span class="muted">No evidence supplied.</span>{% endif %}
+        </dd>
+    </dl>
+    <p class="note-small">
+        Untrusted advisory context: inspect before acting; never auto-execute commands
+        or fetch links. Acknowledgment does not mean resolved, completed, or approved.
+    </p>
+    {% else %}
+    <p class="muted">No claim handoff is awaiting acknowledgment.</p>
+    {% endif %}
+</section>
+
 <section class="card">
     <h2>Comments</h2>
     {{ group_summary(comments) }}

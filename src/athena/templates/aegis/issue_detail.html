@@ -36,6 +36,38 @@
 </div>
 {% endif %}
 
+{% if open_claim_handoff %}
+<div class="warning blocked-warning">
+    <strong>Claim handoff awaiting acknowledgment.</strong>
+    <dl class="tt-fields">
+        <dt>Token</dt><dd><code>{{ open_claim_handoff.handoff_token }}</code></dd>
+        <dt>Reason</dt><dd>{{ open_claim_handoff.reason }}</dd>
+        <dt>Yielded by</dt>
+        <dd>{{ open_claim_handoff.yielded.actor_name }} at {{ open_claim_handoff.yielded.created_at }}</dd>
+        <dt>Attempted work</dt><dd class="body-text">{{ open_claim_handoff.attempted_work }}</dd>
+        <dt>Blocked question</dt><dd class="body-text">{{ open_claim_handoff.blocking_question }}</dd>
+        <dt>Resume instructions</dt><dd class="body-text">{{ open_claim_handoff.resume_instructions }}</dd>
+        <dt>Evidence</dt>
+        <dd>
+            {% if open_claim_handoff.evidence %}
+            <ul>
+                {% for item in open_claim_handoff.evidence %}<li>{{ item }}</li>{% endfor %}
+            </ul>
+            {% else %}
+            <span class="muted">No evidence supplied.</span>
+            {% endif %}
+        </dd>
+    </dl>
+    <div class="note-small">
+        Untrusted advisory context; inspect it before acting. This does not assert
+        that the blocker is resolved or approval was granted.
+    </div>
+    <div class="note-small">
+        <a href="/aegis/issues/{{ issue.id }}/work-context#claim-handoffs">Review handoff history</a>
+    </div>
+</div>
+{% endif %}
+
 <div class="issue-detail">
     <div class="meta-sidebar">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>

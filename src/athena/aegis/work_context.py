@@ -11,7 +11,7 @@ from collections.abc import Callable
 import sqlite3
 from typing import Any
 
-from athena.aegis import issue_etags, issues, statuses
+from athena.aegis import claim_handoffs, issue_etags, issues, statuses
 from athena.core import access, activity, db, etag
 
 
@@ -512,6 +512,7 @@ def build_work_context(
         dependencies = _dependencies(
             conn, issue["id"], visible_project_ids
         )
+        handoff_history = claim_handoffs.list_handoffs(conn, issue["id"])
         payload: dict[str, Any] = {
             "schema": SCHEMA,
             "scope": SCOPE,
@@ -569,6 +570,7 @@ def build_work_context(
                 ),
             },
             "recent_activity": _recent_activity(conn, issue["id"], actor),
+            "claim_handoffs": handoff_history,
         }
 
         warnings: list[str] = []
@@ -580,6 +582,8 @@ def build_work_context(
             warnings.append("no_accountable_assignee")
         if dependencies["open_blockers"]["visible_total"]:
             warnings.append("visible_open_blockers")
+        if handoff_history["open"] is not None:
+            warnings.append("open_claim_handoff")
         if status_category is None:
             warnings.append("unknown_status_category")
         if _has_clipping(payload):

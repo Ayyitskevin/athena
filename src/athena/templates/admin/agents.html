@@ -192,6 +192,16 @@
                             {{ item.visible_open_blocker_count }} agent-visible open blocker{{ "s" if item.visible_open_blocker_count != 1 }}
                         </span>
                         {% endif %}
+                        {% if item.open_claim_handoff %}
+                        <span class="agent-token-warning danger">Handoff awaiting acknowledgment</span>
+                        <div class="muted">
+                            Blocked question: {{ item.open_claim_handoff.blocking_question }}
+                        </div>
+                        <div class="muted">Untrusted advisory context; inspect before acting.</div>
+                        <div class="muted">
+                            <a href="/aegis/issues/{{ item.issue.id }}/work-context#claim-handoffs">Review full handoff</a>
+                        </div>
+                        {% endif %}
                     </li>
                     {% endfor %}
                 </ul>
