@@ -131,7 +131,7 @@ agents that contribute here.
       lifecycle facts: created-vs-completed flow, trustworthy completion-cycle
       median for full-visibility admins, and event-performer human/agent attribution.
       Legacy and imported ambiguity remains explicit rather than a guessed backfill.
-- [ ] Time/schedule-based automation triggers (stale-issue nudges, sprint-end
+- [x] Bounded UTC time/schedule-based automation triggers (stale-issue nudges, sprint-end
       sweeps) alongside event triggers.
 - [x] Mechanical guardrails: Ruff lint and formatting checks, static import
       contracts, mypy across every runtime module in `src/athena`, and a

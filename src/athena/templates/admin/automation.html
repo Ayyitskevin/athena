@@ -6,7 +6,7 @@
 <div class="page-header">
     <div>
         <h1>Automation</h1>
-        <p class="subtitle">When an issue event happens, do something automatically</p>
+        <p class="subtitle">React to issue events or run bounded issue actions at fixed UTC times</p>
     </div>
 </div>
 
@@ -29,9 +29,22 @@
         <tr>
             <td class="issue-title">{{ rule.name }}</td>
             <td class="muted">
-                {{ "any event" if rule.trigger_verb == "*" else rule.trigger_verb }}
+                {% if rule.trigger_type == "schedule" %}
+                    at {{ rule.schedule_at }}
+                    {% if rule.schedule_every_seconds %}
+                        <div class="small">every {{ rule.schedule_every_seconds }} seconds</div>
+                    {% endif %}
+                    {% if rule.conditions.inactive_for_seconds %}
+                        <div class="small">inactive for {{ rule.conditions.inactive_for_seconds }} seconds</div>
+                    {% endif %}
+                {% else %}
+                    {{ "any event" if rule.trigger_verb == "*" else rule.trigger_verb }}
+                {% endif %}
                 {% if rule.conditions.project_id %}
                     in {{ project_names.get(rule.conditions.project_id, "project #" ~ rule.conditions.project_id) }}
+                {% endif %}
+                {% if rule.conditions.sprint_id %}
+                    <div class="small">sprint {{ sprint_names.get(rule.conditions.sprint_id, "#" ~ rule.conditions.sprint_id) }}</div>
                 {% endif %}
             </td>
             <td class="muted">
@@ -48,7 +61,13 @@
                 {% endif %}
             </td>
             <td>
-                {% if rule.enabled %}<span class="badge-active">enabled</span>{% else %}<span class="muted">paused</span>{% endif %}
+                {% if rule.trigger_type == "schedule" %}
+                    <span class="{{ 'badge-active' if rule.schedule_status in ('scheduled', 'due', 'processing', 'completed') else 'badge' }}">{{ rule.schedule_status }}</span>
+                {% elif rule.enabled %}
+                    <span class="badge-active">enabled</span>
+                {% else %}
+                    <span class="muted">paused</span>
+                {% endif %}
                 <form method="post" action="/admin/automation/{{ rule.id }}/enabled" class="inline-form">
                     {% include "partials/csrf.html" %}
                     <input type="hidden" name="enabled" value="{{ 0 if rule.enabled else 1 }}">
@@ -56,11 +75,41 @@
                 </form>
             </td>
             <td>
+                {% if rule.configuration_error %}
+                    <div><span class="badge">malformed</span></div>
+                    <div class="muted small">{{ rule.configuration_error }}</div>
+                {% endif %}
                 {% if rule.failure_count %}
                     <span class="badge" title="{{ rule.last_error }}">⚠ {{ rule.failure_count }} failed</span>
                     {% if rule.last_error_at %}<div class="muted small">last: {{ rule.last_error_at }} UTC</div>{% endif %}
                 {% else %}
-                    <span class="muted">OK</span>
+                    {% if rule.trigger_type == "schedule" and (rule.schedule_failed_count or rule.last_schedule_state == "failed") %}
+                        <span class="badge">Scheduled slot failed.</span>
+                    {% elif rule.trigger_type == "schedule" %}
+                        <span class="muted">No action failures.</span>
+                    {% else %}
+                        <span class="muted">OK</span>
+                    {% endif %}
+                {% endif %}
+                {% if rule.trigger_type == "schedule" %}
+                    {% if rule.last_schedule_target_count is not none %}
+                        <div class="muted small">last slot: {{ rule.last_schedule_target_count }} target(s)</div>
+                    {% endif %}
+                    {% if rule.schedule_pending_count %}
+                        <div class="muted small">{{ rule.schedule_pending_count }} target(s) pending</div>
+                    {% endif %}
+                    {% if rule.schedule_failed_count %}
+                        <div class="muted small">{{ rule.schedule_failed_count }} target(s) failed</div>
+                    {% endif %}
+                    {% if rule.schedule_missed_count %}
+                        <div class="muted small">catch-up skipped {{ rule.schedule_missed_count }} older slot(s)</div>
+                    {% endif %}
+                    {% if rule.last_schedule_overflow_count %}
+                        <div class="muted small">{{ rule.last_schedule_overflow_count }} target(s) over limit; slot failed closed</div>
+                    {% endif %}
+                    {% if rule.last_scheduled_for %}
+                        <div class="muted small">last scheduled: {{ rule.last_scheduled_for }}</div>
+                    {% endif %}
                 {% endif %}
             </td>
             <td class="muted">
@@ -79,7 +128,7 @@
 
 <div class="form-container">
     <h3>New rule</h3>
-    <p class="note-small">A rule reacts to an issue event and performs one action, attributed to the Automation user. Rules act from now on — never on past events.</p>
+    <p class="note-small">Choose an event trigger or a fixed UTC schedule. Each rule performs one bounded action as the Automation user; schedule catch-up is bounded and visible below.</p>
     <form method="post" action="/admin/automation" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
@@ -87,13 +136,29 @@
             <input id="rule-name" type="text" name="name" required placeholder="Auto-triage new bugs">
         </div>
         <div class="form-group">
-            <label for="rule-verb">When (trigger)</label>
+            <label for="rule-trigger-type">Trigger mode</label>
+            <select id="rule-trigger-type" name="trigger_type">
+                <option value="event" selected>issue event</option>
+                <option value="schedule">fixed UTC schedule</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-verb">Event (event mode only)</label>
             <select id="rule-verb" name="trigger_verb">
                 <option value="*">any issue event</option>
                 {% for verb in trigger_verbs %}
                 <option value="{{ verb }}"{% if verb == "created" %} selected{% endif %}>{{ verb }}</option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-schedule-at">Scheduled UTC instant (schedule mode only)</label>
+            <input id="rule-schedule-at" type="text" name="schedule_at" placeholder="2030-06-30T23:59:00Z">
+            <p class="note-small">Use canonical UTC: YYYY-MM-DDTHH:MM:SSZ. Local times and offsets are rejected.</p>
+        </div>
+        <div class="form-group">
+            <label for="rule-schedule-every">Repeat interval in seconds (optional)</label>
+            <input id="rule-schedule-every" type="number" name="schedule_every_seconds" min="60" max="31536000" step="1" placeholder="86400">
         </div>
         <div class="form-group">
             <label for="rule-project">Only in project (optional)</label>
@@ -103,6 +168,19 @@
                 <option value="{{ project.id }}">{{ project.name }}</option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-sprint">Only in sprint (optional)</label>
+            <select id="rule-sprint" name="condition_sprint">
+                <option value="">any sprint</option>
+                {% for sprint in sprints %}
+                <option value="{{ sprint.id }}">{{ project_names.get(sprint.project_id, "Project #" ~ sprint.project_id) }} — {{ sprint.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="rule-inactive-for">Only issues inactive for seconds (schedule mode, optional)</label>
+            <input id="rule-inactive-for" type="number" name="condition_inactive_for_seconds" min="60" max="31536000" step="1" placeholder="604800">
         </div>
         <div class="form-group">
             <label for="rule-action">Do (action)</label>

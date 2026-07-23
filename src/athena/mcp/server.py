@@ -21,12 +21,19 @@ from functools import wraps
 import json
 import os
 import secrets
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
-from athena.aegis import delegations, fleet_metrics, fleet_work, issues, lease_commands
+from athena.aegis import (
+    automation,
+    delegations,
+    fleet_metrics,
+    fleet_work,
+    issues,
+    lease_commands,
+)
 from athena.core import run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
@@ -108,6 +115,18 @@ FleetActorLimit = Annotated[
 FleetMetricDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
 FleetWorkLimit = Annotated[int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)]
 FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+AutomationTriggerType = Literal["event", "schedule"]
+AutomationScheduleAt = Annotated[
+    str, Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+]
+AutomationScheduleInterval = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=automation.MIN_SCHEDULE_INTERVAL_SECONDS,
+        le=automation.MAX_SCHEDULE_INTERVAL_SECONDS,
+    ),
+]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
@@ -320,6 +339,74 @@ def build_server(client: AthenaClient) -> FastMCP:
         runs, cooperative check-ins, replay posture, lineage counts, and totals.
         Check-ins are self-reports; they do not prove an OS process is alive."""
         return client.get_agent_run_health(agent_id=agent_id)
+
+    @mcp.tool()
+    def list_automation_rules() -> list:
+        """List every admin-only automation rule with its event or schedule
+        configuration, progress, failure health, and enabled state."""
+        return client.list_automation_rules()
+
+    @mcp.tool()
+    def get_automation_rule(rule_id: int) -> dict:
+        """Get one admin-only automation rule by id, including schedule progress,
+        configuration errors, failure health, and enabled state."""
+        return client.get_automation_rule(rule_id)
+
+    @mutation_tool
+    def create_automation_rule(
+        name: str,
+        trigger_verb: str,
+        action_type: str,
+        conditions: dict | None = None,
+        action_params: dict | None = None,
+        target_kind: str = "issue",
+        trigger_type: AutomationTriggerType = "event",
+        schedule_at: AutomationScheduleAt | None = None,
+        schedule_every_seconds: AutomationScheduleInterval | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Create an admin-only automation rule. Event rules use trigger_type='event'
+        and an activity trigger_verb. Schedule rules use trigger_type='schedule',
+        trigger_verb='scheduled', canonical UTC schedule_at (YYYY-MM-DDTHH:MM:SSZ),
+        and optional schedule_every_seconds; omit the interval for a one-shot rule.
+        conditions select issues and action_params configure the requested action."""
+        return client.create_automation_rule(
+            name=name,
+            trigger_verb=trigger_verb,
+            action_type=action_type,
+            conditions=conditions,
+            action_params=action_params,
+            target_kind=target_kind,
+            trigger_type=trigger_type,
+            schedule_at=schedule_at,
+            schedule_every_seconds=schedule_every_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def set_automation_rule_enabled(
+        rule_id: int,
+        enabled: bool,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Arm or disarm an admin-only automation rule without deleting its
+        configuration or history."""
+        return client.set_automation_rule_enabled(
+            rule_id,
+            enabled,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def delete_automation_rule(
+        rule_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict | None:
+        """Permanently delete an admin-only automation rule. Disable it instead when
+        the operator may need to resume the same rule later."""
+        return client.delete_automation_rule(
+            rule_id,
+            idempotency_key=idempotency_key,
+        )
 
     @mcp.tool()
     def list_automation_failures() -> list:

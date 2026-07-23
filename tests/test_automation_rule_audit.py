@@ -62,6 +62,31 @@ def test_rest_create_is_audited(tmp_path):
     assert "triage" in ev[0]["detail"]
 
 
+def test_rest_schedule_create_is_audited(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _two_users(c)
+        payload = {
+            "name": "sprint sweep",
+            "trigger_type": "schedule",
+            "trigger_verb": "scheduled",
+            "schedule_at": "2099-01-02T03:04:05Z",
+            "schedule_every_seconds": 3600,
+            "action_type": "comment",
+            "action_params": {"body": "sweep"},
+        }
+        response = c.post("/automation/rules", json=payload, headers=H1)
+        assert response.status_code == 201, response.text
+        rid = response.json()["id"]
+
+    ev = _events(db_file, "created_automation_rule")
+    assert len(ev) == 1
+    assert ev[0]["target_id"] == rid
+    assert ev[0]["detail"] == (
+        "sprint sweep (at 2099-01-02T03:04:05Z, every 3600 seconds issue → comment)"
+    )
+
+
 def test_rest_enable_disable_are_audited(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
@@ -199,3 +224,35 @@ def test_command_delete_unknown_rule_returns_false_records_nothing(tmp_path):
         for e in activity.list_activity(conn, limit=50)
         if e["verb"] == "deleted_automation_rule"
     ] == []
+
+
+def test_command_rejects_malformed_schedule_before_row_or_audit(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _two_users(client)
+    conn = db.connect(db_file)
+    try:
+        automation_commands.create_rule(
+            conn,
+            actor_id=1,
+            name="broken schedule",
+            trigger_verb="scheduled",
+            trigger_type="schedule",
+            schedule_at="not-utc",
+            action_type="comment",
+            action_params={"body": "nudge"},
+        )
+        raise AssertionError("expected AutomationCommandError")
+    except automation_commands.AutomationCommandError as exc:
+        assert exc.status_code == 422
+        assert "canonical UTC" in str(exc)
+    assert (conn.execute("SELECT COUNT(*) AS count FROM automation_rules")).fetchone()[
+        "count"
+    ] == 0
+    assert [
+        event
+        for event in activity.list_activity(conn, limit=50)
+        if event["verb"] == "created_automation_rule"
+    ] == []
+    assert not conn.in_transaction
+    conn.close()

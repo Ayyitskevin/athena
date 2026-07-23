@@ -20,7 +20,7 @@ the review-facing source of truth for the `0.1.0a1` line.
 | API tokens | Mint and revoke | None known in the token lifecycle |
 | OIDC identities | Link and unlink | Provider exchange/discovery are transport/service flows rather than durable domain writes |
 | Webhooks | Register, pause/resume, and delete | Delivery cursor/health updates are operational state and intentionally owned by the delivery subsystem |
-| Automation | Rule create, enable/disable, and delete; core issue edits dispatched by a rule | Some rule actions still compose legacy label/comment/contributor writes |
+| Automation | Event/schedule rule create, enable/disable, and delete; durable schedule claiming/progress; core issue edits dispatched by a rule | Some rule actions still compose legacy label/comment/contributor writes |
 | Agent runs | Run/check-in operations use their dedicated command and run-context owners | General pause/kill/budget/approval controls are roadmap work, not shipped guarantees |
 
 The table identifies ownership shape, not test coverage or security severity.
