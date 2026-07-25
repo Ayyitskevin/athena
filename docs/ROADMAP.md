@@ -45,6 +45,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   logins, revoked tokens, scope denials, and paused refusals were always recorded;
   they now have a page and an API instead of requiring an operator to know the verb
   names.
+- **Delegate** can now reach outside Athena: an issue may be dispatched to an
+  external execution fleet under a policy digest of the authorization in force, and
+  the executor reports evidence and an outcome through a signed, idempotent
+  callback. Every state is what Athena was told, never what is happening on the far
+  side, and dispatch is off unless an executor is configured.
 - **Trust / Learn** also closes the memory loop: a human or an agent can promote
   what a run learned into the issue's runbook page, which the next agent reads
   through ordinary backlinks and its work-context packet. Promotion is always

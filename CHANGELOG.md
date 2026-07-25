@@ -10,6 +10,32 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **Athena can hand work to an external execution fleet.** It is a control plane;
+  an executor is a separate system with its own store. They share no database and
+  neither imports the other — they reconcile over an asynchronous HTTP contract,
+  and `icarus_dispatches` (migration 0067) is Athena's half of it. A dispatch
+  records what Athena **asked**, under a tamper-evident digest of the authorization
+  in force; the executor reports evidence and an outcome through a signed callback.
+  **Every state is what Athena was told, never what is happening on the far side**:
+  `accepted` means the executor said it accepted, not that work is running, and
+  nothing here pretends to see a system it cannot. Evidence is *referenced*, never
+  copied. The outbound call is a **post-commit side effect** — a network call inside
+  a transaction would hold SQLite's single writer for as long as a stranger's
+  server takes, and the durable fact "Athena decided to dispatch this" must survive
+  a far side that never answers, so a failure is recorded as `undeliverable` with
+  its reason. Dispatch is **metered and gated like any other write**, because
+  otherwise an actor gated on `issue.close` could route around the gate by asking an
+  executor instead. Callbacks carry **no Athena credential** — they are
+  authenticated by HMAC over the exact body, checked before any lookup so the
+  endpoint cannot be used to probe which dispatches exist — and can do exactly two
+  things: attach evidence and report an outcome. A digest mismatch is **recorded and
+  flagged**, not discarded, because destroying the evidence would defeat the point
+  of computing it. Egress reuses the webhook SSRF hardening in full, and `icarus:`
+  joins `automation:` as a reserved run namespace so nobody can forge control-plane
+  evidence of what an executor did. Off unless `ATHENA_ICARUS_URL` and
+  `ATHENA_ICARUS_SECRET` are both set, refusing with a 503 rather than accumulating
+  undeliverable rows. See [docs/DISPATCH.md](docs/DISPATCH.md) — including what
+  Athena never verifies.
 - **Run learnings close the memory loop.** VISION's fifth step promised that
   corrections "feed back into Mentor as durable context the agents read next
   time"; Mentor pages were already read by agents, but nothing ever wrote back, so

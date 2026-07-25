@@ -49,7 +49,10 @@ _MAX_RUN_ID_LEN = 200
 # legitimate automation write. Forking a child run FROM an automation run is
 # unaffected: that names the reserved run only as a parent pointer, which is not
 # reserved.
-RESERVED_RUN_ID_PREFIXES: tuple[str, ...] = ("automation:",)
+# `icarus:` joins it for the same reason: Athena mints an execution run per
+# dispatch, and a client that could stamp its own writes with one would be able to
+# forge control-plane evidence of what an external executor did.
+RESERVED_RUN_ID_PREFIXES: tuple[str, ...] = ("automation:", "icarus:")
 
 
 def is_reserved_run_id(value: str | None) -> bool:

@@ -1,0 +1,164 @@
+# Dispatching work to an external executor
+
+Athena is a **control plane**. An execution fleet (Icarus) is a separate system
+with its own store, its own runs, and its own idea of progress. They share no
+database and neither imports the other: they reconcile over an asynchronous HTTP
+contract, and `icarus_dispatches` (migration 0067) is Athena's half of it.
+
+Dispatch is **off unless configured**. With `ATHENA_ICARUS_URL` and
+`ATHENA_ICARUS_SECRET` unset — the default — every dispatch is refused with a 503
+saying so. Half-working is worse than absent.
+
+## What Athena knows, and what it was told
+
+This is the whole design, and it is why the state names read the way they do.
+
+| State | Means |
+|---|---|
+| `pending_delivery` | Athena recorded the decision; the executor has not acknowledged |
+| `accepted` | The executor **said** it accepted, and gave its own run id |
+| `undeliverable` | Athena could not hand it over (with the reason) |
+| `completed` / `failed` | The executor **reported** a terminal outcome |
+
+`accepted` does not mean work is running. Athena cannot see the far side and does
+not pretend to — the same discipline `WORKERS.md` applies to a heartbeat and
+`ACTIVE_WORK.md` applies to a check-in.
+
+**Evidence is referenced, never copied.** `evidence_ref` and `completion_ref` are
+opaque strings the executor chose. Copying artifacts across the boundary would make
+one system's storage the other's problem, which is precisely what "no shared
+database" rules out.
+
+## The envelope
+
+Exactly these fields cross the boundary — there is no free-form payload, because an
+envelope a reader cannot enumerate is one nobody can audit.
+
+```json
+{
+  "schema": "athena.icarus_dispatch.v1",
+  "dispatch_id": 12, "work_item_id": 42,
+  "run_id": "icarus:9f3c…", "parent_run_id": "sol-7", "fork_run_ids": [],
+  "icarus_run_id": null,
+  "repo": "git@example.com:acme/app.git", "base_commit": "abc123",
+  "capability": "repo.edit",
+  "policy_digest": "5e884898…", "approval_state": "not_required",
+  "idempotency_key": "9f3c…",
+  "evidence_ref": null, "completion_ref": null
+}
+```
+
+`fork_run_ids` is **derived** from the activity trail (runs whose `parent_run_id`
+is this dispatch's run) rather than stored. Lineage already lives in one place, and
+a second copy is one more thing that can disagree with the log.
+
+## The flow
+
+```text
+Athena                                        Executor
+  │ 1. command: role, scope, visibility,        │
+  │    budget charge, approval gate,            │
+  │    policy digest, dispatch row,             │
+  │    dispatch_requested event — ONE TX        │
+  │ ───── 2. POST /dispatch (signed) ─────────▶ │ 3. accepts
+  │ ◀──── {"icarus_run_id": "..."} ──────────── │
+  │ 4. state=accepted, dispatch_accepted event  │
+  │ ◀──── 5. POST /callbacks/icarus (signed) ── │    progress: evidence_ref
+  │ 6. verify HMAC, map run, check digest,      │
+  │    record evidence as run-stamped activity  │
+  │ ◀──── 7. POST /callbacks/icarus (signed) ── │    terminal: outcome
+  │ 8. state=completed|failed                   │
+```
+
+**Step 2 is a post-commit side effect.** Athena holds SQLite's single writer while
+a transaction is open, so a network call inside one would block every other writer
+for as long as a stranger's server feels like taking. It is also wrong on its own
+terms: the durable fact is "Athena decided to dispatch this", and that fact must
+survive a far side that never answers. A dispatch nobody could deliver stays
+visible as `undeliverable` with the reason.
+
+## Authorization, in both directions
+
+**Outbound** is an ordinary authenticated write: role, `issue:write` scope, issue
+visibility, a **budget charge**, and any **approval gate**. That last one matters —
+an actor gated on `issue.close` does not get to route around the gate by asking an
+executor to do the work instead. The gate is consumed inside the same transaction,
+so a later failure leaves it unspent.
+
+**Inbound has no Athena credential at all.** The executor is not an Athena user and
+holds no token; it authenticates with an HMAC over the exact request body using the
+shared secret, compared in constant time. The signature is checked **before** any
+lookup, so the callback cannot be used to probe which dispatches exist. And the
+route is deliberately narrow: it can attach evidence and report an outcome on a
+dispatch Athena already created. It cannot create work, change an issue, or name an
+actor.
+
+## The policy digest is tamper-evident, not tamper-proof
+
+The digest is a SHA-256 over the authorization state in force at dispatch: the
+actor, its token scopes, the work item, repo, base commit, capability, approval
+state, and budget window/limit. Scope order does not affect it — a digest that
+depended on ordering would produce false mismatches.
+
+When a callback returns a **different** digest, Athena records the evidence **and**
+a `dispatch_policy_digest_mismatch` event. It does not discard the callback:
+destroying the evidence would defeat exactly the thing the digest was computed to
+produce. A digest exists to let you notice.
+
+## Reserved run namespace
+
+Athena mints an `icarus:<key>` run per dispatch, and that prefix is **reserved**
+alongside `automation:` — a client sending `X-Athena-Run: icarus:anything` has the
+value dropped rather than honored. Otherwise anyone could forge control-plane
+evidence of what an executor did. Callback events are stamped with the dispatch's
+run by Athena itself, so the executor's reports appear in that run's replay and
+lineage.
+
+## Egress safety
+
+The outbound call reuses `core/webhooks`' SSRF hardening **in full**: URL scheme
+validation, rejection of private/loopback/link-local/reserved addresses,
+DNS-pinned connections so a rebind cannot redirect the request, no redirect
+following, and HMAC signing. A control plane that can be made to POST anywhere is a
+control plane that can be turned into a probe.
+
+## Surfaces
+
+```text
+POST /issues/{id}/dispatch    {"repo": "...", "base_commit": "...", "capability": "repo.edit"}
+GET  /dispatches?work_item_id=42&state=accepted
+GET  /dispatches/{id}
+POST /callbacks/icarus        # HMAC-signed, no Athena credential
+dispatch_to_icarus(issue_id, repo, base_commit, capability)
+list_dispatches(work_item_id=None, state=None)
+```
+
+Capabilities are a **closed set** (`repo.edit`, `ci.run`). An open one would mean
+Athena forwarding capability names it has never heard of and cannot reason about.
+
+## Configuration
+
+| Variable | Default | Means |
+|---|---|---|
+| `ATHENA_ICARUS_URL` | *(unset)* | Executor base URL; `POST {URL}/dispatch` |
+| `ATHENA_ICARUS_SECRET` | *(unset)* | Shared HMAC secret, both directions |
+| `ATHENA_ICARUS_TIMEOUT_SECONDS` | 10 | Per-request outbound timeout |
+
+Both the URL and the secret must be set. A URL without a secret would mean sending
+unsigned work to an unauthenticated endpoint.
+
+## Limitations
+
+- **No redelivery loop.** A dispatch that fails to deliver stays `undeliverable`;
+  nothing retries it automatically, and there is no background dispatcher. Adding
+  one is a real feature, not a config flag.
+- **No cancellation.** Athena can record that it asked; it has no way to un-ask.
+- **Athena never verifies that work happened.** Every terminal state is the
+  executor's claim, arriving over a channel authenticated by a shared secret. If
+  that secret leaks, the claims are only as good as the secret.
+- **A one-way capability has no undo.** `UNDO.md`'s compensation model does not
+  reach across this boundary, and nothing here will try to reverse an external
+  effect.
+- **The executor is unspecified here.** This documents Athena's half of the
+  contract. Anything about how the far side behaves is its own system's business,
+  and nothing in this repository verifies it.

@@ -26,6 +26,7 @@ from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
+from athena.aegis import dispatch_api as aegis_dispatch_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
 from athena.aegis import fleet_work_api as aegis_fleet_work_api
@@ -1399,6 +1400,7 @@ def create_app(
     app.include_router(workers_api.router)
     app.include_router(security_api.router)
     app.include_router(mentor_learnings_api.router)
+    app.include_router(aegis_dispatch_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)
