@@ -68,6 +68,56 @@ def _bind_run(conn: sqlite3.Connection, run_id: str, actor_id: int) -> None:
         raise RunBindingError(run_id)
 
 
+def _validated_lineage(
+    conn: sqlite3.Connection,
+    parent_run_id: str | None,
+    forked_from_event_id: int | None,
+) -> tuple[str | None, int | None]:
+    """Drop lineage coordinates that name something which does not exist.
+
+    ``parent_run_id`` and ``forked_from_event_id`` arrive as client headers and were
+    stored verbatim, so any writer could fabricate an ancestry edge out of thin air:
+    name a run nobody ever wrote, or a fork point that is not an event of that run
+    (or not an event at all). ``run_lineage()`` and the replay artifact build their
+    trees from exactly these two columns, so a fabricated pair puts invented ancestry
+    into an operator's evidence.
+
+    This checks SELF-CONSISTENCY only — that each coordinate refers to something
+    real — which is what can be verified without changing WHO may reference whom.
+    Cross-actor lineage stays legitimate on purpose: the fork contract exists so one
+    agent can continue another agent's visible run, and automation deliberately
+    parents its firing onto the triggering actor's run. Whether lineage should also
+    distinguish a *verified* fork from a merely *claimed* parent is a separate
+    product decision, recorded in the vision guide rather than decided here.
+
+    A failing coordinate is dropped to NULL rather than raising: the headers are
+    documented as correlation hints, not authorization, so a bad hint must never
+    fail an otherwise valid write. The two are validated independently — a rule
+    firing on an UNTAGGED trigger legitimately has a real fork event and no parent
+    run — except that a surviving parent also constrains the fork point to belong
+    to it.
+    """
+    if parent_run_id is not None:
+        bound = conn.execute(
+            "SELECT 1 FROM run_bindings WHERE run_id = ?", (parent_run_id,)
+        ).fetchone()
+        if bound is None:
+            parent_run_id = None
+    if forked_from_event_id is not None:
+        if parent_run_id is None:
+            exists = conn.execute(
+                "SELECT 1 FROM activity WHERE id = ?", (forked_from_event_id,)
+            ).fetchone()
+        else:
+            exists = conn.execute(
+                "SELECT 1 FROM activity WHERE id = ? AND run_id = ?",
+                (forked_from_event_id, parent_run_id),
+            ).fetchone()
+        if exists is None:
+            forked_from_event_id = None
+    return parent_run_id, forked_from_event_id
+
+
 def _like_pattern(value: str) -> str:
     """Return a literal LIKE pattern for operator search text."""
     escaped = (
@@ -171,6 +221,13 @@ def record(
         run_id = run_context.get_run_id()
         if run_id is not None:
             _bind_run(conn, run_id, actor_id)
+        # Validate the lineage coordinates AFTER binding, so a run may legitimately
+        # name itself and so the current run counts as real.
+        parent_run_id, forked_from_event_id = _validated_lineage(
+            conn,
+            run_context.get_parent_run_id(),
+            run_context.get_forked_from_event_id(),
+        )
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
@@ -183,8 +240,8 @@ def record(
                 target_id,
                 detail,
                 run_id,
-                run_context.get_parent_run_id(),
-                run_context.get_forked_from_event_id(),
+                parent_run_id,
+                forked_from_event_id,
                 0 if scope_is_complete else 1,
             ),
         )

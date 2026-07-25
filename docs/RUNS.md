@@ -16,6 +16,18 @@ Clients that want deterministic replay stamp writes with:
 
 Browser actions normally omit all three headers and remain ordinary activity rows.
 
+Lineage coordinates must name something real. `X-Athena-Parent-Run` is kept only
+when that run has actually been written (it is a bound run), and
+`X-Athena-Fork-From-Event` only when it names a real activity event — belonging to
+the named parent run, when one survives. A coordinate that fails is stored as
+`NULL` rather than rejected, because these headers remain correlation hints rather
+than authorization. This prevents fabricating ancestry out of thin air; it
+deliberately does **not** restrict *which* real run you may name, because
+cross-actor lineage is a feature: the fork contract exists so one agent can
+continue another's visible run, and automation parents its firing onto the
+triggering actor's run. A rule firing on an untagged trigger therefore keeps its
+real fork point while having no parent run.
+
 The server reserves the `automation:` run-id namespace for the automation engine,
 which mints deterministic per-firing ids (`automation:rule-N:event-M`) in-process.
 A client-supplied `X-Athena-Run` value in that namespace is dropped to untagged at

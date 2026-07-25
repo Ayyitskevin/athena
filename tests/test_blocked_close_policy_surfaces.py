@@ -252,6 +252,18 @@ def test_rest_human_override_honors_etag_and_audits_lineage(tmp_path):
         assert stale.headers["ETag"] == current_tag
         _assert_open(client, scenario)
 
+        # Seed the operator's own run so the override can legitimately claim descent
+        # from it: record() keeps a parent only when that run was actually written,
+        # and a fork point only when it is an event OF that run.
+        session = client.post(
+            f"{url}/comments",
+            json={"body": "reviewing the blocker before overriding"},
+            headers={
+                **_actor(scenario.admin["id"]),
+                "X-Athena-Run": "operator-session",
+            },
+        )
+        _expect(session, 201)
         conn = db.connect(db_file)
         cutoff = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
         conn.close()

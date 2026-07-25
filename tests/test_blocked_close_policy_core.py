@@ -16,7 +16,7 @@ from athena.aegis import (
     projects,
     statuses,
 )
-from athena.core import db, notifications, run_context, users
+from athena.core import activity, db, notifications, run_context, users
 
 
 def _setup(db_file):
@@ -221,6 +221,20 @@ def test_eligible_human_requires_explicit_audited_override_with_lineage_and_etag
             if_match=[current_tag],
         )
     _assert_policy_error(missing.value)
+    # Seed the operator's own run so the override can legitimately claim descent
+    # from it: record() keeps a parent only when that run was actually written, and
+    # a fork point only when it is an event OF that run.
+    session_token = run_context.set_run_id("operator-session")
+    try:
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb="commented",
+            target_kind="issue",
+            target_id=target["id"],
+        )
+    finally:
+        run_context.reset_run_id(session_token)
     cutoff = conn.execute("SELECT MAX(id) FROM activity").fetchone()[0]
     run_token = run_context.set_run_id("human-policy-override")
     parent_token = run_context.set_parent_run_id("operator-session")
