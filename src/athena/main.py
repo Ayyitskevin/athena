@@ -62,6 +62,7 @@ from athena.core import (
 )
 from athena.aegis import issue_undo as aegis_issue_undo
 from athena.mentor import api as mentor_api
+from athena.mentor import learnings_api as mentor_learnings_api
 from athena.mentor import page_undo as mentor_page_undo
 from athena.web import activity as web_activity
 from athena.web import admin as web_admin
@@ -1397,6 +1398,7 @@ def create_app(
     app.include_router(approvals_api.router)
     app.include_router(workers_api.router)
     app.include_router(security_api.router)
+    app.include_router(mentor_learnings_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)

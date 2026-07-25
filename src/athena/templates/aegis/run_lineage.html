@@ -42,6 +42,48 @@
 <p class="muted">This is a root run — the originating goal, with no run above it.</p>
 {% endif %}
 
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
+{% if can_record_learning and learning_issues %}
+{# Trust/Learn made concrete. Looking at what a run DID is exactly the moment an
+   operator knows what the next one should be told, so the promotion lives here.
+   Nothing is promoted automatically — this form is the only way in. #}
+<section class="dashboard-card" aria-labelledby="record-learning-heading">
+    <h2 id="record-learning-heading">Record what this run learned</h2>
+    <p class="subtitle">
+        Appends your note to the issue's runbook page, quoted and attributed to you.
+        The next agent working this issue reads it in its work-context packet.
+    </p>
+    {% for entry in learning_issues %}
+    <form method="post" action="/aegis/activity/runs/{{ lineage.run_id }}/learnings">
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="issue_id" value="{{ entry.id }}">
+        <p>
+            <a href="/aegis/issues/{{ entry.id }}" class="xref">issue #{{ entry.id }}</a>
+            {% if entry.runbook %}
+            — <a href="/mentor/pages/{{ entry.runbook.id }}">{{ entry.runbook.title }}</a>
+            {% else %}
+            <span class="muted">— no runbook yet</span>
+            {% endif %}
+        </p>
+        <label class="visually-hidden" for="summary-{{ entry.id }}">What was learned</label>
+        <textarea id="summary-{{ entry.id }}" name="summary" rows="3"
+                  placeholder="What would have saved you time? What you tried, what the evidence showed, what actually resolved it."></textarea>
+        {% if not entry.runbook %}
+        <label for="space-{{ entry.id }}">Start the runbook in</label>
+        <select id="space-{{ entry.id }}" name="space_id">
+            {% for space in spaces %}
+            <option value="{{ space.id }}">{{ space.name }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
+        <button type="submit" class="button secondary">Record learning</button>
+    </form>
+    {% endfor %}
+</section>
+{% endif %}
+
 {# The focal run + its events (oldest-first, as it happened). #}
 <details class="run-card" open>
     <summary>

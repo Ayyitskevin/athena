@@ -45,6 +45,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   logins, revoked tokens, scope denials, and paused refusals were always recorded;
   they now have a page and an API instead of requiring an operator to know the verb
   names.
+- **Trust / Learn** also closes the memory loop: a human or an agent can promote
+  what a run learned into the issue's runbook page, which the next agent reads
+  through ordinary backlinks and its work-context packet. Promotion is always
+  explicit, promoted text is quoted and attributed rather than merged, and a named
+  run must be one that actually exists.
 - **Trust / Learn** adds undo by compensation: reversing an action records its
   inverse as a new audited command linked to the event it reversed, so history is
   never rewritten. Four verb pairs are reversible (issue and page archive and

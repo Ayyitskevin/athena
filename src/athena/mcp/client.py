@@ -981,6 +981,27 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def record_run_learning(
+        self,
+        issue_id: int,
+        *,
+        summary: str,
+        run_id: str | None = None,
+        space_id: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Append what a run learned to an issue's runbook page."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/learnings",
+            json=self._params(summary=summary, run_id=run_id, space_id=space_id),
+            idempotency_key=idempotency_key,
+        )
+
+    def get_issue_runbook(self, issue_id: int) -> Any:
+        """The issue's runbook page, or null when it has none yet."""
+        return self._result(self._client.get(f"/issues/{issue_id}/runbook"))
+
     def list_security_events(
         self,
         *,
