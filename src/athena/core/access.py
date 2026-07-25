@@ -44,31 +44,41 @@ def _is_admin(actor: dict | None) -> bool:
 
 
 def add_project_member(
-    conn: sqlite3.Connection, project_id: int, user_id: int, added_by: int | None
+    conn: sqlite3.Connection,
+    project_id: int,
+    user_id: int,
+    added_by: int | None,
+    *,
+    commit: bool = True,
 ) -> bool:
     """Grant a user read access to a (private) project. Idempotent: re-adding the same
     pair is a no-op (composite PK + OR IGNORE), returning False so the caller records
     an audit event only on a real change. Raises sqlite3.IntegrityError if the project
-    or user doesn't exist (the foreign keys refuse the orphan)."""
+    or user doesn't exist (the foreign keys refuse the orphan). ``commit=False``
+    composes this inside the audited project-access command's transaction (the space
+    twin below takes the same kwarg)."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO project_members (project_id, user_id, added_by) "
         "VALUES (?, ?, ?)",
         (project_id, user_id, added_by),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
 def remove_project_member(
-    conn: sqlite3.Connection, project_id: int, user_id: int
+    conn: sqlite3.Connection, project_id: int, user_id: int, *, commit: bool = True
 ) -> bool:
     """Revoke a user's membership. Returns True if a row was removed, False if the
-    user wasn't a member (so the caller can 404)."""
+    user wasn't a member (so the caller can 404). ``commit=False`` composes this
+    inside the audited project-access command's transaction."""
     cur = conn.execute(
         "DELETE FROM project_members WHERE project_id = ? AND user_id = ?",
         (project_id, user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

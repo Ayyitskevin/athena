@@ -36,7 +36,6 @@ from athena.aegis import (
     issues,
     lease_commands,
     leases,
-    project_activity,
     project_commands,
     project_etags,
     projects,
@@ -1421,22 +1420,14 @@ def set_project_visibility(
     # Setting it to what it already is is a no-op — no write, no audit event.
     if visibility == project["visibility"]:
         return project
-    updated = projects.set_visibility(conn, project_id, visibility)
-    assert updated is not None
-    # Going private: record the creator as an explicit member so they appear in the
-    # roster (they always keep access via created_by regardless — this is for the UI).
-    if visibility == "private":
-        access.add_project_member(
-            conn, project_id, project["created_by"], added_by=actor["id"]
+    # The command owns the flip, the creator's roster row when going private, and the
+    # atomic visibility event — so an access-control change can never half-land.
+    try:
+        return project_commands.set_project_visibility(
+            conn, actor_id=actor["id"], project_id=project_id, visibility=visibility
         )
-    project_activity.record_project_visibility_changed(
-        conn,
-        actor_id=actor["id"],
-        project_id=project_id,
-        name=updated["name"],
-        visibility=visibility,
-    )
-    return updated
+    except project_commands.ProjectAccessCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @projects_router.get("/{project_id}/members", response_model=list[MemberOut])
@@ -1469,15 +1460,14 @@ def add_project_member(
     member = users.get_user(conn, payload.user_id)
     if member is None:
         raise HTTPException(status_code=422, detail="no such user")
-    if access.add_project_member(
-        conn, project_id, payload.user_id, added_by=actor["id"]
-    ):
-        project_activity.record_project_member_added(
-            conn,
-            actor_id=actor["id"],
-            project_id=project_id,
-            member_name=member["name"],
-        )
+    # The command owns the grant and its atomic audit event.
+    project_commands.add_project_member(
+        conn,
+        actor_id=actor["id"],
+        project_id=project_id,
+        user_id=payload.user_id,
+        member_name=member["name"],
+    )
     return access.list_project_members(conn, project_id)
 
 
@@ -1495,14 +1485,16 @@ def remove_project_member(
     # created_by/admin — this only removes the explicit grant.
     _project_for_privacy(conn, project_id, actor)
     member = users.get_user(conn, user_id)
-    if not access.remove_project_member(conn, project_id, user_id):
-        raise HTTPException(status_code=404, detail="user is not a member")
-    project_activity.record_project_member_removed(
+    # The command owns the revoke and its atomic audit event; a non-member is an
+    # honest 404 rather than a silent success.
+    if not project_commands.remove_project_member(
         conn,
         actor_id=actor["id"],
         project_id=project_id,
+        user_id=user_id,
         member_name=member["name"] if member else str(user_id),
-    )
+    ):
+        raise HTTPException(status_code=404, detail="user is not a member")
     return access.list_project_members(conn, project_id)
 
 

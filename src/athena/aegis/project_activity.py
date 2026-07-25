@@ -75,11 +75,12 @@ def record_project_visibility_changed(
     project_id: int,
     name: str,
     visibility: str,
+    commit: bool = True,
 ) -> None:
     """A project was made private or public. The verb encodes the direction so the
     feed reads at a glance; the detail names the project. The caller only records this
     on a real transition (it skips a no-op set-to-same-value), so every row here is a
-    genuine change."""
+    genuine change. ``commit=False`` lets the command own the transaction."""
     verb = "project_made_private" if visibility == "private" else "project_made_public"
     activity.record(
         conn,
@@ -88,15 +89,22 @@ def record_project_visibility_changed(
         target_kind="project",
         target_id=project_id,
         detail=name,
+        commit=commit,
     )
 
 
 def record_project_member_added(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, member_name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    member_name: str,
+    commit: bool = True,
 ) -> None:
     """A user was granted access to a private project. The detail is the member's name
     so the feed reads "granted <name>"; recorded only on a real change (a re-add of an
-    existing member is a no-op and records nothing)."""
+    existing member is a no-op and records nothing). ``commit=False`` lets the command
+    own the transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -104,15 +112,21 @@ def record_project_member_added(
         target_kind="project",
         target_id=project_id,
         detail=member_name,
+        commit=commit,
     )
 
 
 def record_project_member_removed(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, member_name: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    member_name: str,
+    commit: bool = True,
 ) -> None:
     """A user's access to a private project was revoked. The detail is the member's
     name (preserved here even though the membership row is gone), recorded only when a
-    row was actually removed."""
+    row was actually removed. ``commit=False`` lets the command own the transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -120,6 +134,7 @@ def record_project_member_removed(
         target_kind="project",
         target_id=project_id,
         detail=member_name,
+        commit=commit,
     )
 
 

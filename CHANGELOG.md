@@ -82,6 +82,14 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- Project visibility and membership writes are now audited-atomic commands
+  (`project_commands.set_project_visibility` / `add_project_member` /
+  `remove_project_member`). The visibility flip previously ran as three
+  independent commits — the flip, the creator's roster row when going private,
+  then the activity event — so a crash mid-sequence left a permanently unaudited
+  access-control change: because the mutation is idempotent and the event is
+  recorded only on a real change, a retry never backfills it. REST and the browser
+  now call the same commands, which no longer emit activity from either transport.
 - Password writes are now audited-atomic commands
   (`user_commands.change_own_password` / `reset_user_password`). Both paths ran
   the hash write and the session revocation as separate commits with no audit
