@@ -49,6 +49,7 @@ from athena.core import (
     rate_limits,
     run_context,
     search_api,
+    security_api,
     sessions,
     tokens,
     tokens_api,
@@ -1395,6 +1396,7 @@ def create_app(
     app.include_router(users_api.router)
     app.include_router(approvals_api.router)
     app.include_router(workers_api.router)
+    app.include_router(security_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)

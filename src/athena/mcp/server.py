@@ -215,12 +215,20 @@ def build_server(client: AthenaClient) -> FastMCP:
     def get_fleet_active_work(
         agent_id: FleetAgentId | None = None,
         limit: FleetWorkLimit = fleet_work.DEFAULT_LIMIT,
+        attention_state: Literal["needs_attention", "observed"] | None = None,
     ) -> dict:
         """Admin-only view of agent-held issue claims. Joins each lease to its
         exact tagged claim run, cooperative check-in, visible blockers, and replay
         readiness. Reporting is an observation, never proof that a process is alive
-        or executing work; use attention_reasons to steer by exception."""
-        return client.get_fleet_active_work(agent_id=agent_id, limit=limit)
+        or executing work; use attention_reasons to steer by exception.
+
+        Rows needing attention are returned FIRST, and attention_state='needs_attention'
+        returns only those. `examined_count` says how many rows the attention
+        decision saw: on a clipped fleet, a summary of "0 need attention" means
+        "none of these did", not "none exist"."""
+        return client.get_fleet_active_work(
+            agent_id=agent_id, limit=limit, attention_state=attention_state
+        )
 
     @mcp.tool()
     def get_issue(ref: str) -> dict:
@@ -509,6 +517,21 @@ def build_server(client: AthenaClient) -> FastMCP:
         and revoke every token — one audited lockout. Refuses to strip the last
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
+
+    @mcp.tool()
+    def list_security_events(
+        verb: str | None = None,
+        since: str | None = None,
+        limit: int = 50,
+    ) -> list:
+        """Recent boundary REFUSALS — someone probing where they may not go.
+
+        Covers failed logins, revoked tokens still being presented, scope denials,
+        and paused accounts that keep trying. Each names the account whose boundary
+        was hit. Narrow with verb ('login_failed', 'revoked_token_used',
+        'scope_denied', 'paused_account_refused') and since ('YYYY-MM-DD
+        HH:MM:SS'). Requires an admin token."""
+        return client.list_security_events(verb=verb, since=since, limit=limit)
 
     @mutation_tool
     def worker_heartbeat(

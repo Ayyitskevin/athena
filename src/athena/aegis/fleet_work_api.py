@@ -159,7 +159,13 @@ class ActiveWorkOut(_StrictModel):
     items: list[ActiveWorkItemOut]
     visible_total: int
     limit: int
+    # Echoed back so a filtered page cannot be mistaken for the whole fleet.
+    attention_state: Literal["needs_attention", "observed"] | None = None
     clipped: bool
+    # How many rows the attention decision saw. A summary reading "0 need
+    # attention" means "none of these did", and on a clipped fleet that is a
+    # different statement from "none exist".
+    examined_count: int
     summary: ActiveWorkSummaryOut
 
 
@@ -196,7 +202,7 @@ def _active_work_admin(
     return actor
 
 
-def _query_from_request(request: Request) -> tuple[int | None, int]:
+def _query_from_request(request: Request) -> tuple[int | None, int, str | None]:
     try:
         return fleet_work.parse_query_pairs(list(request.query_params.multi_items()))
     except fleet_work.ActiveWorkQueryError as exc:
@@ -220,5 +226,7 @@ def active_work(
     signal never claims that an external process is alive or executing the issue.
     """
     response.headers.update(_PRIVATE_HEADERS)
-    agent_id, limit = _query_from_request(request)
-    return fleet_work.build_active_work(conn, agent_id=agent_id, limit=limit)
+    agent_id, limit, attention_state = _query_from_request(request)
+    return fleet_work.build_active_work(
+        conn, agent_id=agent_id, limit=limit, attention_state=attention_state
+    )

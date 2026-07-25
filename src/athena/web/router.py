@@ -23,6 +23,7 @@ from athena.aegis import (
     dashboard,
     delegations,
     dependencies,
+    fleet_attention,
     issue_commands,
     issue_history,
     issue_search,
@@ -186,6 +187,14 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     delegation_inbox = (
         delegations.list_delegations(conn, user, limit=8) if user else None
     )
+    # The steer-by-exception rollup, admin-only because every input is already an
+    # admin-scoped read. It is counts and links only — it computes no state of its
+    # own, so it can never disagree with the surfaces it points at.
+    attention = (
+        fleet_attention.build_attention(conn)
+        if user is not None and identity.is_admin(user)
+        else None
+    )
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
@@ -203,6 +212,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             if user
             else [],
             "my_delegation_inbox": delegation_inbox,
+            "fleet_attention": attention,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )

@@ -46,8 +46,20 @@
         </option>
         {% endfor %}
     </select>
+    {# Attention is what this page is FOR, so it gets a control rather than only a
+       URL. The projection returns attention rows first either way; this narrows to
+       exactly them. #}
+    <label for="attention_state">State</label>
+    <select id="attention_state" name="attention_state">
+        <option value="">Any state</option>
+        {% for state in attention_states %}
+        <option value="{{ state }}"{% if active_work.attention_state == state %} selected{% endif %}>
+            {{ state.replace("_", " ") }}
+        </option>
+        {% endfor %}
+    </select>
     <button type="submit">Filter</button>
-    {% if selected_agent_id %}
+    {% if selected_agent_id or active_work.attention_state %}
     <a href="/admin/agents/runs" class="button secondary">Clear</a>
     {% endif %}
 </form>

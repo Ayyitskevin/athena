@@ -66,3 +66,84 @@ def record_failure(
         )
     except Exception:  # noqa: BLE001 — the refusal must go out regardless
         _logger.exception("could not record auth failure event (%s)", verb)
+
+
+# The four refusal verbs, as a closed set: a surface that lists "security signals"
+# must not silently widen into every verb that happens to sound alarming.
+SECURITY_VERBS: tuple[str, ...] = (
+    VERB_LOGIN_FAILED,
+    VERB_REVOKED_TOKEN_USED,
+    VERB_SCOPE_DENIED,
+    VERB_PAUSED_REFUSED,
+)
+
+MAX_LIST_LIMIT = 200
+
+
+def list_failures(
+    conn: sqlite3.Connection,
+    *,
+    verb: str | None = None,
+    since: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Recent boundary refusals, newest first.
+
+    These events were always on the trail and always filterable — but only by an
+    operator who already knew the four verb names and thought to look. Probing
+    before compromise is exactly the signal that must not require knowing to grep,
+    so this is the query the cockpit and MCP ask.
+
+    Reads are UNGATED because every caller is an admin (the routes enforce it) and
+    a refusal names the account whose boundary was hit, which is the fact an
+    operator needs. `verb` is checked against the closed set rather than passed
+    through, so this cannot become a general activity reader with a different name.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise ValueError("limit must be an integer")
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    bounded = min(limit, MAX_LIST_LIMIT)
+    verbs = SECURITY_VERBS
+    if verb is not None:
+        if verb not in SECURITY_VERBS:
+            raise ValueError(f"verb must be one of: {', '.join(SECURITY_VERBS)}")
+        verbs = (verb,)
+    clauses = [f"a.verb IN ({','.join('?' * len(verbs))})"]
+    params: list[object] = list(verbs)
+    if since is not None:
+        # Compared as text against the stored 'YYYY-MM-DD HH:MM:SS' server clock,
+        # the same shape every other activity read uses.
+        clauses.append("a.created_at >= ?")
+        params.append(since)
+    params.append(bounded)
+    rows = conn.execute(
+        "SELECT a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
+        "a.created_at, u.name AS actor_name, u.email AS actor_email, "
+        "u.is_agent AS actor_is_agent "
+        "FROM activity a JOIN users u ON u.id = a.actor_id "
+        f"WHERE {' AND '.join(clauses)} ORDER BY a.id DESC LIMIT ?",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def failure_counts(
+    conn: sqlite3.Connection, *, since: str | None = None
+) -> dict[str, int]:
+    """How many of each refusal, for the attention rollup. Zero-filled, so a quiet
+    fleet reads as an explicit zero rather than a missing key."""
+    clauses = [f"verb IN ({','.join('?' * len(SECURITY_VERBS))})"]
+    params: list[object] = list(SECURITY_VERBS)
+    if since is not None:
+        clauses.append("created_at >= ?")
+        params.append(since)
+    rows = conn.execute(
+        f"SELECT verb, COUNT(*) AS n FROM activity WHERE {' AND '.join(clauses)} "
+        "GROUP BY verb",
+        params,
+    ).fetchall()
+    counts = {verb: 0 for verb in SECURITY_VERBS}
+    for row in rows:
+        counts[row["verb"]] = int(row["n"])
+    return counts

@@ -41,18 +41,36 @@ The browser, REST response, and MCP tool use the same application projection:
 ```text
 GET /fleet/active-work
 GET /fleet/active-work?agent_id=42&limit=25
-GET /admin/agents/runs?agent_id=42&limit=25
-get_fleet_active_work(agent_id=42, limit=25)
+GET /fleet/active-work?attention_state=needs_attention
+GET /admin/agents/runs?agent_id=42&attention_state=needs_attention
+get_fleet_active_work(agent_id=42, limit=25, attention_state="needs_attention")
 ```
 
 The view requires an admin-role actor. A bearer token must also have the `admin`
 scope. The REST and HTML responses are private and non-cacheable. The default limit
 is 100 claims and the maximum is 200. `visible_total` and `clipped` say whether
-the returned operational window is complete. The window is not paginated: active
-leases sort before expired rows, then by expiry and issue id. Use issue activity or
-run replay for older claim history rather than treating a clipped response as an
-exhaustive audit. Each blocker preview contains at most five
-admin-visible open blockers and carries its own exact count and clipping flag.
+the returned operational window is complete. Use issue activity or run replay for
+older claim history rather than treating a clipped response as an exhaustive audit.
+Each blocker preview contains at most five admin-visible open blockers and carries
+its own exact count and clipping flag.
+
+**Attention-bearing rows come first.** The window used to sort active leases before
+expired ones, which meant that on a busy fleet the expired — attention-bearing —
+claims were exactly the rows the limit dropped, while a returned-items summary
+could truthfully report "0 need attention" about a page it had filtered clean of
+them. The window is still bounded, but it is now filled from the attention-prone
+end: SQL orders the cheap signals (expired lease, archived or done issue, paused or
+read-only holder, untagged run) first, and the exact per-row attention state — which
+is decided in exactly one place, in the application projection — sorts the returned
+page. `attention_state` filters that exact state, so a caller can ask for precisely
+the rows needing a human.
+
+`examined_count` reports how many rows the attention decision actually saw. Without
+it, "0 need attention" is ambiguous between "none do" and "none of the ones we
+looked at do", and on a clipped fleet those are very different statements. The SQL
+ordering predicate is a bias, not a second definition of attention: it deliberately
+does not reproduce the check-in, blocker, or token-count reasons, because two
+implementations of the same predicate would eventually disagree.
 
 One SQLite read transaction pins leases, open claim handoffs, account controls,
 claim events, check-ins, blockers, and replay readiness to one snapshot. Every lease
@@ -154,6 +172,9 @@ never create actionable handoffs. A full SQLite backup/restore preserves them.
   routes unaddressable. Athena keeps the evidence fact but suppresses broken links.
 - The projection does not infer completion from quiet activity and does not create
   approvals or handoffs automatically; only explicit holder commands do so.
+- Attention ordering fills a bounded window from the urgent end; it does not make
+  the window unbounded. A fleet with more attention rows than the limit still
+  clips, and says so with `clipped` and `examined_count`.
 - Delegation still has an unavoidable pre-claim race because a generation does not
   exist before acquisition. The lease interlock, not a delegation preview, decides
   which claimant wins.

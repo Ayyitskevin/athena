@@ -30,7 +30,7 @@ import sqlite3
 from athena import config
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
-_MAX_LIST_LIMIT = 500
+MAX_LIST_LIMIT = 500
 
 REPORTING_RECENTLY = "reporting_recently"
 STALE = "stale"
@@ -59,7 +59,7 @@ def _bounded_limit(limit: int) -> int:
         raise ValueError("limit must be an integer")
     if limit < 1:
         raise ValueError("limit must be positive")
-    return min(limit, _MAX_LIST_LIMIT)
+    return min(limit, MAX_LIST_LIMIT)
 
 
 def _stale_after_seconds(value: int | None) -> int:

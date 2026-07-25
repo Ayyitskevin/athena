@@ -245,12 +245,15 @@ class AthenaClient:
         *,
         agent_id: int | None = None,
         limit: int | None = None,
+        attention_state: str | None = None,
     ) -> Any:
         """Read the admin-only active claimed-work projection."""
         return self._result(
             self._client.get(
                 "/fleet/active-work",
-                params=self._params(agent_id=agent_id, limit=limit),
+                params=self._params(
+                    agent_id=agent_id, limit=limit, attention_state=attention_state
+                ),
             )
         )
 
@@ -977,6 +980,22 @@ class AthenaClient:
     def offboard_user(self, user_id: int) -> Any:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
+
+    def list_security_events(
+        self,
+        *,
+        verb: str | None = None,
+        since: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        """Recent boundary refusals — failed logins, revoked tokens, scope
+        denials, paused refusals (admin only)."""
+        return self._result(
+            self._client.get(
+                "/security/events",
+                params=self._params(verb=verb, since=since, limit=limit),
+            )
+        )
 
     def worker_heartbeat(
         self,

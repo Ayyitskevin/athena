@@ -777,7 +777,11 @@ def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
 
         tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
         schema = tools["get_fleet_active_work"].inputSchema
-        assert set(schema["properties"]) == {"agent_id", "limit"}
+        assert set(schema["properties"]) == {
+            "agent_id",
+            "limit",
+            "attention_state",
+        }
         assert schema["properties"]["limit"]["default"] == fleet_work.DEFAULT_LIMIT
 
         from mcp.server.fastmcp.exceptions import ToolError

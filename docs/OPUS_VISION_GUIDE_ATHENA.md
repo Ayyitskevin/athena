@@ -435,33 +435,34 @@ Control (`web/admin.py`, `templates/admin/agent_runs.html`,
 
 **Requirements:**
 
-1. **A needs-attention rollup on the landing surface.** Today `/aegis/dashboard`
-   (`web/router.py` `aegis_dashboard`) shows counts but **no** fleet attention,
-   automation-failure, or webhook-health signal, and `base.html` has no link to
-   Mission Control. Add an admin-only "Fleet attention" card: counts of
+1. ~~**A needs-attention rollup on the landing surface.**~~ **SHIPPED** —
+   `aegis/fleet_attention.py` builds it, the dashboard renders it admin-only, and
+   `base.html` now links Mission Control and Security. Originally: Add an admin-only "Fleet attention" card: counts of
    `needs_attention` claims, failing automation rules, failing webhooks, and (new)
    pending approvals + budget breaches — each linking to its detail. This is the
    single highest-leverage usability fix (deferred F-7).
-2. **Surface security-failure signal.** `security_events` verbs (login-failed,
-   revoked-token-used, scope-denied, paused-refused) are recorded but rendered
-   nowhere (F-5). Add a bounded, admin-only "Security signals" panel + a REST
+2. ~~**Surface security-failure signal.**~~ **SHIPPED** — `/security/events`,
+   `/security/counts`, MCP `list_security_events`, and `/admin/security`.
+   Originally: recorded but rendered nowhere (F-5). Add a bounded, admin-only "Security signals" panel + a REST
    endpoint + MCP `list_security_events(verb, since)` so probing-before-compromise
    is visible without knowing to grep the trail.
-3. **One failures surface, not three.** Mission Control advertises "failures" but
-   shows only automation failures; webhook delivery failures live on a separate
-   page and approval/budget breaches don't exist yet. Unify them.
-4. **Attention ordering must not clip attention rows.** `fleet_work.py` orders
-   active-before-expired then by expiry, so on a busy fleet the expired
-   (attention-bearing) claims are exactly the ones dropped past the limit while the
-   summary can read "0 need attention shown". Add an `attention_state` filter to
-   the projection (web + REST + MCP) and/or order attention-bearing rows first
-   (deferred F-8).
+3. ~~**One failures surface, not three.**~~ **SHIPPED** as the rollup in (1): one
+   card counting every exception surface, each linking to the page that owns it.
+   The card deliberately computes nothing, so it cannot disagree with them.
+4. ~~**Attention ordering must not clip attention rows.**~~ **SHIPPED** — both
+   halves: attention-bearing rows now fill the bounded window from the urgent end,
+   and `attention_state` filters the exact per-row state across web + REST + MCP.
+   `examined_count` was added so "0 need attention" can no longer be misread as
+   "none exist" on a clipped fleet.
 
 **Attention semantics (keep exactly as designed in `docs/ACTIVE_WORK.md`):**
 `needs_attention` is set only for recorded reasons; `observed` means "no known
 reason applied at the snapshot", never "healthy/running". Do not infer completion
 from quiet activity. New reasons to add as the primitives land:
-`budget_exceeded`, `approval_pending`, `kill_requested`, `worker_stale`.
+`budget_exceeded`, `approval_pending`, `kill_requested`, `worker_stale`. Those are
+counted in the rollup today but are **not** yet per-claim attention reasons — a
+budget breach is a fleet signal, not a fact about one lease, and wiring them into
+`_item` needs a claim→agent→policy join that does not exist yet.
 
 ---
 
@@ -686,9 +687,17 @@ heartbeat**, exactly as this guide proposed — and the schema keeps asked,
 acknowledged, and stopped apart, because collapsing them into a `killed` flag is
 the one lie the feature exists to prevent.
 
-**Stage F — Cockpit exception surfaces (F-5/F-7/F-8).** security-signals panel +
-`list_security_events` (REST+MCP), dashboard fleet-attention rollup,
-`attention_state` filter on `fleet_work` (web+REST+MCP), unified failures view.
+**Stage F — Cockpit exception surfaces (F-5/F-7/F-8). — SHIPPED**
+(`docs/EXCEPTION_SURFACES.md`). Security-signals panel + `/security/events` +
+`/security/counts` + MCP `list_security_events`; the dashboard fleet-attention
+rollup (which *is* the unified failures view — one card counting claims,
+approvals, unanswered kills, automation, webhooks, budget breaches, and refusals,
+each linking to the surface that owns it); `attention_state` filter on
+`fleet_work` across web + REST + MCP. F-8 was the real bug: the window sorted
+active-before-expired, so attention rows were the ones the limit dropped while the
+summary could read "0 need attention". Rows now fill the window from the urgent end,
+and `examined_count` distinguishes "none do" from "none of the ones we looked at
+do".
 
 **Stage G — Memory feedback loop.** `mentor/page_commands.append_run_learning`,
 `POST /issues/{ref}/learnings`, MCP `record_run_learning`, replay-view affordance,
