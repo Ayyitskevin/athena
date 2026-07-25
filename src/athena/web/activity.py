@@ -11,13 +11,14 @@ instance main.py injects at startup).
 from __future__ import annotations
 
 import sqlite3
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from athena.core import activity, undo
+from athena.core import access, activity, undo
 from athena.core.deps import get_conn
+from athena.mentor import run_learnings, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.router import _int_or_none, get_templates
 
@@ -266,8 +267,81 @@ def activity_run_lineage(
         )
         if contract is not None:
             fork_contracts.append(contract)
+    # The issues this run actually touched, each with its runbook if it has one.
+    # This is where "record what you learned" belongs: looking at what a run did is
+    # exactly the moment an operator knows what the next one should be told.
+    learning_issues = []
+    seen_issue_ids: set[int] = set()
+    for event in lineage["run"]["events"]:
+        if event["target_kind"] != "issue" or event["target_id"] in seen_issue_ids:
+            continue
+        seen_issue_ids.add(event["target_id"])
+        runbook = run_learnings.get_runbook(conn, event["target_id"])
+        learning_issues.append(
+            {
+                "id": event["target_id"],
+                "runbook": runbook
+                if runbook is not None
+                and access.can_see_page(conn, user, int(runbook["id"]))
+                else None,
+            }
+        )
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/run_lineage.html",
-        context={"lineage": lineage, "fork_contracts": fork_contracts},
+        context={
+            "lineage": lineage,
+            "fork_contracts": fork_contracts,
+            "learning_issues": learning_issues,
+            "spaces": spaces.list_spaces(conn, access.visible_space_filter(conn, user)),
+            "notice": (request.query_params.get("notice") or "").strip(),
+            "error": (request.query_params.get("error") or "").strip(),
+            "can_record_learning": user is not None,
+        },
     )
+
+
+@router.post(
+    "/aegis/activity/runs/{run_id}/learnings",
+    dependencies=[Depends(verify_csrf)],
+)
+def record_run_learning_web(
+    run_id: str,
+    request: Request,
+    issue_id: int = Form(...),
+    summary: str = Form(""),
+    space_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Promote a learning from the run view — the browser twin of
+    POST /issues/{id}/learnings, through the same command.
+
+    Explicit by construction: this only ever runs because a human filled in the
+    form and submitted it. Nothing about finishing a run promotes anything."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to record a'
+            " learning.</div>",
+            status_code=401,
+        )
+    back = f"/aegis/activity/runs/{quote(run_id, safe='')}/lineage"
+    try:
+        result = run_learnings.record_learning(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            summary=summary,
+            run_id=run_id,
+            space_id=_int_or_none(space_id),
+        )
+    except run_learnings.LearningError as exc:
+        return RedirectResponse(
+            f"{back}?{urlencode({'error': exc.detail})}", status_code=303
+        )
+    notice = (
+        f'Started the runbook "{result["page"]["title"]}".'
+        if result["created"]
+        else f'Added to "{result["page"]["title"]}".'
+    )
+    return RedirectResponse(f"{back}?{urlencode({'notice': notice})}", status_code=303)

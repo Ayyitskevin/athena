@@ -257,6 +257,12 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "record_run_learning",
+        "POST",
+        "/issues/5/learnings",
+        lambda c, k: c.record_run_learning(5, summary="learned", idempotency_key=k),
+    ),
+    (
         "worker_heartbeat",
         "PUT",
         "/workers/heartbeat",
@@ -409,6 +415,7 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    ("record_run_learning", {"issue_id": 5, "summary": "learned"}),
     ("worker_heartbeat", {"worker_key": "w-1"}),
     ("request_worker_kill", {"worker_id": 3}),
     ("cancel_worker_kill", {"worker_id": 3}),

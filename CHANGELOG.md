@@ -8,24 +8,31 @@ untagged package/development milestones, not published releases.
 
 ## [Unreleased]
 
-### Fixed
-
-- **Attention-bearing claims are no longer the rows most likely to be hidden.**
-  The active-work window sorted active leases before expired ones, so on a busy
-  fleet the expired — attention-bearing — claims were exactly the rows the limit
-  dropped, while the returned-items summary could truthfully report `0 need
-  attention` about a page it had filtered clean of them. An exception surface that
-  hides exceptions is worse than none, because it reads as reassurance. The window
-  is still bounded but now fills from the urgent end, the exact per-row attention
-  state sorts the returned page, and a new `attention_state` filter (web, REST, and
-  MCP) returns precisely the rows needing a human. `examined_count` was added
-  because "0 need attention" is otherwise ambiguous between "none do" and "none of
-  the ones we looked at do" — different statements on a clipped fleet. The SQL
-  ordering is explicitly a bias, not a second definition of attention: it does not
-  reproduce the check-in, blocker, or token reasons, since two implementations of
-  one predicate eventually disagree.
-
 ### Added
+
+- **Run learnings close the memory loop.** VISION's fifth step promised that
+  corrections "feed back into Mentor as durable context the agents read next
+  time"; Mentor pages were already read by agents, but nothing ever wrote back, so
+  every run started from the knowledge the last one had. A human or an agent can
+  now promote what a run learned into the issue's **runbook** — one Mentor page
+  bound to that issue (migration 0066). The entry references the issue, so the link
+  index, the issue's backlinks, and the next agent's work-context packet pick it up
+  **through machinery that already existed**; nobody had to wire the feedback path.
+  Three constraints are deliberate. **Promotion is explicit** — nothing fires on
+  completion or yield, because handoff text is untrusted advisory input and the
+  operator decides what earns a place in the knowledge base. **Promoted text is
+  quoted, not merged** — it is stored as a blockquote under an attribution header
+  Athena writes, so a summary containing its own headings renders inside the quote
+  instead of forging a second attribution beside the real one, and nothing in it is
+  ever executed. **Provenance is verified** — a named `run_id` must be a run that
+  actually exists and is visible to the recorder, or the promotion is refused
+  rather than recorded with invented attribution. The runbook binding is a row
+  rather than a title lookup, so renaming the page cannot silently fork the memory
+  in two. Surfaced through `POST /issues/{id}/learnings`, `GET
+  /issues/{id}/runbook`, MCP `record_run_learning` / `get_issue_runbook`, and a
+  form on the run lineage view — where looking at what a run did is exactly the
+  moment an operator knows what the next one should be told. See
+  [docs/RUN_LEARNINGS.md](docs/RUN_LEARNINGS.md).
 
 - **Security signals have a surface.** Failed logins, revoked tokens still being
   presented, scope denials, and paused-account refusals have been recorded on the
@@ -209,6 +216,21 @@ untagged package/development milestones, not published releases.
   remains one process/runner on a trusted local machine or tailnet.
 
 ### Fixed
+
+- **Attention-bearing claims are no longer the rows most likely to be hidden.**
+  The active-work window sorted active leases before expired ones, so on a busy
+  fleet the expired — attention-bearing — claims were exactly the rows the limit
+  dropped, while the returned-items summary could truthfully report `0 need
+  attention` about a page it had filtered clean of them. An exception surface that
+  hides exceptions is worse than none, because it reads as reassurance. The window
+  is still bounded but now fills from the urgent end, the exact per-row attention
+  state sorts the returned page, and a new `attention_state` filter (web, REST, and
+  MCP) returns precisely the rows needing a human. `examined_count` was added
+  because "0 need attention" is otherwise ambiguous between "none do" and "none of
+  the ones we looked at do" — different statements on a clipped fleet. The SQL
+  ordering is explicitly a bias, not a second definition of attention: it does not
+  reproduce the check-in, blocker, or token reasons, since two implementations of
+  one predicate eventually disagree.
 
 - The sprint lifecycle is now audited. Creating, editing, starting, completing,
   and deleting a sprint were all bare data-layer writes with no activity event on

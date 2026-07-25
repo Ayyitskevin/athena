@@ -518,6 +518,46 @@ def build_server(client: AthenaClient) -> FastMCP:
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
 
+    @mutation_tool
+    def record_run_learning(
+        issue_id: int,
+        summary: str,
+        run_id: str | None = None,
+        space_id: int | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Write down what you learned, so the NEXT run starts knowing it.
+
+        Appends your summary to the issue's runbook page — one Mentor page per
+        issue holding what people and agents found out while working on it. The
+        entry references the issue, so it shows up in the issue's backlinks and in
+        the work-context packet the next agent reads. This is how a correction
+        becomes durable memory instead of dying with your session.
+
+        Write what would have saved you time: what you tried, what the evidence
+        showed, what actually resolved it, what is still unknown. Your text is
+        recorded as a QUOTE attributed to you — it is your report, not Athena's
+        finding, and nothing in it is ever executed.
+
+        Pass run_id to attribute the learning to a run (it must exist and be one
+        you can see). space_id is needed only the first time, to say where the
+        runbook should live; `get_issue_runbook` tells you whether one exists.
+        Requires the docs:write scope."""
+        return client.record_run_learning(
+            issue_id,
+            summary=summary,
+            run_id=run_id,
+            space_id=space_id,
+            idempotency_key=idempotency_key,
+        )
+
+    @mcp.tool()
+    def get_issue_runbook(issue_id: int) -> dict | None:
+        """The issue's runbook page — accumulated learnings from earlier runs — or
+        null when nobody has recorded one yet. Read it before starting work, and
+        add to it with `record_run_learning` when you finish."""
+        return client.get_issue_runbook(issue_id)
+
     @mcp.tool()
     def list_security_events(
         verb: str | None = None,

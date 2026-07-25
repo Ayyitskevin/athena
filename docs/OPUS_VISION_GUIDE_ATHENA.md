@@ -699,9 +699,19 @@ summary could read "0 need attention". Rows now fill the window from the urgent 
 and `examined_count` distinguishes "none do" from "none of the ones we looked at
 do".
 
-**Stage G — Memory feedback loop.** `mentor/page_commands.append_run_learning`,
-`POST /issues/{ref}/learnings`, MCP `record_run_learning`, replay-view affordance,
-`tests/test_run_learning.py`.
+**Stage G — Memory feedback loop. — SHIPPED** (`docs/RUN_LEARNINGS.md`). Landed
+as `mentor/run_learnings.py` rather than a method on `page_commands` (it needs
+link resolution, run validation, and two visibility checks — its own concern), plus
+migration `0066_issue_runbooks.sql` binding one runbook page per issue,
+`POST /issues/{id}/learnings` + `GET /issues/{id}/runbook`, MCP
+`record_run_learning` / `get_issue_runbook`, a form on the run lineage view, and
+`tests/test_run_learnings.py`. Two things the sketch did not say: the runbook
+binding is a ROW, not a title lookup, so a rename cannot silently fork the memory
+in two; and promoted text is stored **blockquoted** under an attribution header
+Athena writes, so an untrusted summary cannot forge a second attribution beside
+the real one. The REST route lives in Mentor while its path names an issue,
+because the import contract makes Aegis and Mentor peers — documented in the
+module.
 
 **Stage H — Icarus integration.** `core/dispatch.py` (or `aegis/icarus_commands.py`),
 `0068_icarus_dispatch.sql`, `icarus:` reserved namespace in `run_context.py`,
