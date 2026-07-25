@@ -16,6 +16,9 @@
 
 <p class="muted">The audit trail across every issue — who did what, newest first.</p>
 
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
 {# Filter form: a plain GET so the active filters live in the URL (shareable,
    bookmarkable). Submitting drops ?before, which restarts paging from the top —
    the right behaviour when the filter set changes. #}

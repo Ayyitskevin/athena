@@ -1518,13 +1518,17 @@ def test_upgrade_from_0054_preserves_legacy_and_types_only_new_commands(
         "INSERT INTO issues (title, created_by) VALUES ('Legacy issue', ?)",
         (admin["id"],),
     ).lastrowid
-    activity.record(
-        conn,
-        actor_id=admin["id"],
-        verb="created",
-        target_kind="issue",
-        target_id=legacy_issue_id,
+    # Written with explicit SQL rather than activity.record: this row must exist
+    # BEFORE 0055 to be legacy at all, and the recorder always writes today's full
+    # column set (0064 added another). visibility_restricted=0 is what the recorder
+    # would have stored for this backlog issue, which has no project to scope.
+    conn.execute(
+        "INSERT INTO activity "
+        "(actor_id, verb, target_kind, target_id, visibility_restricted) "
+        "VALUES (?, 'created', 'issue', ?, 0)",
+        (admin["id"], legacy_issue_id),
     )
+    conn.commit()
 
     # Finish the upgrade to head. 0055 is the migration under test — it introduces
     # typed lifecycle facts — but the later ones must come too: a command runs

@@ -10,6 +10,30 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **Undo by compensation** — VISION promises the operator can undo what an agent
+  did; ARCHITECTURE promises the trail is append-only. Undo never deletes or edits
+  a row: reversing event *N* runs the inverse as a new, fully audited forward
+  command whose event carries `reverses_event_id = N` (migration 0064), so history
+  gains two rows and a replay shows the action *and* its reversal. Authorization is
+  **re-evaluated, never inherited** — the compensator runs as the undoing actor
+  through the ordinary command owner, so undo is not a back door into someone
+  else's write, and it can itself be refused by a budget or an approval gate like
+  any other write. An undo that would change nothing is a **refusal**, not a
+  cheerful no-op: every compensator is idempotent at the domain layer, so "nothing
+  was recorded" means the effect is no longer in force. Single use is enforced by a
+  partial unique index rather than a read-then-write check, so two concurrent undos
+  cannot both compensate. Reversible today: issue archive/unarchive and
+  label/unlabel, page archive/unarchive and label/unlabel — four pairs whose
+  inverse needs no prior state. Everything else is refused *with its class*:
+  one-way (a comment people read, a published attachment), trapdoor (a destroyed
+  row), or unclassified. Imported history and events the actor cannot see are never
+  undoable. Surfaced through `POST /activity/{event_id}/undo`, the
+  `reverses_event_id` field on every event read, MCP `undo_action`, and an Undo
+  control on reversible rows of the activity feed. See [docs/UNDO.md](docs/UNDO.md)
+  — including why `changed_status` and `assigned` are *not* reversible: their
+  inverse needs the prior value, and `detail` is human-readable prose rather than
+  structured before/after. This is undo by compensation for a bounded set of
+  actions, not general undo.
 - Human-in-the-loop **approval gates** — VISION's Intervene step promised the
   operator can "approve/reject risky actions"; the only gate before this was the
   per-project blocked-close policy, which can refuse but cannot *ask*. An admin can

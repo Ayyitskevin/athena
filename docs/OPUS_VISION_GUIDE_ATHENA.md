@@ -70,9 +70,12 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
 - **Rate limiting** — per-token and per-anon-IP limits exist, but they are
   **in-process** (`core/rate_limits.py`), reset on restart, and not durable
   budgets (§5).
-- **Reversibility** — page version restore, issue archive/restore, and lineage
-  replay exist, but there is **no general undo** that reverses an arbitrary
-  command while preserving audit history (§6).
+- **Reversibility** — ~~no general undo~~ — **partly closed** by undo by
+  compensation (`core/undo.py`, migration 0064; see [`UNDO.md`](UNDO.md)). Four
+  verb pairs are reversible. It is still not *general*: reversing `changed_status`
+  or `assigned` needs the value in force beforehand, and `activity.detail` is
+  human-readable prose, not structured before/after — see §6 for what that would
+  actually take.
 - **MCP parity** — write parity is good for issues/pages, but several shipped REST
   surfaces have **no MCP tool**: webhooks, saved filters, sprint lifecycle,
   attachments, watches, project/space create, event-feed verb/actor filters
@@ -97,7 +100,10 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
   preview remains unbuilt.**
 - **Process-level pause/kill** (today's pause is a credential/identity freeze, not
   a signal to a running worker).
-- **Reversible commands / general undo** with a compensating-action model.
+- ~~**Reversible commands / general undo**~~ — the compensating-action **model**
+  shipped (registry, reversibility classes, `reverses_event_id`, re-evaluated
+  authorization); the *coverage* did not. Widening it past state-free inverses
+  needs structured prior state recorded at write time, not a bigger registry.
 - **Worker/node registration** (Athena models *who* an agent is, never *where* it
   runs or whether its process is alive — check-ins are cooperative only).
 - **Exception-driven push supervision** (attention state exists but there is no
@@ -362,14 +368,17 @@ No `If-Match` on the decision: only a `pending` request is decidable, so a
 re-decide is a 409 on state rather than on a version. The approval authorizes the
 requester's **retry**; there is no stored payload to replay.
 
-**Undo:**
+**Undo — as shipped** ([`UNDO.md`](UNDO.md) is authoritative):
 
 ```
 POST /activity/{event_id}/undo      Idempotency-Key optional
-  → 200 {"reversed_event_id":880,"new_event_id":881,"verb":"unlabeled"}
-  → 409 {"detail":"action is not reversible","code":"undo_unsupported",
-         "reversibility":"one_way"}
-  MCP: undo_action(event_id)
+  → 201 {"reversed_event_id":880, "reversal":{...,"reverses_event_id":880}}
+  → 422 {"detail":"'commented' is one_way: people have read it; …",
+         "code":"undo_not_reversible"}
+  Other codes: undo_event_not_found (404), undo_already_reversed (409),
+  undo_imported_event (422), undo_no_effect (409),
+  undo_refused_by_command (the command's own status)
+  MCP: undo_action(event_id) ; GET /activity carries "reverses_event_id"
 ```
 
 **Worker registry (§12):**
@@ -655,9 +664,14 @@ closing the loop and paying down the highest-severity confirmed debt first.
 pending-approvals card, `tests/test_approvals.py`. Gate + retry, single-use, one
 action kind (`issue.close`); **dry-run preview was not built** and remains open.
 
-**Stage D — Undo.** `core/undo.py` + compensator registry,
-`0064_activity_reverses.sql`, `POST /activity/{id}/undo`, MCP `undo_action`, web
-affordance, `tests/test_undo.py`.
+**Stage D — Undo. — SHIPPED** (`docs/UNDO.md`). `core/undo.py` + compensator
+registry, `0064_activity_reverses.sql`, `POST /activity/{id}/undo`, MCP
+`undo_action`, feed affordance, `tests/test_undo.py`. The registry is populated by
+`aegis/issue_undo.py` and `mentor/page_undo.py` and wired from `main.py`, because
+`core` may not import the domain layers — the guide's "a dict in `core/undo.py`"
+would have violated the import contract. Note the asymmetry the Mentor
+compensators must carry: `page_commands` leaves visibility and scope to its
+transport boundary, so undo re-applies both itself or it becomes an escalation.
 
 **Stage E — Worker registry + actionable kill.** `core/workers.py`,
 `0065_worker_registry.sql`, heartbeat/kill endpoints + MCP tools, cockpit node

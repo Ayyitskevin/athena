@@ -257,6 +257,12 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "undo_action",
+        "POST",
+        "/activity/12/undo",
+        lambda c, k: c.undo_action(12, idempotency_key=k),
+    ),
+    (
         "decide_approval",
         "POST",
         "/approvals/7/decision",
@@ -385,6 +391,7 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    ("undo_action", {"event_id": 12}),
     ("decide_approval", {"request_id": 7, "decision": "approve"}),
     ("set_approval_policy", {"user_id": 9, "action_kind": "issue.close"}),
     ("set_agent_budget", {"user_id": 9, "window": "day", "action_limit": 50}),

@@ -225,6 +225,16 @@ _PAGE_COMMAND_STATUS = {
 }
 
 
+def page_command_status(exc: page_commands.PageCommandError) -> int:
+    """The HTTP status this page-command rejection means.
+
+    Public for the same reason its Aegis twin is (`aegis.api.issue_command_status`):
+    the undo engine's route lives in ``core``, which may not import ``mentor`` to
+    translate, so `mentor/page_undo.py` reuses this one mapping instead of keeping
+    a second that could drift."""
+    return _PAGE_COMMAND_STATUS[exc.kind]
+
+
 def _page_command_error_response(exc: page_commands.PageCommandError) -> JSONResponse:
     """Render a conditional-request failure with a stable code and the current tag, or
     raise the route's ordinary HTTP error for the non-precondition kinds."""
@@ -237,7 +247,7 @@ def _page_command_error_response(exc: page_commands.PageCommandError) -> JSONRes
             content={"detail": exc.detail, "code": code},
             headers=headers,
         )
-    raise HTTPException(status_code=_PAGE_COMMAND_STATUS[exc.kind], detail=exc.detail)
+    raise HTTPException(status_code=page_command_status(exc), detail=exc.detail)
 
 
 @spaces_router.get("", response_model=list[SpaceOut])

@@ -15,7 +15,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from athena.core import activity, agents, run_replay
+from athena.core import activity, agents, run_replay, undo
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, current_actor
 
@@ -49,6 +49,10 @@ class ActivityOut(BaseModel):
     # untrusted bundle, not the running system — so it can't be mistaken for native
     # provenance, and its run fields are always NULL (never spliced into a native run).
     imported_at: str | None = None
+    # The event this one REVERSED, when it was recorded by an undo (migration 0064).
+    # NULL for ordinary events. History is append-only: an undone action keeps its
+    # row, and the compensating action gets its own alongside it.
+    reverses_event_id: int | None = None
 
 
 class RunOut(BaseModel):
@@ -413,3 +417,27 @@ def run_fork_contract(
     if contract is None:
         raise HTTPException(status_code=404, detail="no such fork point")
     return contract
+
+
+class UndoOut(BaseModel):
+    """The reversal — a NEW event, never an edit of the one it undid."""
+
+    reversal: ActivityOut
+    reversed_event_id: int
+
+
+@router.post("/{event_id}/undo", response_model=UndoOut, status_code=201)
+def undo_event(
+    event_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The one WRITE on this router, and it writes nothing here: it asks the undo
+    # engine to run the registered inverse as THIS actor, through the ordinary
+    # command owner. Authorization is therefore re-evaluated rather than inherited
+    # from whoever performed the original action — an actor who could not make the
+    # change themselves cannot reach it by naming its event id. 201, because the
+    # result is a newly created event; refusals carry a stable `code` (see
+    # core/undo.py) so a client branches on the reason rather than the prose.
+    reversal = undo.undo(conn, actor, event_id=event_id)
+    return {"reversal": reversal, "reversed_event_id": event_id}

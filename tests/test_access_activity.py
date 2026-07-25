@@ -797,6 +797,13 @@ def test_migration_keeps_preexisting_issue_events_restricted(tmp_path):
     conn.commit()
 
     conn.executescript(migration.read_text())
+    # Apply the rest of the ledger before recording natively. The legacy row above
+    # is already frozen on the pre-0042 side, which is what this test is about; the
+    # recorder itself always writes today's full column set (0064 added another),
+    # so it must run against the schema the app guarantees at startup.
+    for path in sorted(db.MIGRATIONS_DIR.glob("*.sql")):
+        if path.name > migration.name:
+            conn.executescript(path.read_text())
     native_id = activity.record(
         conn,
         actor_id=user["id"],

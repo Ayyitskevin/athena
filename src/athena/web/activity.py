@@ -14,10 +14,11 @@ import sqlite3
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from athena.core import activity
+from athena.core import activity, undo
 from athena.core.deps import get_conn
+from athena.web.csrf import verify_csrf
 from athena.web.router import _int_or_none, get_templates
 
 router = APIRouter()
@@ -97,11 +98,28 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     events = rows[:_FEED_PAGE]
     next_before = events[-1]["id"] if has_more and events else None
 
+    # Which rows may be offered an Undo, computed for the whole page in one query
+    # rather than per row. Shape only: whether THIS viewer may perform the inverse
+    # is re-decided by the engine when they click, so the affordance is a hint and
+    # never the authority.
+    already_reversed = activity.reversed_event_ids(conn, [e["id"] for e in events])
+    undoable_ids = {
+        event["id"]
+        for event in events
+        if user is not None
+        and undo.is_undoable(event)
+        and event["id"] not in already_reversed
+    }
+
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/activity.html",
         context={
             "events": events,
+            "undoable_ids": undoable_ids,
+            "reversed_ids": already_reversed,
+            "notice": (request.query_params.get("notice") or "").strip(),
+            "error": (request.query_params.get("error") or "").strip(),
             "all_users": activity.distinct_actors(conn, actor=user),
             "all_verbs": activity.distinct_verbs(conn, actor=user),
             "all_kinds": activity.distinct_target_kinds(conn, actor=user),
@@ -121,6 +139,36 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
                 q=q,
             ),
         },
+    )
+
+
+@router.post("/aegis/activity/{event_id}/undo", dependencies=[Depends(verify_csrf)])
+def undo_event_web(
+    request: Request,
+    event_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Undo one event from the feed — the browser twin of POST /activity/{id}/undo.
+
+    Calls the SAME engine the API does, as the signed-in user, so the browser
+    cannot reverse anything the API would refuse. A refusal comes back as a notice
+    on the feed rather than an error page: "already undone" and "nothing left to
+    undo" are ordinary answers an operator should simply read."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to undo.</div>',
+            status_code=401,
+        )
+    try:
+        reversal = undo.undo(conn, user, event_id=event_id)
+    except undo.UndoRefused as exc:
+        return RedirectResponse(
+            f"/aegis/activity?{urlencode({'error': str(exc)})}", status_code=303
+        )
+    notice = f"Undid event #{event_id} — recorded as #{reversal['id']}."
+    return RedirectResponse(
+        f"/aegis/activity?{urlencode({'notice': notice})}", status_code=303
     )
 
 
