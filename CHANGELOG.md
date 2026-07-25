@@ -82,6 +82,14 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- The sprint lifecycle is now audited. Creating, editing, starting, completing,
+  and deleting a sprint were all bare data-layer writes with no activity event on
+  any transport, so the trail could not answer who started an iteration or who
+  deleted the one that held last week's work — and the surface was absent from the
+  command-migration inventory entirely. `aegis/sprint_commands.py` now owns each
+  write: the row change and its event commit or roll back together, from both REST
+  and the browser. The one-active-sprint serialization is preserved, and a no-op
+  edit still records nothing.
 - Project visibility and membership writes are now audited-atomic commands
   (`project_commands.set_project_visibility` / `add_project_member` /
   `remove_project_member`). The visibility flip previously ran as three

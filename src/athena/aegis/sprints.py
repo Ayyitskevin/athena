@@ -41,9 +41,11 @@ def create_sprint(
     goal: str = "",
     start_date: str | None = None,
     end_date: str | None = None,
+    commit: bool = True,
 ) -> dict:
     """Create a sprint (state `planned`) and return it. Raises sqlite3.IntegrityError
-    if project_id isn't a real project (the foreign key)."""
+    if project_id isn't a real project (the foreign key). ``commit=False`` lets the
+    audited sprint command fold the row and its event into one transaction."""
     cur = conn.execute(
         "INSERT INTO sprints (project_id, name, goal, start_date, end_date) "
         "VALUES (?, ?, ?, ?, ?)",
@@ -51,7 +53,8 @@ def create_sprint(
     )
     sprint_id = cur.lastrowid
     assert sprint_id is not None
-    conn.commit()
+    if commit:
+        conn.commit()
     sprint = get_sprint(conn, sprint_id)
     assert sprint is not None
     return sprint
@@ -102,6 +105,7 @@ def update_sprint(
     goal=_UNSET,
     start_date=_UNSET,
     end_date=_UNSET,
+    commit: bool = True,
 ) -> dict | None:
     """Partial edit of a sprint's descriptive fields (name/goal/dates); only fields
     passed are written. State is NOT editable here — it moves via start/complete.
@@ -122,49 +126,69 @@ def update_sprint(
         return get_sprint(conn, sprint_id)
     params.append(sprint_id)
     cur = conn.execute(f"UPDATE sprints SET {', '.join(sets)} WHERE id = ?", params)
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_sprint(conn, sprint_id)
 
 
-def start_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
+def _start_sprint_locked(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
+    """The planned → active transition, assuming the caller holds the write lock."""
+    sprint = get_sprint(conn, sprint_id)
+    if sprint is None:
+        return None
+    if sprint["state"] != PLANNED:
+        raise SprintStateError("only a planned sprint can be started")
+    if active_sprint(conn, sprint["project_id"]) is not None:
+        raise SprintStateError("this project already has an active sprint")
+    conn.execute(
+        "UPDATE sprints SET state = ?, start_date = COALESCE(start_date, date('now')) "
+        "WHERE id = ?",
+        (ACTIVE, sprint_id),
+    )
+    return get_sprint(conn, sprint_id)
+
+
+def start_sprint(
+    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
+) -> dict | None:
     """Move a sprint planned → active. Returns the updated sprint, or None if no
     sprint has that id. Raises SprintStateError if the sprint isn't planned, or if
     its project already has an active sprint (one cadence at a time). Stamps
-    start_date with today if it wasn't set."""
+    start_date with today if it wasn't set.
+
+    ``commit=False`` composes the transition inside the audited sprint command's
+    transaction — that caller already holds SQLite's writer reservation, so the
+    serialization below is preserved rather than duplicated."""
+    if not commit:
+        return _start_sprint_locked(conn, sprint_id)
     # The "one active sprint per project" rule is a check (active_sprint) then a write.
     # Run both inside one BEGIN IMMEDIATE so two concurrent starts can't each read "no
     # active sprint" and both flip to active: the write lock serializes them, so the
     # second re-checks against the first's committed result and is rejected.
     conn.execute("BEGIN IMMEDIATE")
     try:
-        sprint = get_sprint(conn, sprint_id)
+        sprint = _start_sprint_locked(conn, sprint_id)
         if sprint is None:
             conn.rollback()
             return None
-        if sprint["state"] != PLANNED:
-            raise SprintStateError("only a planned sprint can be started")
-        if active_sprint(conn, sprint["project_id"]) is not None:
-            raise SprintStateError("this project already has an active sprint")
-        conn.execute(
-            "UPDATE sprints SET state = ?, start_date = COALESCE(start_date, date('now')) "
-            "WHERE id = ?",
-            (ACTIVE, sprint_id),
-        )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
-    return get_sprint(conn, sprint_id)
+    return sprint
 
 
-def complete_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
+def complete_sprint(
+    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
+) -> dict | None:
     """Move a sprint active → completed. Returns the updated sprint, or None if no
     sprint has that id. Raises SprintStateError if the sprint isn't active. Stamps
     end_date with today if it wasn't set. Issues keep their sprint_id — a completed
     sprint stays a record of what it held (moving incomplete work is a later choice,
-    not something a completion silently does)."""
+    not something a completion silently does). ``commit=False`` composes this inside
+    the audited sprint command's transaction."""
     sprint = get_sprint(conn, sprint_id)
     if sprint is None:
         return None
@@ -175,7 +199,8 @@ def complete_sprint(conn: sqlite3.Connection, sprint_id: int) -> dict | None:
         "WHERE id = ?",
         (COMPLETED, sprint_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_sprint(conn, sprint_id)
 
 
@@ -186,7 +211,9 @@ def count_issues_in_sprint(conn: sqlite3.Connection, sprint_id: int) -> int:
     ).fetchone()["n"]
 
 
-def delete_sprint(conn: sqlite3.Connection, sprint_id: int) -> bool:
+def delete_sprint(
+    conn: sqlite3.Connection, sprint_id: int, *, commit: bool = True
+) -> bool:
     """Delete a sprint. Returns True if one was deleted, False if no sprint had that
     id (so the boundary can 404).
 
@@ -194,7 +221,9 @@ def delete_sprint(conn: sqlite3.Connection, sprint_id: int) -> bool:
     first and returns a clean 409 — we do NOT cascade or detach, because moving a
     pile of issues is a data decision a delete must not make silently. (If a stray
     issue remained, the issues.sprint_id foreign key would refuse the delete anyway.)
+    ``commit=False`` composes this inside the audited sprint command's transaction.
     """
     cur = conn.execute("DELETE FROM sprints WHERE id = ?", (sprint_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
