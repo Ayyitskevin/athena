@@ -851,13 +851,17 @@ One-time-secret creation explicitly rejects keys instead of copying secrets into
 the replay table: `POST /tokens`, `POST /webhooks`, and their browser admin
 forms. Browser/session routes are otherwise outside the idempotency contract;
 never rely on a key to replay cookies, CSRF state, or HTML redirects. Invalid or
-revoked bearer credentials cannot read an existing receipt. Each valid, supported
+revoked bearer credentials cannot read an existing receipt, and a paused
+account's keyed request receives the same audited 403 refusal as any of its
+other actions — never a stored replay; pause/resume flips also bump the global
+authorization revision, so pre-pause receipts stay fenced after a resume
+instead of replaying under restored authorization. Each valid, supported
 keyed bearer mutation—including a replay—consumes one token-rate-limit unit;
 requests rejected earlier for key/route/body/secret policy do not.
 Anonymous first-user creation with a key is rejected rather than silently
 ignoring its retry contract.
 
-The optional MCP `AthenaClient` and all 18 mutation tools accept an optional
+The optional MCP `AthenaClient` and every mutation tool accept an optional
 `idempotency_key`. For a retry-critical operation, choose 1-255 visible ASCII
 characters as an opaque, non-secret key before the first attempt and reuse it
 only with the exact same tool arguments, credential, and run lineage. Omitting

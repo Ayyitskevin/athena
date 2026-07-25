@@ -211,7 +211,13 @@ class RunContextMiddleware:
                 parent_raw = value.decode("utf-8", "replace")
             elif lname == b"x-athena-fork-from-event":
                 forked_from_raw = value.decode("utf-8", "replace")
-        run_token = run_context.set_run_id(run_raw)
+        # The run id comes straight from an untrusted client header, so a
+        # server-reserved namespace (e.g. the automation engine's firing ids) is
+        # dropped here — otherwise a client could pre-stamp a rule's predictable
+        # firing run id and silently suppress it. Parent/fork are pointers into
+        # existing runs (forking from an automation run is legitimate), so they
+        # are not reserved.
+        run_token = run_context.set_client_run_id(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
         forked_from_token = run_context.set_forked_from_event_id(forked_from_raw)
         try:
@@ -338,15 +344,20 @@ class IdempotencyMiddleware:
 
     async def _authenticate(
         self, headers: dict[bytes, bytes]
-    ) -> tuple[str | None, int | None]:
-        """Return a canonical live credential identity and optional token id."""
+    ) -> tuple[str | None, int | None, bool]:
+        """Return a canonical live credential identity, optional token id, and
+        whether that credential's account is currently paused."""
         authorization = headers.get(b"authorization")
         if authorization is not None and authorization.lower().startswith(b"bearer "):
             raw = authorization[len(b"bearer ") :].strip().decode("latin-1")
             actor = await asyncio.to_thread(self._resolve_token, raw)
             if actor is None:
-                return None, None
-            return "tok:" + tokens._hash(raw), int(actor["_token_id"])
+                return None, None, False
+            return (
+                "tok:" + tokens._hash(raw),
+                int(actor["_token_id"]),
+                bool(actor.get("paused_at")),
+            )
 
         if config.TRUST_ACTOR_HEADER:
             raw_actor = headers.get(b"x-athena-actor")
@@ -354,11 +365,11 @@ class IdempotencyMiddleware:
                 try:
                     actor_id = int(raw_actor.decode("latin-1"))
                 except ValueError:
-                    return None, None
+                    return None, None, False
                 actor = await asyncio.to_thread(self._resolve_actor, actor_id)
                 if actor is not None:
-                    return f"actor:{actor_id}", None
-        return None, None
+                    return f"actor:{actor_id}", None, bool(actor.get("paused_at"))
+        return None, None, False
 
     def _resolve_token(self, raw: str) -> dict | None:
         conn = db.connect(self.db_path)
@@ -558,7 +569,7 @@ class IdempotencyMiddleware:
             return
 
         try:
-            identity, token_id = await self._authenticate(headers)
+            identity, token_id, paused = await self._authenticate(headers)
         except sqlite3.Error:
             _logger.exception("could not authenticate idempotent request")
             await _send_json_response(
@@ -567,6 +578,18 @@ class IdempotencyMiddleware:
                 status_code=503,
                 extra_headers={"Retry-After": "1"},
             )
+            return
+        if paused:
+            # A paused account is authenticated but deliberately frozen: pause
+            # "refuses every authenticated action", and reading a stored receipt
+            # is an authenticated action. Skip idempotency processing entirely —
+            # no claim, no replay, no receipt disclosure — and let the route's
+            # identity gate produce the canonical bounded 403 + audit event,
+            # exactly as it does for the same request without a key. Stored
+            # responses are additionally revision-fenced when the pause state
+            # flips (migration 0061), so a later resume cannot replay a body
+            # committed under pre-pause authorization.
+            await self.app(scope, receive, send)
             return
         if identity is None:
             # First-user bootstrap uniquely permits an anonymous/invalid caller;

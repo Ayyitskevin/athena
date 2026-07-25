@@ -181,8 +181,10 @@ check without importing application code.
   and receipt finalization are not yet one transaction, abandoned/failed owners
   remain explicitly indeterminate and are never automatically taken over. A
   global authorization revision purges and permanently fences stored responses
-  after access-affecting role, membership, visibility, authority, or placement
-  changes; this is intentionally broader than per-target invalidation.
+  after access-affecting role, membership, visibility, authority, account-pause,
+  or placement changes; this is intentionally broader than per-target
+  invalidation. A paused account's keyed requests skip idempotency processing
+  entirely and receive the same audited 403 refusal as its unkeyed requests.
 - Strong, content-derived issue `ETag` validators cover the exact public singleton
   representation. Core issue edits plus assignee/project/sprint placement accept
   optional `If-Match`; authorization and validation precede an atomic comparison
