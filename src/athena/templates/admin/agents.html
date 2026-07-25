@@ -18,6 +18,55 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
+{% if unanswered_kills %}
+<section class="dashboard-card" aria-labelledby="unanswered-kills-heading">
+    <h2 id="unanswered-kills-heading">
+        Told to stop <span class="badge">{{ unanswered_kills|length }}</span>
+    </h2>
+    <p class="subtitle">
+        Workers you asked to stop that have not confirmed. Athena cannot signal a
+        process — it records the request, and the worker learns of it on its next
+        heartbeat. A worker that goes quiet is <em>stale</em>, not stopped; one
+        still reporting after acknowledging is not honoring the request.
+    </p>
+    <table class="issues-table">
+        <thead>
+            <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for worker in unanswered_kills %}
+            <tr>
+                <td>
+                    <strong>{{ worker.node_label or worker.worker_key }}</strong>
+                    <div class="muted">last reported {{ worker.age_seconds }}s ago</div>
+                </td>
+                <td>{{ worker.agent_name }}</td>
+                <td>{{ worker.kill_requested_at }} UTC</td>
+                <td>
+                    {% if worker.kill_state == "acknowledged_but_reporting" %}
+                    <span class="badge">acknowledged, still reporting</span>
+                    {% else %}
+                    <span class="badge">awaiting acknowledgement</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if worker.kill_state == "requested" %}
+                    <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form">
+                        {% include "partials/csrf.html" %}
+                        <input type="hidden" name="cancel" value="1">
+                        <button type="submit" class="button secondary small">Withdraw</button>
+                    </form>
+                    {% else %}
+                    <span class="muted">already acknowledged</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
 {% if pending_approvals %}
 <section class="dashboard-card" aria-labelledby="pending-approvals-heading">
     <h2 id="pending-approvals-heading">
@@ -137,6 +186,49 @@
                 <span class="pill">{{ kind }} needs approval</span>
                 {% endfor %}
             </div>
+            {% if agent.workers %}
+            <div class="agent-workers">
+                <h4>Workers</h4>
+                <p class="muted">
+                    Where this agent says it runs. A heartbeat proves it reported,
+                    never that its process is alive.
+                </p>
+                <ul class="activity-list">
+                    {% for worker in agent.workers %}
+                    <li class="activity-item">
+                        <strong>{{ worker.node_label or worker.worker_key }}</strong>
+                        <span class="pill">{{ worker.reporting_state.replace("_", " ") }}</span>
+                        <span class="muted">{{ worker.age_seconds }}s ago</span>
+                        {% for capability in worker.capabilities %}
+                        <span class="pill">{{ capability }}</span>
+                        {% endfor %}
+                        {% if worker.kill_state == "stopped" %}
+                        <span class="badge">reported stopped</span>
+                        {% elif worker.kill_state == "acknowledged_but_reporting" %}
+                        <span class="badge">told to stop, still reporting</span>
+                        {% elif worker.kill_state == "acknowledged" %}
+                        <span class="badge">acknowledged the stop request</span>
+                        {% elif worker.kill_state == "requested" %}
+                        <span class="badge">asked to stop</span>
+                        {% endif %}
+                        {% if worker.kill_state == "none" %}
+                        <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form"
+                              data-confirm="Ask {{ worker.node_label or worker.worker_key }} to stop? Athena records the request; the worker honors it on its next heartbeat.">
+                            {% include "partials/csrf.html" %}
+                            <button type="submit" class="button secondary small">Ask to stop</button>
+                        </form>
+                        {% elif worker.kill_state == "requested" %}
+                        <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form">
+                            {% include "partials/csrf.html" %}
+                            <input type="hidden" name="cancel" value="1">
+                            <button type="submit" class="button secondary small">Withdraw</button>
+                        </form>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
             <div class="agent-admin-controls">
                 {% if agent.user.paused_at %}
                 <form method="post" action="/admin/agents/{{ agent.user.id }}/resume">

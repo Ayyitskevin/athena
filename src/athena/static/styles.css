@@ -1272,6 +1272,17 @@ footer {
 
 /* Visibility badges — neutral slate, distinct from the red notification badge. */
 .badge-private { background: #475569; }
+
+/* The worker registry inside an agent's admin card: where the agent says it runs.
+   Indented under the agent it belongs to, quieter than the controls beside it. */
+.agent-workers {
+    margin: 0.6rem 0 0.2rem;
+}
+
+.agent-workers h4 {
+    margin: 0 0 0.15rem;
+    font-size: 0.85rem;
+}
 .badge-public { background: #94a3b8; }
 
 /* The member roster on the project/space access page. */

@@ -128,6 +128,9 @@ reversible verb pairs ([`docs/UNDO.md`](docs/UNDO.md)), not for every write. Dur
 ([`docs/AGENT_BUDGETS.md`](docs/AGENT_BUDGETS.md)) and human-in-the-loop approval
 gates ([`docs/APPROVALS.md`](docs/APPROVALS.md)) are implemented, both opt-in and
 both deliberately narrow — budgets meter four writes, and `issue.close` is the
-only gateable action kind. See
+only gateable action kind. The worker registry's kill is **cooperative**
+([`docs/WORKERS.md`](docs/WORKERS.md)): Athena records the request and the
+worker's reply, and can neither signal nor observe a process — a silent worker is
+stale, never terminated. See
 [`docs/COMMAND_MIGRATION.md`](docs/COMMAND_MIGRATION.md) for the remaining split
 write paths.

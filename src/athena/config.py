@@ -109,6 +109,18 @@ AGENT_RUN_MAX_CHECKINS_PER_AGENT = _int_env(
     "ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT", 1000, minimum=1
 )
 
+# A worker heartbeat newer than this threshold reports as ``reporting_recently``;
+# older rows are ``stale`` — the same cooperative-presence semantics as run
+# check-ins, and just as deliberately NOT process liveness. A worker that stops
+# heartbeating has stopped REPORTING; whether its process is alive is something
+# Athena cannot observe and never claims.
+WORKER_STALE_SECONDS = _int_env("ATHENA_WORKER_STALE_SECONDS", 90, minimum=1)
+
+# One agent may run several workers (a box per node, a process per capability), but
+# not unboundedly many: a looping or compromised token can refresh the rows it has
+# forever and still never grow the registry past this ceiling.
+WORKER_MAX_PER_AGENT = _int_env("ATHENA_WORKER_MAX_PER_AGENT", 50, minimum=1)
+
 # Per-client-IP limit on ANONYMOUS reads (optional_actor endpoints reached with no
 # valid credential). The per-token limiter never runs for these, so without this a
 # credential-free caller can hammer public reads unbounded. Defaults to 0 (OFF): a

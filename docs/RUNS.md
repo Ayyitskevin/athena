@@ -81,6 +81,13 @@ authorize another actor to mutate the run. Stale state is an operator signal onl
 A heartbeat-only identifier does not create a replayable activity run; that happens
 only when activity events are written with the same run id.
 
+A run check-in and a **worker** ([`WORKERS.md`](WORKERS.md)) answer different
+questions and are deliberately separate. A check-in says "this credential reported
+this run recently" and carries no control flag, so a stale row can never read as
+"killed". A worker says "this process runs here, and it can be asked to stop" —
+the one place a control flag belongs. Both derive staleness the same way, and
+neither observes an OS process.
+
 Mission Control derives headline state from one newest check-in per agent across the
 agent's full retained history. Older and parallel run ids stay in the bounded recent
 history but do not each add another stale headline signal. Timestamp ties resolve by

@@ -34,6 +34,10 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   window's ceiling is spent, and opt-in human-in-the-loop approval gates that
   refuse a gated action with a recorded ask the operator approves or rejects
   (`issue.close` only — one action kind, not a general approval workflow).
+- **Intervene** also includes a cooperative worker registry: an agent process
+  registers by heartbeat, and an admin can ask it to stop. Athena records the
+  request and the worker's reply — it cannot signal or observe a process, so a
+  silent worker is stale, never terminated. That is not process-level kill.
 - **Trust / Learn** adds undo by compensation: reversing an action records its
   inverse as a new audited command linked to the event it reversed, so history is
   never rewritten. Four verb pairs are reversible (issue and page archive and

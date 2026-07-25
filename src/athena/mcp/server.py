@@ -511,6 +511,68 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.offboard_user(user_id)
 
     @mutation_tool
+    def worker_heartbeat(
+        worker_key: str,
+        node_label: str | None = None,
+        capabilities: list[str] | None = None,
+        state: str = "running",
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Register or refresh YOUR worker process, and find out whether the
+        operator asked you to stop.
+
+        Call this on a timer with a stable worker_key (one per process). The reply
+        carries `kill_requested`: when it is true, the operator wants this worker
+        to shut down. Athena CANNOT signal your process — asking is the whole
+        mechanism, so honoring it is your job. Heartbeat with state='stopping' to
+        confirm you heard, then state='stopped' when you have finished.
+
+        node_label says where you run and capabilities what you can do; both are
+        yours to declare and Athena never routes or authorizes on either. A
+        heartbeat proves you REPORTED, never that you are alive: going quiet reads
+        as stale, not stopped."""
+        return client.worker_heartbeat(
+            worker_key=worker_key,
+            node_label=node_label,
+            capabilities=capabilities,
+            state=state,
+            idempotency_key=idempotency_key,
+        )
+
+    @mcp.tool()
+    def list_workers(agent_id: int | None = None, limit: int = 100) -> list:
+        """The worker registry — which agent processes are reporting, on what node,
+        with what capabilities, and which were asked to stop. Admins see the whole
+        fleet; anyone else sees only their own workers. `reporting_state` is
+        cooperative presence, not process liveness."""
+        return client.list_workers(agent_id=agent_id, limit=limit)
+
+    @mutation_tool
+    def request_worker_kill(
+        worker_id: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: ask a worker to stop.
+
+        This RECORDS AN INSTRUCTION; it does not end a process. The worker learns
+        of it on its next heartbeat and is expected to honor it. `kill_state`
+        reports only what has actually been said: 'requested' until the worker
+        acknowledges, 'acknowledged_but_reporting' if it heard and kept running.
+        A worker that goes silent is stale, never 'terminated'. Requires an admin
+        token."""
+        return client.request_worker_kill(worker_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def cancel_worker_kill(
+        worker_id: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: withdraw a kill request the worker has not acknowledged yet.
+        Refused once acknowledged — it may already be shutting down. Requires an
+        admin token."""
+        return client.cancel_worker_kill(worker_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
     def undo_action(
         event_id: int,
         idempotency_key: IdempotencyKey | None = None,

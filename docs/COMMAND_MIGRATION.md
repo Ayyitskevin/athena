@@ -25,7 +25,8 @@ the review-facing source of truth for the `0.1.0a1` line.
 | Agent budgets | Set/clear own their write plus its audit event; the charge is folded into each metered command's transaction | Metering covers issue create/edit and page create/edit; other durable writes and automation firings are deliberately unmetered |
 | Approvals | Policy set/clear and approve/reject each own their write plus its audit event; the consumption of an approval is folded into the gated command's own transaction | Only `issue.close` is gateable; there is no expiry, bulk decide, or un-reject |
 | Undo | Reversal reuses the ordinary command owner for the inverse, as the undoing actor, and the reversal link commits inside that command's transaction | Only four verb pairs have a registered inverse; verbs needing prior state (status, assignee) are unreversible until that state is recorded structurally |
-| Agent runs | Run/check-in operations use their dedicated command and run-context owners | General pause/kill controls are roadmap work, not shipped guarantees |
+| Workers | Heartbeat, kill request, cancellation, acknowledgement, and stop each own their write plus its audit event; credentials are re-resolved inside the write transaction | The kill is cooperative — Athena records an instruction and cannot end a process. No worker deletion or expiry |
+| Agent runs | Run/check-in operations use their dedicated command and run-context owners | Process-level kill remains roadmap work, not a shipped guarantee |
 
 The table identifies ownership shape, not test coverage or security severity.
 Before changing a listed legacy path, inspect both REST and browser adapters;
