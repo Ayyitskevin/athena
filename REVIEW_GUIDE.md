@@ -122,7 +122,11 @@ requests are less useful than one falsifiable architectural challenge.
 ## Claims this alpha does not make
 
 Athena is not a public multi-tenant service, an enterprise permission system,
-a real-time collaborative editor, or a general workflow engine. General undo,
-approval gates, durable budgets, and complete command ownership are roadmap
-goals. See [`docs/COMMAND_MIGRATION.md`](docs/COMMAND_MIGRATION.md) for the
-remaining split write paths.
+a real-time collaborative editor, or a general workflow engine. General undo and
+complete command ownership are roadmap goals. Durable per-agent action budgets
+([`docs/AGENT_BUDGETS.md`](docs/AGENT_BUDGETS.md)) and human-in-the-loop approval
+gates ([`docs/APPROVALS.md`](docs/APPROVALS.md)) are implemented, both opt-in and
+both deliberately narrow — budgets meter four writes, and `issue.close` is the
+only gateable action kind. See
+[`docs/COMMAND_MIGRATION.md`](docs/COMMAND_MIGRATION.md) for the remaining split
+write paths.

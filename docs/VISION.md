@@ -28,9 +28,10 @@ people.
 Each phase names the target capability we invest in. This is the destination, not
 a shipped-feature inventory; [`ARCHITECTURE.md`](ARCHITECTURE.md) records current
 delivery. Durable per-agent **action** budgets are now implemented (opt-in, metering
-actions rather than model spend — see [`AGENT_BUDGETS.md`](AGENT_BUDGETS.md)). Approval
-gates, process-level agent kill controls, and general undo remain roadmap goals rather
-than guarantees Athena makes today.
+actions rather than model spend — see [`AGENT_BUDGETS.md`](AGENT_BUDGETS.md)), as are
+human-in-the-loop **approval gates** (opt-in, `issue.close` only — see
+[`APPROVALS.md`](APPROVALS.md)). Process-level agent kill controls and general undo
+remain roadmap goals rather than guarantees Athena makes today.
 
 1. **Direct** — capture intent as work agents can pick up (issues with clear acceptance
    criteria, docs as playbooks).
@@ -53,9 +54,9 @@ than guarantees Athena makes today.
    agent-first.)
 2. **Every agent action is attributable, reversible, and bounded.** Actor
    attribution exists today; optional run IDs and lineage enrich it. Scope, rate,
-   and idempotency provide some bounding. Budgets, general reversibility, and
-   approval are explicit roadmap requirements. Trust comes from *undo + inspect*,
-   not from watching.
+   idempotency, durable budgets, and opt-in approval gates provide bounding.
+   General reversibility remains an explicit roadmap requirement. Trust comes from
+   *undo + inspect*, not from watching.
 3. **The human steers by exception.** Default to letting agents run; surface *decisions*
    — failures, approvals, budget breaches — not noise.
 4. **One operator, zero ops.** No feature may require a second human, a DBA, or a

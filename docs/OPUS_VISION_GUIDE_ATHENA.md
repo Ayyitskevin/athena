@@ -62,9 +62,11 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
   leaves a permanent unaudited access-control change (deferred F-3).
 - **Sprint + project-status lifecycle** — durable writes with **no audit event on
   any transport** and absent from the migration inventory (deferred F-4).
-- **Human-in-the-loop gating** — the only gate is the per-project blocked-close
-  policy (`docs/WORKFLOW_GATES.md`). There is **no general approval-request
-  primitive** (§5, §9).
+- **Human-in-the-loop gating** — ~~the only gate is the per-project blocked-close
+  policy~~ — **closed** by the opt-in approval gates in `core/approvals.py`
+  (migration 0063; see [`APPROVALS.md`](APPROVALS.md)). `issue.close` is the only
+  gateable action kind, so this is a bounded slice rather than a general
+  approval-request primitive (§5, §9).
 - **Rate limiting** — per-token and per-anon-IP limits exist, but they are
   **in-process** (`core/rate_limits.py`), reset on restart, and not durable
   budgets (§5).
@@ -85,7 +87,14 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
   never observes an agent's model spend and must not carry a cost column it cannot
   honestly populate. Token/cost metering stays additive, pending an external meter
   (Stage H). Wall-clock quotas remain unbuilt.
-- General **approval requests** (human-in-the-loop, dry-run preview, approve/reject).
+- ~~General **approval requests**~~ — **shipped** as opt-in per-actor approval
+  gates (`core/approvals.py`, migration 0063, REST + MCP + cockpit; see
+  [`APPROVALS.md`](APPROVALS.md)). The design decision this guide left open —
+  deferred execution vs. gate-and-retry — was resolved as **gate + retry**: Athena
+  never stores an agent's mutation and replays it later on the agent's behalf,
+  because that re-executes a stale payload under authorization evaluated at a
+  different moment. `issue.close` is the only gateable kind today; **dry-run
+  preview remains unbuilt.**
 - **Process-level pause/kill** (today's pause is a credential/identity freeze, not
   a signal to a running worker).
 - **Reversible commands / general undo** with a compensating-action model.
@@ -214,7 +223,7 @@ enforcement.
 | **Scopes** | ✅ `tokens.py` (read/issue:write/docs:write/admin) | keep; add finer resource scopes only if a real need appears (stay lean) | `identity.require_token_scope` |
 | **Budgets** | ❌ | durable counters per `(agent, window)`: action count, and an opaque "cost unit" the operator credits; decremented inside the command tx; refuses the write at zero | inside each command via `core.budgets.charge(conn, actor, cost, commit=False)` |
 | **Rate limits** | ⚠️ in-process (`rate_limits.py`) | keep in-process for burst control; the durable budget above is the cross-restart bound | middleware + command |
-| **Approvals** | ⚠️ blocked-close only | general approval-request row: a command that hits a policy-flagged action records `AWAITING_APPROVAL` instead of mutating; operator approve/reject resolves it | command boundary |
+| **Approvals** | ✅ opt-in gates (`approvals.py`, 0063) for `issue.close`, plus blocked-close | widen the action-kind vocabulary; the gate refuses and records a pending ask, and the operator's approval authorizes **one retry by that requester against that target** — never a stored, replayed payload | inside each gated command via `core.approvals.require(conn, actor, …)` |
 | **Pause/kill** | ⚠️ credential freeze | keep identity-level pause; add a **kill signal** row the worker registry (§12) polls, so a running worker learns it was killed | identity + worker heartbeat contract |
 | **Leases** | ✅ generation-fenced | keep; job state derives from them | `lease_commands.py` |
 | **Retries / idempotency** | ✅ durable idempotency | keep; budgets must be charged **once per key** (charge on owner-claim, not on replay) | `IdempotencyMiddleware` + command |
@@ -286,7 +295,7 @@ Recommended sequence (each is one reviewable slice with its own PR):
 | # | Migration | Adds | Unlocks |
 |---|---|---|---|
 | 0062 | `agent_budgets` | `agent_budgets` table + `budget_set`/`budget_exceeded` verbs are data, not schema | §5 budgets |
-| 0063 | `approval_requests` | `approval_requests(id, issue_id, run_id, requested_by, action_kind, payload_json, state, decided_by, decided_at, policy_digest)` | §5/§9 approvals |
+| 0063 | `approval_requests` | **shipped** as `agent_approval_policies(user_id, action_kind, …)` + `approval_requests(id, action_kind, target_kind, target_id, requested_by, run_id, state, decided_by, decided_at, decision_note, consumed_at, created_at)` with a partial unique index on the live intent. No `payload_json`: gate + retry stores an **intent**, never a replayable payload | §5/§9 approvals |
 | 0064 | `activity_reverses` | `activity.reverses_event_id` | §6 undo |
 | 0065 | `worker_registry` | `workers(id, agent_id, node_label, last_heartbeat_at, capabilities_json, kill_requested_at)` | §12 workers |
 | 0066 | `project_visibility_membership_commands` | no schema change; a *code* migration porting F-3 to commands (may need an index) | close F-3 debt |
@@ -307,36 +316,51 @@ Every durable capability gets **both** a REST endpoint and an MCP tool that reac
 the *same command*. Shapes below follow existing conventions (stable `code` on
 errors, `Idempotency-Key` on mutations, `If-Match` where a precondition applies).
 
-**Budget — set (admin) and read (self):**
+The first two shipped in Stages B and C; the sketches below are replaced by their
+**as-built** contracts, which are the ones to code against —
+[`AGENT_BUDGETS.md`](AGENT_BUDGETS.md) and [`APPROVALS.md`](APPROVALS.md) are
+authoritative. The rest remain proposals.
+
+**Budget — set (admin) and read (self) — as shipped:**
 
 ```
-PUT /agents/{id}/budget            Idempotency-Key optional
-  → 200 {"agent_id":42,"window":"day","action_limit":500,"cost_limit":100000,
-         "action_used":0,"cost_used":0,"resets_at":"2026-07-26T00:00:00Z"}
-  MCP: set_agent_budget(agent_id, window, action_limit, cost_limit)
-
-GET /agents/{id}/budget            (admin, or self via whoami extension)
-  → 200 same shape ; MCP: whoami() gains "budget": {...}
+PUT    /users/{id}/budget          body {"window":"day","action_limit":500}
+GET    /users/{id}/budget          (admin for anyone; any actor reads its OWN)
+DELETE /users/{id}/budget          back to unlimited (idempotent)
+  MCP: set_agent_budget / get_agent_budget / clear_agent_budget
+  GET /users/me carries "budget" ; MCP whoami() likewise
 ```
 Enforcement failure (any charged write at zero):
 ```
-429 {"detail":"agent budget exhausted for window 'day'",
-     "code":"budget_exceeded","retry_after":3600}
+429 Retry-After: 3421
+    {"detail":"agent budget exhausted: 50/50 metered actions used this day",
+     "code":"agent_budget_exhausted","budget":{...}}
 ```
+No `cost_limit`: Athena meters actions, never model spend it cannot observe.
 
-**Approval — request is implicit (a policy-flagged command returns it), resolve is explicit:**
+**Approval — the ask is implicit (a gated command records and returns it),
+the decision is explicit — as shipped:**
 
 ```
-A flagged command instead of mutating:
-  202 {"detail":"approval required","code":"approval_required",
-       "approval":{"id":7,"action_kind":"issue.close","state":"pending"}}
+A gated command instead of mutating:
+  202 {"detail":"issue.close requires operator approval",
+       "code":"approval_required",
+       "approval":{"id":7,"action_kind":"issue.close","target_kind":"issue",
+                   "target_id":42,"run_id":"sol-1","state":"pending", ...}}
+  Already rejected → 409 with "code":"approval_rejected" (an answer, not a delay)
 
-POST /approvals/{id}/decision      If-Match on the approval ETag
+POST /approvals/{id}/decision      (admin only)
   body {"decision":"approve"|"reject","note":"..."}
   → 200 {"id":7,"state":"approved","decided_by":1,"decided_at":"..."}
   MCP: decide_approval(id, decision, note)   (admin/human only)
-GET /approvals?state=pending        MCP: list_approvals(state)
+GET  /approvals?state=pending       MCP: list_approvals(state)
+PUT/DELETE /approvals/policies/{user_id}[/{action_kind}]
+                                    MCP: set_approval_policy
+  GET /users/me carries "approval_required" ; MCP whoami() likewise
 ```
+No `If-Match` on the decision: only a `pending` request is decidable, so a
+re-decide is a 409 on state rather than on a version. The approval authorizes the
+requester's **retry**; there is no stored payload to replay.
 
 **Undo:**
 
@@ -607,7 +631,7 @@ Athena                                   Icarus
 Each stage is independently shippable, gated, and mergeable. Order optimizes for
 closing the loop and paying down the highest-severity confirmed debt first.
 
-**Stage A — Close confirmed command/security debt (no new surface).**
+**Stage A — Close confirmed command/security debt (no new surface). — SHIPPED.**
 - F-9 password-reset command: `core/user_commands.py` (+ `password_reset` event),
   `web/admin.py`, new `core/users_api.py` endpoint, `tests/test_password_*`.
 - F-3 project visibility/membership commands: `aegis/project_commands.py`,
@@ -618,15 +642,18 @@ closing the loop and paying down the highest-severity confirmed debt first.
 - F-4 sprint/status audit: `aegis/sprint_commands.py` (new), `aegis/sprints_api.py`,
   add to `COMMAND_MIGRATION.md`.
 
-**Stage B — Budgets.** `core/budgets.py`, `0062_agent_budgets.sql`, charge points
-in `aegis/issue_commands.py` + `mentor/page_commands.py`, `PUT /agents/{id}/budget`,
-MCP `set_agent_budget` + `whoami` extension, `web/admin.py` panel,
-`tests/test_agent_budgets.py`.
+**Stage B — Budgets. — SHIPPED** (`docs/AGENT_BUDGETS.md`). `core/budgets.py`,
+`0062_agent_budgets.sql`, charge points in `aegis/issue_commands.py` +
+`mentor/page_commands.py`, `PUT /users/{id}/budget` (not `/agents/…`), MCP
+`set_agent_budget` + `whoami` extension, `web/admin.py` panel,
+`tests/test_agent_budgets.py`. Actions only — no cost dimension.
 
-**Stage C — Approvals + human-in-the-loop.** `core/approvals.py`,
-`0063_approval_requests.sql`, flag hook in commands, `POST /approvals/{id}/decision`,
-MCP `list_approvals`/`decide_approval`, cockpit pending-approvals card,
-`tests/test_approvals.py`.
+**Stage C — Approvals + human-in-the-loop. — SHIPPED** (`docs/APPROVALS.md`).
+`core/approvals.py`, `0063_approval_requests.sql`, gate in
+`aegis/issue_commands.py`, `POST /approvals/{id}/decision` + policy routes, MCP
+`list_approvals`/`decide_approval`/`set_approval_policy`, cockpit
+pending-approvals card, `tests/test_approvals.py`. Gate + retry, single-use, one
+action kind (`issue.close`); **dry-run preview was not built** and remains open.
 
 **Stage D — Undo.** `core/undo.py` + compensator registry,
 `0064_activity_reverses.sql`, `POST /activity/{id}/undo`, MCP `undo_action`, web

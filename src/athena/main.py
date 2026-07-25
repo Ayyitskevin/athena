@@ -35,6 +35,8 @@ from athena.core import (
     activity,
     agent_runs_api,
     activity_api,
+    approvals,
+    approvals_api,
     attachments_api,
     budgets,
     db,
@@ -1220,6 +1222,58 @@ def create_app(
         )
 
     app.add_exception_handler(budgets.BudgetExhausted, _budget_exhausted)
+
+    # A gated action refuses inside the command's transaction, so that write has
+    # rolled back whole by the time this runs — which is exactly why the pending
+    # request is recorded HERE, on its own connection: a row written inside that
+    # transaction would have rolled back with the refusal. Recording is idempotent,
+    # so an agent retrying while it waits re-reads its existing ask rather than
+    # flooding the operator's queue. 202: the ask was accepted, the action was not.
+    def _approval_required(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, approvals.ApprovalRequired):
+            raise exc
+        recorded = None
+        try:
+            conn = db.connect(request.app.state.db_path)
+            try:
+                recorded = approvals.open_request(
+                    conn,
+                    actor_id=exc.actor_id,
+                    action_kind=exc.action_kind,
+                    target_kind=exc.target_kind,
+                    target_id=exc.target_id,
+                    run_id=run_context.get_run_id(),
+                ).public()
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — the 202 must go out regardless
+            _logger.exception("could not record approval request")
+        return JSONResponse(
+            status_code=202,
+            content={
+                "detail": str(exc),
+                "code": approvals.APPROVAL_REQUIRED_CODE,
+                "approval": recorded,
+            },
+        )
+
+    app.add_exception_handler(approvals.ApprovalRequired, _approval_required)
+
+    # A rejection is an ANSWER, not a delay: 409 rather than 202, so an agent stops
+    # retrying instead of waiting for a decision that already arrived.
+    def _approval_rejected(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, approvals.ApprovalRejected):
+            raise exc
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(exc),
+                "code": approvals.APPROVAL_REJECTED_CODE,
+                "approval": exc.request.public(),
+            },
+        )
+
+    app.add_exception_handler(approvals.ApprovalRejected, _approval_rejected)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
@@ -1312,6 +1366,7 @@ def create_app(
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
+    app.include_router(approvals_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)

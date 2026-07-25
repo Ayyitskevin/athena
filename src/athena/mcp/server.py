@@ -283,9 +283,11 @@ def build_server(client: AthenaClient) -> FastMCP:
     @mcp.tool()
     def whoami() -> dict:
         """Who am I? Your identity (id, email, role, agent flag), the acting
-        token's effective scopes (null means the auth is not scope-limited), and
-        the run identity currently stamped on your writes. Call this FIRST to
-        learn what you may do instead of discovering limits through 403s."""
+        token's effective scopes (null means the auth is not scope-limited), your
+        durable action budget (null when unlimited), the action kinds that need
+        operator approval before you may take them (`approval_required`), and the
+        run identity currently stamped on your writes. Call this FIRST to learn
+        what you may do instead of discovering limits through 403s."""
         return {**client.whoami(), "run": client.current_run()}
 
     @mcp.tool()
@@ -507,6 +509,47 @@ def build_server(client: AthenaClient) -> FastMCP:
         and revoke every token — one audited lockout. Refuses to strip the last
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
+
+    @mcp.tool()
+    def list_approvals(state: str | None = None, limit: int = 100) -> list:
+        """The operator's approval queue — actions an agent asked to take that are
+        waiting on a human decision. Pass state='pending' for just the open ones.
+        Requires an admin token."""
+        return client.list_approvals(state=state, limit=limit)
+
+    @mutation_tool
+    def decide_approval(
+        request_id: int,
+        decision: str,
+        note: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Approve or reject a pending approval request ('approve' | 'reject').
+
+        Approving does NOT perform the action: it opens the gate for exactly ONE
+        retry by the original requester against the same target, and that retry
+        re-validates everything. Deciding an already-settled request is refused
+        rather than silently flipping an answer the agent may have acted on.
+        Requires an admin token."""
+        return client.decide_approval(
+            request_id,
+            decision=decision,
+            note=note,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def set_approval_policy(
+        user_id: int,
+        action_kind: str,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> list:
+        """Admin: require operator approval before this user may take an action
+        kind (currently 'issue.close'). Gating is opt-in — an ungated user is
+        unaffected. Returns the user's gated kinds."""
+        return client.set_approval_policy(
+            user_id, action_kind=action_kind, idempotency_key=idempotency_key
+        )
 
     @mcp.tool()
     def get_agent_budget(user_id: int) -> dict | None:

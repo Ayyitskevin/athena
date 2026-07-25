@@ -26,7 +26,17 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access, budgets, db, etag, identity, labels, tokens, users
+from athena.core import (
+    access,
+    approvals,
+    budgets,
+    db,
+    etag,
+    identity,
+    labels,
+    tokens,
+    users,
+)
 
 ErrorKind = Literal[
     "unauthorized",
@@ -511,6 +521,22 @@ def _update_issue(
             if actor_is_agent or not override_blocked_close:
                 _reject_blocked_close_policy()
             policy_override_used = closing
+
+        # The human-in-the-loop gate, checked AFTER the blocked-close policy: that
+        # policy is a hard refusal the operator already configured, so there is no
+        # point asking approval for something policy forbids outright. Gating is
+        # opt-in per actor; an approved request is spent here, inside the same
+        # transaction as the close it authorizes. Automation
+        # (enforce_actor_policy=False) is never gated — a rule the operator
+        # configured must not wait on the operator.
+        if enforce_actor_policy and closing:
+            approvals.require(
+                conn,
+                actor,
+                action_kind=approvals.ACTION_ISSUE_CLOSE,
+                target_kind="issue",
+                target_id=issue_id,
+            )
 
         if "project_id" in provided:
             updated = issues.set_project(

@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from athena.core import agent_commands, budgets, user_commands, users
+from athena.core import agent_commands, approvals, budgets, user_commands, users
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -127,6 +127,9 @@ class UserMeOut(UserOut):
     # This actor's durable action ceiling, or None when unbudgeted (unlimited) —
     # so an agent learns its bound by asking rather than by hitting a 429.
     budget: BudgetOut | None = None
+    # Action kinds this actor must get operator approval for before acting, empty
+    # when ungated (the default) — same ask-don't-guess principle as `budget`.
+    approval_required: list[str] = []
 
 
 @router.post("", response_model=UserOut, status_code=201)
@@ -197,14 +200,17 @@ def me(
 
     Declared before /{user_id} so "me" is matched here, not as a user id.
 
-    `budget` is this actor's durable action ceiling, or null when unbudgeted — the
-    same discover-your-limits-by-asking principle as `scopes`, one DB read."""
+    `budget` is this actor's durable action ceiling, or null when unbudgeted, and
+    `approval_required` lists the action kinds gated behind an operator decision
+    — the same discover-your-limits-by-asking principle as `scopes`, two DB
+    reads."""
     scopes = actor.get("_token_scopes")
     budget = budgets.observed(conn, actor["id"])
     return {
         **actor,
         "scopes": list(scopes) if scopes is not None else None,
         "budget": None if budget is None else budget.public(),
+        "approval_required": approvals.gated_kinds(conn, actor["id"]),
     }
 
 

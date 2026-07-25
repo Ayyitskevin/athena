@@ -23,7 +23,8 @@ the review-facing source of truth for the `0.1.0a1` line.
 | Webhooks | Register, pause/resume, and delete | Delivery cursor/health updates are operational state and intentionally owned by the delivery subsystem |
 | Automation | Event/schedule rule create, enable/disable, and delete; durable schedule claiming/progress; core issue edits dispatched by a rule | Some rule actions still compose legacy label/comment/contributor writes |
 | Agent budgets | Set/clear own their write plus its audit event; the charge is folded into each metered command's transaction | Metering covers issue create/edit and page create/edit; other durable writes and automation firings are deliberately unmetered |
-| Agent runs | Run/check-in operations use their dedicated command and run-context owners | General pause/kill and approval controls are roadmap work, not shipped guarantees |
+| Approvals | Policy set/clear and approve/reject each own their write plus its audit event; the consumption of an approval is folded into the gated command's own transaction | Only `issue.close` is gateable; there is no expiry, bulk decide, or un-reject |
+| Agent runs | Run/check-in operations use their dedicated command and run-context owners | General pause/kill controls are roadmap work, not shipped guarantees |
 
 The table identifies ownership shape, not test coverage or security severity.
 Before changing a listed legacy path, inspect both REST and browser adapters;

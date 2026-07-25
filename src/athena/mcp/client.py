@@ -978,6 +978,45 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def list_approvals(self, *, state: str | None = None, limit: int = 100) -> Any:
+        """The operator's approval queue (admin only)."""
+        return self._result(
+            self._client.get(
+                "/approvals", params=self._params(state=state, limit=limit)
+            )
+        )
+
+    def decide_approval(
+        self,
+        request_id: int,
+        *,
+        decision: str,
+        note: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Approve or reject a pending request (admin only)."""
+        return self._mutate(
+            self._client.post,
+            f"/approvals/{request_id}/decision",
+            json=self._params(decision=decision, note=note),
+            idempotency_key=idempotency_key,
+        )
+
+    def set_approval_policy(
+        self,
+        user_id: int,
+        *,
+        action_kind: str,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: require approval for an action kind by this user."""
+        return self._mutate(
+            self._client.put,
+            f"/approvals/policies/{user_id}",
+            json={"action_kind": action_kind},
+            idempotency_key=idempotency_key,
+        )
+
     def get_agent_budget(self, user_id: int) -> Any:
         """Read a user's durable action budget, or null when unbudgeted. Admin for
         anyone; any actor may read its own."""
