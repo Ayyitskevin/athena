@@ -10,6 +10,10 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- `PUT /users/{id}/password`, the REST parity surface for the admin password
+  reset that previously existed only in the browser. Authorization (admin role
+  plus the admin scope for a bearer token) is enforced inside the command, so the
+  two transports cannot drift.
 - MCP `label_page` / `unlabel_page` tools, so agents can manage the shared label
   vocabulary on Mentor pages through the same REST behavior the browser uses —
   closing an API/MCP parity gap for an existing durable write.
@@ -78,6 +82,14 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- Password writes are now audited-atomic commands
+  (`user_commands.change_own_password` / `reset_user_password`). Both paths ran
+  the hash write and the session revocation as separate commits with no audit
+  event on any transport: a crash between them left a rotated password with live
+  sessions, and an admin could reset any account — taking it over, since later
+  writes are attributed to the target — with nothing on the append-only trail.
+  The hash write, the revocation that rotation forces, and the event now commit or
+  roll back together, and the password and its hash never reach the trail.
 - The automation engine's per-firing idempotency guard can no longer be forged
   from a client run-id header. A rule's firing run id is predictable
   (`automation:rule-N:event-M`) and the guard treats any activity row carrying it

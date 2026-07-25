@@ -47,6 +47,10 @@ class UserAgentUpdate(BaseModel):
     is_agent: bool
 
 
+class UserPasswordReset(BaseModel):
+    password: str
+
+
 class UserOut(BaseModel):
     id: int
     email: str
@@ -257,6 +261,30 @@ def update_agent(
             actor_id=actor["id"],
             target_user_id=user_id,
             is_agent=payload.is_agent,
+        )
+    except user_commands.UserCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.put("/{user_id}/password", response_model=UserOut)
+def reset_password(
+    user_id: int,
+    payload: UserPasswordReset,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Admin password reset: replace a user's password and revoke every session that
+    account holds, atomically with its 'password_reset' audit event. This lever
+    previously existed only in the browser, so the one privilege operation with no
+    REST surface was also the one with no trail; both gaps close together.
+
+    The command owns authorization (admin role, plus the admin scope for a bearer
+    token) — this route deliberately resolves a plain actor and lets the command
+    decide, so the boundary cannot drift from the browser's. The response is the
+    updated user; the password is never echoed and never recorded."""
+    try:
+        return user_commands.reset_user_password(
+            conn, actor=actor, target_user_id=user_id, password=payload.password
         )
     except user_commands.UserCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

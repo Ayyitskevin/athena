@@ -81,13 +81,18 @@ def _with_password_state(user: dict) -> dict:
     return user
 
 
-def set_password(conn: sqlite3.Connection, user_id: int, password: str) -> dict | None:
-    """Set or replace a user's login password and return the updated row."""
+def set_password(
+    conn: sqlite3.Connection, user_id: int, password: str, *, commit: bool = True
+) -> dict | None:
+    """Set or replace a user's login password and return the updated row.
+    ``commit=False`` lets ``user_commands`` fold the hash write, the session
+    revocation it forces, and the audit event into one transaction."""
     cur = conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (passwords.hash_password(password), user_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_user(conn, user_id)
@@ -108,9 +113,10 @@ def verify_credentials(
     if not passwords.verify_password(password, row["password_hash"]):
         return None
     # Successful login with a hash stored at an older cost: transparently upgrade
-    # it while we hold the plaintext. Password writes are a bounded flow outside
-    # the command layer (like set_password), so a direct audited-free UPDATE here
-    # matches the documented ownership in docs/COMMAND_MIGRATION.md.
+    # it while we hold the plaintext. This is the one password write that stays
+    # outside the command layer: it re-encodes the SAME credential at a newer cost
+    # rather than replacing it, so there is no lifecycle change to attribute (the
+    # audited replacements live in user_commands), per docs/COMMAND_MIGRATION.md.
     if passwords.needs_rehash(row["password_hash"]):
         conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
