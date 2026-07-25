@@ -21,6 +21,7 @@ from athena.aegis import (
     project_commands,
     project_etags,
     projects,
+    sprint_commands,
     sprints,
     statuses,
 )
@@ -595,8 +596,11 @@ def create_sprint_web(
         return HTMLResponse(
             '<div class="error">Sprint name is required.</div>', status_code=400
         )
-    sprints.create_sprint(
+    # The command owns the row and its atomic 'sprint_created' event — the same one
+    # REST calls.
+    sprint_commands.create_sprint(
         conn,
+        actor_id=user["id"],
         project_id=project_id,
         name=name,
         goal=goal.strip(),
@@ -617,9 +621,12 @@ def start_sprint_web(
     if err is not None:
         return err
     try:
-        sprints.start_sprint(conn, sprint_id)
+        sprint_commands.start_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+    except sprint_commands.SprintCommandError:
+        # Vanished past the authorization gate — land back on the list, which 404s.
+        pass
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )
@@ -636,9 +643,12 @@ def complete_sprint_web(
     if err is not None:
         return err
     try:
-        sprints.complete_sprint(conn, sprint_id)
+        sprint_commands.complete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
         return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+    except sprint_commands.SprintCommandError:
+        # Vanished past the authorization gate — land back on the list, which 404s.
+        pass
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )
@@ -659,7 +669,8 @@ def delete_sprint_web(
             '<div class="error">Move its issues out of the sprint first.</div>',
             status_code=409,
         )
-    sprints.delete_sprint(conn, sprint_id)
+    # The command owns the delete and its atomic 'sprint_deleted' event.
+    sprint_commands.delete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     return RedirectResponse(
         f"/aegis/projects/{sprint['project_id']}/sprints", status_code=303
     )

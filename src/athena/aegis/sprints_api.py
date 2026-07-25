@@ -15,7 +15,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from athena.aegis import projects, sprints
+from athena.aegis import projects, sprint_commands, sprints
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor, optional_actor
@@ -112,8 +112,10 @@ def create_sprint(
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="sprint name is required")
-    return sprints.create_sprint(
+    # The command owns the row and its atomic 'sprint_created' event.
+    return sprint_commands.create_sprint(
         conn,
+        actor_id=actor["id"],
         project_id=project_id,
         name=name,
         goal=payload.goal,
@@ -152,10 +154,12 @@ def update_sprint(
         if not name:
             raise HTTPException(status_code=422, detail="sprint name cannot be empty")
         fields["name"] = name
-    updated = sprints.update_sprint(conn, sprint_id, **fields)
-    if updated is None:
-        raise HTTPException(status_code=404, detail="no such sprint")
-    return updated
+    try:
+        return sprint_commands.update_sprint(
+            conn, actor_id=actor["id"], sprint_id=sprint_id, fields=fields
+        )
+    except sprint_commands.SprintCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/sprints/{sprint_id}/start", response_model=SprintOut)
@@ -166,11 +170,13 @@ def start_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        sprint = sprints.start_sprint(conn, sprint_id)
-        assert sprint is not None
-        return sprint
+        return sprint_commands.start_sprint(
+            conn, actor_id=actor["id"], sprint_id=sprint_id
+        )
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except sprint_commands.SprintCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.post("/sprints/{sprint_id}/complete", response_model=SprintOut)
@@ -181,11 +187,13 @@ def complete_sprint(
 ) -> dict:
     _sprint_for_write(conn, sprint_id, actor)
     try:
-        sprint = sprints.complete_sprint(conn, sprint_id)
-        assert sprint is not None
-        return sprint
+        return sprint_commands.complete_sprint(
+            conn, actor_id=actor["id"], sprint_id=sprint_id
+        )
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except sprint_commands.SprintCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.delete("/sprints/{sprint_id}", status_code=204)
@@ -201,4 +209,5 @@ def delete_sprint(
         raise HTTPException(
             status_code=409, detail="move its issues out of the sprint first"
         )
-    sprints.delete_sprint(conn, sprint_id)
+    # The command owns the delete and its atomic 'sprint_deleted' event.
+    sprint_commands.delete_sprint(conn, actor_id=actor["id"], sprint_id=sprint_id)
