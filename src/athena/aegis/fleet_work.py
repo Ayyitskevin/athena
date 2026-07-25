@@ -20,7 +20,11 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 200
 MAX_BLOCKER_PREVIEW = 5
 
-_QUERY_FIELDS = {"agent_id", "limit"}
+_QUERY_FIELDS = {"agent_id", "limit", "attention_state"}
+
+NEEDS_ATTENTION = "needs_attention"
+OBSERVED = "observed"
+ATTENTION_STATES = (NEEDS_ATTENTION, OBSERVED)
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 _STATUS_CATEGORY_SQL = (
@@ -30,6 +34,27 @@ _STATUS_CATEGORY_SQL = (
 _BLOCKER_CATEGORY_SQL = (
     "COALESCE(bps.category, CASE bi.status "
     "WHEN 'open' THEN 'todo' WHEN 'done' THEN 'done' ELSE 'doing' END)"
+)
+
+# The SQL ordering bias. Attention is decided in exactly ONE place — `_item`, in
+# Python, where every reason including check-in freshness and blockers is known —
+# so this predicate deliberately does NOT try to reproduce it. It only ensures the
+# bounded window is filled from the attention-PRONE end of the fleet.
+#
+# That matters because the previous ordering did the opposite: active claims first,
+# expired last, so on a busy fleet the expired (attention-bearing) rows were exactly
+# the ones the limit dropped, while the returned-items summary could truthfully read
+# "0 need attention" about a page that had been filtered clean of them. An honest
+# projection must not make the operator's most urgent rows the least likely to be
+# shown.
+_ATTENTION_PRONE_SQL = (
+    "(CASE WHEN l.expires_at <= ? "
+    "OR i.archived_at IS NOT NULL "
+    f"OR {_STATUS_CATEGORY_SQL} = 'done' "
+    "OR u.paused_at IS NOT NULL "
+    "OR u.role = 'viewer' "
+    "OR claim_event.run_id IS NULL "
+    "THEN 0 ELSE 1 END)"
 )
 
 
@@ -64,7 +89,20 @@ def _parse_query_int(
     return parsed
 
 
-def parse_query_pairs(pairs: list[tuple[str, str]]) -> tuple[int | None, int]:
+def parse_attention_state(value: str | None) -> str | None:
+    """Normalize the attention filter, or refuse a value that is not a state."""
+    if value is None or value == "":
+        return None
+    if value not in ATTENTION_STATES:
+        raise ActiveWorkQueryError(
+            f"attention_state must be one of: {', '.join(ATTENTION_STATES)}"
+        )
+    return value
+
+
+def parse_query_pairs(
+    pairs: list[tuple[str, str]],
+) -> tuple[int | None, int, str | None]:
     """Reject unknown or repeated HTTP criteria and normalize exact integers."""
 
     raw: dict[str, str] = {}
@@ -86,7 +124,7 @@ def parse_query_pairs(pairs: list[tuple[str, str]]) -> tuple[int | None, int]:
         default=DEFAULT_LIMIT,
     )
     assert limit is not None
-    return agent_id, limit
+    return agent_id, limit, parse_attention_state(raw.get("attention_state"))
 
 
 def build_active_work(
@@ -94,6 +132,7 @@ def build_active_work(
     *,
     agent_id: int | None = None,
     limit: int = DEFAULT_LIMIT,
+    attention_state: str | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Return a bounded admin projection of agent-held issue leases.
@@ -102,11 +141,24 @@ def build_active_work(
     server-owned instant.  A claim can be active while its exact run is stale,
     unreported, or untagged; those states are explicit attention reasons rather than
     being collapsed into a misleading "healthy/running" label.
+
+    Rows the fleet is most likely to need attention on are fetched and returned
+    FIRST.  The window is still bounded, so a busy fleet is still clipped — but it
+    is clipped from the quiet end rather than the urgent one, and ``examined_count``
+    says how many rows the attention decision actually saw.  ``attention_state``
+    filters the exact, Python-decided state within that window.
     """
     normalized_agent_id = _optional_positive_int(agent_id, name="agent_id")
     bounded_limit = _positive_bounded_int(limit, name="limit", maximum=MAX_LIMIT)
+    requested_attention_state = parse_attention_state(attention_state)
     observed_at = _utc_now(now)
     observed_text = observed_at.strftime(_TS_FORMAT)
+    # Examine up to MAX_LIMIT rows regardless of the requested page size: a filtered
+    # request needs rows to filter FROM, and the cap keeps the read bounded whatever
+    # the caller asks for.
+    window = (
+        max(bounded_limit, MAX_LIMIT) if requested_attention_state else (bounded_limit)
+    )
 
     with db.transaction(conn):
         clauses = ["u.is_agent = 1"]
@@ -164,9 +216,9 @@ def build_active_work(
             "ORDER BY candidate.id DESC LIMIT 1"
             ") "
             f"WHERE {where_sql} "
-            "ORDER BY CASE WHEN l.expires_at > ? THEN 0 ELSE 1 END, "
+            f"ORDER BY {_ATTENTION_PRONE_SQL}, "
             "l.expires_at, l.issue_id LIMIT ?",
-            [*params, observed_text, bounded_limit],
+            [*params, observed_text, window],
         ).fetchall()
 
         issue_ids = [int(row["issue_id"]) for row in rows]
@@ -195,6 +247,18 @@ def build_active_work(
             for row in rows
         ]
 
+    examined_count = len(items)
+    # Attention is decided exactly once, above. Sorting on it here is stable, so
+    # rows keep their expiry order within each group and the urgent ones lead.
+    items.sort(key=lambda item: item["attention_state"] != NEEDS_ATTENTION)
+    if requested_attention_state is not None:
+        items = [
+            item
+            for item in items
+            if item["attention_state"] == requested_attention_state
+        ]
+    items = items[:bounded_limit]
+
     return {
         "schema": SCHEMA,
         "scope": "admin_fleet_view",
@@ -212,7 +276,13 @@ def build_active_work(
         "items": items,
         "visible_total": visible_total,
         "limit": bounded_limit,
-        "clipped": visible_total > len(items),
+        "attention_state": requested_attention_state,
+        "clipped": visible_total > examined_count,
+        # How many rows the attention decision actually saw. Without it, a summary
+        # reading "0 need attention" is ambiguous between "none do" and "none of the
+        # ones we looked at do" — and on a clipped fleet those are very different
+        # statements.
+        "examined_count": examined_count,
         "summary": {
             "scope": "returned_items",
             "returned_count": len(items),

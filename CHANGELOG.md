@@ -8,8 +8,47 @@ untagged package/development milestones, not published releases.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Attention-bearing claims are no longer the rows most likely to be hidden.**
+  The active-work window sorted active leases before expired ones, so on a busy
+  fleet the expired — attention-bearing — claims were exactly the rows the limit
+  dropped, while the returned-items summary could truthfully report `0 need
+  attention` about a page it had filtered clean of them. An exception surface that
+  hides exceptions is worse than none, because it reads as reassurance. The window
+  is still bounded but now fills from the urgent end, the exact per-row attention
+  state sorts the returned page, and a new `attention_state` filter (web, REST, and
+  MCP) returns precisely the rows needing a human. `examined_count` was added
+  because "0 need attention" is otherwise ambiguous between "none do" and "none of
+  the ones we looked at do" — different statements on a clipped fleet. The SQL
+  ordering is explicitly a bias, not a second definition of attention: it does not
+  reproduce the check-in, blocker, or token reasons, since two implementations of
+  one predicate eventually disagree.
+
 ### Added
 
+- **Security signals have a surface.** Failed logins, revoked tokens still being
+  presented, scope denials, and paused-account refusals have been recorded on the
+  activity trail since they were added — and were readable only by an operator who
+  already knew the four verb names and thought to filter for them. Probing before
+  compromise is exactly the signal that must not require knowing to grep, so it now
+  has `GET /security/events`, `GET /security/counts`, MCP `list_security_events`,
+  and an admin **Security signals** page. Admin-only, with a closed verb vocabulary
+  so the surface cannot quietly become a general activity reader wearing a security
+  name, and zero-filled counts so a quiet fleet reads as an explicit zero.
+- **One fleet-attention rollup on the dashboard.** Athena's exception surfaces grew
+  one at a time and each landed on its own page, so an operator expected to steer
+  by exception had to know six places to look. An admin-only card now counts claims
+  needing attention, approvals waiting, workers told to stop, failing automation
+  rules, failing webhooks, budget ceilings hit, and boundary refusals — each linking
+  to the surface that owns it. **The card computes nothing**: every number comes
+  from the surface that owns it, so it can never disagree with the page it sends
+  you to. Standing state is not window-bounded (an unanswered approval is still
+  unanswered a month later); event-counted signals are, because a probe from months
+  ago is not this morning's alarm. A quiet fleet reads "nothing is asking for you
+  right now — that is what the last N hours recorded, not a promise that every agent
+  is healthy". `base.html` also gained the Mission Control and Security links it
+  never had. See [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md).
 - **A worker registry with a cooperative kill request** — Athena models *who* an
   agent is, and check-ins prove a credential reported a *run*; neither answers
   "which of my agent processes are up, on what box, and can I tell one to stop?"

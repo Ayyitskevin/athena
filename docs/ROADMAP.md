@@ -38,6 +38,13 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   registers by heartbeat, and an admin can ask it to stop. Athena records the
   request and the worker's reply — it cannot signal or observe a process, so a
   silent worker is stale, never terminated. That is not process-level kill.
+- **Intervene** finally has one place to look: an admin-only fleet-attention
+  rollup on the dashboard counts claims needing attention, waiting approvals,
+  unanswered kill requests, failing automation rules and webhooks, budget ceilings
+  hit, and boundary refusals — each linking to the surface that owns it. Refused
+  logins, revoked tokens, scope denials, and paused refusals were always recorded;
+  they now have a page and an API instead of requiring an operator to know the verb
+  names.
 - **Trust / Learn** adds undo by compensation: reversing an action records its
   inverse as a new audited command linked to the event it reversed, so history is
   never rewritten. Four verb pairs are reversible (issue and page archive and

@@ -29,6 +29,7 @@ from athena.core import (
     oidc,
     oidc_commands,
     run_replay,
+    security_events,
     token_commands,
     tokens,
     user_commands,
@@ -813,7 +814,9 @@ def agent_runs_admin(
             query_pairs = [
                 (key, value) for key, value in query_pairs if key != "agent_id"
             ]
-        agent_id, work_limit = fleet_work.parse_query_pairs(query_pairs)
+        agent_id, work_limit, attention_state = fleet_work.parse_query_pairs(
+            query_pairs
+        )
     except fleet_work.ActiveWorkQueryError as exc:
         return HTMLResponse(
             f"<h1>Invalid active-work request</h1><p>{escape(exc.detail)}</p>",
@@ -822,8 +825,9 @@ def agent_runs_admin(
         )
     context = agents.agent_run_health(conn, agent_id=agent_id)
     context["active_work"] = fleet_work.build_active_work(
-        conn, agent_id=agent_id, limit=work_limit
+        conn, agent_id=agent_id, limit=work_limit, attention_state=attention_state
     )
+    context["attention_states"] = list(fleet_work.ATTENTION_STATES)
     context["automation_failures"] = automation.list_rules(conn, failing_only=True)
     return templates.TemplateResponse(
         request=request,
@@ -1043,6 +1047,36 @@ def _webhooks_context(
         # "all"), so the list never drifts from what the recorders emit.
         "event_kinds": activity.distinct_target_kinds(conn),
     }
+
+
+@router.get("/admin/security", response_class=HTMLResponse)
+def security_signals(
+    request: Request,
+    verb: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Boundary refusals — the probing an operator should see before a compromise.
+
+    These events have always been on the trail; what was missing was a place to
+    read them without already knowing the four verb names. Admin-only, because a
+    list of who has been probing is operator intelligence."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    selected = verb if verb in security_events.SECURITY_VERBS else None
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/security.html",
+        context={
+            "events": security_events.list_failures(conn, verb=selected, limit=100),
+            "counts": security_events.failure_counts(conn),
+            "verbs": list(security_events.SECURITY_VERBS),
+            "selected_verb": selected,
+        },
+        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+    )
 
 
 @router.get("/admin/webhooks", response_class=HTMLResponse)

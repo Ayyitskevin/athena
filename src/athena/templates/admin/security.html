@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Security signals — Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/dashboard" class="muted">← Back to dashboard</a>
+        <h1>Security signals</h1>
+    </div>
+</div>
+
+<p class="muted">
+    Refusals: someone tried to go where they may not. Each names the account whose
+    boundary was hit — the user whose password was guessed at, the owner of the
+    revoked token presented, the actor whose scope ran out. A refusal is evidence
+    of an attempt, not of a compromise.
+</p>
+
+<div class="agent-pill-row">
+    {% for name, count in counts.items() %}
+    <span class="pill">{{ name.replace("_", " ") }}: {{ count }}</span>
+    {% endfor %}
+</div>
+
+<form method="get" action="/admin/security" class="activity-filters">
+    <label>
+        Kind
+        <select name="verb" onchange="this.form.submit()">
+            <option value="">Any refusal</option>
+            {% for v in verbs %}
+            <option value="{{ v }}"{{ " selected" if selected_verb == v }}>{{ v.replace("_", " ") }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Filter</button>
+</form>
+
+{% if events %}
+<table class="issues-table">
+    <thead>
+        <tr><th>When</th><th>Account</th><th>Refusal</th><th>Detail</th></tr>
+    </thead>
+    <tbody>
+    {% for event in events %}
+        <tr>
+            <td class="muted">{{ event.created_at }} UTC</td>
+            <td>
+                <strong>{{ event.actor_name }}</strong>
+                <div class="muted">{{ event.actor_email }}{% if event.actor_is_agent %} · agent{% endif %}</div>
+            </td>
+            <td><code>{{ event.verb }}</code></td>
+            <td>{{ event.detail }}</td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="muted">No refusals recorded{% if selected_verb %} of this kind{% endif %}.</p>
+{% endif %}
+{% endblock %}

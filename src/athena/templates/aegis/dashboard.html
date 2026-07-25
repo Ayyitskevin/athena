@@ -25,6 +25,41 @@
     </div>
 </div>
 
+{% if fleet_attention %}
+{# Steer by exception: one card for everything asking for a human, each number
+   linking to the surface that owns it. Counts only — this card computes nothing,
+   so it cannot disagree with the page it sends you to. #}
+<section class="dashboard-card" aria-labelledby="fleet-attention-heading">
+    <h3 id="fleet-attention-heading">
+        Fleet attention
+        {% if fleet_attention.total %}<span class="badge">{{ fleet_attention.total }}</span>{% endif %}
+    </h3>
+    {% if fleet_attention.total %}
+    <ul class="dashboard-list">
+        {% for signal in fleet_attention.signals %}
+        {% if signal.count %}
+        <li>
+            <a href="{{ signal.href }}">{{ signal.label }}</a>
+            <strong>{{ signal.count }}</strong>
+            <span class="muted">{{ signal.scope }}</span>
+        </li>
+        {% endif %}
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">
+        Nothing is asking for you right now. That is what the last
+        {{ fleet_attention.window_hours }} hours recorded — not a promise that every
+        agent is healthy.
+    </p>
+    {% endif %}
+    <p class="muted">
+        <a href="/admin/agents/runs">Mission Control</a> ·
+        <a href="/admin/security">Security signals</a>
+    </p>
+</section>
+{% endif %}
+
 <div class="dashboard-grid">
     {% if request.state.user %}
     <section class="dashboard-card">
