@@ -83,6 +83,15 @@ def test_events_replay_envelope_is_stable(tmp_path):
     app = create_app(tmp_path / "shape.db")
     with TestClient(app) as client:
         _seed_user(tmp_path / "shape.db")
+        # Real lineage coordinates: record() drops a parent naming a run nobody ran
+        # and a fork point that is not an event of that run, so the envelope is
+        # exercised with the shape the fork contract actually hands a client.
+        client.post(
+            "/issues",
+            json={"title": "shared prefix"},
+            headers={**H, "X-Athena-Run": "parent"},
+        )
+        fork_from = client.get("/events?run_id=parent", headers=H).json()["events"][0]
         client.post(
             "/issues",
             json={"title": "forked"},
@@ -90,11 +99,11 @@ def test_events_replay_envelope_is_stable(tmp_path):
                 **H,
                 "X-Athena-Run": "child",
                 "X-Athena-Parent-Run": "parent",
-                "X-Athena-Fork-From-Event": "7",
+                "X-Athena-Fork-From-Event": str(fork_from["id"]),
             },
         )
 
-        event = client.get("/events", headers=H).json()["events"][0]
+        event = client.get("/events?run_id=child", headers=H).json()["events"][0]
         assert set(event) == {
             "id",
             "actor_id",
@@ -108,12 +117,11 @@ def test_events_replay_envelope_is_stable(tmp_path):
             "parent_run_id",
             "forked_from_event_id",
         }
-        assert event["id"] == 1
         assert event["verb"] == "created"
         assert event["target_kind"] == "issue"
         assert event["run_id"] == "child"
         assert event["parent_run_id"] == "parent"
-        assert event["forked_from_event_id"] == 7
+        assert event["forked_from_event_id"] == fork_from["id"]
 
 
 def test_events_pagination_has_more_and_resume(tmp_path):

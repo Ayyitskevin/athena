@@ -98,6 +98,17 @@ untagged package/development milestones, not published releases.
   access-control change: because the mutation is idempotent and the event is
   recorded only on a real change, a retry never backfills it. REST and the browser
   now call the same commands, which no longer emit activity from either transport.
+- Run-lineage coordinates must now name something real. `parent_run_id` and
+  `forked_from_event_id` arrived as client headers and were stored verbatim, so
+  any writer could fabricate ancestry out of thin air — naming a run nobody ever
+  wrote, or a fork point that is not an event of that run — and `run_lineage()`
+  plus the replay artifact build their trees from exactly those columns. A parent
+  is now kept only when that run has actually been written, and a fork point only
+  when it is a real event belonging to the surviving parent; a failing coordinate
+  is stored as `NULL` rather than rejected, since the headers remain correlation
+  hints, not authorization. Cross-actor lineage stays legitimate on purpose (the
+  fork contract and automation both depend on it), and a rule firing on an
+  untagged trigger keeps its real fork point while having no parent run.
 - Password writes are now audited-atomic commands
   (`user_commands.change_own_password` / `reset_user_password`). Both paths ran
   the hash write and the session revocation as separate commits with no audit

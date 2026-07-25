@@ -60,6 +60,11 @@ def test_constructor_run_id_tags_every_write(tmp_path):
 def test_set_run_switches_and_never_leaks_previous_context(tmp_path):
     tc, ath, db_file = _harness(tmp_path)
     try:
+        # The parent must be a run that was actually written — record() drops a
+        # parent naming a run nobody ran, so fabricated ancestry stays out of the
+        # lineage tree.
+        ath.set_run("run-a")
+        ath.create_issue(title="under run-a")
         # First run carries a parent; the event records both.
         ath.set_run("run-b", parent_run_id="run-a")
         first = ath.create_issue(title="under run-b")
@@ -150,6 +155,11 @@ def test_server_begin_run_and_current_run_tools(tmp_path):
     tc, ath, db_file = _harness(tmp_path)
     try:
         server = build_server(ath)
+        # Write the parent run first: record() keeps a parent only when that run
+        # was actually run, so the operator goal must exist before a tool run
+        # claims descent from it.
+        ath.set_run("goal-run")
+        ath.create_issue(title="operator goal")
         asyncio.run(
             server.call_tool(
                 "begin_run", {"run_id": "tool-run", "parent_run_id": "goal-run"}

@@ -196,10 +196,20 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
     )
     # An untagged event: the three lineage keys are present but null.
     plain = _event(conn, target_id=10, verb="created")
-    # A run-tagged event forked from the first, with a parent run.
+    # The parent run must be a run that was actually written, and the fork point an
+    # event OF that run — record() drops coordinates naming something unreal, so the
+    # shared prefix is seeded here exactly as the fork contract would hand it over.
+    goal_token = run_context.set_run_id("goal-run")
+    try:
+        fork_from = activity.record(
+            conn, actor_id=1, verb="created", target_kind="issue", target_id=10
+        )
+    finally:
+        run_context.reset_run_id(goal_token)
+    # A run-tagged event forked from the parent run's prefix.
     run_token = run_context.set_run_id("child-run")
     parent_token = run_context.set_parent_run_id("goal-run")
-    fork_token = run_context.set_forked_from_event_id(plain["id"])
+    fork_token = run_context.set_forked_from_event_id(fork_from["id"])
     try:
         tagged = activity.record(
             conn, actor_id=1, verb="changed_status", target_kind="issue", target_id=10
@@ -221,7 +231,7 @@ def test_payload_carries_run_lineage_coordinates(tmp_path):
     # …and carry the real coordinates when the event is tagged.
     assert bodies[tagged["id"]]["run_id"] == "child-run"
     assert bodies[tagged["id"]]["parent_run_id"] == "goal-run"
-    assert bodies[tagged["id"]]["forked_from_event_id"] == plain["id"]
+    assert bodies[tagged["id"]]["forked_from_event_id"] == fork_from["id"]
 
 
 def test_delivery_signs_orders_and_advances_cursor(tmp_path):

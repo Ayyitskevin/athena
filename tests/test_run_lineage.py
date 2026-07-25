@@ -53,6 +53,15 @@ def test_record_stamps_parent_run_id_within_scope(tmp_path):
     conn = _migrated_conn(tmp_path / "stamp.db")
     conn.execute("INSERT INTO users (email, name) VALUES ('a@e.com', 'A')")
     conn.commit()
+    # The parent must be a run that was actually written: record() drops a parent
+    # naming a run nobody ever ran, so fabricated ancestry cannot enter the tree.
+    pt0 = run_context.set_run_id("parent")
+    try:
+        activity.record(
+            conn, actor_id=1, verb="created", target_kind="issue", target_id=1
+        )
+    finally:
+        run_context.reset_run_id(pt0)
     rt = run_context.set_run_id("child")
     pt = run_context.set_parent_run_id("parent")
     try:
