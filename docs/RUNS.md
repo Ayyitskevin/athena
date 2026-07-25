@@ -16,6 +16,14 @@ Clients that want deterministic replay stamp writes with:
 
 Browser actions normally omit all three headers and remain ordinary activity rows.
 
+The server reserves the `automation:` run-id namespace for the automation engine,
+which mints deterministic per-firing ids (`automation:rule-N:event-M`) in-process.
+A client-supplied `X-Athena-Run` value in that namespace is dropped to untagged at
+the request edge, so a client cannot pre-stamp a rule's predictable firing id and
+suppress it via the engine's activity-derived idempotency guard. Naming a reserved
+run as a `X-Athena-Parent-Run` or fork point is unaffected — forking a child run
+from an automation run stays legitimate.
+
 ## Cooperative Check-ins
 
 An agent may report that it is still working under a client-chosen run identifier

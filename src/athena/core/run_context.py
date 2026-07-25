@@ -38,6 +38,24 @@ _forked_from_event_id: contextvars.ContextVar[int | None] = contextvars.ContextV
 # every activity row. Long enough for any UUID/ULID/job id a caller would use.
 _MAX_RUN_ID_LEN = 200
 
+# Run-id namespaces the SERVER owns and mints in-process (e.g. the automation
+# engine's deterministic per-firing ids). A client must never be able to stamp an
+# event with one of these: the automation idempotency guard treats "an activity
+# row already carries this firing's run id" as "this firing already happened", so
+# a client that could pre-stamp the predictable `automation:rule-N:event-M` id
+# would silently suppress that rule from firing. The engine sets these ids
+# directly on the run context (never through the request middleware), so reserving
+# the prefix on the CLIENT header path closes the forgery without touching any
+# legitimate automation write. Forking a child run FROM an automation run is
+# unaffected: that names the reserved run only as a parent pointer, which is not
+# reserved.
+RESERVED_RUN_ID_PREFIXES: tuple[str, ...] = ("automation:",)
+
+
+def is_reserved_run_id(value: str | None) -> bool:
+    """Whether a run id lives in a server-reserved namespace a client may not stamp."""
+    return value is not None and value.startswith(RESERVED_RUN_ID_PREFIXES)
+
 
 def strict_run_id(raw: object) -> str:
     """Return a canonical persisted run id, or reject invalid input.
@@ -76,9 +94,22 @@ def normalize(raw: str | None) -> str | None:
 
 
 def set_run_id(raw: str | None) -> contextvars.Token:
-    """Set the current run id from a raw header value and return the reset token.
-    The caller (the ASGI middleware) MUST reset with it when the request ends."""
+    """Set the current run id from a raw value and return the reset token. Used by
+    trusted in-process callers (the automation engine mints its own reserved-namespace
+    firing ids here); the request middleware uses :func:`set_client_run_id` so a client
+    cannot stamp a reserved id. The caller MUST reset with the token when done."""
     return _run_id.set(normalize(raw))
+
+
+def set_client_run_id(raw: str | None) -> contextvars.Token:
+    """Set the current run id from a CLIENT-supplied header, dropping any value in a
+    server-reserved namespace to None (untagged). This is the request-edge form of
+    :func:`set_run_id`: a caller may correlate its own runs freely but may not stamp
+    events into a namespace the server owns (see :data:`RESERVED_RUN_ID_PREFIXES`)."""
+    normalized = normalize(raw)
+    if is_reserved_run_id(normalized):
+        normalized = None
+    return _run_id.set(normalized)
 
 
 def reset_run_id(token: contextvars.Token) -> None:
