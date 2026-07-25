@@ -210,6 +210,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals
 - [docs/RUN_LEARNINGS.md](docs/RUN_LEARNINGS.md) — promoting what a run learned into Mentor
+- [docs/DISPATCH.md](docs/DISPATCH.md) — handing work to an external executor, and hearing back
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors

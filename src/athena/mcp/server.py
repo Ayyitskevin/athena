@@ -519,6 +519,52 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.offboard_user(user_id)
 
     @mutation_tool
+    def dispatch_to_icarus(
+        issue_id: int,
+        repo: str,
+        base_commit: str,
+        capability: Literal["repo.edit", "ci.run"],
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Hand an issue to the external execution fleet.
+
+        Athena is the control plane; the executor is a separate system with its own
+        store. This records that Athena ASKED, under a policy digest of the
+        authorization in force, and then hands the envelope over. It does not run
+        anything itself and cannot see what happens next.
+
+        Read `state` carefully — it is Athena's knowledge, not the executor's
+        progress. 'accepted' means the executor said it accepted; it never means
+        work is running. 'undeliverable' means Athena could not hand it over at all.
+        Evidence and completion arrive later as opaque references via the
+        executor's signed callback.
+
+        Metered and gated like any other write: it spends a budget action, and an
+        actor gated on issue.close cannot route around that gate by dispatching
+        instead. Requires the issue:write scope and a configured executor."""
+        return client.dispatch_to_icarus(
+            issue_id,
+            repo=repo,
+            base_commit=base_commit,
+            capability=capability,
+            idempotency_key=idempotency_key,
+        )
+
+    @mcp.tool()
+    def list_dispatches(
+        work_item_id: int | None = None,
+        state: str | None = None,
+        limit: int = 50,
+    ) -> list:
+        """What Athena has handed to the executor, newest first. Filter by
+        work_item_id or by state ('pending_delivery', 'accepted', 'undeliverable',
+        'completed', 'failed'). Each state is what Athena was told, not what is
+        happening on the far side."""
+        return client.list_dispatches(
+            work_item_id=work_item_id, state=state, limit=limit
+        )
+
+    @mutation_tool
     def record_run_learning(
         issue_id: int,
         summary: str,

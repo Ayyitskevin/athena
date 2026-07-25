@@ -116,6 +116,22 @@ AGENT_RUN_MAX_CHECKINS_PER_AGENT = _int_env(
 # Athena cannot observe and never claims.
 WORKER_STALE_SECONDS = _int_env("ATHENA_WORKER_STALE_SECONDS", 90, minimum=1)
 
+# The external execution fleet Athena may hand work to. BOTH must be set for
+# dispatch to be available: a URL without a secret would mean sending unsigned work
+# to an unauthenticated endpoint, and a secret without a URL means nothing. Unset is
+# the default and dispatch is simply refused, which is the honest state for a
+# deployment that has no executor.
+ICARUS_URL = os.environ.get("ATHENA_ICARUS_URL", "").strip()
+ICARUS_SECRET = os.environ.get("ATHENA_ICARUS_SECRET", "").strip()
+ICARUS_TIMEOUT_SECONDS = _int_env("ATHENA_ICARUS_TIMEOUT_SECONDS", 10, minimum=1)
+
+
+def icarus_configured() -> bool:
+    """Whether an executor is configured. Read at call time, not import time, so a
+    test or a reconfigured process sees the current value."""
+    return bool(ICARUS_URL and ICARUS_SECRET)
+
+
 # One agent may run several workers (a box per node, a process per capability), but
 # not unboundedly many: a looping or compromised token can refresh the rows it has
 # forever and still never grow the registry past this ceiling.

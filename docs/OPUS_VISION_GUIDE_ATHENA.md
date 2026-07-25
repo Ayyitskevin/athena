@@ -713,10 +713,24 @@ the real one. The REST route lives in Mentor while its path names an issue,
 because the import contract makes Aegis and Mentor peers — documented in the
 module.
 
-**Stage H — Icarus integration.** `core/dispatch.py` (or `aegis/icarus_commands.py`),
-`0068_icarus_dispatch.sql`, `icarus:` reserved namespace in `run_context.py`,
-dispatch command + signed idempotent callback endpoint, MCP `dispatch_to_icarus`,
-cockpit dispatch view, `tests/test_icarus_dispatch.py`.
+**Stage H — Icarus integration. — SHIPPED** (`docs/DISPATCH.md`). Both modules,
+as it turned out: `core/dispatch.py` owns the record, the digest, and the envelope;
+`aegis/icarus_commands.py` owns the command and delivery. The migration is
+**0067**, not 0068 — migrations must be contiguous and the code-only 0066/0067 this
+table imagined never materialized. Plus the `icarus:` reservation in
+`run_context.py`, `POST /issues/{id}/dispatch`, the HMAC-authenticated idempotent
+callback, MCP `dispatch_to_icarus` / `list_dispatches`, and
+`tests/test_icarus_dispatch.py`.
+
+Three things the sketch did not say. The outbound call is a **post-commit side
+effect** — a network call inside a transaction would hold SQLite's single writer
+for as long as a stranger's server takes. Dispatch is **metered and gated** like
+any other write, because otherwise an actor gated on `issue.close` could route
+around the gate by asking an executor instead. And there is deliberately **no
+cockpit view**: `GET /dispatches` and the activity trail carry it, and a page
+whose only content is "what Athena was told" would invite reading it as fleet
+status. Dispatch is **off unless configured**, and refuses with a 503 rather than
+accumulating undeliverable rows.
 
 **MCP parity backfill (F-2)** runs alongside every stage: any REST surface a stage
 touches gets its MCP tool in the same PR (webhooks, filters, sprints, attachments,

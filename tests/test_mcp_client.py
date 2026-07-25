@@ -257,6 +257,14 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "dispatch_to_icarus",
+        "POST",
+        "/issues/5/dispatch",
+        lambda c, k: c.dispatch_to_icarus(
+            5, repo="r", base_commit="c", capability="repo.edit", idempotency_key=k
+        ),
+    ),
+    (
         "record_run_learning",
         "POST",
         "/issues/5/learnings",
@@ -415,6 +423,10 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    (
+        "dispatch_to_icarus",
+        {"issue_id": 5, "repo": "r", "base_commit": "c", "capability": "repo.edit"},
+    ),
     ("record_run_learning", {"issue_id": 5, "summary": "learned"}),
     ("worker_heartbeat", {"worker_key": "w-1"}),
     ("request_worker_kill", {"worker_id": 3}),

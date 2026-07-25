@@ -981,6 +981,44 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def dispatch_to_icarus(
+        self,
+        issue_id: int,
+        *,
+        repo: str,
+        base_commit: str,
+        capability: str,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Ask the configured executor to do work on an issue."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{issue_id}/dispatch",
+            json={
+                "repo": repo,
+                "base_commit": base_commit,
+                "capability": capability,
+            },
+            idempotency_key=idempotency_key,
+        )
+
+    def list_dispatches(
+        self,
+        *,
+        work_item_id: int | None = None,
+        state: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        """What Athena has handed to the executor, newest first."""
+        return self._result(
+            self._client.get(
+                "/dispatches",
+                params=self._params(
+                    work_item_id=work_item_id, state=state, limit=limit
+                ),
+            )
+        )
+
     def record_run_learning(
         self,
         issue_id: int,
