@@ -158,11 +158,17 @@ trusted team on one machine or tailnet. It is not yet:
 - an enterprise permission, SCIM, or SAML platform;
 - a real-time collaborative block editor;
 - a general workflow engine; or
-- a claim of complete command migration, undo, or approvals.
+- a claim of complete command migration or undo.
 
 Durable per-agent action budgets **are** implemented (opt-in; see
 [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md)). They meter actions, not tokens or
 dollars — Athena never observes an agent's model spend.
+
+Human-in-the-loop **approval gates are implemented** too (opt-in, one action kind
+— `issue.close`; see [docs/APPROVALS.md](docs/APPROVALS.md)). A gated action is
+refused with a recorded ask that the operator approves or rejects; approval
+authorizes one retry, not a stored side effect. That is a bounded first slice,
+not a general approval workflow.
 
 The app includes password login, optional OIDC, CSRF protection, secure headers,
 visibility-aware reads, scoped tokens, SSRF-hardened webhooks, portability tools,
@@ -199,6 +205,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/AUTOMATION_SCHEDULES.md](docs/AUTOMATION_SCHEDULES.md) — bounded UTC schedules and recovery
 - [docs/WORKFLOW_GATES.md](docs/WORKFLOW_GATES.md) — optional project blocked-close governance
 - [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md) — durable, opt-in per-agent action ceilings
+- [docs/APPROVALS.md](docs/APPROVALS.md) — opt-in human-in-the-loop approval gates
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors

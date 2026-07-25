@@ -10,6 +10,32 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- Human-in-the-loop **approval gates** — VISION's Intervene step promised the
+  operator can "approve/reject risky actions"; the only gate before this was the
+  per-project blocked-close policy, which can refuse but cannot *ask*. An admin can
+  now require operator approval before a chosen actor takes a chosen action kind
+  (`issue.close` today). The gated write is refused with `202` and a recorded ask
+  naming who wanted to do what to which target, carrying the requesting run's id;
+  the operator approves, and the **agent retries** the same write.
+  Deliberately **gate + retry, not deferred execution**: Athena never stores a
+  mutation and replays it later on the agent's behalf, which would re-execute a
+  stale payload under authorization evaluated at a different moment. Because the
+  retry is an ordinary write it re-validates everything — visibility, scope, the
+  blocked-close policy, the budget, `If-Match` — so an approval authorizes an
+  intent, never a stored side effect. Approvals are **single-use** (consumed inside
+  the retry's own transaction) and bound to both requester and target. A rejection
+  answers with `409` and the `approval_rejected` code so an agent stops rather than
+  waits. Gating is **opt-in**: applying migration 0063 changes nothing until an
+  operator gates someone, and automation rule firings are never gated — the
+  operator's own automation must not wait on the operator. Surfaced through
+  `GET /approvals`, `POST /approvals/{id}/decision`, the
+  `/approvals/policies/{user_id}` policy routes, the `approval_required` field on
+  `/users/me`, the MCP tools `list_approvals` / `decide_approval` /
+  `set_approval_policy`, and a "Waiting on you" queue in the agent cockpit. Every
+  step is audited (`approval_requested`, `approval_approved`, `approval_rejected`,
+  `approval_consumed`, `approval_policy_set`, `approval_policy_cleared`). See
+  [docs/APPROVALS.md](docs/APPROVALS.md) for the guarantees and the limitations —
+  one action kind, no expiry, no bulk decide, no un-reject.
 - Durable per-agent **action budgets** — the bounded half of "attributable,
   reversible, and bounded". An admin caps how many metered writes an agent may
   make per fixed window (`hour` or `day`); the charge is folded into the metered

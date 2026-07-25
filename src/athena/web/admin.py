@@ -23,6 +23,7 @@ from athena.core import (
     activity,
     agent_commands,
     agents,
+    approvals,
     budgets,
     identity,
     oidc,
@@ -397,9 +398,24 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         # opt-in, so most fleets start here.
         budget = budgets.observed(conn, agent["user"]["id"])
         agent["budget"] = None if budget is None else budget.public()
+        agent["gated_actions"] = approvals.gated_kinds(conn, agent["user"]["id"])
+    # Pending approvals are the steer-by-exception queue: actions an agent asked to
+    # take that are waiting on this human. Names are resolved here so the template
+    # stays a renderer.
+    pending = []
+    for request in approvals.list_requests(conn, state="pending", limit=50):
+        requester = users.get_user(conn, request.requested_by)
+        pending.append(
+            {
+                **request.public(),
+                "requested_by_name": requester["name"] if requester else "unknown",
+            }
+        )
     return {
         "agents": agent_rows,
         "budget_windows": sorted(budgets.WINDOWS),
+        "approval_kinds": sorted(approvals.ACTION_KINDS),
+        "pending_approvals": pending,
         "notice": None,
         "error": None,
         **extra,
@@ -415,6 +431,8 @@ def agents_admin(
     resumed: str | None = Query(None),
     budget_set: str | None = Query(None),
     budget_cleared: str | None = Query(None),
+    decided: str | None = Query(None),
+    gate_changed: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -439,6 +457,12 @@ def agents_admin(
         notice = "Budget set: metered writes are now capped for this window."
     elif budget_cleared:
         notice = "Budget cleared: metered writes are unlimited again."
+    elif decided == "approve":
+        notice = "Approved: the requester may retry that action once."
+    elif decided == "reject":
+        notice = "Rejected: the requester is told to stop rather than wait."
+    elif gate_changed:
+        notice = "Approval policy updated."
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
@@ -509,6 +533,77 @@ def onboard_agent(
         context=_agents_context(conn, user, onboarded=onboarded),
         status_code=201,
     )
+
+
+@router.post(
+    "/admin/approvals/{request_id}/decision",
+    dependencies=[Depends(verify_csrf)],
+)
+def decide_approval(
+    request: Request,
+    request_id: int,
+    decision: str = Form(""),
+    note: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Decide one pending approval from the cockpit — the same core owner REST and
+    MCP call. Approving opens the gate for exactly one retry by the requester; it
+    does not perform the action."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    try:
+        approvals.decide(
+            conn,
+            actor_id=user["id"],
+            request_id=request_id,
+            decision=decision.strip(),
+            note=note.strip() or None,
+        )
+    except approvals.ApprovalDecisionError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse(
+        f"/admin/agents?decided={decision.strip()}", status_code=303
+    )
+
+
+@router.post(
+    "/admin/agents/{user_id}/approval-policy",
+    dependencies=[Depends(verify_csrf)],
+)
+def set_approval_policy(
+    request: Request,
+    user_id: int,
+    action_kind: str = Form(""),
+    gate: str = Form("on"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Gate or ungate an action kind for one agent."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    try:
+        if gate == "off":
+            approvals.clear_policy(
+                conn,
+                actor_id=user["id"],
+                target_user_id=user_id,
+                action_kind=action_kind.strip(),
+            )
+        else:
+            approvals.set_policy(
+                conn,
+                actor_id=user["id"],
+                target_user_id=user_id,
+                action_kind=action_kind.strip(),
+            )
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
 
 
 @router.post(

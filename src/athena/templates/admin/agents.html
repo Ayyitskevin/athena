@@ -18,6 +18,56 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
+{% if pending_approvals %}
+<section class="dashboard-card" aria-labelledby="pending-approvals-heading">
+    <h2 id="pending-approvals-heading">
+        Waiting on you <span class="badge">{{ pending_approvals|length }}</span>
+    </h2>
+    <p class="subtitle">
+        Actions an agent asked to take and cannot take without your decision.
+        Approving opens the gate for exactly one retry by that agent against that
+        target — it does not perform the action, and the retry re-checks
+        everything. Rejecting tells the agent to stop rather than wait.
+    </p>
+    <table class="issues-table">
+        <thead>
+            <tr><th>Requested</th><th>Action</th><th>Target</th><th>Run</th><th>Decision</th></tr>
+        </thead>
+        <tbody>
+        {% for approval in pending_approvals %}
+            <tr>
+                <td>
+                    <strong>{{ approval.requested_by_name }}</strong>
+                    <div class="muted">{{ approval.created_at }} UTC</div>
+                </td>
+                <td><code>{{ approval.action_kind }}</code></td>
+                <td>
+                    {% if approval.target_kind == "issue" %}
+                    <a href="/aegis/issues/{{ approval.target_id }}">issue #{{ approval.target_id }}</a>
+                    {% else %}
+                    {{ approval.target_kind }} #{{ approval.target_id }}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if approval.run_id %}<code class="checkin-run-id">{{ approval.run_id }}</code>
+                    {% else %}<span class="muted">untagged</span>{% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/admin/approvals/{{ approval.id }}/decision" class="agent-budget-form">
+                        {% include "partials/csrf.html" %}
+                        <label class="visually-hidden" for="approval-note-{{ approval.id }}">Note</label>
+                        <input id="approval-note-{{ approval.id }}" type="text" name="note" placeholder="note (optional)">
+                        <button type="submit" name="decision" value="approve" class="button">Approve</button>
+                        <button type="submit" name="decision" value="reject" class="button danger">Reject</button>
+                    </form>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
 {% if onboarded %}
 <div class="form-container">
     <h3>Agent onboarded: {{ onboarded.user.name }}</h3>
@@ -83,6 +133,9 @@
                 {% else %}
                 <span class="pill">unbudgeted</span>
                 {% endif %}
+                {% for kind in agent.gated_actions %}
+                <span class="pill">{{ kind }} needs approval</span>
+                {% endfor %}
             </div>
             <div class="agent-admin-controls">
                 {% if agent.user.paused_at %}
@@ -111,6 +164,16 @@
                     </select>
                     <button type="submit" class="button secondary">Set budget</button>
                 </form>
+                {% for kind in approval_kinds %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/approval-policy">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="action_kind" value="{{ kind }}">
+                    <input type="hidden" name="gate" value="{{ "off" if kind in agent.gated_actions else "on" }}">
+                    <button type="submit" class="button secondary">
+                        {{ "Stop requiring" if kind in agent.gated_actions else "Require" }} approval for {{ kind }}
+                    </button>
+                </form>
+                {% endfor %}
                 {% if agent.budget %}
                 <form method="post" action="/admin/agents/{{ agent.user.id }}/budget/clear"
                       data-confirm="Remove {{ agent.user.name }}'s budget? Its metered writes become unlimited again.">

@@ -102,3 +102,12 @@ import with the safe historical default of disabled.
 This is a per-project close gate, not a transition graph, approval engine, or
 multi-worker coordinator. It adds no external service and does not change Athena's
 single-process automation boundary.
+
+## Relationship to approval gates
+
+This policy and the per-actor approval gates in [`APPROVALS.md`](APPROVALS.md)
+are separate opt-in mechanisms that answer different questions: this one asks
+"may this issue be closed at all right now?", approvals ask "may *this actor*
+close it without me?". A close evaluates the blocked-close policy **first** —
+there is no point asking the operator to approve something the project forbids
+outright — so a refusal here is never converted into a pending approval request.

@@ -257,6 +257,22 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "decide_approval",
+        "POST",
+        "/approvals/7/decision",
+        lambda c, k: c.decide_approval(
+            7, decision="approve", note="ok", idempotency_key=k
+        ),
+    ),
+    (
+        "set_approval_policy",
+        "PUT",
+        "/approvals/policies/9",
+        lambda c, k: c.set_approval_policy(
+            9, action_kind="issue.close", idempotency_key=k
+        ),
+    ),
+    (
         "set_agent_budget",
         "PUT",
         "/users/9/budget",
@@ -369,6 +385,8 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    ("decide_approval", {"request_id": 7, "decision": "approve"}),
+    ("set_approval_policy", {"user_id": 9, "action_kind": "issue.close"}),
     ("set_agent_budget", {"user_id": 9, "window": "day", "action_limit": 50}),
     ("clear_agent_budget", {"user_id": 9}),
     ("label_page", {"page_id": 4, "label_id": 9}),
