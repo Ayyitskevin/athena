@@ -812,6 +812,25 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def label_page(
+        self, page_id: int, label_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/labels",
+            json={"label_id": label_id},
+            idempotency_key=idempotency_key,
+        )
+
+    def unlabel_page(
+        self, page_id: int, label_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.delete,
+            f"/pages/{page_id}/labels/{label_id}",
+            idempotency_key=idempotency_key,
+        )
+
     # --- events -------------------------------------------------------------
 
     def recent_events(

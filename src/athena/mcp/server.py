@@ -1016,6 +1016,21 @@ def build_server(client: AthenaClient) -> FastMCP:
         the page."""
         return client.unarchive_page(page_id, idempotency_key=idempotency_key)
 
+    @mutation_tool
+    def label_page(
+        page_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Attach an existing label (by id — see list_labels) to a Mentor page.
+        Idempotent — the same shared vocabulary issues use. Returns the page."""
+        return client.label_page(page_id, label_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def unlabel_page(
+        page_id: int, label_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Remove a label from a Mentor page. Returns the page."""
+        return client.unlabel_page(page_id, label_id, idempotency_key=idempotency_key)
+
     return mcp
 
 
