@@ -66,7 +66,19 @@
             <span class="muted">{{ e.target_kind }} #{{ e.target_id }}</span>
             {% endif %}
         {% endif %}
+        {% if e.reverses_event_id %}
+        {# History is append-only: this row UNDID an earlier one, and both stay. #}
+        <span class="muted">(undoes #{{ e.reverses_event_id }})</span>
+        {% endif %}
         <span class="muted activity-time">{{ e.created_at }}</span>
+        {% if reversed_ids is defined and e.id in reversed_ids %}
+        <span class="muted">undone</span>
+        {% elif undoable_ids is defined and e.id in undoable_ids %}
+        <form method="post" action="/aegis/activity/{{ e.id }}/undo" class="inline-form">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small">Undo</button>
+        </form>
+        {% endif %}
     </li>
     {% endfor %}
 </ul>

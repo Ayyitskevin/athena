@@ -978,6 +978,15 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def undo_action(self, event_id: int, *, idempotency_key: str | None = None) -> Any:
+        """Reverse one activity event by running its registered inverse as YOU.
+        Records a new compensating event; never edits history."""
+        return self._mutate(
+            self._client.post,
+            f"/activity/{event_id}/undo",
+            idempotency_key=idempotency_key,
+        )
+
     def list_approvals(self, *, state: str | None = None, limit: int = 100) -> Any:
         """The operator's approval queue (admin only)."""
         return self._result(

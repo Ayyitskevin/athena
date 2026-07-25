@@ -34,6 +34,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   window's ceiling is spent, and opt-in human-in-the-loop approval gates that
   refuse a gated action with a recorded ask the operator approves or rejects
   (`issue.close` only — one action kind, not a general approval workflow).
+- **Trust / Learn** adds undo by compensation: reversing an action records its
+  inverse as a new audited command linked to the event it reversed, so history is
+  never rewritten. Four verb pairs are reversible (issue and page archive and
+  labels); everything else is refused with its reversibility class. That is not
+  general undo.
 
 Phase 1 closed the original attribution and delegated-completion breaks. Items
 that remain intentionally open are still unchecked below.

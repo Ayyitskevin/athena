@@ -9,8 +9,10 @@ aegis/comments.py.
 
 from __future__ import annotations
 
+from collections.abc import Collection, Iterator
+import contextlib
+import contextvars
 import csv
-from collections.abc import Collection
 from datetime import datetime
 from io import StringIO
 import sqlite3
@@ -23,9 +25,41 @@ from athena.core import access, notifications, run_context
 _SELECT = (
     "SELECT a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
     "a.created_at, a.run_id, a.parent_run_id, a.forked_from_event_id, "
-    "a.imported_at, u.name AS actor_name FROM activity a "
+    "a.imported_at, a.reverses_event_id, u.name AS actor_name FROM activity a "
     "JOIN users u ON u.id = a.actor_id"
 )
+
+# The event the compensating command in flight is reversing (migration 0064), or
+# None outside an undo. A contextvar for the same reason run_context uses one: the
+# link rides alongside the call instead of being threaded through every recorder's
+# signature, and concurrent requests cannot see each other's value.
+#
+# Stamp-ONCE. `record` takes the value and clears it, so a compensator that records
+# several events links only its first — a reversal names one antecedent, and the
+# unique index in 0064 would reject the rest anyway. core/undo.py verifies after the
+# fact that a link actually landed: an undo that changed nothing is a refusal, not a
+# silent success.
+_pending_reversal: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "athena_pending_reversal", default=None
+)
+
+
+@contextlib.contextmanager
+def pending_reversal(event_id: int) -> Iterator[None]:
+    """Mark the events recorded inside this block as reversing ``event_id``."""
+    token = _pending_reversal.set(event_id)
+    try:
+        yield
+    finally:
+        _pending_reversal.reset(token)
+
+
+def _take_pending_reversal() -> int | None:
+    value = _pending_reversal.get()
+    if value is not None:
+        _pending_reversal.set(None)
+    return value
+
 
 # Sentinel for the read functions' `actor`: "no visibility gating" (internal callers,
 # per-entity sections already gated upstream by their detail route's 404, and tests).
@@ -231,8 +265,8 @@ def record(
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
-            "forked_from_event_id, visibility_restricted) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "forked_from_event_id, visibility_restricted, reverses_event_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 actor_id,
                 verb,
@@ -243,6 +277,7 @@ def record(
                 parent_run_id,
                 forked_from_event_id,
                 0 if scope_is_complete else 1,
+                _take_pending_reversal(),
             ),
         )
         event_id = cur.lastrowid
@@ -279,6 +314,46 @@ def record(
 def get_activity(conn: sqlite3.Connection, activity_id: int) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE a.id = ?", (activity_id,)).fetchone()
     return dict(row) if row else None
+
+
+def get_visible_activity(
+    conn: sqlite3.Connection, activity_id: int, actor: dict | None
+) -> dict | None:
+    """One event, or None when it does not exist *or* this actor may not see it.
+
+    The same predicate the feeds use, applied to a single id, so a caller that acts
+    on an event by id (undo) cannot reach past the visibility gate the list reads
+    enforce. Missing and hidden deliberately collapse to the same answer: an
+    event-by-id probe must not become an oracle for private work."""
+    gate, params = access.event_visibility_clause(conn, actor, alias="a")
+    where = f" WHERE a.id = ?{f' AND {gate}' if gate else ''}"
+    row = conn.execute(f"{_SELECT}{where}", [activity_id, *params]).fetchone()
+    return dict(row) if row else None
+
+
+def reversal_of(conn: sqlite3.Connection, event_id: int) -> dict | None:
+    """The event that already reversed ``event_id``, if any (0064 allows one)."""
+    row = conn.execute(
+        f"{_SELECT} WHERE a.reverses_event_id = ?", (event_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def reversed_event_ids(
+    conn: sqlite3.Connection, event_ids: Collection[int]
+) -> set[int]:
+    """Which of these events already have a reversal — one query for a whole feed,
+    so rendering an undo affordance costs no per-row lookup."""
+    ids = [int(event_id) for event_id in event_ids]
+    if not ids:
+        return set()
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        "SELECT DISTINCT reverses_event_id FROM activity "
+        f"WHERE reverses_event_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {row["reverses_event_id"] for row in rows}
 
 
 def list_activity(

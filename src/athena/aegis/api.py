@@ -299,25 +299,36 @@ class CommentOut(BaseModel):
     created_at: str
 
 
+_ISSUE_COMMAND_STATUS = {
+    "unauthorized": 401,
+    "forbidden": 403,
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "precondition_required": 428,
+    "invalid_precondition": 400,
+    "precondition_too_large": 431,
+    "precondition_failed": 412,
+    "lease_generation_required": 428,
+    "invalid_lease_generation": 422,
+    "lease_generation_mismatch": 409,
+}
+
+
+def issue_command_status(exc: issue_commands.IssueCommandError) -> int:
+    """The HTTP status this command rejection means.
+
+    Public because the undo engine needs the same answer from outside this module
+    (`aegis/issue_undo.py`): its route lives in ``core``, which may not import
+    ``aegis`` to translate. One mapping, so the two boundaries cannot drift."""
+    return _ISSUE_COMMAND_STATUS[exc.kind]
+
+
 def _issue_command_http_error(
     exc: issue_commands.IssueCommandError,
 ) -> HTTPException:
     """Translate a framework-free command rejection at the REST boundary."""
-    status_code = {
-        "unauthorized": 401,
-        "forbidden": 403,
-        "not_found": 404,
-        "invalid": 422,
-        "conflict": 409,
-        "precondition_required": 428,
-        "invalid_precondition": 400,
-        "precondition_too_large": 431,
-        "precondition_failed": 412,
-        "lease_generation_required": 428,
-        "invalid_lease_generation": 422,
-        "lease_generation_mismatch": 409,
-    }[exc.kind]
-    return HTTPException(status_code=status_code, detail=exc.detail)
+    return HTTPException(status_code=issue_command_status(exc), detail=exc.detail)
 
 
 _PRECONDITION_HTTP = {

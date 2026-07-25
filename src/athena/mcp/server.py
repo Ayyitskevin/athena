@@ -510,6 +510,28 @@ def build_server(client: AthenaClient) -> FastMCP:
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
 
+    @mutation_tool
+    def undo_action(
+        event_id: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Undo one activity event by applying its registered inverse.
+
+        History is append-only, so this NEVER edits or deletes the original event:
+        it runs the inverse as a new, fully audited action whose event points back
+        at the one it reversed. You act as yourself — the same role, scope, and
+        visibility rules apply as if you had made the change by hand, so undo is
+        not a way to reach someone else's write.
+
+        Reversible today: issue archive/unarchive and label/unlabel, page
+        archive/unarchive and label/unlabel. Everything else is refused with a
+        reason: a comment or an attachment is one-way (delete it explicitly
+        instead), a destroyed row is a trapdoor. Refused too when the event was
+        already undone, was imported from another system, or when its effect is no
+        longer in force (someone already changed it back). Find event ids with
+        `list_events` or `list_activity`."""
+        return client.undo_action(event_id, idempotency_key=idempotency_key)
+
     @mcp.tool()
     def list_approvals(state: str | None = None, limit: int = 100) -> list:
         """The operator's approval queue — actions an agent asked to take that are

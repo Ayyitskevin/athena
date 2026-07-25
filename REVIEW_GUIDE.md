@@ -123,7 +123,8 @@ requests are less useful than one falsifiable architectural challenge.
 
 Athena is not a public multi-tenant service, an enterprise permission system,
 a real-time collaborative editor, or a general workflow engine. General undo and
-complete command ownership are roadmap goals. Durable per-agent action budgets
+complete command ownership are roadmap goals — undo by compensation ships for four
+reversible verb pairs ([`docs/UNDO.md`](docs/UNDO.md)), not for every write. Durable per-agent action budgets
 ([`docs/AGENT_BUDGETS.md`](docs/AGENT_BUDGETS.md)) and human-in-the-loop approval
 gates ([`docs/APPROVALS.md`](docs/APPROVALS.md)) are implemented, both opt-in and
 both deliberately narrow — budgets meter four writes, and `issue.close` is the

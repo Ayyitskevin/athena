@@ -52,12 +52,15 @@ from athena.core import (
     sessions,
     tokens,
     tokens_api,
+    undo,
     users,
     users_api,
     webhooks,
     webhooks_api,
 )
+from athena.aegis import issue_undo as aegis_issue_undo
 from athena.mentor import api as mentor_api
+from athena.mentor import page_undo as mentor_page_undo
 from athena.web import activity as web_activity
 from athena.web import admin as web_admin
 from athena.web import auth as web_auth
@@ -1147,6 +1150,14 @@ def create_app(
 
     app = FastAPI(title="Athena", lifespan=lifespan)
 
+    # Teach the undo engine each layer's inverses. core/undo.py owns the mechanism
+    # and may not import aegis/mentor (the import contract), so the composition
+    # root is the only place that may know both — the same reason the routers are
+    # assembled here. Registration is idempotent, so building many apps in one
+    # process (every test) is fine.
+    aegis_issue_undo.register()
+    mentor_page_undo.register()
+
     # A tagged write that tries to continue ANOTHER actor's run is refused deep
     # in activity.record (transport-neutral, transaction-rolled-back); this maps
     # the refusal to the same 403 shape every authorization failure uses.
@@ -1274,6 +1285,21 @@ def create_app(
         )
 
     app.add_exception_handler(approvals.ApprovalRejected, _approval_rejected)
+
+    # Undo refusals are raised transport-neutrally from core/undo.py and from the
+    # compensators, so one handler answers identically for REST, the browser, and
+    # MCP-through-REST. The status code travels on the exception because the
+    # reasons genuinely differ (404 invisible, 409 already reversed or nothing
+    # left to reverse, 422 not reversible); `code` is the stable contract.
+    def _undo_refused(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, undo.UndoRefused):
+            raise exc
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc), "code": exc.code},
+        )
+
+    app.add_exception_handler(undo.UndoRefused, _undo_refused)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
