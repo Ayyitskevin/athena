@@ -234,29 +234,35 @@ def labels_for_issues(
 # --- The page<->label join (the Mentor twin of the issue join above) ---------
 
 
-def add_label_to_page(conn: sqlite3.Connection, page_id: int, label_id: int) -> bool:
+def add_label_to_page(
+    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool = True
+) -> bool:
     """Attach a label to a page. Idempotent (composite PK + OR IGNORE). Returns True
     if a new pairing was created, False if it was already attached — so the caller
     records the audit event only on a real change. Raises sqlite3.IntegrityError if
-    the page or label doesn't exist (the FKs)."""
+    the page or label doesn't exist (the FKs). ``commit=False`` lets the audited
+    command fold the attach and its event into one transaction."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO page_labels (page_id, label_id) VALUES (?, ?)",
         (page_id, label_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 
 def remove_label_from_page(
-    conn: sqlite3.Connection, page_id: int, label_id: int
+    conn: sqlite3.Connection, page_id: int, label_id: int, *, commit: bool = True
 ) -> bool:
     """Detach a label from a page. Returns True if a pairing was removed, False if
-    the pair wasn't attached (so the caller can 404)."""
+    the pair wasn't attached (so the caller can 404). ``commit=False`` lets the
+    audited command fold the detach and its event into one transaction."""
     cur = conn.execute(
         "DELETE FROM page_labels WHERE page_id = ? AND label_id = ?",
         (page_id, label_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

@@ -27,7 +27,6 @@ from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
 from athena.mentor import (
-    page_activity,
     page_commands,
     page_comment_commands,
     page_comments,
@@ -980,18 +979,18 @@ def attach_label(
     payload: LabelAttach,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
+) -> dict | JSONResponse:
     # Labelling a page is an open write like editing it (Mentor's shared-wiki model) —
     # but only on a page the actor can see. 404 if missing or hidden; 422 if the label
     # id isn't real (rather than letting the FK surface a 500). Idempotent — re-attaching
-    # records nothing.
-    page = _page_for_read(conn, page_id, actor)
-    if labels.get_label(conn, payload.label_id) is None:
-        raise HTTPException(status_code=422, detail="no such label")
-    if labels.add_label_to_page(conn, page_id, payload.label_id):
-        page_activity.record_page_label_added(
+    # records nothing. The command owns the atomic attach + 'page_labeled' event.
+    _page_for_read(conn, page_id, actor)
+    try:
+        page = page_commands.attach_page_label(
             conn, actor_id=actor["id"], page_id=page_id, label_id=payload.label_id
         )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
     return _with_labels(conn, page)
 
 
@@ -1001,11 +1000,14 @@ def detach_label(
     label_id: int,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> dict:
-    page = _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
-    if not labels.remove_label_from_page(conn, page_id, label_id):
-        raise HTTPException(status_code=404, detail="label not on this page")
-    page_activity.record_page_label_removed(
-        conn, actor_id=actor["id"], page_id=page_id, label_id=label_id
-    )
+) -> dict | JSONResponse:
+    # 404 if the page is missing or hidden; the command owns the atomic detach +
+    # 'page_unlabeled' event and 404s a label that isn't attached.
+    _page_for_read(conn, page_id, actor)
+    try:
+        page = page_commands.detach_page_label(
+            conn, actor_id=actor["id"], page_id=page_id, label_id=label_id
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
     return _with_labels(conn, page)

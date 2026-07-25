@@ -34,7 +34,6 @@ from athena.core import (
 )
 from athena.core.deps import get_conn
 from athena.mentor import (
-    page_activity,
     page_commands,
     page_comment_commands,
     page_comments,
@@ -1163,11 +1162,17 @@ def add_page_label(
         return HTMLResponse(
             '<div class="error">Label name is required.</div>', status_code=400
         )
+    # Find-or-create the label (web vocabulary convenience), then the command owns
+    # the atomic attach + 'page_labeled' event — the same one REST calls. A page
+    # that vanished in the race past the visibility gate lands back on the page
+    # route (which 404s) rather than erroring here.
     label = labels.get_or_create_label(conn, name=name)
-    if labels.add_label_to_page(conn, page_id, label["id"]):  # idempotent
-        page_activity.record_page_label_added(
+    try:
+        page_commands.attach_page_label(
             conn, actor_id=user["id"], page_id=page_id, label_id=label["id"]
         )
+    except page_commands.PageCommandError:
+        pass
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -1192,8 +1197,13 @@ def remove_page_label(
     _, err = _page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
-    if labels.remove_label_from_page(conn, page_id, label_id):
-        page_activity.record_page_label_removed(
+    # The command owns the atomic detach + 'page_unlabeled' event. A label that
+    # isn't attached is a no-op in the UI (double-submit) — land back on the page
+    # rather than 404, the same forgiveness the issue-label form gives.
+    try:
+        page_commands.detach_page_label(
             conn, actor_id=user["id"], page_id=page_id, label_id=label_id
         )
+    except page_commands.PageCommandError:
+        pass
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)

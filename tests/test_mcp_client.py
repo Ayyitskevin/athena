@@ -257,6 +257,18 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "label_page",
+        "POST",
+        "/pages/4/labels",
+        lambda c, k: c.label_page(4, 9, idempotency_key=k),
+    ),
+    (
+        "unlabel_page",
+        "DELETE",
+        "/pages/4/labels/9",
+        lambda c, k: c.unlabel_page(4, 9, idempotency_key=k),
+    ),
+    (
         "create_automation_rule",
         "POST",
         "/automation/rules",
@@ -343,6 +355,8 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    ("label_page", {"page_id": 4, "label_id": 9}),
+    ("unlabel_page", {"page_id": 4, "label_id": 9}),
     (
         "create_automation_rule",
         {"name": "rule", "trigger_verb": "created", "action_type": "comment"},

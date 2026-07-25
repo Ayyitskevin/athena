@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import db, etag
+from athena.core import db, etag, labels
 from athena.mentor import page_activity, page_etags, pages
 
 _ERROR_KINDS = (
@@ -228,6 +228,61 @@ def delete_page(
         )
     pages.finalize_page_deletion(conn, page_id, stored_names)
     return True
+
+
+def attach_page_label(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, label_id: int
+) -> dict:
+    """Attach a label to a page atomically with its ``page_labeled`` event — the
+    Mentor twin of aegis attach_label. Previously the join write and the activity
+    recorder committed SEPARATELY (labels.add_label_to_page committed, then the
+    event committed on its own), so a crash between them could label a page with no
+    ``page_labeled`` event on the trail. Idempotent: re-attaching an attached pair
+    records nothing. Visibility/existence authorization stays at the transport
+    boundary (like the other page commands); the page is re-read under the write
+    lock as the race guard. Raises ``PageCommandError('not_found')`` if the page
+    vanished and ``('invalid', 'no such label')`` for an unknown label id (checked
+    here so the FK cannot surface as a 500). Returns the page."""
+    with db.transaction(conn, immediate=True):
+        page = pages.get_page(conn, page_id)
+        if page is None:
+            raise PageCommandError("not_found", "no such page")
+        if labels.get_label(conn, label_id) is None:
+            raise PageCommandError("invalid", "no such label")
+        if labels.add_label_to_page(conn, page_id, label_id, commit=False):
+            page_activity.record_page_label_added(
+                conn,
+                actor_id=actor_id,
+                page_id=page_id,
+                label_id=label_id,
+                commit=False,
+            )
+        return page
+
+
+def detach_page_label(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, label_id: int
+) -> dict:
+    """Detach a label from a page atomically with its ``page_unlabeled`` event —
+    the Mentor twin of aegis detach_label, closing the same split-commit gap as
+    attach_page_label. Raises ``PageCommandError('not_found')`` with "no such page"
+    if the page vanished, or with "label not on this page" when the pair isn't
+    attached — the boundary maps both to its 404 (REST) or treats the unattached
+    pair as a double-submit no-op (browser). Returns the page."""
+    with db.transaction(conn, immediate=True):
+        page = pages.get_page(conn, page_id)
+        if page is None:
+            raise PageCommandError("not_found", "no such page")
+        if not labels.remove_label_from_page(conn, page_id, label_id, commit=False):
+            raise PageCommandError("not_found", "label not on this page")
+        page_activity.record_page_label_removed(
+            conn,
+            actor_id=actor_id,
+            page_id=page_id,
+            label_id=label_id,
+            commit=False,
+        )
+        return page
 
 
 def set_page_archived(
