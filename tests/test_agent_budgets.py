@@ -370,6 +370,146 @@ def test_page_writes_are_metered_too(tmp_path):
         )
 
 
+def test_cockpit_sets_and_clears_a_budget(tmp_path):
+    # The browser controls call the same core owner as REST and MCP, so the three
+    # cannot drift — and the agents page shows consumption rather than hiding it.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        c.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
+        r = c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
+        agent = _agent(c)
+        agent_id = agent["user"]["id"]
+
+        assert (
+            c.post(
+                f"/admin/agents/{agent_id}/budget",
+                data={"action_limit": "2", "window": "hour"},
+                follow_redirects=False,
+            ).status_code
+            == 303
+        )
+        page = c.get("/admin/agents")
+        assert "0/2 actions this hour" in page.text
+
+        # A non-numeric limit is refused without touching the stored ceiling.
+        rejected = c.post(
+            f"/admin/agents/{agent_id}/budget",
+            data={"action_limit": "lots", "window": "hour"},
+            follow_redirects=False,
+        )
+        assert rejected.status_code == 303
+        assert "error=" in rejected.headers["location"]
+        assert (
+            c.get(f"/users/{agent_id}/budget", headers=H1).json()["action_limit"] == 2
+        )
+
+        assert (
+            c.post(
+                f"/admin/agents/{agent_id}/budget/clear", follow_redirects=False
+            ).status_code
+            == 303
+        )
+        assert c.get(f"/users/{agent_id}/budget", headers=H1).json() is None
+        assert "unbudgeted" in c.get("/admin/agents").text
+
+    assert [e["detail"] for e in _events(db_file, "agent_budget_set")] == [
+        "2 actions per hour"
+    ]
+    assert len(_events(db_file, "agent_budget_cleared")) == 1
+
+
+def test_cockpit_budget_controls_are_admin_only(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        member = c.post(
+            "/users",
+            json={
+                "email": "m@e.com",
+                "name": "Mem",
+                "role": "member",
+                "password": "pw",
+            },
+            headers=H1,
+        ).json()
+        assert member["role"] == "member"
+        as_member = TestClient(app)
+        as_member.post(
+            "/login",
+            data={"email": "m@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        as_member.headers["X-CSRF-Token"] = as_member.cookies.get("athena_csrf", "")
+        agent_id = agent["user"]["id"]
+        assert (
+            as_member.post(
+                f"/admin/agents/{agent_id}/budget",
+                data={"action_limit": "5", "window": "day"},
+                follow_redirects=False,
+            ).status_code
+            == 403
+        )
+        assert (
+            as_member.post(
+                f"/admin/agents/{agent_id}/budget/clear", follow_redirects=False
+            ).status_code
+            == 403
+        )
+        assert c.get(f"/users/{agent_id}/budget", headers=H1).json() is None
+
+
+def test_unknown_user_is_a_404_on_every_budget_route(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        assert c.get("/users/9999/budget", headers=H1).status_code == 404
+        assert c.delete("/users/9999/budget", headers=H1).status_code == 404
+
+
+def test_core_helpers_guard_their_inputs(tmp_path):
+    # The core owner validates independently of any transport's schema: the REST
+    # Literal rejects a bad window before it arrives, but the browser form and any
+    # in-process caller reach these directly.
+    import pytest
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+    conn = db.connect(db_file)
+    agent_id = agent["user"]["id"]
+
+    with pytest.raises(ValueError, match="window must be one of"):
+        budgets.set_budget(
+            conn,
+            actor_id=1,
+            target_user_id=agent_id,
+            window="fortnight",
+            action_limit=5,
+        )
+    with pytest.raises(ValueError, match="must be an integer"):
+        budgets.set_budget(
+            conn, actor_id=1, target_user_id=agent_id, window="day", action_limit="5"
+        )
+    with pytest.raises(ValueError, match="must not be negative"):
+        budgets.set_budget(
+            conn, actor_id=1, target_user_id=agent_id, window="day", action_limit=-1
+        )
+    # Clearing an unbudgeted user is an honest False, and records nothing.
+    assert budgets.clear_budget(conn, actor_id=1, target_user_id=agent_id) is False
+    # An anonymous actor has no budget to charge — the gate is per-identity.
+    budgets.charge(conn, None)
+    conn.close()
+    assert _events(db_file, "agent_budget_cleared") == []
+
+
 def test_automation_rule_firings_are_not_metered(tmp_path):
     # A budget bounds what AGENTS initiate. It must never silently stop a rule the
     # operator configured, so rule firings go through the unmetered command path.
