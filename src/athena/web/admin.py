@@ -27,7 +27,6 @@ from athena.core import (
     oidc,
     oidc_commands,
     run_replay,
-    sessions,
     token_commands,
     tokens,
     user_commands,
@@ -173,25 +172,31 @@ def update_own_password(
             context=_password_context(error="New passwords do not match."),
             status_code=400,
         )
-    if (
-        users.verify_credentials(conn, email=user["email"], password=current_password)
-        is None
-    ):
+    # The command owns the ownership check, the hash write, the revocation of every
+    # OTHER session (so a device signed in on the old password can't keep riding a
+    # live cookie for up to SESSION_TTL_DAYS, while this browser stays signed in),
+    # and the atomic 'password_changed' event.
+    try:
+        user_commands.change_own_password(
+            conn,
+            actor=user,
+            current_password=current_password,
+            new_password=new_password,
+            keep_session_raw=request.cookies.get(config.SESSION_COOKIE),
+        )
+    except user_commands.UserCommandError as exc:
         return templates.TemplateResponse(
             request=request,
             name="settings/password.html",
-            context=_password_context(error="Current password is incorrect."),
-            status_code=400,
+            context=_password_context(
+                error=(
+                    "Current password is incorrect."
+                    if exc.status_code == 400
+                    else "Password could not be changed."
+                )
+            ),
+            status_code=400 if exc.status_code == 400 else exc.status_code,
         )
-
-    users.set_password(conn, user["id"], new_password)
-    # Revoke every OTHER session of this user, so a device signed in on the old
-    # password (a shared/stolen/forgotten browser) can't keep riding a live cookie for
-    # up to SESSION_TTL_DAYS. The current browser's session is kept — the user who just
-    # rotated the password stays logged in here.
-    sessions.revoke_other_sessions(
-        conn, user["id"], request.cookies.get(config.SESSION_COOKIE)
-    )
     return RedirectResponse("/settings/password?updated=1", status_code=303)
 
 
@@ -711,13 +716,25 @@ def update_user_password(
             context=_admin_context(conn, error="Password is required."),
             status_code=400,
         )
-    users.set_password(conn, user_id, password)
-    # An admin resetting a compromised or departing user's password must actually
-    # end that user's access — revoke every live session so an existing cookie can't
-    # keep authenticating for up to SESSION_TTL_DAYS. (The self-service change path
-    # does the same for other devices; this is the admin-initiated equivalent, and
-    # here we keep none of the target's sessions.)
-    sessions.revoke_all_sessions(conn, user_id)
+    # The command owns the admin authorization, the hash write, the revocation of
+    # EVERY live session (an admin resetting a compromised or departing user's
+    # password must end that access now, not after SESSION_TTL_DAYS), and the atomic
+    # 'password_reset' event — the privilege trail this lever previously lacked.
+    try:
+        user_commands.reset_user_password(
+            conn, actor=actor, target_user_id=user_id, password=password
+        )
+    except user_commands.UserCommandError as exc:
+        if exc.status_code == 404:
+            return HTMLResponse(
+                '<div class="error">No such user.</div>', status_code=404
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/users.html",
+            context=_admin_context(conn, error=str(exc)),
+            status_code=400 if exc.status_code == 422 else exc.status_code,
+        )
     return RedirectResponse("/admin/users", status_code=303)
 
 

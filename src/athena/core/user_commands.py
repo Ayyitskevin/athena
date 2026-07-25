@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import activity, db, users
+from athena.core import activity, db, identity, passwords, sessions, tokens, users
 
 # Free-form activity verbs (activity.verb is plain TEXT; see migrations/0017).
 VERB_CREATED_USER = "created_user"
 VERB_CHANGED_ROLE = "changed_role"
 VERB_MARKED_AGENT = "marked_agent"
 VERB_UNMARKED_AGENT = "unmarked_agent"
+VERB_PASSWORD_CHANGED = "password_changed"
+VERB_PASSWORD_RESET = "password_reset"
 
 
 class UserCommandError(Exception):
@@ -32,6 +34,26 @@ class UserCommandError(Exception):
     def __init__(self, message: str, *, status_code: int) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _require_admin_actor(actor: dict | None) -> dict:
+    """Resolve the administrative authorization boundary for a credential write.
+
+    Mirrors ``agent_commands._require_admin_actor``: browser sessions and the
+    explicitly trusted actor-header path carry no token scope cap, while a bearer
+    actor must hold the admin scope in addition to the admin role. Keeping both
+    checks inside the command means a new adapter cannot turn a password reset —
+    which hands over an account — into an authorization bypass.
+    """
+    if actor is None:
+        raise UserCommandError("authentication required", status_code=401)
+    if not identity.is_admin(actor):
+        raise UserCommandError("admin role required", status_code=403)
+    if not identity.token_has_scope(actor, tokens.ADMIN_SCOPE):
+        raise UserCommandError(
+            f"token scope required: {tokens.ADMIN_SCOPE}", status_code=403
+        )
+    return actor
 
 
 def _create_detail(user: dict) -> str:
@@ -118,6 +140,112 @@ def set_user_role(
                 detail=f"{target['role']} → {updated['role']}",
                 commit=False,
             )
+        return updated
+
+
+def change_own_password(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    current_password: str,
+    new_password: str,
+    keep_session_raw: str | None = None,
+) -> dict:
+    """Rotate the CALLER's own password, revoke the sessions that rotation
+    invalidates, and record a 'password_changed' event — all in one transaction.
+
+    Ownership is proven by ``current_password``, verified here under the write lock
+    rather than at the transport, so the check and the write cannot straddle a
+    concurrent rotation. Every OTHER session of the account is revoked so a device
+    signed in on the old password cannot keep riding a live cookie for up to
+    SESSION_TTL_DAYS; the caller's own session (``keep_session_raw``) survives, so
+    they stay signed in here. A missing cookie revokes everything — the safe
+    direction.
+
+    Previously the hash write and the session revocation were two independent
+    commits with no audit event at all, so a crash between them left a rotated
+    password with live sessions and nothing on the append-only trail. Neither the
+    password nor its hash is ever recorded.
+
+    Raises UserCommandError(401) when unauthenticated, (422) for a blank current or
+    new password, (400) when the current password does not match, and (404) if the
+    account vanished before the write.
+    """
+    if actor is None:
+        raise UserCommandError("authentication required", status_code=401)
+    new_password = new_password.strip()
+    if not current_password.strip():
+        raise UserCommandError("current password is required", status_code=422)
+    if not new_password:
+        raise UserCommandError("new password is required", status_code=422)
+    with db.transaction(conn, immediate=True):
+        target = users.get_user(conn, actor["id"])
+        if target is None:
+            raise UserCommandError("no such user", status_code=404)
+        # Verify against the stored hash directly instead of users.verify_credentials:
+        # that helper transparently re-hashes at a newer cost AND COMMITS, which would
+        # end this transaction mid-command — and the upgrade is pointless when the very
+        # next statement replaces the hash. An account with no password (SSO-only) has
+        # nothing to prove ownership with and is refused, exactly as before.
+        if not passwords.verify_password(current_password, target["password_hash"]):
+            raise UserCommandError("current password is incorrect", status_code=400)
+        updated = users.set_password(conn, target["id"], new_password, commit=False)
+        # Never None: the row was read under this same write lock.
+        assert updated is not None
+        revoked = sessions.revoke_other_sessions(
+            conn, target["id"], keep_session_raw, commit=False
+        )
+        activity.record(
+            conn,
+            actor_id=target["id"],
+            verb=VERB_PASSWORD_CHANGED,
+            target_kind="user",
+            target_id=target["id"],
+            detail=f"{revoked} other session(s) revoked",
+            commit=False,
+        )
+        return updated
+
+
+def reset_user_password(
+    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int, password: str
+) -> dict:
+    """Reset a user's password as an admin, revoke EVERY session of that account, and
+    record a 'password_reset' event — all in one transaction.
+
+    This is a privilege operation, not a preference: afterwards the admin can sign in
+    as the target, and every later write is attributed to the target's account. It was
+    the one admin lever with no audit trail at all (role change, agent flag, pause,
+    token kill switch, and offboard are all audited commands), so the log could not
+    answer who reset a password or when. Unlike the self-service change, no session of
+    the target is kept — resetting a compromised or departing user's credential must
+    actually end their access now rather than after SESSION_TTL_DAYS.
+
+    Authorization is enforced here (admin role, plus the admin scope for a bearer
+    token) so no adapter can reach it with less. Neither the password nor its hash is
+    ever recorded. Raises UserCommandError(401/403) for authorization, (422) for a
+    blank password, and (404) for an unknown target.
+    """
+    actor = _require_admin_actor(actor)
+    password = password.strip()
+    if not password:
+        raise UserCommandError("password is required", status_code=422)
+    with db.transaction(conn, immediate=True):
+        if users.get_user(conn, target_user_id) is None:
+            raise UserCommandError("no such user", status_code=404)
+        updated = users.set_password(conn, target_user_id, password, commit=False)
+        # Never None: the row was read under this same write lock.
+        assert updated is not None
+        revoked = sessions.revoke_all_sessions(conn, target_user_id, commit=False)
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=VERB_PASSWORD_RESET,
+            target_kind="user",
+            target_id=target_user_id,
+            detail=f"{revoked} session(s) revoked",
+            commit=False,
+        )
         return updated
 
 
