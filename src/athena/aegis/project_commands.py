@@ -144,6 +144,115 @@ def delete_project(conn: sqlite3.Connection, *, actor_id: int, project_id: int) 
         return projects.delete_project(conn, project_id, commit=False)
 
 
+class ProjectAccessCommandError(Exception):
+    """A transport-neutral project-access rejection. ``status_code`` lets each adapter
+    map it (404 for a vanished project, 404 for a non-member removal)."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def set_project_visibility(
+    conn: sqlite3.Connection, *, actor_id: int, project_id: int, visibility: str
+) -> dict:
+    """Flip a project public↔private atomically with its ``project_made_private`` /
+    ``project_made_public`` event — the Aegis twin of
+    ``space_commands.set_space_visibility``.
+
+    Going private also inserts the creator as an explicit member (they keep access via
+    ``created_by`` regardless; this surfaces them in the roster), folded into the SAME
+    transaction. Previously the flip, that membership row, and the event were THREE
+    independent commits, so a crash mid-sequence left a permanently unaudited
+    access-control change — a project could become private with nothing on the
+    append-only trail saying who narrowed it, or (worse) go private without its
+    creator's roster row.
+
+    The boundary validates the value and skips a no-op set-to-same, so this is only
+    called on a real transition. Raises ``ProjectAccessCommandError(404)`` if the
+    project vanished before the write."""
+    with db.transaction(conn, immediate=True):
+        before = projects.get_project(conn, project_id)
+        if before is None:
+            raise ProjectAccessCommandError("no such project", status_code=404)
+        updated = projects.set_visibility(conn, project_id, visibility, commit=False)
+        if updated is None:
+            raise ProjectAccessCommandError("no such project", status_code=404)
+        if visibility == "private":
+            access.add_project_member(
+                conn,
+                project_id,
+                before["created_by"],
+                added_by=actor_id,
+                commit=False,
+            )
+        project_activity.record_project_visibility_changed(
+            conn,
+            actor_id=actor_id,
+            project_id=project_id,
+            name=updated["name"],
+            visibility=visibility,
+            commit=False,
+        )
+        return updated
+
+
+def add_project_member(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    user_id: int,
+    member_name: str,
+) -> bool:
+    """Grant a user read access to a private project atomically with its
+    ``project_member_added`` event. Idempotent: a re-add records nothing and returns
+    False. The boundary validates that the user exists (422) and passes the member's
+    name for the audit detail. Previously the grant and its event were two commits, so
+    a crash between them left an unaudited access grant."""
+    with db.transaction(conn, immediate=True):
+        added = access.add_project_member(
+            conn, project_id, user_id, added_by=actor_id, commit=False
+        )
+        if added:
+            project_activity.record_project_member_added(
+                conn,
+                actor_id=actor_id,
+                project_id=project_id,
+                member_name=member_name,
+                commit=False,
+            )
+        return added
+
+
+def remove_project_member(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    user_id: int,
+    member_name: str,
+) -> bool:
+    """Revoke a user's access to a private project atomically with its
+    ``project_member_removed`` event. Returns True if a row was removed; no event for a
+    removal that didn't happen (the REST boundary 404s a non-member, the browser treats
+    it as a no-op). The boundary passes the member's name for the audit detail, since
+    the membership row is gone by the time it reads. Previously the revoke and its
+    event were two commits, so a crash between them left an unaudited access
+    revocation."""
+    with db.transaction(conn, immediate=True):
+        removed = access.remove_project_member(conn, project_id, user_id, commit=False)
+        if removed:
+            project_activity.record_project_member_removed(
+                conn,
+                actor_id=actor_id,
+                project_id=project_id,
+                member_name=member_name,
+                commit=False,
+            )
+        return removed
+
+
 def set_blocked_close_policy(
     conn: sqlite3.Connection,
     *,

@@ -18,7 +18,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena.aegis import (
     issues,
-    project_activity,
     project_commands,
     project_etags,
     projects,
@@ -376,18 +375,19 @@ def project_set_visibility(
             status_code=400,
         )
     if visibility != project["visibility"]:
-        projects.set_visibility(conn, project_id, visibility)
-        if visibility == "private":
-            access.add_project_member(
-                conn, project_id, project["created_by"], added_by=user["id"]
+        # The command owns the flip, the creator's roster row when going private, and
+        # the atomic visibility event — the same one REST calls. A project that
+        # vanished in the race past the authorization gate simply lands back on the
+        # access page (which 404s).
+        try:
+            project_commands.set_project_visibility(
+                conn,
+                actor_id=user["id"],
+                project_id=project_id,
+                visibility=visibility,
             )
-        project_activity.record_project_visibility_changed(
-            conn,
-            actor_id=user["id"],
-            project_id=project_id,
-            name=project["name"],
-            visibility=visibility,
-        )
+        except project_commands.ProjectAccessCommandError:
+            pass
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
 
@@ -468,10 +468,14 @@ def project_add_member(
     member = users.get_user(conn, int(user_id)) if user_id.strip().isdigit() else None
     if member is None:
         return HTMLResponse('<div class="error">No such user.</div>', status_code=400)
-    if access.add_project_member(conn, project_id, member["id"], added_by=user["id"]):
-        project_activity.record_project_member_added(
-            conn, actor_id=user["id"], project_id=project_id, member_name=member["name"]
-        )
+    # The command owns the grant and its atomic audit event — the same one REST calls.
+    project_commands.add_project_member(
+        conn,
+        actor_id=user["id"],
+        project_id=project_id,
+        user_id=member["id"],
+        member_name=member["name"],
+    )
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
 
@@ -497,13 +501,15 @@ def project_remove_member(
     if err is not None:
         return err
     member = users.get_user(conn, member_id)
-    if access.remove_project_member(conn, project_id, member_id):
-        project_activity.record_project_member_removed(
-            conn,
-            actor_id=user["id"],
-            project_id=project_id,
-            member_name=member["name"] if member else str(member_id),
-        )
+    # The command owns the revoke and its atomic audit event — the same one REST
+    # calls. A no-op (they weren't a member) records nothing and still 303s back.
+    project_commands.remove_project_member(
+        conn,
+        actor_id=user["id"],
+        project_id=project_id,
+        user_id=member_id,
+        member_name=member["name"] if member else str(member_id),
+    )
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
 

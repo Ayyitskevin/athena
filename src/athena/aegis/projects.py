@@ -186,7 +186,7 @@ def update_project(
 
 
 def set_visibility(
-    conn: sqlite3.Connection, project_id: int, visibility: str
+    conn: sqlite3.Connection, project_id: int, visibility: str, *, commit: bool = True
 ) -> dict | None:
     """Flip a project public ↔ private. Returns the updated project, or None if no
     project has that id (so the boundary can 404). The boundary validates the value
@@ -195,11 +195,13 @@ def set_visibility(
     but never writes it, so there is exactly one owner of the flag (the cardinal
     one-owner rule). Narrowing to 'private' takes effect immediately: every read path
     already filters through access.can_see_project, inert only because nothing was
-    private yet."""
+    private yet. ``commit=False`` lets the audited project-access command fold the
+    flip, the creator's roster row, and the activity event into one transaction."""
     cur = conn.execute(
         "UPDATE projects SET visibility = ? WHERE id = ?", (visibility, project_id)
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if cur.rowcount == 0:
         return None
     return get_project(conn, project_id)
