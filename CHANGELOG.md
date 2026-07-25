@@ -10,6 +10,9 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- MCP `label_page` / `unlabel_page` tools, so agents can manage the shared label
+  vocabulary on Mentor pages through the same REST behavior the browser uses —
+  closing an API/MCP parity gap for an existing durable write.
 - A visibility-safe Fleet Throughput page, strict REST endpoint, and MCP tool
   backed by one bounded snapshot service. New append-only lifecycle facts preserve
   event-time terminal categories, project scope, predecessor chains, and actor type;
@@ -75,6 +78,30 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- The automation engine's per-firing idempotency guard can no longer be forged
+  from a client run-id header. A rule's firing run id is predictable
+  (`automation:rule-N:event-M`) and the guard treats any activity row carrying it
+  as proof the firing already happened; client `X-Athena-Run` values were stored
+  verbatim, so a write-scoped client could pre-stamp that id and silently suppress
+  the rule. The request edge now drops a client run id in the reserved
+  `automation:` namespace (the engine still mints those ids in-process); forking a
+  child run from an automation run is unaffected.
+- Pausing an account now also freezes its stored idempotency receipts. The
+  idempotency middleware previously authenticated by credential liveness alone
+  and served stored replays without reaching the identity-layer pause gate, so a
+  paused agent credential could still read completed mutation responses for up
+  to the receipt TTL; `paused_at` was also missing from the authorization-
+  revision fence triggers. A paused account's keyed request now skips
+  claim/replay entirely and receives the same audited 403 refusal as its other
+  actions, and any pause-state flip bumps the global authorization revision
+  (migration 0061), permanently fencing pre-pause receipts even after resume.
+- Page label attach/detach is now an audited-atomic command
+  (`page_commands.attach_page_label` / `detach_page_label`): the join write and
+  its `page_labeled`/`page_unlabeled` event commit or roll back together, where
+  they previously committed separately and a crash between them could label a
+  page with no trail entry. REST and the browser call the same command; MCP
+  reaches it through REST. This was the last Mentor write listed as
+  command-migration debt.
 - Fleet-board moves now submit the card's canonical issue ETag and fail closed
   when the board is stale, preserving the newer status and showing an explicit
   refreshed-board conflict notice in both HTMX and no-JS flows.
