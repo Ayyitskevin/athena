@@ -26,7 +26,7 @@ from athena.aegis import (
     sprints,
     statuses,
 )
-from athena.core import access, db, etag, identity, labels, tokens, users
+from athena.core import access, budgets, db, etag, identity, labels, tokens, users
 
 ErrorKind = Literal[
     "unauthorized",
@@ -193,7 +193,10 @@ def create_issue(
     priority: str = "medium",
     project_id: int | None = None,
 ) -> dict:
-    """Create one issue and its first audit/projection state atomically."""
+    """Create one issue and its first audit/projection state atomically.
+
+    Metered: an actor with a durable budget spends one action here (see
+    ``core.budgets``). Unbudgeted actors — the default — are unaffected."""
     actor = _require_issue_writer(actor)
     if not isinstance(title, str):
         raise IssueCommandError("invalid", "title must be a string")
@@ -214,6 +217,8 @@ def create_issue(
         raise IssueCommandError("invalid", "unknown priority")
 
     with db.transaction(conn, immediate=True):
+        # Charge inside the write lock so the charge and the row commit together.
+        budgets.charge(conn, actor)
         # Unknown and invisible projects deliberately collapse into one error so
         # a write cannot probe a private container's existence.
         if project_id is not None and not access.can_see_project(
@@ -259,7 +264,10 @@ def update_issue(
     if_match: list[str] | None = None,
     override_blocked_close: bool = False,
 ) -> dict:
-    """Update editable issue fields and all resulting audit facts atomically."""
+    """Update editable issue fields and all resulting audit facts atomically.
+
+    Metered: an actor with a durable budget spends one action here (see
+    ``core.budgets``). Unbudgeted actors — the default — are unaffected."""
     actor = _require_issue_writer(actor)
     return _update_issue(
         conn,
@@ -317,6 +325,11 @@ def update_issue_as_automation(
         sprint_id=UNSET,
         if_match=None,
         override_blocked_close=False,
+        # Rule firings are the OPERATOR's own automation, not delegated agent work,
+        # so they are deliberately unmetered: a budget must never silently stop a
+        # rule the operator configured. Budgeting the fleet is about bounding what
+        # agents initiate.
+        meter=False,
     )
 
 
@@ -368,8 +381,14 @@ def _update_issue(
     sprint_id: int | None | _UnsetType,
     if_match: list[str] | None,
     override_blocked_close: bool,
+    meter: bool = True,
 ) -> dict:
     with db.transaction(conn, immediate=True):
+        # Charge the actor's durable budget inside the write lock, so the charge and
+        # the mutation commit or roll back together and two concurrent writes cannot
+        # both spend the last unit. Unbudgeted actors (the default) are unaffected.
+        if meter:
+            budgets.charge(conn, actor)
         before: dict | None
         snapshot_is_agent = bool(actor.get("is_agent"))
         live_actor = users.get_user(conn, actor["id"])

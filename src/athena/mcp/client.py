@@ -978,6 +978,37 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def get_agent_budget(self, user_id: int) -> Any:
+        """Read a user's durable action budget, or null when unbudgeted. Admin for
+        anyone; any actor may read its own."""
+        return self._result(self._client.get(f"/users/{user_id}/budget"))
+
+    def set_agent_budget(
+        self,
+        user_id: int,
+        *,
+        window: str,
+        action_limit: int,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: cap how many metered writes a user may make per fixed window."""
+        return self._mutate(
+            self._client.put,
+            f"/users/{user_id}/budget",
+            json={"window": window, "action_limit": action_limit},
+            idempotency_key=idempotency_key,
+        )
+
+    def clear_agent_budget(
+        self, user_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Admin: remove a user's budget, returning them to unlimited."""
+        return self._mutate(
+            self._client.delete,
+            f"/users/{user_id}/budget",
+            idempotency_key=idempotency_key,
+        )
+
     def list_activity_runs(
         self, *, actor_id: int, gap_seconds: int = 1800, limit: int = 200
     ) -> Any:

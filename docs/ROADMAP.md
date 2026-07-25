@@ -30,7 +30,8 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   Control, active-work state, and throughput metrics.
 - **Intervene** includes token revocation, one-command offboard, audited
   per-agent pause, holder/admin claim controls, and optional project blocked-close
-  gates. Durable budgets and approvals remain outside that claim.
+  gates, and durable per-agent action budgets that refuse a metered write once the
+  window's ceiling is spent. Approvals remain outside that claim.
 
 Phase 1 closed the original attribution and delegated-completion breaks. Items
 that remain intentionally open are still unchecked below.

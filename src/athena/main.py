@@ -36,6 +36,7 @@ from athena.core import (
     agent_runs_api,
     activity_api,
     attachments_api,
+    budgets,
     db,
     identity,
     security_events,
@@ -1186,6 +1187,39 @@ def create_app(
         )
 
     app.add_exception_handler(identity.ScopeDenied, _record_scope_denial)
+
+    # A budget refusal is raised inside the metered command's transaction, so that
+    # write has already rolled back whole by the time this runs. Recording it here
+    # — one app-level owner, its own connection — means every transport (REST, the
+    # browser, and MCP through REST) reports the same 429 with the same stable code
+    # and Retry-After, and an agent hitting its ceiling always reaches the trail as
+    # the decision the operator should see.
+    def _budget_exhausted(request: Request, exc: Exception) -> JSONResponse:
+        if not isinstance(exc, budgets.BudgetExhausted):
+            raise exc
+        try:
+            conn = db.connect(request.app.state.db_path)
+            try:
+                budgets.record_exhaustion(
+                    conn,
+                    actor_id=exc.budget.user_id,
+                    detail=f"{request.method} {request.url.path}",
+                )
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — the 429 must go out regardless
+            _logger.exception("could not record budget exhaustion")
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": str(exc),
+                "code": budgets.BUDGET_EXHAUSTED_CODE,
+                "budget": exc.budget.public(),
+            },
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        )
+
+    app.add_exception_handler(budgets.BudgetExhausted, _budget_exhausted)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
     # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)

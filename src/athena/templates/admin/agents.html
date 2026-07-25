@@ -75,6 +75,14 @@
             <div class="agent-admin-counts">
                 <span class="pill">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
                 <span class="pill">{{ agent.revoked_token_count }} revoked</span>
+                {% if agent.budget %}
+                <span class="pill">
+                    {{ agent.budget.action_used }}/{{ agent.budget.action_limit }} actions this {{ agent.budget.window }}
+                </span>
+                {% if agent.budget.remaining == 0 %}<span class="badge">budget spent</span>{% endif %}
+                {% else %}
+                <span class="pill">unbudgeted</span>
+                {% endif %}
             </div>
             <div class="agent-admin-controls">
                 {% if agent.user.paused_at %}
@@ -87,6 +95,27 @@
                       data-confirm="Pause {{ agent.user.name }}? Every authenticated action is refused until resumed — tokens and sessions stay intact.">
                     {% include "partials/csrf.html" %}
                     <button type="submit" class="button secondary">Pause</button>
+                </form>
+                {% endif %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/budget" class="agent-budget-form">
+                    {% include "partials/csrf.html" %}
+                    <label class="visually-hidden" for="budget-limit-{{ agent.user.id }}">Action limit</label>
+                    <input id="budget-limit-{{ agent.user.id }}" type="number" name="action_limit" min="0"
+                           value="{{ agent.budget.action_limit if agent.budget else '' }}"
+                           placeholder="limit" class="budget-limit-input">
+                    <label class="visually-hidden" for="budget-window-{{ agent.user.id }}">Window</label>
+                    <select id="budget-window-{{ agent.user.id }}" name="window">
+                        {% for w in budget_windows %}
+                        <option value="{{ w }}"{{ " selected" if agent.budget and agent.budget.window == w }}>per {{ w }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="button secondary">Set budget</button>
+                </form>
+                {% if agent.budget %}
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/budget/clear"
+                      data-confirm="Remove {{ agent.user.name }}'s budget? Its metered writes become unlimited again.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button secondary">Clear budget</button>
                 </form>
                 {% endif %}
                 <form method="post" action="/admin/agents/{{ agent.user.id }}/revoke-tokens"

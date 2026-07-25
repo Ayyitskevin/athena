@@ -27,8 +27,10 @@ people.
 
 Each phase names the target capability we invest in. This is the destination, not
 a shipped-feature inventory; [`ARCHITECTURE.md`](ARCHITECTURE.md) records current
-delivery. In particular, budgets, approval gates, agent pause/kill controls, and
-general undo are roadmap goals rather than guarantees Athena makes today.
+delivery. Durable per-agent **action** budgets are now implemented (opt-in, metering
+actions rather than model spend — see [`AGENT_BUDGETS.md`](AGENT_BUDGETS.md)). Approval
+gates, process-level agent kill controls, and general undo remain roadmap goals rather
+than guarantees Athena makes today.
 
 1. **Direct** — capture intent as work agents can pick up (issues with clear acceptance
    criteria, docs as playbooks).

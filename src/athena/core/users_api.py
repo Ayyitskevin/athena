@@ -13,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from athena.core import agent_commands, user_commands, users
+from athena.core import agent_commands, budgets, user_commands, users
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -49,6 +49,20 @@ class UserAgentUpdate(BaseModel):
 
 class UserPasswordReset(BaseModel):
     password: str
+
+
+class BudgetUpdate(BaseModel):
+    window: Literal["hour", "day"]
+    action_limit: int
+
+
+class BudgetOut(BaseModel):
+    user_id: int
+    window: str
+    action_limit: int
+    action_used: int
+    remaining: int
+    window_started_at: str
 
 
 class UserOut(BaseModel):
@@ -110,6 +124,9 @@ class UserMeOut(UserOut):
     # same semantics token_has_scope relies on, so the caller can tell "no token cap"
     # apart from "a token that happens to allow everything".
     scopes: list[str] | None = None
+    # This actor's durable action ceiling, or None when unbudgeted (unlimited) —
+    # so an agent learns its bound by asking rather than by hitting a 429.
+    budget: BudgetOut | None = None
 
 
 @router.post("", response_model=UserOut, status_code=201)
@@ -163,7 +180,10 @@ def index(
 
 
 @router.get("/me", response_model=UserMeOut)
-def me(actor: dict = Depends(current_actor)) -> dict:
+def me(
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
     """Who am I? Returns the authenticated user's identity, role, and agent flag,
     plus the acting token's effective scopes — so an agent holding only a bearer
     token can discover who it is and what it may do without first provoking a 403.
@@ -175,9 +195,17 @@ def me(actor: dict = Depends(current_actor)) -> dict:
     actor dict to the declared fields, so internal keys (_token_id, _token_scopes)
     and the password hash never leak.
 
-    Declared before /{user_id} so "me" is matched here, not as a user id."""
+    Declared before /{user_id} so "me" is matched here, not as a user id.
+
+    `budget` is this actor's durable action ceiling, or null when unbudgeted — the
+    same discover-your-limits-by-asking principle as `scopes`, one DB read."""
     scopes = actor.get("_token_scopes")
-    return {**actor, "scopes": list(scopes) if scopes is not None else None}
+    budget = budgets.observed(conn, actor["id"])
+    return {
+        **actor,
+        "scopes": list(scopes) if scopes is not None else None,
+        "budget": None if budget is None else budget.public(),
+    }
 
 
 @router.post("/onboard_agent", response_model=AgentOnboardOut, status_code=201)
@@ -288,6 +316,70 @@ def reset_password(
         )
     except user_commands.UserCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/{user_id}/budget", response_model=BudgetOut | None)
+def read_budget(
+    user_id: int,
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | None:
+    """This user's durable action budget, or `null` when unbudgeted (the default,
+    meaning unlimited). An admin may read anyone's; anyone may read their OWN, so
+    an agent can discover its ceiling by asking instead of by being refused.
+
+    The returned counters are rolled forward to now, so a window that has already
+    elapsed reads as fresh rather than spent."""
+    if actor["id"] != user_id:
+        require_admin(actor)
+    if users.get_user(conn, user_id) is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    budget = budgets.observed(conn, user_id)
+    return None if budget is None else budget.public()
+
+
+@router.put("/{user_id}/budget", response_model=BudgetOut)
+def set_budget(
+    user_id: int,
+    payload: BudgetUpdate,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Set a durable ceiling on how many metered writes this user may make per
+    fixed window, atomically with its `agent_budget_set` audit event.
+
+    Metering is opt-in: a user with no budget is unlimited, so this is the switch
+    that starts bounding an agent. Changing an existing ceiling preserves the
+    current consumption and window — raising a limit releases the agent at once
+    without gifting a fresh window. `action_limit: 0` is legitimate and freezes
+    metered writes while leaving reads working."""
+    if users.get_user(conn, user_id) is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    try:
+        budget = budgets.set_budget(
+            conn,
+            actor_id=actor["id"],
+            target_user_id=user_id,
+            window=payload.window,
+            action_limit=payload.action_limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return budget.public()
+
+
+@router.delete("/{user_id}/budget", status_code=204)
+def clear_budget(
+    user_id: int,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> None:
+    """Remove a user's budget, returning them to unlimited, atomically with its
+    `agent_budget_cleared` audit event. Idempotent: clearing an unbudgeted user
+    is a 204 that records nothing."""
+    if users.get_user(conn, user_id) is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    budgets.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
 
 
 @router.put("/{user_id}/paused", response_model=UserOut)

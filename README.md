@@ -158,7 +158,11 @@ trusted team on one machine or tailnet. It is not yet:
 - an enterprise permission, SCIM, or SAML platform;
 - a real-time collaborative block editor;
 - a general workflow engine; or
-- a claim of complete command migration, undo, approvals, or durable agent budgets.
+- a claim of complete command migration, undo, or approvals.
+
+Durable per-agent action budgets **are** implemented (opt-in; see
+[docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md)). They meter actions, not tokens or
+dollars — Athena never observes an agent's model spend.
 
 The app includes password login, optional OIDC, CSRF protection, secure headers,
 visibility-aware reads, scoped tokens, SSRF-hardened webhooks, portability tools,
@@ -194,6 +198,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/RUNS.md](docs/RUNS.md) — run replay, lineage, and forking
 - [docs/AUTOMATION_SCHEDULES.md](docs/AUTOMATION_SCHEDULES.md) — bounded UTC schedules and recovery
 - [docs/WORKFLOW_GATES.md](docs/WORKFLOW_GATES.md) — optional project blocked-close governance
+- [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md) — durable, opt-in per-agent action ceilings
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors
