@@ -23,6 +23,7 @@ from athena.core import (
     activity,
     agent_commands,
     agents,
+    budgets,
     identity,
     oidc,
     oidc_commands,
@@ -391,7 +392,18 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         agent["delegation_inbox"] = delegations.list_delegations(
             conn, agent["user"], viewer=viewer, limit=20
         )
-    return {"agents": agent_rows, "notice": None, "error": None, **extra}
+        # The durable ceiling, rolled forward to now so an elapsed window reads as
+        # fresh rather than spent. None means unbudgeted (unlimited) — metering is
+        # opt-in, so most fleets start here.
+        budget = budgets.observed(conn, agent["user"]["id"])
+        agent["budget"] = None if budget is None else budget.public()
+    return {
+        "agents": agent_rows,
+        "budget_windows": sorted(budgets.WINDOWS),
+        "notice": None,
+        "error": None,
+        **extra,
+    }
 
 
 @router.get("/admin/agents", response_class=HTMLResponse)
@@ -401,6 +413,8 @@ def agents_admin(
     offboarded: str | None = Query(None),
     paused: str | None = Query(None),
     resumed: str | None = Query(None),
+    budget_set: str | None = Query(None),
+    budget_cleared: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -421,6 +435,10 @@ def agents_admin(
         notice = "Paused: every authenticated action is refused until resumed."
     elif resumed:
         notice = "Resumed: the account is active again."
+    elif budget_set:
+        notice = "Budget set: metered writes are now capped for this window."
+    elif budget_cleared:
+        notice = "Budget cleared: metered writes are unlimited again."
     return templates.TemplateResponse(
         request=request,
         name="admin/agents.html",
@@ -491,6 +509,60 @@ def onboard_agent(
         context=_agents_context(conn, user, onboarded=onboarded),
         status_code=201,
     )
+
+
+@router.post(
+    "/admin/agents/{user_id}/budget",
+    dependencies=[Depends(verify_csrf)],
+)
+def set_agent_budget(
+    request: Request,
+    user_id: int,
+    action_limit: str = Form(""),
+    window: str = Form("day"),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Set an agent's durable action ceiling from the cockpit — the same command
+    the REST endpoint and MCP tool call, so the three cannot drift."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    raw = action_limit.strip()
+    if not raw.isdigit():
+        return RedirectResponse(
+            "/admin/agents?error=Action+limit+must+be+a+whole+number.",
+            status_code=303,
+        )
+    try:
+        budgets.set_budget(
+            conn,
+            actor_id=user["id"],
+            target_user_id=user_id,
+            window=window,
+            action_limit=int(raw),
+        )
+    except ValueError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
+
+
+@router.post(
+    "/admin/agents/{user_id}/budget/clear",
+    dependencies=[Depends(verify_csrf)],
+)
+def clear_agent_budget(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Return an agent to unlimited metered writes. Idempotent."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    budgets.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
+    return RedirectResponse("/admin/agents?budget_cleared=1", status_code=303)
 
 
 @router.post(

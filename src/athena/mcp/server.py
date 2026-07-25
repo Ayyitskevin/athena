@@ -508,6 +508,42 @@ def build_server(client: AthenaClient) -> FastMCP:
         admin. Returns the counts revoked. Requires an admin token."""
         return client.offboard_user(user_id)
 
+    @mcp.tool()
+    def get_agent_budget(user_id: int) -> dict | None:
+        """Read a user's durable action budget — how many metered writes it may
+        make per fixed window, how many it has used, and how many remain — or null
+        when that user is unbudgeted (the default, meaning unlimited). Admin for
+        anyone else; any actor may read its own. `whoami` carries yours already."""
+        return client.get_agent_budget(user_id)
+
+    @mutation_tool
+    def set_agent_budget(
+        user_id: int,
+        window: str,
+        action_limit: int,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: cap how many metered writes a user may make per fixed window
+        ('hour' or 'day'). Metering is opt-in — an unbudgeted user is unlimited —
+        so this is the lever that starts bounding an agent. Raising a limit
+        mid-window releases the agent at once without granting a fresh window;
+        action_limit=0 freezes its metered writes while leaving reads working.
+        Returns the budget. Requires an admin token."""
+        return client.set_agent_budget(
+            user_id,
+            window=window,
+            action_limit=action_limit,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def clear_agent_budget(
+        user_id: int, idempotency_key: IdempotencyKey | None = None
+    ) -> dict:
+        """Admin: remove a user's budget, returning it to unlimited. Idempotent.
+        Requires an admin token."""
+        return client.clear_agent_budget(user_id, idempotency_key=idempotency_key)
+
     # --- issue writes -------------------------------------------------------
 
     @mutation_tool

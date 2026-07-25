@@ -10,6 +10,21 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- Durable per-agent **action budgets** — the bounded half of "attributable,
+  reversible, and bounded". An admin caps how many metered writes an agent may
+  make per fixed window (`hour` or `day`); the charge is folded into the metered
+  command's own transaction, so a refused or failed write spends nothing and two
+  concurrent writes cannot both spend the last unit. Unlike the in-process token
+  rate limiter, the counter survives restart. Metering is **opt-in**: a user with
+  no budget is unlimited, so applying migration 0062 changes nothing until an
+  operator sets a ceiling. Exhaustion returns `429` with the stable
+  `agent_budget_exhausted` code, a `Retry-After`, and the budget itself, and lands
+  on the activity trail. Surfaced through `GET`/`PUT`/`DELETE /users/{id}/budget`,
+  the `budget` field on `/users/me` (so an agent learns its ceiling by asking
+  rather than by being refused), the MCP tools `get_agent_budget` /
+  `set_agent_budget` / `clear_agent_budget`, and the agent cockpit. Budgets meter
+  **actions, not tokens or dollars**: Athena never observes an agent's model
+  spend, so it deliberately carries no cost column it could not honestly populate.
 - `PUT /users/{id}/password`, the REST parity surface for the admin password
   reset that previously existed only in the browser. Authorization (admin role
   plus the admin scope for a bearer token) is enforced inside the command, so the

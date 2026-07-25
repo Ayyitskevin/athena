@@ -257,6 +257,20 @@ MUTATION_CASES = [
         lambda c, k: c.restore_page_version(4, 2, idempotency_key=k),
     ),
     (
+        "set_agent_budget",
+        "PUT",
+        "/users/9/budget",
+        lambda c, k: c.set_agent_budget(
+            9, window="day", action_limit=50, idempotency_key=k
+        ),
+    ),
+    (
+        "clear_agent_budget",
+        "DELETE",
+        "/users/9/budget",
+        lambda c, k: c.clear_agent_budget(9, idempotency_key=k),
+    ),
+    (
         "label_page",
         "POST",
         "/pages/4/labels",
@@ -355,6 +369,8 @@ MCP_MUTATION_CASES = [
     ("archive_page", {"page_id": 4}),
     ("unarchive_page", {"page_id": 4}),
     ("restore_page_version", {"page_id": 4, "version": 2}),
+    ("set_agent_budget", {"user_id": 9, "window": "day", "action_limit": 50}),
+    ("clear_agent_budget", {"user_id": 9}),
     ("label_page", {"page_id": 4, "label_id": 9}),
     ("unlabel_page", {"page_id": 4, "label_id": 9}),
     (

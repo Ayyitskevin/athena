@@ -78,7 +78,13 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
 
 ### Missing (roadmap)
 
-- Durable **agent budgets and quotas** (token spend, action counts, wall-clock).
+- ~~Durable **agent budgets and quotas**~~ — **shipped** as opt-in per-agent
+  *action* budgets (`core/budgets.py`, migration 0062, REST + MCP + cockpit; see
+  [`AGENT_BUDGETS.md`](AGENT_BUDGETS.md)). The open decision named in §18 was
+  resolved deliberately: Athena meters **actions, not tokens/dollars**, because it
+  never observes an agent's model spend and must not carry a cost column it cannot
+  honestly populate. Token/cost metering stays additive, pending an external meter
+  (Stage H). Wall-clock quotas remain unbuilt.
 - General **approval requests** (human-in-the-loop, dry-run preview, approve/reject).
 - **Process-level pause/kill** (today's pause is a credential/identity freeze, not
   a signal to a running worker).

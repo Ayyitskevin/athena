@@ -1526,11 +1526,16 @@ def test_upgrade_from_0054_preserves_legacy_and_types_only_new_commands(
         target_id=legacy_issue_id,
     )
 
-    shutil.copy(
-        source_migrations / "0055_issue_lifecycle_facts.sql",
-        staged_migrations / "0055_issue_lifecycle_facts.sql",
-    )
-    assert db.migrate(conn) == ["0055_issue_lifecycle_facts.sql"]
+    # Finish the upgrade to head. 0055 is the migration under test — it introduces
+    # typed lifecycle facts — but the later ones must come too: a command runs
+    # against the schema the app guarantees at startup (main.py migrates to head and
+    # /readyz fails closed otherwise), so exercising one against a half-migrated
+    # database would assert a state Athena never serves.
+    for migration in sorted(source_migrations.glob("*.sql")):
+        if migration.name >= "0055_issue_lifecycle_facts.sql":
+            shutil.copy(migration, staged_migrations / migration.name)
+    newly_applied = db.migrate(conn)
+    assert newly_applied[0] == "0055_issue_lifecycle_facts.sql"
     assert conn.execute("SELECT COUNT(*) FROM issue_lifecycle_facts").fetchone()[0] == 0
 
     native = issue_commands.create_issue(

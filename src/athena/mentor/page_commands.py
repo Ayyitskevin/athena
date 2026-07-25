@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import db, etag, labels
+from athena.core import budgets, db, etag, labels
 from athena.mentor import page_activity, page_etags, pages
 
 _ERROR_KINDS = (
@@ -76,8 +76,11 @@ def edit_page(
     The current representation and the strong-comparison check both run inside this
     ``BEGIN IMMEDIATE`` transaction, so two writers holding the same tag cannot both
     pass the precondition and mutate — the point of an optimistic lock.
+
+    Metered: a budgeted actor spends one action here (see ``core.budgets``).
     """
     with db.transaction(conn, immediate=True):
+        budgets.charge(conn, {"id": actor_id})
         before = pages.get_page(conn, page_id)
         if before is None:
             raise PageCommandError("not_found", "no such page")
@@ -126,8 +129,11 @@ def create_page(
     auto-watch and any mentions included). Transport-shape validation — a non-empty
     title, and a parent that is a real page in the SAME space — is the boundary's job
     (as with the page edit/comment commands); the foreign keys are the backstop.
-    Returns the new page."""
+    Returns the new page.
+
+    Metered: a budgeted actor spends one action here (see ``core.budgets``)."""
     with db.transaction(conn, immediate=True):
+        budgets.charge(conn, {"id": actor_id})
         page = pages.create_page(
             conn,
             space_id=space_id,
