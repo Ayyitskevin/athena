@@ -104,8 +104,12 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
   shipped (registry, reversibility classes, `reverses_event_id`, re-evaluated
   authorization); the *coverage* did not. Widening it past state-free inverses
   needs structured prior state recorded at write time, not a bigger registry.
-- **Worker/node registration** (Athena models *who* an agent is, never *where* it
-  runs or whether its process is alive — check-ins are cooperative only).
+- ~~**Worker/node registration**~~ — **shipped** as a cooperative registry
+  (`core/workers.py`, migration 0065; see [`WORKERS.md`](WORKERS.md)). Athena now
+  models *where* an agent says it runs and can leave it a kill request. It still
+  never models whether a process is alive: presence is `reporting_recently` or
+  `stale`, and the kill is an instruction the worker collects and answers, so
+  asked / acknowledged / stopped stay three separate facts.
 - **Exception-driven push supervision** (attention state exists but there is no
   push alert; failures accumulate invisibly — F-5).
 - **Memory/context feedback loop** (Mentor pages are playbooks agents read, but
@@ -230,7 +234,7 @@ enforcement.
 | **Budgets** | ❌ | durable counters per `(agent, window)`: action count, and an opaque "cost unit" the operator credits; decremented inside the command tx; refuses the write at zero | inside each command via `core.budgets.charge(conn, actor, cost, commit=False)` |
 | **Rate limits** | ⚠️ in-process (`rate_limits.py`) | keep in-process for burst control; the durable budget above is the cross-restart bound | middleware + command |
 | **Approvals** | ✅ opt-in gates (`approvals.py`, 0063) for `issue.close`, plus blocked-close | widen the action-kind vocabulary; the gate refuses and records a pending ask, and the operator's approval authorizes **one retry by that requester against that target** — never a stored, replayed payload | inside each gated command via `core.approvals.require(conn, actor, …)` |
-| **Pause/kill** | ⚠️ credential freeze | keep identity-level pause; add a **kill signal** row the worker registry (§12) polls, so a running worker learns it was killed | identity + worker heartbeat contract |
+| **Pause/kill** | ✅ credential freeze + cooperative kill request (`workers.py`, 0065) | keep both; a worker that ignores the request is surfaced (`acknowledged_but_reporting`), never force-stopped — Athena cannot signal a foreign process | identity + worker heartbeat contract |
 | **Leases** | ✅ generation-fenced | keep; job state derives from them | `lease_commands.py` |
 | **Retries / idempotency** | ✅ durable idempotency | keep; budgets must be charged **once per key** (charge on owner-claim, not on replay) | `IdempotencyMiddleware` + command |
 | **Escalation** | ❌ | when a budget/approval/kill fires, emit a push notification + webhook + attention reason | notifications + webhooks + `fleet_work` |
@@ -303,7 +307,7 @@ Recommended sequence (each is one reviewable slice with its own PR):
 | 0062 | `agent_budgets` | `agent_budgets` table + `budget_set`/`budget_exceeded` verbs are data, not schema | §5 budgets |
 | 0063 | `approval_requests` | **shipped** as `agent_approval_policies(user_id, action_kind, …)` + `approval_requests(id, action_kind, target_kind, target_id, requested_by, run_id, state, decided_by, decided_at, decision_note, consumed_at, created_at)` with a partial unique index on the live intent. No `payload_json`: gate + retry stores an **intent**, never a replayable payload | §5/§9 approvals |
 | 0064 | `activity_reverses` | `activity.reverses_event_id` | §6 undo |
-| 0065 | `worker_registry` | `workers(id, agent_id, node_label, last_heartbeat_at, capabilities_json, kill_requested_at)` | §12 workers |
+| 0065 | `worker_registry` | **shipped** as `agent_workers(id, agent_id, worker_key, node_label, capabilities, first_seen_at, last_seen_at, last_token_id, kill_requested_at, kill_requested_by, kill_acknowledged_at, stopped_at)`, UNIQUE(agent_id, worker_key). Three kill columns, not one flag | §12 workers |
 | 0066 | `project_visibility_membership_commands` | no schema change; a *code* migration porting F-3 to commands (may need an index) | close F-3 debt |
 | 0067 | `sprint_status_audit` | no schema; code migration adding audit to sprint/status writes (F-4) | close F-4 debt |
 | 0068 | `icarus_dispatch` | `icarus_dispatches(id, issue_id, run_id, parent_run_id, icarus_run_id, repo, base_commit, capability, policy_digest, approval_state, idempotency_key, evidence_ref, completion_ref, state)` | §14 integration |
@@ -673,9 +677,14 @@ would have violated the import contract. Note the asymmetry the Mentor
 compensators must carry: `page_commands` leaves visibility and scope to its
 transport boundary, so undo re-applies both itself or it becomes an escalation.
 
-**Stage E — Worker registry + actionable kill.** `core/workers.py`,
-`0065_worker_registry.sql`, heartbeat/kill endpoints + MCP tools, cockpit node
-view, `tests/test_workers.py`.
+**Stage E — Worker registry + actionable kill. — SHIPPED** (`docs/WORKERS.md`).
+`core/workers.py` + `core/worker_commands.py`, `0065_agent_workers.sql`,
+`PUT /workers/heartbeat` and the kill routes, MCP `worker_heartbeat` /
+`list_workers` / `request_worker_kill` / `cancel_worker_kill`, cockpit node view,
+`tests/test_workers.py`. The kill signal is a **row the worker polls on its next
+heartbeat**, exactly as this guide proposed — and the schema keeps asked,
+acknowledged, and stopped apart, because collapsing them into a `killed` flag is
+the one lie the feature exists to prevent.
 
 **Stage F — Cockpit exception surfaces (F-5/F-7/F-8).** security-signals panel +
 `list_security_events` (REST+MCP), dashboard fleet-attention rollup,

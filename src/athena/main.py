@@ -57,6 +57,7 @@ from athena.core import (
     users_api,
     webhooks,
     webhooks_api,
+    workers_api,
 )
 from athena.aegis import issue_undo as aegis_issue_undo
 from athena.mentor import api as mentor_api
@@ -1393,6 +1394,7 @@ def create_app(
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
     app.include_router(approvals_api.router)
+    app.include_router(workers_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)

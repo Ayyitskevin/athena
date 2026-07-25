@@ -35,6 +35,8 @@ from athena.core import (
     users,
     webhook_commands,
     webhooks,
+    worker_commands,
+    workers,
 )
 from athena.core.deps import get_conn
 from athena.mcp.config import claude_mcp_config
@@ -399,6 +401,11 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         budget = budgets.observed(conn, agent["user"]["id"])
         agent["budget"] = None if budget is None else budget.public()
         agent["gated_actions"] = approvals.gated_kinds(conn, agent["user"]["id"])
+        # Where this agent says it runs. Cooperative presence only: a worker that
+        # stops heartbeating reads as stale, never as a process that died.
+        agent["workers"] = workers.list_workers(
+            conn, agent_id=agent["user"]["id"], limit=20
+        )
     # Pending approvals are the steer-by-exception queue: actions an agent asked to
     # take that are waiting on this human. Names are resolved here so the template
     # stays a renderer.
@@ -411,8 +418,16 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
                 "requested_by_name": requester["name"] if requester else "unknown",
             }
         )
+    # Workers told to stop that have not answered are the operator's live question,
+    # so they are surfaced above the per-agent detail rather than buried in it.
+    unanswered_kills = [
+        worker
+        for worker in workers.list_workers(conn, limit=200)
+        if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
+    ]
     return {
         "agents": agent_rows,
+        "unanswered_kills": unanswered_kills,
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         "pending_approvals": pending,
@@ -433,6 +448,7 @@ def agents_admin(
     budget_cleared: str | None = Query(None),
     decided: str | None = Query(None),
     gate_changed: str | None = Query(None),
+    notice: str | None = Query(None),
     error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -444,7 +460,6 @@ def agents_admin(
     assert user is not None, "_admin_required accepted a missing user"
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
-    notice = None
     if revoked is not None:
         notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
     elif offboarded:
@@ -567,6 +582,43 @@ def decide_approval(
     return RedirectResponse(
         f"/admin/agents?decided={decision.strip()}", status_code=303
     )
+
+
+@router.post(
+    "/admin/workers/{worker_id}/kill",
+    dependencies=[Depends(verify_csrf)],
+)
+def request_worker_kill(
+    request: Request,
+    worker_id: int,
+    cancel: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Ask a worker to stop, or withdraw an unanswered request — the same core
+    command owner REST and MCP call.
+
+    The notice deliberately says "asked to stop", not "stopped": Athena records an
+    instruction and cannot end a process. The worker learns of it on its next
+    heartbeat, and the registry reports only what has actually been said."""
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    withdrawing = cancel.strip().lower() in ("1", "true", "on", "yes")
+    try:
+        if withdrawing:
+            worker_commands.cancel_kill(conn, actor=user, worker_id=worker_id)
+        else:
+            worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
+    except worker_commands.WorkerCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
+    notice = (
+        "Kill request withdrawn."
+        if withdrawing
+        else "Worker asked to stop; it will be told on its next heartbeat."
+    )
+    return RedirectResponse(f"/admin/agents?notice={notice}", status_code=303)
 
 
 @router.post(

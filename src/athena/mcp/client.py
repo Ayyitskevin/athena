@@ -978,6 +978,56 @@ class AthenaClient:
         """Admin offboard: demote to viewer + revoke all sessions and tokens (admin only)."""
         return self._mutate(self._client.post, f"/users/{user_id}/offboard")
 
+    def worker_heartbeat(
+        self,
+        *,
+        worker_key: str,
+        node_label: str | None = None,
+        capabilities: list[str] | None = None,
+        state: str = "running",
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Register or refresh YOUR worker, and learn whether you were asked to stop."""
+        return self._mutate(
+            self._client.put,
+            "/workers/heartbeat",
+            json=self._params(
+                worker_key=worker_key,
+                node_label=node_label,
+                capabilities=capabilities,
+                state=state,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+    def list_workers(self, *, agent_id: int | None = None, limit: int = 100) -> Any:
+        """The worker registry: every worker for an admin, your own otherwise."""
+        return self._result(
+            self._client.get(
+                "/workers", params=self._params(agent_id=agent_id, limit=limit)
+            )
+        )
+
+    def request_worker_kill(
+        self, worker_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Admin: ask a worker to stop. Records the instruction; cannot end a process."""
+        return self._mutate(
+            self._client.post,
+            f"/workers/{worker_id}/kill",
+            idempotency_key=idempotency_key,
+        )
+
+    def cancel_worker_kill(
+        self, worker_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Admin: withdraw a kill request the worker has not acknowledged yet."""
+        return self._mutate(
+            self._client.delete,
+            f"/workers/{worker_id}/kill",
+            idempotency_key=idempotency_key,
+        )
+
     def undo_action(self, event_id: int, *, idempotency_key: str | None = None) -> Any:
         """Reverse one activity event by running its registered inverse as YOU.
         Records a new compensating event; never edits history."""

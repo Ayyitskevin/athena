@@ -207,6 +207,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md) — durable, opt-in per-agent action ceilings
 - [docs/APPROVALS.md](docs/APPROVALS.md) — opt-in human-in-the-loop approval gates
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
+- [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors

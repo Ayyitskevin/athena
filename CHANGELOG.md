@@ -10,6 +10,30 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **A worker registry with a cooperative kill request** — Athena models *who* an
+  agent is, and check-ins prove a credential reported a *run*; neither answers
+  "which of my agent processes are up, on what box, and can I tell one to stop?"
+  A worker now registers itself by heartbeat (`PUT /workers/heartbeat`), declaring
+  a node label and self-declared capabilities, and an admin can ask it to stop.
+  **The kill is cooperative, and the schema says so.** Athena cannot signal a
+  foreign OS process, so it records three separate facts — the operator *asked*,
+  the worker *said it heard*, the worker *said it stopped* — rather than one
+  `killed` flag that would invent certainty. The worker learns of the request on
+  its next heartbeat (`kill_requested: true`); honoring it is the worker's job.
+  A worker that goes quiet is **stale**, never terminated; one that acknowledged
+  and kept reporting is surfaced as `acknowledged_but_reporting`, because hiding
+  that would undo the point. A restart does not cancel the instruction, asking
+  twice does not reset how long it has been ignored, and a request can be
+  withdrawn only until it is acknowledged. Registration requires an agent account
+  holding a live write-scoped bearer token, re-resolved inside the write
+  transaction; a browser session, a human's token, and a read-only token are all
+  refused. First registration is audited, refreshes are not, and every kill
+  request, cancellation, acknowledgement, and stop is. Surfaced through
+  `GET`/`POST`/`DELETE` on `/workers`, MCP `worker_heartbeat` / `list_workers` /
+  `request_worker_kill` / `cancel_worker_kill`, and a per-agent worker list plus a
+  "Told to stop" queue in the cockpit. Worker events are admin-only on the trail.
+  See [docs/WORKERS.md](docs/WORKERS.md) — including how pause interacts with a
+  kill request, and why there is still no process-level kill.
 - **Undo by compensation** — VISION promises the operator can undo what an agent
   did; ARCHITECTURE promises the trail is append-only. Undo never deletes or edits
   a row: reversing event *N* runs the inverse as a new, fully audited forward
