@@ -46,6 +46,7 @@ not be.
 | `page_archived` / `page_unarchived` | restore / archive the page |
 | `page_labeled` / `page_unlabeled` | detach / attach that label |
 | `changed_status` (issue) | put the issue back in its previous status |
+| `assigned` / `unassigned` (issue) | put the issue back in its previous hands |
 
 The first four pairs share one property that made them safe to ship first: **the
 inverse needs no prior state.** A toggle's inverse is the toggle; a label event
@@ -80,10 +81,16 @@ compensator gates it itself:
 - **A fact must exist.** 0055 is deliberately not backfilled, so an event older
   than it has no fact. That is `undo_not_reversible` (422), never a guess.
 
-`assigned` / `unassigned` remain unreversible, and here the original reasoning
-does hold: the event records only the *new* assignee's display name (and names
-are not unique), so there is nothing to restore from. That one needs storage that
-does not exist yet.
+`assigned` / `unassigned` needed the storage that status already had: the event
+records only the *new* assignee's display name (names are not unique, and a
+re-assign reads identically to a first assign), so there was genuinely nothing
+to restore from. Migration 0068 (`issue_assignee_facts`) records the typed
+before/after ids in the same transaction as the event — the assignee twin of
+0055 — and the compensator applies the same scalar discipline as status: a
+still-in-force gate (the issue's current assignee must be the one this event
+produced), refusal for a pre-0068 event rather than a guess parsed from prose,
+and the ordinary command as the undoing actor. No scope gate: statuses are
+per-project and remapped by a move; an assignee is not.
 
 Classified and refused today: comments and attachments (`one_way` — delete them
 explicitly), destroyed rows such as `page_deleted` / `space_deleted` /
@@ -136,7 +143,8 @@ reversal with the event it undid.
 
 ## Limitations
 
-- Four verb pairs are reversible; everything else is refused, with a reason.
+- Seven verbs are reversible (the four archive/label pairs, `changed_status`,
+  and `assigned`/`unassigned`); everything else is refused, with a reason.
 - There is no bulk undo, and no "undo this whole run" — each event is its own
   decision.
 - A compensator reverses the *effect*, not the world around it. Undoing a label

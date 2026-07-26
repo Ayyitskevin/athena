@@ -362,11 +362,12 @@ def test_dispatching_is_metered_and_gated_like_any_other_write(tmp_path):
         agent_id = agent["user"]["id"]
         issue = _issue(c)
 
-        # An actor gated on issue.close must not route around that gate by asking
-        # an executor to do the work instead.
+        # Dispatch is gated under its OWN action kind. It borrowed issue.close's
+        # policy row when it first shipped, which conflated two intents the
+        # operator decides separately; the decoupling has its own test below.
         c.put(
             f"/approvals/policies/{agent_id}",
-            json={"action_kind": "issue.close"},
+            json={"action_kind": "dispatch.request"},
             headers=H1,
         )
         gated = c.post(
@@ -447,7 +448,7 @@ def test_an_approved_gate_is_recorded_on_the_dispatch(tmp_path, monkeypatch):
         issue = _issue(c)
         c.put(
             f"/approvals/policies/{agent['user']['id']}",
-            json={"action_kind": "issue.close"},
+            json={"action_kind": "dispatch.request"},
             headers=H1,
         )
         payload = {
@@ -474,6 +475,110 @@ def test_an_approved_gate_is_recorded_on_the_dispatch(tmp_path, monkeypatch):
         )
         assert approved.status_code == 201
         assert approved.json()["approval_state"] == "approved"
+
+
+def test_a_close_gate_and_a_dispatch_gate_are_separate_intents(tmp_path, monkeypatch):
+    """The decoupling proof, in both directions.
+
+    Dispatch originally borrowed issue.close's policy row. That meant gating an
+    agent's closes silently gated its dispatches — and, worse, an approval the
+    operator granted for CLOSING an issue could be SPENT by a dispatch of that
+    issue instead. The operator approved one intent; the agent performed another
+    on its authority. These pin the fix: each kind gates only its own action, and
+    an approval is only spendable by the intent the operator actually read.
+    """
+    # This test dispatches twice, and icarus_run_id is UNIQUE — a real executor
+    # names each run distinctly, so the stub must too.
+    runs = iter(range(1, 100))
+
+    def _distinct_run_poster(url, body, headers):
+        return True, json.dumps({"icarus_run_id": f"icarus-run-{next(runs)}"})
+
+    monkeypatch.setattr(webhooks, "urllib_poster", lambda timeout: _distinct_run_poster)
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        agent_id = agent["user"]["id"]
+        # The agent's own issue, so it may close it as creator.
+        issue = _issue(c, headers=_bearer(agent))
+        payload = {
+            "repo": "git@example.com:acme/app.git",
+            "base_commit": "abc123",
+            "capability": "repo.edit",
+        }
+
+        # Gate the agent's CLOSES only.
+        c.put(
+            f"/approvals/policies/{agent_id}",
+            json={"action_kind": "issue.close"},
+            headers=H1,
+        )
+
+        # Direction one: the close gate does not touch dispatch.
+        r = c.post(
+            f"/issues/{issue['id']}/dispatch", json=payload, headers=_bearer(agent)
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["approval_state"] == "not_required"
+
+        # The sharp case. The agent asks to close; the operator approves THAT.
+        refused = c.patch(
+            f"/issues/{issue['id']}", json={"status": "done"}, headers=_bearer(agent)
+        )
+        assert refused.status_code == 202
+        request_id = c.get("/approvals?state=pending", headers=H1).json()[0]["id"]
+        c.post(
+            f"/approvals/{request_id}/decision",
+            json={"decision": "approve"},
+            headers=H1,
+        )
+
+        # A dispatch of the same issue must NOT spend the close approval. (Before
+        # the fix it did: the operator approved "close #N" and the agent's
+        # dispatch of #N consumed it.)
+        again = c.post(
+            f"/issues/{issue['id']}/dispatch",
+            json={**payload, "base_commit": "def456"},
+            headers=_bearer(agent),
+        )
+        assert again.status_code == 201
+        assert again.json()["approval_state"] == "not_required"
+        approvals_view = {a["id"]: a for a in c.get("/approvals", headers=H1).json()}
+        assert approvals_view[request_id]["state"] == "approved"
+        assert approvals_view[request_id]["consumed_at"] is None
+
+        # ...so the intent the operator actually approved still goes through,
+        # consuming the approval it was granted for.
+        closed = c.patch(
+            f"/issues/{issue['id']}", json={"status": "done"}, headers=_bearer(agent)
+        )
+        assert closed.status_code == 200, closed.text
+        spent = {a["id"]: a for a in c.get("/approvals", headers=H1).json()}
+        assert spent[request_id]["consumed_at"] is not None
+
+        # Direction two: a dispatch gate does not touch an ordinary close.
+        other = c.post(
+            "/issues", json={"title": "again"}, headers=_bearer(agent)
+        ).json()
+        c.delete(f"/approvals/policies/{agent_id}/issue.close", headers=H1)
+        c.put(
+            f"/approvals/policies/{agent_id}",
+            json={"action_kind": "dispatch.request"},
+            headers=H1,
+        )
+        assert (
+            c.patch(
+                f"/issues/{other['id']}",
+                json={"status": "done"},
+                headers=_bearer(agent),
+            ).status_code
+            == 200
+        )
+        # And the cockpit vocabulary names both kinds for the operator.
+        assert c.get("/users/me", headers=_bearer(agent)).json()[
+            "approval_required"
+        ] == ["dispatch.request"]
 
 
 def test_redelivering_an_answered_dispatch_is_a_no_op(tmp_path):

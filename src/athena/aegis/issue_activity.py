@@ -126,6 +126,23 @@ def project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str |
     return _project_scope_key(conn, project_id)
 
 
+def assignee_fact_for_event(conn: sqlite3.Connection, event_id: int) -> dict | None:
+    """The structured assignee fact recorded alongside one activity event, or None.
+
+    The assignee twin of :func:`lifecycle_fact_for_event`, over 0068's
+    ``issue_assignee_facts``: this module owns the only INSERT, so the reader
+    lives beside it. ``None`` means the event predates 0068 (no backfill) — a
+    caller needing the prior assignee must refuse on None, never reconstruct one
+    from the event's display-name detail.
+    """
+    row = conn.execute(
+        "SELECT event_id, issue_id, before_assignee_id, after_assignee_id "
+        "FROM issue_assignee_facts WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
 def _scope_kwargs(
     project_ids: Collection[int | None] | None,
 ) -> dict[str, object]:
@@ -396,6 +413,14 @@ def record_assignee_change(
     records "unassigned" (no detail); setting records "assigned" with the new
     assignee's display name as the human specifics.
 
+    Beside the event, the typed ``before``/``after`` ids land in
+    ``issue_assignee_facts`` (0068) in the same transaction — the display name in
+    the detail is not restorable evidence (names are not unique, and a re-assign
+    reads identically to a first assign), and the fact row is what makes the
+    assignment reversible. The 0068 trigger re-raises if the fact cannot bind to
+    this exact event, which rolls the whole assignment back: an assignment that
+    cannot be recorded honestly does not happen, matching the status writer.
+
     The new assignee's watch, the activity row, and its notification fan-out use
     one commit. Commands pass ``commit=False`` so those effects also share the
     issue row's outer transaction.
@@ -404,7 +429,7 @@ def record_assignee_change(
         return
     try:
         if after is None:
-            activity.record(
+            event = activity.record(
                 conn,
                 actor_id=actor_id,
                 verb="unassigned",
@@ -418,7 +443,7 @@ def record_assignee_change(
             # assignment itself lands in their inbox (they're a watcher when it
             # fans out).
             notifications.watch(conn, after, "issue", issue_id, commit=False)
-            activity.record(
+            event = activity.record(
                 conn,
                 actor_id=actor_id,
                 verb="assigned",
@@ -427,6 +452,12 @@ def record_assignee_change(
                 detail=assignee["name"] if assignee else "",
                 commit=False,
             )
+        conn.execute(
+            "INSERT INTO issue_assignee_facts "
+            "(event_id, issue_id, before_assignee_id, after_assignee_id) "
+            "VALUES (?, ?, ?, ?)",
+            (event["id"], issue_id, before, after),
+        )
         if commit:
             conn.commit()
     except BaseException:

@@ -127,8 +127,8 @@ complete command ownership are roadmap goals — undo by compensation ships for 
 reversible verb pairs ([`docs/UNDO.md`](docs/UNDO.md)), not for every write. Durable per-agent action budgets
 ([`docs/AGENT_BUDGETS.md`](docs/AGENT_BUDGETS.md)) and human-in-the-loop approval
 gates ([`docs/APPROVALS.md`](docs/APPROVALS.md)) are implemented, both opt-in and
-both deliberately narrow — budgets meter four writes, and `issue.close` is the
-only gateable action kind. The worker registry's kill is **cooperative**
+both deliberately narrow — budgets meter a handful of writes, and only
+`issue.close` and `dispatch.request` are gateable action kinds. The worker registry's kill is **cooperative**
 ([`docs/WORKERS.md`](docs/WORKERS.md)): Athena records the request and the
 worker's reply, and can neither signal nor observe a process — a silent worker is
 stale, never terminated. See

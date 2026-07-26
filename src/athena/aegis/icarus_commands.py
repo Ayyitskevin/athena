@@ -148,16 +148,21 @@ def request_dispatch(
             return existing
 
         # Dispatching is a metered write like any other agent action, and it is
-        # gated like one: an actor whose issue.close is gated does not get to route
-        # around that by asking an executor to do the work instead. The gate is
+        # gated like one — under its OWN action kind. Dispatch originally borrowed
+        # `issue.close`'s policy row, which conflated two intents: gating an
+        # agent's closes silently gated its dispatches too, and — worse — an
+        # approval the operator granted for CLOSING an issue could be spent by a
+        # DISPATCH of that issue instead. An approval authorizes the intent the
+        # operator read on the ask, so the kinds must never be shared. An operator
+        # who wants both gated gates both; each is one policy row. The gate is
         # consumed inside this transaction, so a failure below leaves it unspent.
         budgets.charge(conn, actor)
         approval_state = "not_required"
-        if approvals.is_gated(conn, actor["id"], approvals.ACTION_ISSUE_CLOSE):
+        if approvals.is_gated(conn, actor["id"], approvals.ACTION_DISPATCH_REQUEST):
             approvals.require(
                 conn,
                 actor,
-                action_kind=approvals.ACTION_ISSUE_CLOSE,
+                action_kind=approvals.ACTION_DISPATCH_REQUEST,
                 target_kind="issue",
                 target_id=work_item_id,
             )

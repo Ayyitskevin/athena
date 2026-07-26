@@ -80,10 +80,12 @@ visible as `undeliverable` with the reason.
 ## Authorization, in both directions
 
 **Outbound** is an ordinary authenticated write: role, `issue:write` scope, issue
-visibility, a **budget charge**, and any **approval gate**. That last one matters —
-an actor gated on `issue.close` does not get to route around the gate by asking an
-executor to do the work instead. The gate is consumed inside the same transaction,
-so a later failure leaves it unspent.
+visibility, a **budget charge**, and any **approval gate** — under dispatch's own
+action kind, `dispatch.request`. It briefly borrowed `issue.close`'s policy row,
+which conflated two intents the operator decides separately (and let a close
+approval be spent by a dispatch); each is now its own gate, and an operator who
+wants both gated sets both. The gate is consumed inside the same transaction, so a
+later failure leaves it unspent.
 
 **Inbound has no Athena credential at all.** The executor is not an Athena user and
 holds no token; it authenticates with an HMAC over the exact request body using the

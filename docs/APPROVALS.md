@@ -52,11 +52,19 @@ Athena decides on the operator's behalf.
 | Action kind | Fires on |
 |---|---|
 | `issue.close` | a write that transitions an issue from an open status into a done status (including one caused by a project move) |
+| `dispatch.request` | handing an issue to the configured external executor (see [DISPATCH.md](DISPATCH.md)) |
 
 The vocabulary is **closed**: an unknown action kind is refused at the boundary
 (422) rather than stored as an inert policy row that silently gates nothing. It
 lives in `core/approvals.py`, not in a schema `CHECK`, so adding a gate is a code
 change with tests rather than a migration.
+
+Each kind names **one intent**, and that is load-bearing: the operator approves
+the intent they read on the ask, so two different actions must never share a
+kind. Dispatch briefly borrowed `issue.close`'s policy row when it first
+shipped, which meant gating an agent's closes silently gated its dispatches —
+and an approval granted for *closing* an issue could be *spent* by a dispatch of
+it. That coupling is gone; an operator who wants both gated sets both rows.
 
 Deliberately **not** gated:
 
@@ -148,7 +156,7 @@ As with `scopes` and `budget`, an agent is expected to learn its gates by
 
 ## Limitations
 
-- One action kind (`issue.close`) is gateable today.
+- Two action kinds (`issue.close`, `dispatch.request`) are gateable today.
 - Gates are per-user, not per-token or per-project: an agent holding several
   tokens shares one policy. The gate bounds the *actor*, not the credential.
 - There is no expiry on a pending request and no reminder loop. An ask waits

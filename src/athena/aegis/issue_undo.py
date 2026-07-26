@@ -146,6 +146,60 @@ def _restore_status(conn: sqlite3.Connection, actor: dict | None, event: dict) -
         raise _refusal(exc) from exc
 
 
+def _restore_assignee(
+    conn: sqlite3.Connection, actor: dict | None, event: dict
+) -> None:
+    """Put an issue back in the hands an ``assigned``/``unassigned`` event took it
+    from.
+
+    The prior assignee is read from ``issue_assignee_facts`` (migration 0068) —
+    the event itself records only the NEW assignee's display name, which is not
+    unique and not a prior value, so before 0068 there was nothing trustworthy to
+    restore. A pre-0068 event has no fact and refuses; the prose detail is never
+    interpreted.
+
+    Like status (and unlike the toggles), an assignee is a scalar with no domain
+    idempotency, so the engine's no-effect net cannot catch a stale undo: without
+    the still-in-force gate, undoing an old assignment would overwrite a NEWER
+    assignee and stamp the result as a reversal. No scope gate, though — statuses
+    are per-project and remapped by a move; an assignee is not.
+
+    Authorization, budget, and any approval gate belong to ``update_issue``, run
+    as the undoing actor. Passing ``assignee_id=None`` is an explicit unassign
+    (the command distinguishes None from "not provided").
+    """
+    fact = issue_activity.assignee_fact_for_event(conn, event["id"])
+    if fact is None:
+        raise undo.UndoRefused(
+            "no structured prior assignee was recorded for this event",
+            code=undo.NOT_REVERSIBLE_CODE,
+            status_code=422,
+        )
+    issue = issues.get_issue(conn, event["target_id"])
+    if issue is None:
+        raise undo.UndoRefused(
+            "the issue no longer exists",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    if issue["assignee_id"] != fact["after_assignee_id"]:
+        raise undo.UndoRefused(
+            "the issue has since been reassigned; "
+            "this event's assignment is no longer in force",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=event["target_id"],
+            assignee_id=fact["before_assignee_id"],
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
 def _detach_label(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
     try:
         issue_commands.detach_label(
@@ -178,6 +232,13 @@ def register() -> None:
     undo.register("unlabeled", action_class=undo.TWO_WAY, compensator=_attach_label)
     undo.register(
         "changed_status", action_class=undo.TWO_WAY, compensator=_restore_status
+    )
+    # One compensator for both directions: the fact's before/after carries the
+    # direction, so undoing an assign restores the previous holder (or clears it)
+    # and undoing an unassign re-assigns them.
+    undo.register("assigned", action_class=undo.TWO_WAY, compensator=_restore_assignee)
+    undo.register(
+        "unassigned", action_class=undo.TWO_WAY, compensator=_restore_assignee
     )
 
     # Classified, deliberately not reversible. Naming them is the point: a surface
