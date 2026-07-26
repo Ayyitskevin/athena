@@ -125,6 +125,27 @@ ICARUS_URL = os.environ.get("ATHENA_ICARUS_URL", "").strip()
 ICARUS_SECRET = os.environ.get("ATHENA_ICARUS_SECRET", "").strip()
 ICARUS_TIMEOUT_SECONDS = _int_env("ATHENA_ICARUS_TIMEOUT_SECONDS", 10, minimum=1)
 
+# Exact hostnames Athena may POST to even though they resolve to private,
+# loopback, or link-local addresses. Empty (the default) keeps the SSRF policy
+# absolute, which is the right default for a public deployment — but Athena's
+# PRIMARY deployment is a solo operator's machine or tailnet, where the webhook
+# receiver or the execution fleet lives at 127.0.0.1 or a LAN/CGNAT address by
+# design. Without this, every dispatch to a local executor lands
+# `undeliverable: url resolves to a disallowed (internal) address`, discovered
+# the first time the dispatch loop was exercised against a real counterparty.
+#
+# The trust model holds because the CHANNEL differs: webhook URLs are registered
+# at runtime through the API (attacker-reachable, so they stay guarded), while
+# this list is set in the process environment by whoever owns the process — the
+# same trust as ATHENA_ICARUS_SECRET itself. Matching is exact and
+# case-insensitive; no wildcards, no CIDR ranges, so an entry names one host the
+# operator chose. Delivery still pins the connection to the resolved address.
+EGRESS_PRIVATE_HOSTS = tuple(
+    host.strip().lower()
+    for host in os.environ.get("ATHENA_EGRESS_PRIVATE_HOSTS", "").split(",")
+    if host.strip()
+)
+
 
 def icarus_configured() -> bool:
     """Whether an executor is configured. Read at call time, not import time, so a

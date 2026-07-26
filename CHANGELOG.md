@@ -10,6 +10,30 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **The operator loop is field-exercised against a real counterparty.**
+  `examples/icarus_executor.py` is a reference Icarus executor — one stdlib-only
+  file that never imports Athena (a test pins both), verifies the envelope
+  signature before parsing a byte, echoes the policy digest, signs its
+  callbacks, and retries them, because the callback endpoint is idempotent and a
+  one-shot report would be lost to any transient failure.
+  `scripts/field_exercise.py` (run in CI by `tests/test_field_exercise.py`)
+  boots Athena and that executor as real processes and drives the whole loop —
+  onboard → delegate → claim against the reviewed ETag → heartbeat → work under
+  a run → a gated dispatch refused, approved, retried, delivered, and completed
+  by signed callbacks → a learning promoted into the runbook the work-context
+  packet then serves → an operator undo — over real loopback HTTP with real
+  HMAC on both sides, nothing stubbed. Its first run found both items under
+  Fixed below, which is the argument for its existence.
+- **Operators can allow egress to hosts they own.** The SSRF guard refuses any
+  host resolving private/loopback/link-local — correct against
+  attacker-registered webhook URLs, but it also made `ATHENA_ICARUS_URL`
+  pointing at the operator's own machine, LAN, or tailnet impossible: every
+  dispatch to a local executor landed `undeliverable`.
+  `ATHENA_EGRESS_PRIVATE_HOSTS` is an exact-hostname, case-insensitive,
+  no-wildcard allowlist set in the process environment — the same trust channel
+  as the shared secret itself, not the attacker-reachable API. Empty (the
+  default) keeps the policy absolute; delivery still pins the connection to the
+  resolved address either way.
 - **An assignment can be undone.** `assigned` events recorded only the new
   assignee's display name — not unique, not a prior value, and a re-assign read
   identically to a first assign — so unlike status (whose prior state 0055 had
@@ -301,6 +325,16 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- **A real executor's acceptance is now actually read.** The hardened delivery
+  poster drained and **discarded** every 2xx response body, so
+  `{"icarus_run_id": ...}` — the id the executor announces itself under, and the
+  key its callbacks use — never reached Athena. Every real dispatch was silently
+  correlated by the fallback idempotency key while the executor called back
+  under the run id it had actually declared, and every callback answered 404.
+  No stubbed test could see this: the injected posters all returned their
+  bodies; only the real `http.client` path dropped them. Found by the field
+  exercise's first run. The poster now returns a bounded (64 KiB) success body,
+  which webhook delivery — the other caller — never reads on success.
 - **A close approval can no longer be spent by a dispatch.** Dispatch borrowed
   `issue.close`'s approval policy row when it shipped: gating an agent's closes
   silently gated its dispatches too, and — the sharp edge — an approval the

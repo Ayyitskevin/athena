@@ -139,6 +139,13 @@ python3.12 -m venv .venv
 scripts/coverage.sh
 ```
 
+The suite includes a **field exercise** (`scripts/field_exercise.py`, run by
+`tests/test_field_exercise.py`): a real Athena process and the reference
+executor from [`examples/icarus_executor.py`](examples/icarus_executor.py)
+drive the full operator loop — onboard, delegate, claim, heartbeat, gated
+dispatch, approval, signed delivery and callbacks, a promoted learning, and an
+undo — over real loopback HTTP, with nothing stubbed.
+
 The coverage script runs the complete test suite with full-source branch
 coverage and enforces the floors in `pyproject.toml`. The current baseline, final
 evidence, explicit non-runs, and release blockers live in
@@ -172,7 +179,9 @@ authorizes one retry, not a stored side effect. That is a bounded first slice,
 not a general approval workflow.
 
 The app includes password login, optional OIDC, CSRF protection, secure headers,
-visibility-aware reads, scoped tokens, SSRF-hardened webhooks, portability tools,
+visibility-aware reads, scoped tokens, SSRF-hardened webhooks (with an explicit
+opt-in allowlist for receivers on your own machine or tailnet —
+`ATHENA_EGRESS_PRIVATE_HOSTS`), portability tools,
 and operational health checks. Exposing any self-hosted app publicly still
 requires deliberate TLS, secret, proxy, backup, and monitoring configuration;
 see [SECURITY.md](SECURITY.md) and

@@ -145,9 +145,47 @@ Athena forwarding capability names it has never heard of and cannot reason about
 | `ATHENA_ICARUS_URL` | *(unset)* | Executor base URL; `POST {URL}/dispatch` |
 | `ATHENA_ICARUS_SECRET` | *(unset)* | Shared HMAC secret, both directions |
 | `ATHENA_ICARUS_TIMEOUT_SECONDS` | 10 | Per-request outbound timeout |
+| `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames Athena may POST to even though they resolve private/loopback (see below) |
 
 Both the URL and the secret must be set. A URL without a secret would mean sending
 unsigned work to an unauthenticated endpoint.
+
+**An executor on your own machine, LAN, or tailnet needs one more line.** The
+SSRF guard that protects webhook delivery also guards dispatch, and it refuses
+any host that resolves to a private, loopback, or link-local address — so
+without help, `ATHENA_ICARUS_URL=http://127.0.0.1:8443` makes every dispatch
+land `undeliverable: url resolves to a disallowed (internal) address`. That is
+the guard doing its job against attacker-registered URLs; your executor's
+address is not attacker-registered, so name it explicitly:
+
+```
+ATHENA_EGRESS_PRIVATE_HOSTS=127.0.0.1
+```
+
+The list is exact hostnames (comma-separated, case-insensitive, no wildcards),
+set in the process environment — the same trust channel as the secret itself.
+Delivery still pins the connection to the resolved address. This was found the
+first time the dispatch loop ran against a real local counterparty, which is
+what `scripts/field_exercise.py` now does in CI.
+
+## The reference executor
+
+[`examples/icarus_executor.py`](../examples/icarus_executor.py) is the smallest
+honest counterparty to this contract: one stdlib-only file (a test pins that it
+imports nothing from Athena — the two systems share a secret and a wire format,
+never code) that verifies the envelope signature before parsing a byte, answers
+acceptance with its own run id, echoes the policy digest verbatim, signs its
+callbacks the same way, and retries them — because the callback endpoint is
+idempotent and a one-shot report would be lost to any transient failure.
+
+```
+ATHENA_URL=http://127.0.0.1:8000 EXECUTOR_SECRET=change-me \
+    python examples/icarus_executor.py
+```
+
+It "works" by immediately reporting evidence and a completed outcome — the
+executor equivalent of hello-world. Everything it reports is a claim, which is
+exactly the contract: Athena records what it is told and verifies nothing.
 
 ## Limitations
 
