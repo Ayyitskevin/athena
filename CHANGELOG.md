@@ -10,6 +10,21 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **An assignment can be undone.** `assigned` events recorded only the new
+  assignee's display name — not unique, not a prior value, and a re-assign read
+  identically to a first assign — so unlike status (whose prior state 0055 had
+  recorded all along) there was genuinely nothing trustworthy to restore.
+  Migration **0068** (`issue_assignee_facts`) records the typed before/after ids
+  in the same transaction as the event, keyed 1:1 to it and append-only — the
+  assignee twin of the lifecycle facts. The compensator applies the same scalar
+  discipline as status undo: the assignment must still be in force (undoing a
+  superseded event refuses rather than silently unseating a newer assignee), a
+  pre-0068 event refuses rather than guessing from prose, and the ordinary
+  command — run as the undoing actor — owns authorization, budget, and gates.
+  The assignee columns keep a plain `REFERENCES users(id)`, like
+  `activity.actor_id`: Athena never hard-deletes a user, so the reference always
+  resolves.
+
 - **Configuring a project's statuses is a command, and is audited.** A project's
   status set *is* its issue lifecycle: adding a `done`-category status changes what
   "closed" means for its board, its dependencies, and its blocked-close policy.
@@ -68,9 +83,9 @@ untagged package/development milestones, not published releases.
   a transaction would hold SQLite's single writer for as long as a stranger's
   server takes, and the durable fact "Athena decided to dispatch this" must survive
   a far side that never answers, so a failure is recorded as `undeliverable` with
-  its reason. Dispatch is **metered and gated like any other write**, because
-  otherwise an actor gated on `issue.close` could route around the gate by asking an
-  executor instead. Callbacks carry **no Athena credential** — they are
+  its reason. Dispatch is **metered and gated like any other write** — under its
+  own `dispatch.request` approval kind (see Fixed below), because otherwise a
+  gated actor could route around approvals by asking an executor instead. Callbacks carry **no Athena credential** — they are
   authenticated by HMAC over the exact body, checked before any lookup so the
   endpoint cannot be used to probe which dispatches exist — and can do exactly two
   things: attach evidence and report an outcome. A digest mismatch is **recorded and
@@ -258,8 +273,6 @@ untagged package/development milestones, not published releases.
   run the reconciliation against a selected database and attachment directory and
   reports bounded category counts rather than blob names or content.
 
-### Changed
-
 - Claim acquisition and same-holder renewal now require exactly one strong root
   issue ETag across REST and MCP, with explicit missing, malformed, oversized, and
   stale-precondition responses and durable exact-retry replay.
@@ -288,6 +301,16 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- **A close approval can no longer be spent by a dispatch.** Dispatch borrowed
+  `issue.close`'s approval policy row when it shipped: gating an agent's closes
+  silently gated its dispatches too, and — the sharp edge — an approval the
+  operator granted for *closing* an issue could be consumed by a *dispatch* of
+  that issue instead. An approval authorizes the intent the operator read on the
+  ask, so two actions must never share a kind. Dispatch now has its own,
+  `dispatch.request`, in the closed vocabulary (no migration — 0063 deliberately
+  left `action_kind` as code-owned free text). **Behavior change to note:** an
+  operator who relied on the borrowed coupling must now gate `dispatch.request`
+  explicitly; a close gate no longer touches dispatch, and vice versa.
 - **Attention-bearing claims are no longer the rows most likely to be hidden.**
   The active-work window sorted active leases before expired ones, so on a busy
   fleet the expired — attention-bearing — claims were exactly the rows the limit

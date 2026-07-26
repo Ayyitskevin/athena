@@ -33,7 +33,8 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   gates, durable per-agent action budgets that refuse a metered write once the
   window's ceiling is spent, and opt-in human-in-the-loop approval gates that
   refuse a gated action with a recorded ask the operator approves or rejects
-  (`issue.close` only — one action kind, not a general approval workflow).
+  (`issue.close` and `dispatch.request` — two action kinds, each naming one
+  intent, not a general approval workflow).
 - **Intervene** also includes a cooperative worker registry: an agent process
   registers by heartbeat, and an admin can ask it to stop. Athena records the
   request and the worker's reply — it cannot signal or observe a process, so a
@@ -57,11 +58,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   run must be one that actually exists.
 - **Trust / Learn** adds undo by compensation: reversing an action records its
   inverse as a new audited command linked to the event it reversed, so history is
-  never rewritten. Five verb pairs are reversible — issue and page archive and
-  labels, plus an issue's status, which reverses from the structured prior state
-  the lifecycle facts already recorded and refuses when a newer change has
-  superseded it. Everything else is refused with its reversibility class. That is
-  not general undo.
+  never rewritten. The reversible set now covers issue and page archive and
+  labels, an issue's status (from the structured prior state the lifecycle facts
+  already recorded), and its assignee (from the 0068 assignee facts) — each
+  scalar refusing when a newer change has superseded it. Everything else is
+  refused with its reversibility class. That is not general undo.
 - **Intervene** finally has no unaudited durable writes left in the Aegis project
   surface: configuring a project's statuses — which is configuring what "closed"
   means for its issues — is a command with an actor and an audit event, and every

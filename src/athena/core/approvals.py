@@ -33,8 +33,15 @@ from athena.core import activity, db
 
 # The gated vocabulary. Kept here (not in a schema CHECK) so adding a gate is a
 # code change with tests, not a migration.
+#
+# Each kind names ONE intent, and that is load-bearing: an approval authorizes
+# the intent the operator read on the ask, so two different actions must never
+# share a kind — the operator would approve one thing and the agent could spend
+# the approval on the other. Dispatch borrowed `issue.close` when it first
+# shipped, which meant exactly that confusion; it now has its own kind.
 ACTION_ISSUE_CLOSE = "issue.close"
-ACTION_KINDS: frozenset[str] = frozenset({ACTION_ISSUE_CLOSE})
+ACTION_DISPATCH_REQUEST = "dispatch.request"
+ACTION_KINDS: frozenset[str] = frozenset({ACTION_ISSUE_CLOSE, ACTION_DISPATCH_REQUEST})
 
 VERB_REQUESTED = "approval_requested"
 VERB_APPROVED = "approval_approved"

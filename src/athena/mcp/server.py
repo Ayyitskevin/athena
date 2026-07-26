@@ -539,9 +539,10 @@ def build_server(client: AthenaClient) -> FastMCP:
         Evidence and completion arrive later as opaque references via the
         executor's signed callback.
 
-        Metered and gated like any other write: it spends a budget action, and an
-        actor gated on issue.close cannot route around that gate by dispatching
-        instead. Requires the issue:write scope and a configured executor."""
+        Metered and gated like any other write: it spends a budget action, and
+        dispatch has its own approval kind ('dispatch.request') an operator can
+        gate independently of issue.close. Requires the issue:write scope and a
+        configured executor."""
         return client.dispatch_to_icarus(
             issue_id,
             repo=repo,
@@ -738,8 +739,8 @@ def build_server(client: AthenaClient) -> FastMCP:
         idempotency_key: IdempotencyKey | None = None,
     ) -> list:
         """Admin: require operator approval before this user may take an action
-        kind (currently 'issue.close'). Gating is opt-in — an ungated user is
-        unaffected. Returns the user's gated kinds."""
+        kind ('issue.close' or 'dispatch.request'). Gating is opt-in — an ungated
+        user is unaffected. Returns the user's gated kinds."""
         return client.set_approval_policy(
             user_id, action_kind=action_kind, idempotency_key=idempotency_key
         )

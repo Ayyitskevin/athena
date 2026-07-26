@@ -29,10 +29,10 @@ Each phase names the target capability we invest in. This is the destination, no
 a shipped-feature inventory; [`ARCHITECTURE.md`](ARCHITECTURE.md) records current
 delivery. Durable per-agent **action** budgets are now implemented (opt-in, metering
 actions rather than model spend — see [`AGENT_BUDGETS.md`](AGENT_BUDGETS.md)), as are
-human-in-the-loop **approval gates** (opt-in, `issue.close` only — see
-[`APPROVALS.md`](APPROVALS.md)), and **undo by compensation** for a first set of
-reversible actions (see [`UNDO.md`](UNDO.md) — four verb pairs, never a rewritten
-trail), and a **worker registry** with a cooperative kill request (see
+human-in-the-loop **approval gates** (opt-in, `issue.close` and
+`dispatch.request` — see [`APPROVALS.md`](APPROVALS.md)), and **undo by compensation** for a first set of
+reversible actions (see [`UNDO.md`](UNDO.md) — archives, labels, status, and
+assignee; never a rewritten trail), and a **worker registry** with a cooperative kill request (see
 [`WORKERS.md`](WORKERS.md) — Athena records that a worker was asked to stop and
 what it said back; it cannot signal a process). *Process-level* kill and *general*
 undo across every write remain roadmap goals rather than guarantees Athena makes

@@ -164,8 +164,9 @@ Durable per-agent action budgets **are** implemented (opt-in; see
 [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md)). They meter actions, not tokens or
 dollars — Athena never observes an agent's model spend.
 
-Human-in-the-loop **approval gates are implemented** too (opt-in, one action kind
-— `issue.close`; see [docs/APPROVALS.md](docs/APPROVALS.md)). A gated action is
+Human-in-the-loop **approval gates are implemented** too (opt-in, two action kinds
+— `issue.close` and `dispatch.request`; see
+[docs/APPROVALS.md](docs/APPROVALS.md)). A gated action is
 refused with a recorded ask that the operator approves or rejects; approval
 authorizes one retry, not a stored side effect. That is a bounded first slice,
 not a general approval workflow.
