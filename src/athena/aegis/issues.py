@@ -52,6 +52,28 @@ _SELECT = (
 )
 
 
+def select_sql() -> str:
+    """The issue SELECT (no WHERE), for a caller building its own predicate.
+
+    Exposed so ``issue_query`` composes the *same* projection and joins rather
+    than declaring a second one: a queried issue and a listed issue must be the
+    same shape, or two surfaces of the same product disagree about what an issue
+    has. Callers append their own joins, WHERE, and ORDER BY.
+    """
+    return _SELECT
+
+
+def to_issue(row: sqlite3.Row) -> dict:
+    """Map a :func:`select_sql` row to an issue dict — the one row mapper."""
+    return _to_issue(row)
+
+
+def like_contains(value: str) -> str:
+    """The escaped LIKE pattern for a case-insensitive substring match, so a query
+    grammar's free text searches exactly like the ``search=`` parameter does."""
+    return _like_contains(value)
+
+
 def _to_issue(row: sqlite3.Row) -> dict:
     """Turn a _SELECT row into an issue dict, adding the computed display key.
 

@@ -24,8 +24,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from athena.aegis import issues
-from athena.core import labels
+from athena.aegis import issue_query, issues
+from athena.core import labels, work_query
 
 # The legal criteria dimensions — anything else in a submitted criteria object is
 # rejected by normalize_criteria, so a stored filter can only constrain what the
@@ -38,8 +38,23 @@ from athena.core import labels
 #   label       — label name resolved to issue ids (an unknown label matches none)
 #   project     — "none" (backlog) or a project id, via issues.parse_project_filter
 #   search      — case-insensitive substring in title/body
-_STRING_KEYS = ("status", "priority", "label", "project", "search")
+#   query       — a work-query string (core.work_query); when present it REPLACES
+#                 the structured dimensions rather than narrowing them, so a saved
+#                 filter is either a query or a set of fields, never a confusing
+#                 intersection of both.
+_STRING_KEYS = ("status", "priority", "label", "project", "search", "query")
 _CRITERIA_KEYS = frozenset((*_STRING_KEYS, "assignee_id"))
+
+#: The structured dimensions ``query`` supersedes. Named once so the validation
+#: message and the run path cannot disagree about which keys conflict.
+_STRUCTURED_KEYS = ("status", "priority", "label", "project", "search", "assignee_id")
+
+
+#: A query-backed filter pages at the DB, so it needs a bound where the
+#: structured path (which returns every match to its uncapped internal callers)
+#: has none. Generous enough to serve a board, small enough that a saved filter
+#: cannot be used to materialize the whole table.
+MAX_QUERY_RESULTS = 500
 
 
 class InvalidFilterCriteria(ValueError):
@@ -100,6 +115,22 @@ def validate_criteria(criteria: dict) -> str | None:
     project = criteria.get("project")
     if project is not None and issues.parse_project_filter(project) is None:
         return "invalid project filter"
+    query = criteria.get("query")
+    if query is not None:
+        clashing = sorted(k for k in _STRUCTURED_KEYS if k in criteria)
+        if clashing:
+            return (
+                "query cannot be combined with the structured criteria "
+                f"({', '.join(clashing)}); express them in the query"
+            )
+        # Validated at WRITE time so a saved filter cannot be persisted in a shape
+        # that fails every time it is run — the reader (normalized_valid_criteria)
+        # fails closed and would silently match nothing, which is exactly the
+        # "empty result for a broken query" the grammar exists to prevent.
+        try:
+            work_query.parse(query)
+        except work_query.QueryError as exc:
+            return str(exc)
     return None
 
 
@@ -129,6 +160,8 @@ def run_filter(
     criteria: dict | None,
     *,
     visible_project_ids: set[int] | None = None,
+    actor: dict | None = None,
+    limit: int = MAX_QUERY_RESULTS,
 ) -> list[dict]:
     """Resolve criteria into the issues that match, via issues.list_issues.
 
@@ -145,6 +178,22 @@ def run_filter(
         # Dropping a malformed dimension would turn a narrow query into a broad
         # one; passing an oversized id through could overflow sqlite3.
         return []
+    if "query" in crit:
+        # A query filter runs through the query compiler, which applies the SAME
+        # visibility clause list_issues does. `actor` is needed only for `@me`;
+        # a stored filter naming it, run without one, fails closed to no results
+        # rather than silently widening to every assignee.
+        try:
+            compiled = work_query.parse(crit["query"])
+            return issue_query.run_query(
+                conn,
+                compiled,
+                actor=actor,
+                visible_project_ids=visible_project_ids,
+                limit=limit,
+            )
+        except (work_query.QueryError, issue_query.QueryCompileError):
+            return []
     project_id: int | None = None
     backlog = False
     if "project" in crit:

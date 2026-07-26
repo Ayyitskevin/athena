@@ -227,6 +227,20 @@ class AthenaClient:
             params["include_archived"] = True
         return self._result(self._client.get("/issues", params=params))
 
+    def search_work(self, q: str, *, limit: int = 50, offset: int = 0) -> Any:
+        """Run a work query. Same endpoint the browser and REST callers use."""
+        return self._result(
+            self._client.get(
+                "/issues", params={"q": q, "limit": limit, "offset": offset}
+            )
+        )
+
+    def count_work(self, q: str) -> Any:
+        return self._result(self._client.get("/issues/query/count", params={"q": q}))
+
+    def query_help(self) -> Any:
+        return self._result(self._client.get("/issues/query/help"))
+
     def list_my_delegated_work(
         self,
         *,

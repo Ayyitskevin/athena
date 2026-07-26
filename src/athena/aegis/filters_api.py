@@ -44,6 +44,11 @@ class FilterCriteria(BaseModel):
     label: str | None = None
     project: str | None = None
     search: str | None = None
+    # A work-query string. Mutually exclusive with the dimensions above (rejected
+    # by validate_criteria, not merged) so a saved filter is one thing or the
+    # other and never a surprising intersection. Parsed at write time, so a filter
+    # that cannot run cannot be stored.
+    query: str | None = None
 
 
 class FilterCreate(BaseModel):
@@ -182,5 +187,8 @@ def run(
         conn,
         flt["criteria"],
         visible_project_ids=access.visible_project_filter(conn, actor),
+        # The runner's identity, so a saved `assignee:@me` resolves to whoever is
+        # running it — the reason to save that query rather than a fixed user id.
+        actor=actor,
     )
     return api._with_labels_many(conn, rows)

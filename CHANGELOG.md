@@ -10,7 +10,44 @@ the newest one and for what tagging still requires.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **One query language over all work.** Athena had filters but no *language*: an
+  operator wanting "open infra issues in ATH assigned to me, most urgent first"
+  clicked three controls and could neither save, share, nor hand that sentence to
+  an agent. Now `is:open label:infra project:ATH assignee:@me sort:priority-desc`
+  works in the browser, over REST (`GET /issues?q=`), from MCP (`search_work`),
+  and inside a saved filter. The shape is GitHub's, not Jira's — space-separated
+  `field:value` atoms joined by AND with `-` to negate — because a grammar with no
+  operators has no precedence for a human *or an agent composing from a docstring*
+  to get wrong. See [docs/QUERY.md](docs/QUERY.md).
+
+  Three properties are the design, not details. **An unknown atom is an error
+  naming the atom**, never an empty result: a query box that answers "no results"
+  to a typo has invented an answer, and the operator concludes there is no
+  matching work when really there was a missing `s`. **Visibility is composed into
+  the SQL**, never filtered afterwards, so a bounded page is a full page of
+  visible rows rather than a partial one with the hidden results silently removed
+  — the difference is observable in `limit`, and there is a test that fails
+  without it. **`is:open` is category-based**: it resolves through the same
+  status-category expression the fleet views use, so a project whose done state is
+  called `shipped` behaves correctly and closed-ness has one definition.
+
+  The parser lives in `core` and is pure — no database, no domain imports — so the
+  grammar is testable without fixtures and the same parse result drives every
+  surface; what an atom *means* lives in the domain layer with the tables it
+  queries. `q` and the structured filters are mutually exclusive (a 422, not a
+  merge). Saved filters validate their query at write time, so one that could
+  never run cannot be stored.
+
+### Changed
+
+- **The default-status→category mapping now has exactly one definition.**
+  `fleet_work.py` carried two hand-written SQL copies of it; the query compiler
+  would have been a third. `statuses.category_sql()` generates the expression from
+  `DEFAULT_STATUSES`, so adding a default status updates every SQL site at once
+  instead of leaving the copies to drift — the failure mode Stage I spent a whole
+  slice fixing.
 
 ## 0.1.0a1 — 2026-07-26
 
