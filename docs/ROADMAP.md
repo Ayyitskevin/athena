@@ -189,8 +189,37 @@ Checked boxes record repository implementation, not release status. They do not
 assert a successful hosted-CI run for the current production-readiness changes
 or that Athena is production-ready; deployment and release sign-off are separate.
 
+## Phase 5 — Expansion: do the other tools' jobs
+
+Goal: a solo operator running an agent fleet needs no other tab open. Not feature
+parity with five products — the *jobs* those products do, done inside Athena's
+own architecture. The full campaign, with boundaries and parked decisions, is
+[OPUS_EXPANSION_GUIDE_ATHENA.md](OPUS_EXPANSION_GUIDE_ATHENA.md).
+
+The previous scoping deferred this "until the fleet loop above is complete and
+boring". Phases 1–4 and the hardening/field-proving/release stages that followed
+satisfied that condition, so the expansion begins on the roadmap's own terms —
+under exactly the same architecture rules, none of which are amended.
+
+- [x] **One query language over all work** ([QUERY.md](QUERY.md)): a bounded,
+      GitHub-shaped grammar — `is:open label:infra assignee:@me sort:priority-desc`
+      — over REST, the browser, MCP, and saved filters. Unknown atoms are errors
+      naming the atom, never empty results; visibility is composed into the SQL.
+- [ ] **Live embeds**: fenced directives in Mentor pages that render real issue
+      lists, boards, and metrics at view time, with the *viewer's* visibility.
+      The stage where docs and tracker become one product.
+- [ ] **Knowledge graph**: unlinked mentions, a bounded server-rendered graph
+      view over the links already stored, page templates, an operator daily note.
+- [ ] **Forge integration**: inbound signed events landing as imported activity on
+      the issues they name. Integrate with a forge; never become one.
+- [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.
+- [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.
+
 ## Out of scope (for now)
 
-Multi-tenant hosting, real-time collaboration (CRDTs), a JS build, and
-Notion-style databases/blocks. Athena stays a self-hosted, server-rendered,
-single-operator tool until the fleet loop above is complete and boring.
+Multi-tenant hosting, real-time collaboration (CRDTs), a JS build chain,
+git hosting / code review / CI (Athena integrates with a forge rather than
+becoming one), and Notion-style free-form block databases. Custom fields are
+parked as an explicit product decision — labels plus the query grammar plus
+embeds are the Athena-shaped alternative. Athena stays a self-hosted,
+server-rendered, single-operator tool.

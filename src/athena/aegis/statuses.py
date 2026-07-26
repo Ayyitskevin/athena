@@ -81,6 +81,32 @@ def is_done(conn: sqlite3.Connection, project_id: int | None, name: str) -> bool
     return category_of(conn, project_id, name) == "done"
 
 
+def category_sql(*, status_column: str, category_column: str) -> str:
+    """A SQL expression resolving an issue's status to its category.
+
+    ``category_column`` is a LEFT JOINed ``project_statuses.category`` (NULL for a
+    backlog issue, which has no rows of its own); the CASE is the fallback for
+    exactly that case, and it is **generated from DEFAULT_STATUSES** rather than
+    written out. That matters: a hand-written copy of this mapping is a second
+    source of truth for what "closed" means, and Stage I's whole lesson was that a
+    second implementation of a status rule drifts from the first. Adding a default
+    status now updates every SQL site at once.
+
+    Callers must LEFT JOIN ``project_statuses`` themselves, since only the caller
+    knows its alias and its issue join. The ELSE arm mirrors ``global_category``'s
+    neutral middle for a name nobody has a row or a default for.
+    """
+    for name, category in DEFAULT_STATUSES:
+        # These are interpolated as SQL literals, so refuse anything that could
+        # end the literal. They are module constants today; this keeps that true.
+        if "'" in name or "'" in category:
+            raise ValueError(f"unsafe default status literal: {name!r}")
+    whens = " ".join(
+        f"WHEN '{name}' THEN '{category}'" for name, category in DEFAULT_STATUSES
+    )
+    return f"COALESCE({category_column}, CASE {status_column} {whens} ELSE 'doing' END)"
+
+
 def first_status(conn: sqlite3.Connection, project_id: int | None) -> str:
     """The default status for a new issue in this project (its first, by position)."""
     options = list_statuses(conn, project_id)

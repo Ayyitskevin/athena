@@ -235,6 +235,7 @@ def filter_detail(
                 conn,
                 crit,
                 visible_project_ids=access.visible_project_filter(conn, user),
+                actor=user,
             )
             if crit is not None
             else []

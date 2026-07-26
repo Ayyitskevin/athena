@@ -194,6 +194,41 @@ def build_server(client: AthenaClient) -> FastMCP:
         )
 
     @mcp.tool()
+    def search_work(q: str, limit: int = 50, offset: int = 0) -> list:
+        """Find issues with a work query — the precise way to ask for work.
+
+        The grammar is GitHub-shaped: space-separated `field:value` atoms, joined
+        by AND, with `-` to negate one. Examples:
+
+            is:open assignee:@me sort:priority-desc
+            project:ATH label:infra -label:noise
+            is:closed has:blockers "payment retry"
+
+        Fields: is:(open|closed|archived|unassigned), has:(blockers|parent|
+        children|labels), status:, priority:, label:, project:(id|KEY|none),
+        sprint:(id|none), assignee:(id|@me|none), sort:(created|id|priority|
+        status)-(asc|desc). Bare words and "quoted phrases" match title and body.
+
+        `@me` is the token's own actor. Archived issues are excluded unless the
+        query says `is:archived`. An unknown field is an error naming the field,
+        never an empty result — so a typo is visible instead of looking like "no
+        work". Call query_help() for the vocabulary as data."""
+        return client.search_work(q, limit=limit, offset=offset)
+
+    @mcp.tool()
+    def count_work(q: str) -> dict:
+        """How many issues a work query matches, ignoring paging — so a bounded
+        page can be reported as "50 of 340" rather than as the whole answer."""
+        return client.count_work(q)
+
+    @mcp.tool()
+    def query_help() -> dict:
+        """The work-query vocabulary as data: every field, its accepted values,
+        and the limits. Emitted by the parser itself, so it cannot drift from
+        what search_work actually accepts."""
+        return client.query_help()
+
+    @mcp.tool()
     def list_my_delegated_work(
         include_closed: bool = False,
         limit: DelegationLimit = 50,

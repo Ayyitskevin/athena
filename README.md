@@ -75,7 +75,9 @@ sides.
 ### Aegis — work
 
 Projects, issues, configurable statuses, boards, sprints, priorities, labels,
-dependencies, filters, comments, watches, and automation. Issue writes maintain
+dependencies, filters, comments, watches, and automation, plus a
+[work query language](docs/QUERY.md) (`is:open label:infra assignee:@me`)
+shared by the browser, REST, MCP, and saved filters. Issue writes maintain
 their activity, search, link, mention, and notification projections through a
 shared command transaction.
 
@@ -216,6 +218,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/WORKFLOW_GATES.md](docs/WORKFLOW_GATES.md) — optional project blocked-close governance
 - [docs/AGENT_BUDGETS.md](docs/AGENT_BUDGETS.md) — durable, opt-in per-agent action ceilings
 - [docs/APPROVALS.md](docs/APPROVALS.md) — opt-in human-in-the-loop approval gates
+- [docs/QUERY.md](docs/QUERY.md) — the work query language, and why unknown atoms are errors
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals

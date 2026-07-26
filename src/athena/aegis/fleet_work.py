@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues
+from athena.aegis import claim_handoffs, issues, statuses
 from athena.core import agent_run_checkins, db
 
 
@@ -27,13 +27,14 @@ OBSERVED = "observed"
 ATTENTION_STATES = (NEEDS_ATTENTION, OBSERVED)
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
-_STATUS_CATEGORY_SQL = (
-    "COALESCE(ps.category, CASE i.status "
-    "WHEN 'open' THEN 'todo' WHEN 'done' THEN 'done' ELSE 'doing' END)"
+# Generated from statuses.DEFAULT_STATUSES rather than written out, so the
+# default-status mapping has exactly one definition. These were two hand-written
+# copies of it until the query grammar needed a third.
+_STATUS_CATEGORY_SQL = statuses.category_sql(
+    status_column="i.status", category_column="ps.category"
 )
-_BLOCKER_CATEGORY_SQL = (
-    "COALESCE(bps.category, CASE bi.status "
-    "WHEN 'open' THEN 'todo' WHEN 'done' THEN 'done' ELSE 'doing' END)"
+_BLOCKER_CATEGORY_SQL = statuses.category_sql(
+    status_column="bi.status", category_column="bps.category"
 )
 
 # The SQL ordering bias. Attention is decided in exactly ONE place — `_item`, in

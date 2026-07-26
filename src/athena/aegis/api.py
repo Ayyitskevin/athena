@@ -37,13 +37,22 @@ from athena.aegis import (
     lease_commands,
     leases,
     project_commands,
+    issue_query,
     project_etags,
     projects,
     sprints,
     status_commands,
     statuses,
 )
-from athena.core import access, attachment_commands, attachments, labels, links, users
+from athena.core import (
+    access,
+    attachment_commands,
+    attachments,
+    labels,
+    links,
+    users,
+    work_query,
+)
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
@@ -497,8 +506,34 @@ def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
     return parsed
 
 
+def _query_refusal(exc: Exception, atom: str | None) -> HTTPException:
+    """One 422 shape for a bad query, whether the grammar or the domain refused it.
+
+    ``atom`` names the offending piece so a caller can fix the typo instead of
+    guessing which of eight terms was wrong — the whole reason an unknown atom is
+    an error rather than an empty result set."""
+    detail: dict[str, object] = {"error": str(exc), "code": "invalid_query"}
+    if atom is not None:
+        detail["atom"] = atom
+    return HTTPException(status_code=422, detail=detail)
+
+
+def _parsed_query(raw: str) -> work_query.Query:
+    try:
+        return work_query.parse(raw)
+    except work_query.QueryError as exc:
+        raise _query_refusal(exc, exc.atom) from exc
+
+
 @router.get("", response_model=list[IssueOut])
 def index(
+    q: str | None = Query(
+        None,
+        description=(
+            "Work query, e.g. 'is:open label:infra project:ATH sort:priority-desc'. "
+            "Mutually exclusive with the structured filters below."
+        ),
+    ),
     status: str | None = None,
     priority: str | None = None,
     assignee: int | None = Query(None, ge=0, le=issues.MAX_SQLITE_INTEGER),
@@ -512,6 +547,46 @@ def index(
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
+    # `q` and the structured filters are two spellings of the same intent, so
+    # combining them is refused rather than merged: silently AND-ing them would
+    # make `?q=is:open&status=done` return nothing and look like a data problem,
+    # and silently preferring one would ignore what the caller asked for.
+    if q is not None:
+        conflicting = [
+            name
+            for name, value in (
+                ("status", status),
+                ("priority", priority),
+                ("assignee", assignee),
+                ("label", label),
+                ("search", search),
+                ("project", project),
+                ("sprint", sprint),
+            )
+            if value is not None
+        ]
+        if include_archived:
+            conflicting.append("include_archived")
+        if conflicting:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "q cannot be combined with the structured filters "
+                    f"({', '.join(sorted(conflicting))}); express them in the query"
+                ),
+            )
+        try:
+            rows = issue_query.run_query(
+                conn,
+                _parsed_query(q),
+                actor=actor,
+                visible_project_ids=access.visible_project_filter(conn, actor),
+                limit=limit,
+                offset=offset,
+            )
+        except issue_query.QueryCompileError as exc:
+            raise _query_refusal(exc, exc.atom) from exc
+        return _with_labels_many(conn, rows)
     # Optional filters, same semantics the web list uses (one shared path in
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
@@ -543,6 +618,44 @@ def index(
         offset=offset,
     )
     return _with_labels_many(conn, rows)
+
+
+class QueryCountOut(BaseModel):
+    # The total behind a page, so a surface can say "showing 50 of 340" instead of
+    # implying the page is the whole answer — the same honesty the active-work and
+    # work-context surfaces already apply to their bounded windows.
+    q: str
+    matched: int
+
+
+@router.get("/query/count", response_model=QueryCountOut)
+def query_count(
+    q: str,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """How many issues this query matches, within the caller's visibility."""
+    parsed = _parsed_query(q)
+    try:
+        matched = issue_query.count_query(
+            conn,
+            parsed,
+            actor=actor,
+            visible_project_ids=access.visible_project_filter(conn, actor),
+        )
+    except issue_query.QueryCompileError as exc:
+        raise _query_refusal(exc, exc.atom) from exc
+    return {"q": parsed.raw, "matched": matched}
+
+
+@router.get("/query/help")
+def query_help() -> dict:
+    """The query vocabulary, as data.
+
+    Emitted from `work_query.describe()` rather than restated, so this endpoint,
+    the MCP tool's docstring, and docs/QUERY.md cannot drift from the parser.
+    """
+    return work_query.describe()
 
 
 class IssueSearchHit(BaseModel):
