@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
+from athena.aegis import embed_data
 from athena.core import (
     access,
     activity,
@@ -619,7 +620,17 @@ def page_detail(
         name="mentor/page_detail.html",
         context={
             "page": page,
-            "body_html": render_body(conn, page["body"], actor=user),
+            # Embeds resolve HERE, per request, against the VIEWER — never the
+            # author. An admin's `q: is:open` renders for a member only the work
+            # that member could already see, and nothing is cached between
+            # viewers, because a cache keyed on the page would serve one reader's
+            # visibility to another.
+            "body_html": render_body(
+                conn,
+                page["body"],
+                actor=user,
+                embed_results=embed_data.resolve_body(conn, page["body"], actor=user),
+            ),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
             "all_labels": labels.list_labels(
