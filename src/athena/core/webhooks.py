@@ -50,6 +50,11 @@ SECRET_PREFIX = "whsec_"
 _BACKOFF_BASE_SECONDS = 10
 _BACKOFF_CAP_SECONDS = 3600
 
+# How much of a receiver's 2xx response body the poster keeps. Enough for any
+# contract payload (dispatch acceptance is a one-key JSON object); a bound so a
+# misbehaving receiver cannot make Athena buffer megabytes per delivery.
+_MAX_RESPONSE_BODY_BYTES = 64 * 1024
+
 # Columns safe to return to a caller — never the signing secret.
 _PUBLIC_COLS = (
     "id, url, event_kind, active, cursor, failure_count, last_error, "
@@ -62,6 +67,21 @@ _PUBLIC_COLS = (
 
 class _UnsafeAddress(Exception):
     """A URL resolved to an address Athena must not connect to (SSRF guard)."""
+
+
+def _host_exempt(host: str) -> bool:
+    """Whether the operator explicitly allowed this exact host to resolve private.
+
+    Read at call time so a test or reconfigured process sees the current list.
+    Exact, case-insensitive hostname match — no wildcards, no ranges — against
+    ``ATHENA_EGRESS_PRIVATE_HOSTS``, which is set in the process environment: the
+    same trust channel as the secrets themselves, not the attacker-reachable API
+    where webhook URLs are registered. An exemption skips only the address-class
+    check; resolution is still required and delivery still pins to the resolved
+    address, so an exempt name cannot be combined with a redirect or a rebind to
+    reach a host the operator did not name.
+    """
+    return host.strip().lower() in config.EGRESS_PRIVATE_HOSTS
 
 
 def _address_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -99,11 +119,14 @@ def is_safe_url(url: str) -> tuple[bool, str]:
     The app makes the request, so an attacker who can register a URL could probe
     the internal network or the cloud metadata endpoint (classic SSRF). We require
     http/https and reject any host that resolves to a private, loopback, link-local,
-    reserved, multicast, or unspecified address. This is the first-line check, run at
-    registration and before every delivery pass. It is necessary but not sufficient on
-    its own: the delivery poster re-validates and PINS the connection to the vetted IP
-    (see _safe_connect_target) so a record flipped to an internal IP after this check —
-    or a redirect to one — still cannot be reached."""
+    reserved, multicast, or unspecified address — unless the operator explicitly
+    named that exact host in ``ATHENA_EGRESS_PRIVATE_HOSTS`` (see
+    :func:`_host_exempt`; a self-hosted deployment's executor or webhook receiver
+    legitimately lives at a loopback/LAN/tailnet address). This is the first-line
+    check, run at registration and before every delivery pass. It is necessary but
+    not sufficient on its own: the delivery poster re-validates and PINS the
+    connection to the vetted IP (see _safe_connect_target) so a record flipped to an
+    internal IP after this check — or a redirect to one — still cannot be reached."""
     try:
         parsed = urlparse(url)
     except ValueError:
@@ -125,9 +148,10 @@ def is_safe_url(url: str) -> tuple[bool, str]:
         # are "can't safely resolve" — fail closed rather than let the exception
         # escape and abort the whole delivery pass.
         return False, "host does not resolve"
-    for info in infos:
-        if _address_blocked(ipaddress.ip_address(info[4][0])):
-            return False, "url resolves to a disallowed (internal) address"
+    if not _host_exempt(host):
+        for info in infos:
+            if _address_blocked(ipaddress.ip_address(info[4][0])):
+                return False, "url resolves to a disallowed (internal) address"
     return True, ""
 
 
@@ -143,9 +167,10 @@ def _safe_connect_target(host: str, port: int) -> tuple[int, tuple]:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except (socket.gaierror, UnicodeError) as exc:
         raise _UnsafeAddress("host does not resolve") from exc
-    for info in infos:
-        if _address_blocked(ipaddress.ip_address(info[4][0])):
-            raise _UnsafeAddress("url resolves to a disallowed (internal) address")
+    if not _host_exempt(host):
+        for info in infos:
+            if _address_blocked(ipaddress.ip_address(info[4][0])):
+                raise _UnsafeAddress("url resolves to a disallowed (internal) address")
     return infos[0][0], infos[0][4]
 
 
@@ -502,9 +527,16 @@ def urllib_poster(timeout: float) -> Poster:
             conn.request("POST", target, body=body, headers=headers)
             response = conn.getresponse()
             code = response.status
-            response.read()  # drain the body so the connection closes cleanly
+            # Drain (bounded) so the connection closes cleanly — and KEEP it: a
+            # receiver's 2xx body can carry contract data. Dispatch acceptance
+            # returns {"icarus_run_id": ...}, and discarding it here meant Athena
+            # silently correlated every real executor by the fallback key while
+            # the executor called back under the run id it had actually announced
+            # — found the first time a real counterparty spoke the contract, not
+            # by the stub posters, which all returned their bodies.
+            payload = response.read(_MAX_RESPONSE_BODY_BYTES)
             if 200 <= code < 300:
-                return True, None
+                return True, payload.decode("utf-8", "replace") if payload else None
             if 300 <= code < 400:
                 # A redirect is refused, never followed: the Location could point at an
                 # internal address the registration check never saw.

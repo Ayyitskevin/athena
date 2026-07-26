@@ -308,3 +308,70 @@ def test_https_pin_still_validates_cert_against_the_hostname(tmp_path, monkeypat
     finally:
         server.shutdown()
         thread.join(timeout=2)
+
+
+# --- the operator's private-host allowlist ----------------------------------
+
+
+def test_the_allowlist_is_empty_by_default_and_the_policy_stays_absolute():
+    from athena import config
+
+    assert config.EGRESS_PRIVATE_HOSTS == ()
+    ok, reason = webhooks.is_safe_url("http://127.0.0.1/hook")
+    assert not ok and "internal" in reason
+
+
+def test_a_named_host_may_resolve_private_and_unnamed_hosts_still_may_not(
+    monkeypatch,
+):
+    """The exemption is exact-match: naming one host opens exactly that host.
+
+    Discovered by the field exercise: without this, a self-hosted operator cannot
+    point ATHENA_ICARUS_URL or a webhook at their own machine, LAN, or tailnet —
+    the deployments Athena is FOR — and every dispatch to a local executor lands
+    `undeliverable`.
+    """
+    from athena import config
+
+    monkeypatch.setattr(config, "EGRESS_PRIVATE_HOSTS", ("127.0.0.1",))
+    ok, reason = webhooks.is_safe_url("http://127.0.0.1:8443/dispatch")
+    assert ok, reason
+    # A different private target is still refused — the list is not a mode switch.
+    ok, _ = webhooks.is_safe_url("http://10.0.0.5/")
+    assert not ok
+    ok, _ = webhooks.is_safe_url("http://169.254.169.254/latest/meta-data/")
+    assert not ok
+    # And the connect-time pin honors the same exemption, so delivery agrees with
+    # registration about what is reachable.
+    family, sockaddr = webhooks._safe_connect_target("127.0.0.1", 8443)
+    assert sockaddr[0] == "127.0.0.1"
+    with pytest.raises(webhooks._UnsafeAddress):
+        webhooks._safe_connect_target("169.254.169.254", 80)
+
+
+def test_the_allowlist_match_is_case_insensitive_but_never_fuzzy(monkeypatch):
+    from athena import config
+
+    monkeypatch.setattr(config, "EGRESS_PRIVATE_HOSTS", ("localhost",))
+    assert webhooks._host_exempt("LOCALHOST")
+    assert webhooks._host_exempt("localhost")
+    # No prefix/suffix/subdomain matching: an exemption names one host.
+    assert not webhooks._host_exempt("localhost.attacker.example")
+    assert not webhooks._host_exempt("a-localhost")
+
+
+def test_delivery_reaches_a_loopback_endpoint_through_the_allowlist_alone(
+    local_server, monkeypatch
+):
+    """End to end with NO monkeypatch of the address policy: the allowlist is the
+    only thing standing between the poster and a loopback receiver, exactly as it
+    would be for an operator's local executor."""
+    from athena import config
+
+    base, state = local_server
+    state["status"] = 200
+    monkeypatch.setattr(config, "EGRESS_PRIVATE_HOSTS", ("127.0.0.1",))
+    post = webhooks.urllib_poster(2.0)
+    ok, reason = post(base + "/hook", b'{"x":1}', {"Content-Type": "application/json"})
+    assert ok, reason
+    assert state["requests"] == ["/hook"]

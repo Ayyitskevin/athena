@@ -69,6 +69,15 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   automation rule action reaches a command owner rather than composing its own
   write beside the trail.
 
+- **The loop is exercised, not just implemented.** A field exercise
+  (`scripts/field_exercise.py`, gated in CI) drives every step above against a
+  real Athena process and a real reference executor
+  (`examples/icarus_executor.py`) over real HTTP with real signatures — the
+  composed system, not its parts. Its first run found two defects the stubbed
+  tests could not: the SSRF guard refused every local executor (now an explicit
+  opt-in allowlist), and the delivery poster discarded the acceptance body that
+  carries the executor's run id (so no real callback could ever correlate).
+
 Phase 1 closed the original attribution and delegated-completion breaks. Items
 that remain intentionally open are still unchecked below.
 
