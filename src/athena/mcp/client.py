@@ -241,6 +241,23 @@ class AthenaClient:
     def query_help(self) -> Any:
         return self._result(self._client.get("/issues/query/help"))
 
+    def resolve_embeds(self, text: str) -> Any:
+        return self._result(self._client.post("/embeds/resolve", json={"text": text}))
+
+    def page_embeds(self, page_id: int) -> Any:
+        """A page's embeds, resolved as this token's actor.
+
+        Two REST calls — read the page, resolve its body — because the import
+        contract keeps Mentor pages and Aegis issue queries in peer modules that
+        may not import each other. Composed here so an agent still makes one tool
+        call, and so the visibility of both halves is the caller's own.
+        """
+        page = self._result(self._client.get(f"/pages/{page_id}"))
+        return self.resolve_embeds(page.get("body") or "")
+
+    def embed_help(self) -> Any:
+        return self._result(self._client.get("/embeds/help"))
+
     def list_my_delegated_work(
         self,
         *,

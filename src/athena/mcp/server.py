@@ -222,6 +222,38 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.count_work(q)
 
     @mcp.tool()
+    def read_page_embeds(page_id: int) -> list:
+        """Resolve a Mentor page's live embeds to DATA, as you.
+
+        A page can carry ```athena blocks that show real work — an issue list, a
+        count, a single issue — rendered fresh whenever anyone looks. This returns
+        what those blocks resolve to for YOUR visibility, as structured rows
+        rather than the HTML a browser gets.
+
+        Use it on an issue's runbook page to see the live work the runbook points
+        at, instead of re-deriving it from the prose around it. Each result has a
+        `kind` and either its data or an `error` saying why that block did not
+        render. Nothing here is stored on the page: the page holds the directive,
+        the data is resolved per reader."""
+        return client.page_embeds(page_id)
+
+    @mcp.tool()
+    def resolve_embeds(text: str) -> list:
+        """Resolve embed directives in arbitrary text, as you.
+
+        The same resolver read_page_embeds uses. Useful before saving a page: see
+        what your ```athena blocks will actually show — including which ones will
+        render an error — without writing them first."""
+        return client.resolve_embeds(text)
+
+    @mcp.tool()
+    def embed_help() -> dict:
+        """The embed vocabulary as data: every kind, its keys, and the limits.
+        Emitted by the parser itself, so it cannot drift from what actually
+        renders."""
+        return client.embed_help()
+
+    @mcp.tool()
     def query_help() -> dict:
         """The work-query vocabulary as data: every field, its accepted values,
         and the limits. Emitted by the parser itself, so it cannot drift from

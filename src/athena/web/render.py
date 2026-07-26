@@ -25,6 +25,7 @@ search snippets are short, untrusted, and want literal text, not formatting.
 from __future__ import annotations
 
 import re
+import secrets
 import sqlite3
 from html import unescape
 
@@ -32,7 +33,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 import nh3
 
-from athena.core import links, users
+from athena.core import embeds, links, users
 
 # One configured Markdown renderer for every body. `html=False` is the security
 # linchpin (raw HTML is escaped, not emitted); `breaks=True` preserves authored
@@ -101,11 +102,112 @@ def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:
     return Markup(linked.replace("\n", "<br>"))
 
 
+def _extract_embeds(
+    text: str, embed_results: list[dict] | None
+) -> tuple[str, dict[str, str]]:
+    """Replace each ```athena block with an opaque token, returning the rewritten
+    source and the token→HTML map.
+
+    ``embed_results`` comes from ``aegis.embed_data.resolve_body`` — the caller
+    resolves, because resolution needs a database and a viewer and this module is
+    the presentation layer. When it is None (an internal caller that did not
+    resolve), directives render as a plain notice rather than vanishing: a reader
+    must never be shown a page with a silent hole where an embed was.
+    """
+    found = embeds.find_directives(text)
+    if not found:
+        return text, {}
+    nonce = secrets.token_hex(8)
+    placeholders: dict[str, str] = {}
+    for index, (whole, _body) in enumerate(found):
+        token = f"athenaembed{nonce}x{index}"
+        if embed_results is not None and index < len(embed_results):
+            html = _embed_html(embed_results[index])
+        else:
+            html = (
+                '<div class="embed embed-error"><div class="embed-message">'
+                "Embed not rendered here.</div></div>"
+            )
+        placeholders[token] = html
+        text = text.replace(whole, token, 1)
+    return text, placeholders
+
+
+def _embed_html(resolved: dict) -> str:
+    """Render one resolved embed to HTML.
+
+    Every value here is escaped by this function; nothing author-supplied is
+    emitted as markup. That is why the embed HTML is substituted AFTER the
+    sanitizer rather than passing through it — there is no untrusted markup in it
+    to sanitize, and running it through nh3 would strip the structure it needs.
+    """
+    title = resolved.get("title") or ""
+    head = f'<div class="embed-title">{escape(title)}</div>' if title else ""
+
+    error = resolved.get("error")
+    if error:
+        # Visible, in place, with the reason. An embed that silently rendered
+        # nothing would be indistinguishable from one that matched nothing.
+        return (
+            f'<div class="embed embed-error">{head}'
+            f'<div class="embed-message">Embed did not render: {escape(error)}</div>'
+            f"</div>"
+        )
+
+    kind = resolved.get("kind")
+    if kind == "count":
+        return (
+            f'<div class="embed embed-count">{head}'
+            f'<span class="embed-number">{escape(str(resolved["matched"]))}</span>'
+            f'<span class="embed-query">{escape(resolved.get("query") or "")}</span>'
+            f"</div>"
+        )
+
+    if kind == "issue":
+        return (
+            f'<div class="embed embed-issue">{head}{_issue_row(resolved["item"])}</div>'
+        )
+
+    rows = "".join(_issue_row(item) for item in resolved.get("items", []))
+    if not rows:
+        rows = '<div class="embed-message">No issues match.</div>'
+    footer = ""
+    if resolved.get("truncated"):
+        # Say what was left out. A bounded window presented as the whole answer
+        # is how an operator concludes there are ten open issues when there are
+        # forty-two.
+        footer = (
+            f'<div class="embed-more">Showing {escape(str(resolved["shown"]))} '
+            f"of {escape(str(resolved['matched']))}</div>"
+        )
+    return f'<div class="embed embed-issues">{head}{rows}{footer}</div>'
+
+
+def _issue_row(item: dict) -> str:
+    key = item.get("key") or f"#{item['id']}"
+    assignee = item.get("assignee_name")
+    who = (
+        f'<span class="embed-assignee">{escape(assignee)}</span>'
+        if assignee
+        else '<span class="embed-assignee muted">unassigned</span>'
+    )
+    return (
+        f'<div class="embed-row">'
+        f'<a href="{_HREF["issue"].format(item["id"])}" class="embed-key">'
+        f"{escape(key)}</a> "
+        f'<span class="embed-issue-title">{escape(item["title"])}</span> '
+        f'<span class="embed-status">{escape(item["status"])}</span> '
+        f'<span class="embed-priority">{escape(item["priority"])}</span> {who}'
+        f"</div>"
+    )
+
+
 def render_body(
     conn: sqlite3.Connection,
     text: str | None,
     *,
     actor: dict | None | object = links._UNGATED,
+    embed_results: list[dict] | None = None,
 ) -> Markup:
     """Render a body (Markdown) to safe HTML with cross-references linked. A
     reference to a real target becomes an <a class="xref">title</a>; a broken one
@@ -127,6 +229,17 @@ def render_body(
     default, for internal/test callers) waves every reference through."""
     if not text:
         return Markup("")
+
+    # Lift ```athena directives out BEFORE Markdown, leaving an opaque token in
+    # their place. This is not a style choice: the sanitizer strips the
+    # `class="language-athena"` that would identify the block afterwards, so
+    # there is no way to find it in the rendered HTML. The token is alphanumeric,
+    # so it survives Markdown and nh3 untouched — exactly how the [[ref]] tokens
+    # already do — and it carries a per-render random component, so an author
+    # cannot write a literal token into their page and have Athena replace it
+    # with someone else's embed.
+    text, placeholders = _extract_embeds(text, embed_results)
+
     # Markdown (raw HTML escaped by html=False), then an independent sanitizer
     # pass. nh3 keeps a strict allowlist of formatting tags and drops anything
     # dangerous; the [[ref]] tokens are plain text, so they pass through to the
@@ -197,4 +310,14 @@ def render_body(
     # by now every reserved token is either linked markup (no [[…]] left) or a rendered
     # literal the guard above skips, so this pass only ever sees genuine [[Title]] text.
     linked = links.TITLE_REF_RE.sub(_title_link, linked)
+    # Embeds go in LAST, after every substitution pass and after the sanitizer.
+    # Their HTML is built entirely by this module from escaped values, so there is
+    # no untrusted markup in it to sanitize — and passing it through nh3 would
+    # strip the structure it needs. A directive nested inside a quoted block is
+    # therefore rendered as an embed exactly where the author put it, and one
+    # inside a NON-athena code fence was never extracted at all.
+    for token, html in placeholders.items():
+        # Markdown wraps a bare token in its own paragraph; replace the whole
+        # paragraph so a block-level embed is not nested inside a <p>.
+        linked = linked.replace(f"<p>{token}</p>", html).replace(token, html)
     return Markup(linked)
