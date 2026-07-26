@@ -12,6 +12,45 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Live embeds: a page can show real work.** A Mentor page may carry a fenced
+  ` ```athena ` directive — `kind: issues` with a [work query](docs/QUERY.md),
+  `kind: count`, or `kind: issue` — that renders at view time as real rows. A
+  runbook can now *display* its issue's live state rather than describing it, and
+  a page stops being a place where copied-in status goes stale. See
+  [docs/EMBEDS.md](docs/EMBEDS.md).
+
+  **Nothing is stored.** The page holds the directive; the data resolves fresh for
+  whoever is looking. A snapshot in page content would be a staleness lie the
+  moment the work moved and a visibility leak the moment someone else opened the
+  page — so **visibility is the reader's, never the author's**. An embed written
+  by an admin shows a member only what that member could already see, and two
+  people opening one page can legitimately see different rows. A single issue the
+  reader cannot see is reported exactly like a missing one, so an embed is not an
+  existence oracle for private work.
+
+  **A directive that cannot render says so, in place, with the reason.** A bad
+  query, an unknown kind, a typo'd key — each renders a visible error box, one
+  broken directive never breaks the others, and a page never fails to load because
+  an embed was mistyped. Bounded and honest about it: at most 10 rows by default
+  (50 ceiling) and 10 directives per page, with a truncated list saying "Showing
+  10 of 42" rather than implying the window is the whole answer.
+
+  Directives are extracted **before** Markdown and substituted back after
+  sanitizing, the same way `[[ref]]` tokens already survive the pipeline. That is
+  not a preference: the sanitizer strips the `class="language-athena"` that would
+  identify the fence afterwards (verified, not assumed). The approach also means
+  embed HTML is built by Athena from escaped values and never passes through the
+  sanitizer as author markup at all. The placeholder carries a **per-render
+  nonce**, so an author cannot write a literal token and have Athena substitute
+  someone else's embed into it — with a test that fails if the nonce becomes
+  predictable.
+
+  Agents get **data, not markup**: `read_page_embeds`, `resolve_embeds`, and
+  `embed_help` over MCP, plus `POST /embeds/resolve`. That endpoint takes *text*
+  rather than a page id because the import contract makes Aegis and Mentor peers;
+  the MCP client composes the page read and the resolve so an agent still makes
+  one call, and gains the ability to preview a body it is about to save.
+
 - **One query language over all work.** Athena had filters but no *language*: an
   operator wanting "open infra issues in ATH assigned to me, most urgent first"
   clicked three controls and could neither save, share, nor hand that sentence to

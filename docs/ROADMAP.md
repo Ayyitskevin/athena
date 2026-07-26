@@ -205,9 +205,11 @@ under exactly the same architecture rules, none of which are amended.
       GitHub-shaped grammar — `is:open label:infra assignee:@me sort:priority-desc`
       — over REST, the browser, MCP, and saved filters. Unknown atoms are errors
       naming the atom, never empty results; visibility is composed into the SQL.
-- [ ] **Live embeds**: fenced directives in Mentor pages that render real issue
-      lists, boards, and metrics at view time, with the *viewer's* visibility.
-      The stage where docs and tracker become one product.
+- [x] **Live embeds** ([EMBEDS.md](EMBEDS.md)): fenced ```athena directives in
+      Mentor pages that render real issue lists, counts, and single issues at view
+      time, with the *viewer's* visibility rather than the author's. Nothing is
+      snapshotted into page content; a directive that cannot render says so in
+      place. The stage where docs and tracker become one product.
 - [ ] **Knowledge graph**: unlinked mentions, a bounded server-rendered graph
       view over the links already stored, page templates, an operator daily note.
 - [ ] **Forge integration**: inbound signed events landing as imported activity on

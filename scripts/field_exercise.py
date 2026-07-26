@@ -459,6 +459,52 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                 )
             step("the next agent's work-context packet serves the runbook")
 
+            # --- the runbook shows the issue's LIVE state --------------------
+            # The payoff of embeds: a runbook that does not just describe work but
+            # displays it. Appended through the ordinary page command, then read
+            # back through the resolver an agent uses, over real HTTP.
+            _, page_before, _ = _request(
+                "GET", f"{athena}/pages/{learning['page_id']}", headers=agent_h
+            )
+            assert page_before is not None
+            directive = (
+                "```athena\n"
+                "kind: issue\n"
+                f"issue: {issue['id']}\n"
+                "title: This issue, right now\n"
+                "```"
+            )
+            _request(
+                "PATCH",
+                f"{athena}/pages/{learning['page_id']}",
+                headers={**agent_run_h, "If-Match": page_before["_etag"]}
+                if page_before.get("_etag")
+                else agent_run_h,
+                body={"body": f"{page_before.get('body') or ''}\n\n{directive}"},
+            )
+            _, resolved, _ = _request(
+                "POST",
+                f"{athena}/embeds/resolve",
+                headers=agent_h,
+                body={"text": directive},
+            )
+            assert isinstance(resolved, list) and resolved
+            embed = resolved[0]
+            if embed.get("error") is not None:
+                raise Failure(f"the runbook's embed did not resolve: {embed}")
+            if embed["item"]["id"] != issue["id"]:
+                raise Failure(f"embed resolved the wrong issue: {embed}")
+            if embed["item"]["status"] != "in_progress":
+                raise Failure(
+                    "the embed reports a stale status: "
+                    f"{embed['item']['status']} (the issue is in_progress)"
+                )
+            step(
+                "the runbook's embed shows the issue's live state",
+                f"{embed['item']['key'] or embed['item']['id']} "
+                f"= {embed['item']['status']}",
+            )
+
             # --- Close, and the operator's undo -----------------------------
             _request(
                 "PATCH",
