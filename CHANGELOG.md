@@ -2,11 +2,26 @@
 
 Notable changes to Athena are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and package version
-markers follow semantic versioning while the project remains pre-1.0. As of
-2026-07-23, Athena has no tags or GitHub releases: version-like headings below are
-untagged package/development milestones, not published releases.
+markers follow semantic versioning while the project remains pre-1.0. Version-like
+headings are milestones in a version line; a heading becomes a *published release*
+only once a matching git tag exists. See
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md) for the evidence behind
+the newest one and for what tagging still requires.
 
 ## [Unreleased]
+
+Nothing yet.
+
+## 0.1.0a1 — 2026-07-26
+
+The release candidate of the `0.1.0a1` line. The complete documented release gate
+— dependency freeze, lint, formatting, whole-runtime typing, import contracts,
+the full suite with enforced coverage floors, the process smoke, the field
+exercise, and the sdist → wheel → external-boot packaging recipe — was run at this
+exact tree and is recorded in
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). Applying the tag is the
+release owner's decision, and until one exists this stays an untagged milestone
+like the two below it.
 
 ### Added
 
@@ -325,6 +340,14 @@ untagged package/development milestones, not published releases.
 
 ### Fixed
 
+- **The source distribution shipped a gate it could not run.** `MANIFEST.in`
+  included `scripts/` but not `examples/`, so an sdist carried
+  `scripts/field_exercise.py` while omitting the `examples/icarus_executor.py`
+  it spawns by path — the release gate was unrunnable from a source
+  distribution. Found by building the sdist during the 0.1.0a1 packaging run,
+  one stage after the exercise was added. The exercise now passes **from an
+  extracted sdist**, and a test asserts `MANIFEST.in` ships whatever directory
+  the exercise spawns from, so the two cannot drift apart again.
 - **A real executor's acceptance is now actually read.** The hardened delivery
   poster drained and **discarded** every 2xx response body, so
   `{"icarus_run_id": ...}` — the id the executor announces itself under, and the
