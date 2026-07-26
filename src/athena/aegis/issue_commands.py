@@ -714,6 +714,72 @@ def set_issue_parent(
         return updated
 
 
+def _resolve_write_actor(
+    conn: sqlite3.Connection,
+    actor: dict | None,
+    issue_id: int,
+    *,
+    enforce_actor_policy: bool,
+) -> tuple[dict, dict]:
+    """Resolve the acting identity and the target issue from LIVE rows, returning
+    ``(actor, issue)``.
+
+    Factored out of the write commands so the automation bypass has exactly one
+    shape, matching :func:`_update_issue`'s. The credential is re-read inside the
+    caller's transaction rather than trusted from the transport: an account paused,
+    demoted, or deleted between request and write must not still write.
+
+    With ``enforce_actor_policy=False`` the per-issue creator/assignee policy is
+    skipped — a rule acts on whatever issue its trigger selected — but the identity
+    assertion is re-made here, under the lock, so a caller cannot reach the bypass
+    by passing some other user's id.
+    """
+    if actor is None:
+        raise IssueCommandError("unauthorized", "authentication required")
+    live_actor = users.get_user(conn, actor["id"])
+    if live_actor is None:
+        raise IssueCommandError("forbidden", "actor is no longer available")
+    resolved = {**actor, **live_actor}
+    if resolved.get("paused_at"):
+        raise IssueCommandError("forbidden", "account is paused")
+    if enforce_actor_policy:
+        resolved = _require_issue_writer(resolved)
+        return resolved, _writable_issue(conn, resolved, issue_id)
+    if resolved.get("email") != AUTOMATION_ACTOR_EMAIL or not resolved.get("is_agent"):
+        raise IssueCommandError("forbidden", "automation actor required")
+    issue = issues.get_issue(conn, issue_id)
+    if issue is None:
+        raise IssueCommandError("not_found", "no such issue")
+    return resolved, issue
+
+
+def _attach_label(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    label_id: int,
+    enforce_actor_policy: bool,
+) -> tuple[dict, bool]:
+    """The shared attach write. Returns ``(issue, changed)``."""
+    with db.transaction(conn, immediate=True):
+        resolved, issue = _resolve_write_actor(
+            conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
+        )
+        if labels.get_label(conn, label_id) is None:
+            raise IssueCommandError("invalid", "no such label")
+        changed = labels.add_label_to_issue(conn, issue_id, label_id, commit=False)
+        if changed:
+            issue_activity.record_label_added(
+                conn,
+                actor_id=resolved["id"],
+                issue_id=issue_id,
+                label_id=label_id,
+                commit=False,
+            )
+        return issue, changed
+
+
 def attach_label(
     conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, label_id: int
 ) -> dict:
@@ -721,20 +787,40 @@ def attach_label(
     write gate as status/assign. Idempotent: re-attaching records nothing. Raises
     IssueCommandError(404/403) for the issue gate, (422) for an unknown label.
     Returns the (unchanged) issue row so the caller can reshape it."""
-    actor = _require_issue_writer(actor)
-    with db.transaction(conn, immediate=True):
-        issue = _writable_issue(conn, actor, issue_id)
-        if labels.get_label(conn, label_id) is None:
-            raise IssueCommandError("invalid", "no such label")
-        if labels.add_label_to_issue(conn, issue_id, label_id, commit=False):
-            issue_activity.record_label_added(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                label_id=label_id,
-                commit=False,
-            )
-        return issue
+    issue, _ = _attach_label(
+        conn,
+        actor=actor,
+        issue_id=issue_id,
+        label_id=label_id,
+        enforce_actor_policy=True,
+    )
+    return issue
+
+
+def attach_label_as_automation(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, label_id: int
+) -> bool:
+    """Attach a label through the same command under explicit system policy.
+
+    The twin of :func:`update_issue_as_automation`, and narrow for the same reason:
+    a rule acts on the issue its trigger selected rather than as that issue's
+    creator or assignee, and only the passwordless in-process Automation agent may
+    take that path. Returns whether the label was actually added, which is the
+    contract the rule engine reports as "this firing did something" — a re-attach
+    records nothing and returns False, so a replayed firing stays idempotent.
+
+    Deliberately unmetered and ungated, like ``update_issue_as_automation``: a
+    budget or an approval gate must never silently stop a rule the operator
+    configured. Budgets bound what *agents* initiate.
+    """
+    _, changed = _attach_label(
+        conn,
+        actor={"id": actor_id},
+        issue_id=issue_id,
+        label_id=label_id,
+        enforce_actor_policy=False,
+    )
+    return changed
 
 
 def detach_label(
@@ -758,6 +844,44 @@ def detach_label(
         return issue
 
 
+def _add_contributor(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    issue_id: int,
+    user_id: int,
+    require_agent: bool,
+    enforce_actor_policy: bool,
+) -> tuple[list[dict], bool]:
+    """The shared contributor write. Returns ``(contributors, changed)``."""
+    with db.transaction(conn, immediate=True):
+        resolved, _ = _resolve_write_actor(
+            conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
+        )
+        target = users.get_user(conn, user_id)
+        if target is None:
+            raise IssueCommandError("invalid", "no such user")
+        if require_agent and not target["is_agent"]:
+            raise IssueCommandError("invalid", "delegation target must be an agent")
+        changed = contributors_data.add_contributor(
+            conn, issue_id, user_id, resolved["id"], commit=False
+        )
+        if changed:
+            recorder = (
+                issue_activity.record_delegated
+                if require_agent
+                else issue_activity.record_contributor_added
+            )
+            recorder(
+                conn,
+                actor_id=resolved["id"],
+                issue_id=issue_id,
+                user_id=user_id,
+                commit=False,
+            )
+        return contributors_data.list_contributors(conn, issue_id), changed
+
+
 def add_contributor(
     conn: sqlite3.Connection,
     *,
@@ -772,30 +896,38 @@ def add_contributor(
     Same write gate. Idempotent: re-adding an existing contributor records nothing.
     Raises IssueCommandError(404/403) for the issue gate, (422) for an unknown user
     or (with require_agent) a non-agent target. Returns the contributor list."""
-    actor = _require_issue_writer(actor)
-    with db.transaction(conn, immediate=True):
-        _writable_issue(conn, actor, issue_id)
-        target = users.get_user(conn, user_id)
-        if target is None:
-            raise IssueCommandError("invalid", "no such user")
-        if require_agent and not target["is_agent"]:
-            raise IssueCommandError("invalid", "delegation target must be an agent")
-        if contributors_data.add_contributor(
-            conn, issue_id, user_id, actor["id"], commit=False
-        ):
-            recorder = (
-                issue_activity.record_delegated
-                if require_agent
-                else issue_activity.record_contributor_added
-            )
-            recorder(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                user_id=user_id,
-                commit=False,
-            )
-        return contributors_data.list_contributors(conn, issue_id)
+    people, _ = _add_contributor(
+        conn,
+        actor=actor,
+        issue_id=issue_id,
+        user_id=user_id,
+        require_agent=require_agent,
+        enforce_actor_policy=True,
+    )
+    return people
+
+
+def add_contributor_as_automation(
+    conn: sqlite3.Connection, *, actor_id: int, issue_id: int, user_id: int
+) -> bool:
+    """Add a contributor through the same command under explicit system policy.
+
+    The twin of :func:`update_issue_as_automation` — same narrow bypass, same
+    reasons, same identity assertion re-made inside the write transaction. Returns
+    whether a contributor row was actually added, so a replayed firing that finds
+    the person already there reports "nothing done" rather than a second event.
+    An unknown ``user_id`` raises ``IssueCommandError('invalid')``, which the rule
+    engine turns into a failed occurrence when the rule is fail-closed.
+    """
+    _, changed = _add_contributor(
+        conn,
+        actor={"id": actor_id},
+        issue_id=issue_id,
+        user_id=user_id,
+        require_agent=False,
+        enforce_actor_policy=False,
+    )
+    return changed
 
 
 def remove_contributor(

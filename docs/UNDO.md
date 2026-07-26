@@ -45,18 +45,45 @@ not be.
 | `labeled` / `unlabeled` (issue) | detach / attach that label |
 | `page_archived` / `page_unarchived` | restore / archive the page |
 | `page_labeled` / `page_unlabeled` | detach / attach that label |
+| `changed_status` (issue) | put the issue back in its previous status |
 
-These four pairs share one property that made them safe to ship first: **the
+The first four pairs share one property that made them safe to ship first: **the
 inverse needs no prior state.** A toggle's inverse is the toggle; a label event
 stores the label's *name*, and names are unique (0007, `COLLATE NOCASE`), so
 resolving one back to an id is a lookup rather than an interpretation of prose.
 
-Verbs like `changed_status` or `assigned` are *not* reversible here, and the
-reason is worth stating: undoing them needs the value that was in force before,
-and `activity.detail` is documented as human-readable specifics, not a structured
-before/after. Driving a mutation by parsing that prose would be inference dressed
-up as a feature. Reversing those verbs honestly needs structured prior state
-recorded at write time — a real change, not a bigger registry.
+`changed_status` is the first verb whose inverse *does* need prior state, and it
+needed no new storage to get it. **This document previously said otherwise** —
+that reversing status "needs structured prior state recorded at write time — a
+real change". That was wrong: migration 0055 has recorded `before_status`,
+`before_category`, and `before_project_scope_key` into `issue_lifecycle_facts`
+since well before undo existed, keyed 1:1 to the activity event, immutable, and
+written in the same transaction. The compensator reads that row. It never parses
+`activity.detail`, which says the same thing as prose — driving a mutation from a
+human-readable string would be inference dressed up as a feature.
+
+Prior state alone is not enough, though, and the difference is worth stating
+because it generalizes to every scalar field. Archive and label inverses are
+protected by **domain idempotency**: re-archiving an archived issue records
+nothing, and "recorded nothing" is how the engine detects that the effect it was
+asked to reverse is no longer in force. Writing a status is never a no-op, so
+that net does not catch anything. Undoing a stale status event would cheerfully
+overwrite a *newer* value and stamp the result as a reversal — the trail would
+assert it reversed `open → in_progress` while actually discarding `done`. So the
+compensator gates it itself:
+
+- **Still in force.** The issue's current status must be the one this event
+  produced. Otherwise: `undo_no_effect` (409), and nothing is written.
+- **Same access envelope.** Statuses are per-project (0024) and a project move
+  *remaps* an issue's status, so a `before_status` captured under one project is
+  not meaningful under another. A move since the event refuses.
+- **A fact must exist.** 0055 is deliberately not backfilled, so an event older
+  than it has no fact. That is `undo_not_reversible` (422), never a guess.
+
+`assigned` / `unassigned` remain unreversible, and here the original reasoning
+does hold: the event records only the *new* assignee's display name (and names
+are not unique), so there is nothing to restore from. That one needs storage that
+does not exist yet.
 
 Classified and refused today: comments and attachments (`one_way` — delete them
 explicitly), destroyed rows such as `page_deleted` / `space_deleted` /

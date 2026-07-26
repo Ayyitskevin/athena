@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.aegis import api as issue_api
-from athena.aegis import issue_commands
+from athena.aegis import issue_activity, issue_commands, issues
 from athena.core import labels, undo
 
 
@@ -74,6 +74,78 @@ def _archive_issue(conn: sqlite3.Connection, actor: dict | None, event: dict) ->
     _set_archived(conn, actor, event, archived=True)
 
 
+def _restore_status(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
+    """Put an issue back into the status a ``changed_status`` event moved it out of.
+
+    The prior status is read from ``issue_lifecycle_facts`` (migration 0055), which
+    has recorded ``before_status`` structurally, immutably, and in the same
+    transaction as the event since long before undo existed. The event's own
+    ``detail`` says the same thing as prose — and is never used here, because
+    driving a write from a human-readable string is exactly what makes a compensator
+    untrustworthy.
+
+    Two gates that the label and archive inverses do not need, because a scalar
+    field has no domain idempotency to fall back on:
+
+    * **Still in force.** ``update_issue`` records an event for any real change, so
+      if the issue has moved on to a third status the engine's "recorded nothing
+      means nothing to undo" net (``core/undo.undo``) would NOT fire — it would
+      happily write the old value over the newer one and stamp that as a reversal.
+      The trail would then assert it reversed ``open → in_progress`` while actually
+      discarding ``done``. So the effect must still be in force: the issue's current
+      status has to be the one this event produced.
+    * **Same access envelope.** Statuses are per-project (0024) and moving an issue
+      between projects REMAPS its status. A ``before_status`` captured under one
+      project is not meaningful under another, so a scope change refuses rather than
+      writing a name that means something different (or nothing) where it landed.
+
+    Authorization is not checked here at all: ``issue_commands.update_issue`` owns
+    role, scope, visibility, budget, and the approval gate, and running through it as
+    the undoing actor is what makes those apply to undo too. Re-opening a closed
+    issue is an ordinary status write and is metered and gated like one.
+    """
+    fact = issue_activity.lifecycle_fact_for_event(conn, event["id"])
+    if fact is None or fact["event_kind"] != "status_transition":
+        raise undo.UndoRefused(
+            "no structured prior status was recorded for this event",
+            code=undo.NOT_REVERSIBLE_CODE,
+            status_code=422,
+        )
+    issue = issues.get_issue(conn, event["target_id"])
+    if issue is None:
+        raise undo.UndoRefused(
+            "the issue no longer exists",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    if issue["status"] != fact["after_status"]:
+        raise undo.UndoRefused(
+            f"the issue has since moved to '{issue['status']}'; "
+            f"this event's change to '{fact['after_status']}' is no longer in force",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    if (
+        issue_activity.project_scope_key(conn, issue["project_id"])
+        != fact["after_project_scope_key"]
+    ):
+        raise undo.UndoRefused(
+            "the issue has moved to another project since this event, "
+            "where its previous status may not exist or may mean something else",
+            code=undo.NO_EFFECT_CODE,
+            status_code=409,
+        )
+    try:
+        issue_commands.update_issue(
+            conn,
+            actor=actor,
+            issue_id=event["target_id"],
+            status=fact["before_status"],
+        )
+    except issue_commands.IssueCommandError as exc:
+        raise _refusal(exc) from exc
+
+
 def _detach_label(conn: sqlite3.Connection, actor: dict | None, event: dict) -> None:
     try:
         issue_commands.detach_label(
@@ -104,6 +176,9 @@ def register() -> None:
     undo.register("unarchived", action_class=undo.TWO_WAY, compensator=_archive_issue)
     undo.register("labeled", action_class=undo.TWO_WAY, compensator=_detach_label)
     undo.register("unlabeled", action_class=undo.TWO_WAY, compensator=_attach_label)
+    undo.register(
+        "changed_status", action_class=undo.TWO_WAY, compensator=_restore_status
+    )
 
     # Classified, deliberately not reversible. Naming them is the point: a surface
     # can say WHY there is no undo instead of leaving the verb unexplained, and the

@@ -23,6 +23,7 @@ from athena.aegis import (
     projects,
     sprint_commands,
     sprints,
+    status_commands,
     statuses,
 )
 from athena.core import access, identity, users
@@ -170,10 +171,18 @@ def project_edit_form(
         return err
     proj_statuses = statuses.list_statuses(conn, project_id)
     # How many issues use each status, so the template can disable removing one
-    # that's still in use (the API/data layer refuses it too).
+    # that's still in use. ARCHIVED issues are included because the command's guard
+    # counts them: without include_archived the page would offer a Remove button
+    # that the command then refuses, which reads as a bug rather than as the guard
+    # doing its job.
     status_usage = {
         s["name"]: len(
-            issues.list_issues(conn, project_id=project_id, status=s["name"])
+            issues.list_issues(
+                conn,
+                project_id=project_id,
+                status=s["name"],
+                include_archived=True,
+            )
         )
         for s in proj_statuses
     }
@@ -676,6 +685,21 @@ def delete_sprint_web(
     )
 
 
+def _status_refusal(exc: status_commands.StatusCommandError) -> HTMLResponse:
+    """Render a status-configuration refusal the way this page always has.
+
+    Authorization keeps its own codes — a hidden project stays a 404 and a
+    non-creator stays a 403, so the browser does not become a weaker existence
+    oracle than the REST surface. Everything the command refuses on the merits
+    (duplicate, bad category, last status, still in use) stays 400, which is what
+    this form answered before the migration.
+    """
+    code = exc.status_code if exc.status_code in (403, 404) else 400
+    return HTMLResponse(
+        f'<div class="error">{html.escape(str(exc))}</div>', status_code=code
+    )
+
+
 @router.post(
     "/aegis/projects/{project_id}/statuses", dependencies=[Depends(verify_csrf)]
 )
@@ -687,21 +711,20 @@ def add_project_status_web(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Add a status to a project from its edit page. Creator-only, like editing the
-    project. The data layer rejects duplicates/bad categories; we surface the reason."""
+    project. The command owns the gate, the validation, the write, and the audit
+    event; this surfaces its refusal reason."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    _, err = _authorize_project_write(conn, project_id, user)
-    if err is not None:
-        return err
-    reason = statuses.add_status(conn, project_id, name, category)
-    if reason is not None:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(reason)}</div>', status_code=400
+    try:
+        status_commands.add_status(
+            conn, actor=user, project_id=project_id, name=name, category=category
         )
+    except status_commands.StatusCommandError as exc:
+        return _status_refusal(exc)
     return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)
 
 
@@ -723,12 +746,10 @@ def remove_project_status_web(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    _, err = _authorize_project_write(conn, project_id, user)
-    if err is not None:
-        return err
-    reason = statuses.remove_status(conn, project_id, name)
-    if reason is not None:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(reason)}</div>', status_code=400
+    try:
+        status_commands.remove_status(
+            conn, actor=user, project_id=project_id, name=name
         )
+    except status_commands.StatusCommandError as exc:
+        return _status_refusal(exc)
     return RedirectResponse(f"/aegis/projects/{project_id}/edit", status_code=303)

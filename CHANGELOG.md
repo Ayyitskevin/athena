@@ -10,6 +10,51 @@ untagged package/development milestones, not published releases.
 
 ### Added
 
+- **Configuring a project's statuses is a command, and is audited.** A project's
+  status set *is* its issue lifecycle: adding a `done`-category status changes what
+  "closed" means for its board, its dependencies, and its blocked-close policy.
+  Both writes took no actor, committed on their own, and recorded nothing, so the
+  append-only trail could not answer who changed the vocabulary — the last
+  unaudited durable write in the Aegis project surface. Add and remove now own the
+  row change, a `project_status_added` / `project_status_removed` event, and the
+  authorization, all in one transaction, with the credential re-resolved from live
+  rows inside the write lock. **Authorization is relocated, not changed**: the rule
+  is still visibility-first then creator-only, so a private project stays a 404
+  rather than a 403 that confirms it exists, and an agent that created a project may
+  still configure it. Narrowing that is a product decision, not something a
+  migration slice should do silently. The in-use guard and the `DELETE` now share a
+  transaction, closing the window where an issue could be moved into a status
+  between the check and its removal.
+- **An issue's status change can be undone.** `changed_status` is the first verb
+  whose inverse needs prior state — and it needed **no new storage** to get it:
+  migration 0055 has recorded `before_status` structurally and immutably, in the
+  same transaction as the event, since long before undo existed. `docs/UNDO.md` and
+  the migration inventory both said otherwise; both are corrected. The compensator
+  reads that row and never parses `activity.detail`, which carries the same
+  transition as prose. Two gates matter more than the reader: a scalar field has no
+  domain idempotency, so the engine's "recorded nothing means nothing to undo" net
+  cannot catch a stale undo. Without them, undoing an old status event would
+  overwrite a **newer** value and stamp the result as a reversal — a false entry on
+  an append-only trail. So the change must still be in force (else `undo_no_effect`)
+  and the issue must not have moved projects, which *remaps* statuses (0024). See
+  [docs/UNDO.md](docs/UNDO.md).
+
+### Changed
+
+- **Every automation rule action now reaches a command owner.** `add_label` and
+  `add_contributor` were the last two composing their own transaction, data-layer
+  write, and activity event beside the command that already owned those writes.
+  They route through `attach_label_as_automation` / `add_contributor_as_automation`,
+  twins of the existing `update_issue_as_automation` — same narrow bypass, same
+  identity assertion, and now re-made *inside* the write transaction, so a caller
+  cannot reach the per-issue policy bypass by passing another user's id. The
+  changed-or-not contract the schedule receipts depend on is preserved, so a
+  replayed firing still records exactly one event. **One behavior change worth
+  naming: pausing the Automation account now stops label and contributor firings
+  too.** It already stopped assign and set_status; label and contributor bypassed
+  that check entirely and kept writing. Rule firings stay deliberately unmetered
+  and ungated — a budget or an approval gate must never silently stop a rule the
+  operator configured.
 - **Athena can hand work to an external execution fleet.** It is a control plane;
   an executor is a separate system with its own store. They share no database and
   neither imports the other — they reconcile over an asynchronous HTTP contract,
