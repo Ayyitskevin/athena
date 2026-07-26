@@ -1,2 +1,9 @@
 # Contributor-facing verification helpers referenced by README and the test suite.
 recursive-include scripts *.py *.sh
+
+# The reference executor is not optional decoration: scripts/field_exercise.py
+# spawns examples/icarus_executor.py by path, so an sdist carrying the exercise
+# without the executor ships a gate that cannot run. Caught by building the sdist
+# during the 0.1.0a1 release gate, after Stage K added the exercise but not this
+# line.
+recursive-include examples *.py

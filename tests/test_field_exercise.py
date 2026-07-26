@@ -50,3 +50,22 @@ def test_the_loop_composes_over_real_http():
         f"\n--- stderr ---\n{result.stderr}"
     )
     assert "FIELD EXERCISE PASSED" in result.stdout
+
+
+def test_the_sdist_ships_everything_the_exercise_spawns():
+    """A source distribution carrying the exercise must carry the executor too.
+
+    `scripts/field_exercise.py` spawns `examples/icarus_executor.py` by path, so
+    an sdist with one and not the other ships a release gate that cannot run.
+    That is exactly what the 0.1.0a1 packaging build produced: MANIFEST.in
+    included `scripts/` (added long before) but not `examples/` (added by the
+    stage that wrote the exercise). This asserts the declaration rather than
+    building an sdist, so it costs nothing and still fails the moment the two
+    files drift apart again.
+    """
+    manifest = (REPO / "MANIFEST.in").read_text(encoding="utf-8")
+    spawned = EXECUTOR.relative_to(REPO).parts[0]
+    assert f"recursive-include {spawned}" in manifest, (
+        f"scripts/field_exercise.py spawns {EXECUTOR.relative_to(REPO)}, but "
+        f"MANIFEST.in does not ship '{spawned}/' in the sdist"
+    )
