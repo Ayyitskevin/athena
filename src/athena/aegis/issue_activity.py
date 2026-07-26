@@ -88,6 +88,44 @@ def _record_lifecycle_fact(
     )
 
 
+_LIFECYCLE_FACT_COLUMNS = (
+    "event_id, issue_id, previous_event_id, event_kind, before_status, "
+    "before_category, after_status, after_category, "
+    "before_project_scope_key, after_project_scope_key, actor_kind"
+)
+
+
+def lifecycle_fact_for_event(conn: sqlite3.Connection, event_id: int) -> dict | None:
+    """The structured lifecycle fact recorded alongside one activity event, or None.
+
+    This module owns the only INSERT into ``issue_lifecycle_facts`` (migration
+    0055), so the reader belongs beside it. The table is append-only and 1:1 with
+    a native, unrestricted activity event, which makes it the one trustworthy
+    source of an issue's *prior* status — ``activity.detail`` carries the same
+    transition as prose ("open → done") and must never be parsed to drive a write.
+
+    ``None`` is a real answer, not a default to paper over: 0055 is deliberately
+    not backfilled, so an event recorded before that migration has no fact. A
+    caller that needs prior state must refuse on None rather than assume one.
+    """
+    row = conn.execute(
+        f"SELECT {_LIFECYCLE_FACT_COLUMNS} FROM issue_lifecycle_facts "
+        "WHERE event_id = ?",
+        (event_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str | None:
+    """The access-envelope key for a project, or None for the backlog.
+
+    Public so a compensator can compare an issue's CURRENT envelope against the one
+    a lifecycle fact recorded, without re-implementing the lookup that decides what
+    a recorded scope key means.
+    """
+    return _project_scope_key(conn, project_id)
+
+
 def _scope_kwargs(
     project_ids: Collection[int | None] | None,
 ) -> dict[str, object]:

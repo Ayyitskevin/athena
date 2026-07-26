@@ -30,8 +30,6 @@ import sqlite3
 from athena import config
 from athena.aegis import (
     comment_commands,
-    contributors,
-    issue_activity,
     issue_commands,
     issues,
 )
@@ -732,23 +730,21 @@ def _perform_action(
         name = (params.get("label") or "").strip()
         if not name:
             return False
+        # Resolving a name to a label stays in the adapter, exactly as the browser
+        # route does it: the command takes a label id, because "create the label if
+        # it is missing" is a transport convenience, not part of the write it owns.
         label = labels.get_or_create_label(conn, name=name)
-        with db.transaction(conn, immediate=True):
-            if not labels.add_label_to_issue(
-                conn,
-                issue["id"],
-                label["id"],
-                commit=False,
-            ):
-                return False
-            issue_activity.record_label_added(
+        try:
+            return issue_commands.attach_label_as_automation(
                 conn,
                 actor_id=actor_id,
                 issue_id=issue["id"],
                 label_id=label["id"],
-                commit=False,
             )
-            return True
+        except issue_commands.IssueCommandError:
+            if fail_closed:
+                raise
+            return False
 
     if rule["action_type"] == "comment":
         body = (params.get("body") or "").strip()
@@ -770,23 +766,17 @@ def _perform_action(
             if fail_closed:
                 raise ValueError("configured contributor user does not exist")
             return False
-        with db.transaction(conn, immediate=True):
-            if not contributors.add_contributor(
-                conn,
-                issue["id"],
-                user_id,
-                added_by=actor_id,
-                commit=False,
-            ):
-                return False
-            issue_activity.record_contributor_added(
+        try:
+            return issue_commands.add_contributor_as_automation(
                 conn,
                 actor_id=actor_id,
                 issue_id=issue["id"],
                 user_id=user_id,
-                commit=False,
             )
-            return True
+        except issue_commands.IssueCommandError:
+            if fail_closed:
+                raise
+            return False
 
     return False
 

@@ -40,6 +40,7 @@ from athena.aegis import (
     project_etags,
     projects,
     sprints,
+    status_commands,
     statuses,
 )
 from athena.core import access, attachment_commands, attachments, labels, links, users
@@ -1537,13 +1538,18 @@ def add_project_status(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Configuring statuses is project config — creator-only, like editing the
-    # project itself.
-    _project_for_write(conn, project_id, actor)
-    reason = statuses.add_status(conn, project_id, payload.name, payload.category)
-    if reason is not None:
-        status = 409 if "already exists" in reason else 422
-        raise HTTPException(status_code=status, detail=reason)
-    return statuses.list_statuses(conn, project_id)
+    # project itself. The command owns that gate now (from rows read under its own
+    # write lock) along with the validation, the write, and the audit event.
+    try:
+        return status_commands.add_status(
+            conn,
+            actor=actor,
+            project_id=project_id,
+            name=payload.name,
+            category=payload.category,
+        )
+    except status_commands.StatusCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @projects_router.delete("/{project_id}/statuses/{name}", response_model=list[StatusOut])
@@ -1553,12 +1559,12 @@ def remove_project_status(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    _project_for_write(conn, project_id, actor)
-    reason = statuses.remove_status(conn, project_id, name)
-    if reason is not None:
-        status = 404 if reason == "no such status" else 409
-        raise HTTPException(status_code=status, detail=reason)
-    return statuses.list_statuses(conn, project_id)
+    try:
+        return status_commands.remove_status(
+            conn, actor=actor, project_id=project_id, name=name
+        )
+    except status_commands.StatusCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 # --- Labels: a top-level shared vocabulary --------------------------------

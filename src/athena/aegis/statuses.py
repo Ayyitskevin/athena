@@ -105,19 +105,58 @@ def global_category(conn: sqlite3.Connection, name: str) -> str:
 
 # --- management (per-project; the backlog's default set is fixed) -----------
 
+# The refusal reasons, named so the command owner (aegis/status_commands.py) can
+# map each to a status code by identity rather than by matching a substring of
+# prose that a later edit would silently reword.
+REASON_NAME_REQUIRED = "status name is required"
+REASON_BAD_CATEGORY = f"category must be one of: {', '.join(CATEGORIES)}"
+REASON_DUPLICATE = "a status with that name already exists"
+REASON_UNKNOWN = "no such status"
+REASON_LAST_STATUS = "a project must keep at least one status"
+REASON_IN_USE = "reassign the issues using this status first"
+
+
+def _name_taken(conn: sqlite3.Connection, project_id: int, name: str) -> bool:
+    """Whether the project already has this status name, under the collation the
+    UNIQUE constraint actually uses.
+
+    Migration 0024 declares ``UNIQUE (project_id, name COLLATE NOCASE)``, but
+    ``is_valid`` compares with Python ``==``. Adding "Open" to a project that
+    already had "open" therefore passed validation and died on the constraint —
+    an unhandled sqlite3.IntegrityError, i.e. a 500 on both transports. The
+    NOCASE probe is deliberately LOCAL to this write rather than folded into
+    ``is_valid``: ``is_valid`` is the validator for issue status writes, and
+    making it case-insensitive would let "Open" pass there and then fall off
+    ``category_of`` (which still compares exactly), turning this 500 into a worse
+    one inside an issue's write transaction.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM project_statuses "
+        "WHERE project_id = ? AND name = ? COLLATE NOCASE LIMIT 1",
+        (project_id, name),
+    ).fetchone()
+    return row is not None
+
 
 def add_status(
-    conn: sqlite3.Connection, project_id: int, name: str, category: str
+    conn: sqlite3.Connection,
+    project_id: int,
+    name: str,
+    category: str,
+    *,
+    commit: bool = True,
 ) -> str | None:
-    """Append a status to a project. Returns None on success, else a human reason
-    the boundary turns into an error (same predicate shape as pages.validate_move)."""
+    """Append a status to a project. Returns None on success, else one of the
+    REASON_* constants the caller turns into an error (same predicate shape as
+    pages.validate_move). ``commit=False`` lets ``status_commands`` fold this into
+    the transaction that also carries its authorization check and audit event."""
     name = name.strip()
     if not name:
-        return "status name is required"
+        return REASON_NAME_REQUIRED
     if category not in CATEGORIES:
-        return f"category must be one of: {', '.join(CATEGORIES)}"
-    if is_valid(conn, project_id, name):
-        return "a status with that name already exists"
+        return REASON_BAD_CATEGORY
+    if _name_taken(conn, project_id, name):
+        return REASON_DUPLICATE
     position = conn.execute(
         "SELECT COALESCE(MAX(position), -1) + 1 AS p FROM project_statuses "
         "WHERE project_id = ?",
@@ -128,28 +167,39 @@ def add_status(
         "VALUES (?, ?, ?, ?)",
         (project_id, name, category, position),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return None
 
 
-def remove_status(conn: sqlite3.Connection, project_id: int, name: str) -> str | None:
+def remove_status(
+    conn: sqlite3.Connection, project_id: int, name: str, *, commit: bool = True
+) -> str | None:
     """Remove a status from a project. Refuses to remove the last one, or one that
     issues in the project still use (reassign them first). Returns None on success,
-    else a human reason."""
+    else one of the REASON_* constants.
+
+    The in-use count includes ARCHIVED issues on purpose: an archived issue can be
+    restored, and restoring one into a status the project no longer has would leave
+    a row that fails ``is_valid`` and so cannot be written by any issue command.
+    ``commit=False`` lets ``status_commands`` own the transaction, which also closes
+    the window where an issue could be moved INTO this status between the count and
+    the DELETE."""
     current = list_statuses(conn, project_id)
     if not any(s["name"] == name for s in current):
-        return "no such status"
+        return REASON_UNKNOWN
     if len(current) <= 1:
-        return "a project must keep at least one status"
+        return REASON_LAST_STATUS
     in_use = conn.execute(
         "SELECT COUNT(*) AS n FROM issues WHERE project_id = ? AND status = ?",
         (project_id, name),
     ).fetchone()["n"]
     if in_use > 0:
-        return "reassign the issues using this status first"
+        return REASON_IN_USE
     conn.execute(
         "DELETE FROM project_statuses WHERE project_id = ? AND name = ?",
         (project_id, name),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return None

@@ -57,9 +57,16 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   run must be one that actually exists.
 - **Trust / Learn** adds undo by compensation: reversing an action records its
   inverse as a new audited command linked to the event it reversed, so history is
-  never rewritten. Four verb pairs are reversible (issue and page archive and
-  labels); everything else is refused with its reversibility class. That is not
-  general undo.
+  never rewritten. Five verb pairs are reversible — issue and page archive and
+  labels, plus an issue's status, which reverses from the structured prior state
+  the lifecycle facts already recorded and refuses when a newer change has
+  superseded it. Everything else is refused with its reversibility class. That is
+  not general undo.
+- **Intervene** finally has no unaudited durable writes left in the Aegis project
+  surface: configuring a project's statuses — which is configuring what "closed"
+  means for its issues — is a command with an actor and an audit event, and every
+  automation rule action reaches a command owner rather than composing its own
+  write beside the trail.
 
 Phase 1 closed the original attribution and delegated-completion breaks. Items
 that remain intentionally open are still unchecked below.
