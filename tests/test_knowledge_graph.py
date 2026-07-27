@@ -738,3 +738,289 @@ def test_an_agent_can_take_a_suggested_edge_over_mcp(tmp_path):
         assert [
             b["id"] for b in c.get(f"/pages/{guide['id']}/backlinks", headers=H1).json()
         ] == [doc["id"]]
+
+
+# --- the browser surfaces ---------------------------------------------------
+#
+# The browser routes are a separate implementation of the same rules — their own
+# visibility gate, their own write guard, their own redirect. Testing only the
+# REST twins would leave every one of those unexercised, which is exactly how a
+# web route quietly stops passing the session user.
+
+
+def _viewer(client, tmp_path, email="v@e.com", name="graph.db"):
+    """A signed-up user demoted to the read-only role."""
+    user = _user(client, email)
+    conn = db.connect(tmp_path / name)
+    try:
+        conn.execute("UPDATE users SET role = 'viewer' WHERE id = ?", (user["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+    return user
+
+
+def test_the_browser_graph_page_draws_real_svg(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space, proj = _space(c), _project(c)
+        guide = _page(c, space["id"], GUIDE, "x")
+        _page(c, space["id"], "Linked", f"see [[{GUIDE}]]")
+        issue = _issue(c, proj["id"], "Ship it", f"per [[{GUIDE}]]")
+    with TestClient(app) as browser:
+        _login(browser)
+        html = browser.get(f"/mentor/pages/{guide['id']}/graph").text
+        assert "<svg" in html and html.count("<circle") == 3
+        # Every node is a real link, so the graph is keyboard-navigable.
+        assert f'href="/mentor/pages/{guide["id"]}"' in html
+        assert f'href="/aegis/issues/{issue["id"]}"' in html
+        # The issue side renders through the same shared template.
+        assert "<svg" in browser.get(f"/aegis/issues/{issue['id']}/graph").text
+
+
+def test_the_browser_graph_page_404s_for_a_hidden_page(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        _user(c, "b@e.com")
+        priv = _space(c, "PRIV", "Private")
+        c.put(
+            f"/spaces/{priv['id']}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+        hidden = _page(c, priv["id"], "Hidden", "x")
+    with TestClient(app) as outsider:
+        _login(outsider, "b@e.com")
+        # Same 404 a missing page gets: the graph route is not an existence oracle.
+        assert outsider.get(f"/mentor/pages/{hidden['id']}/graph").status_code == 404
+        assert outsider.get("/mentor/pages/99999/graph").status_code == 404
+
+
+def test_a_browser_click_links_the_mention_and_returns_to_the_target(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+        guide = _page(c, space["id"], GUIDE, "x")
+        doc = _page(c, space["id"], "Prose", f"read the {GUIDE} first")
+    with TestClient(app) as browser:
+        _login(browser)
+        # The form posts to the SOURCE (the page being edited), naming the target.
+        resp = browser.post(
+            f"/mentor/pages/{doc['id']}/link-mention",
+            data={"target_kind": "page", "target_id": guide["id"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        # Back to the target's Connections, where the operator was standing.
+        assert resp.headers["location"] == f"/mentor/pages/{guide['id']}/graph"
+        after = browser.get(f"/mentor/pages/{doc['id']}").text
+        assert GUIDE in after
+        # A second click has nothing left to link.
+        again = browser.post(
+            f"/mentor/pages/{doc['id']}/link-mention",
+            data={"target_kind": "page", "target_id": guide["id"]},
+            follow_redirects=False,
+        )
+        assert again.status_code == 409
+
+
+def test_an_issue_takes_a_mention_from_the_browser_too(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space, proj = _space(c), _project(c)
+        guide = _page(c, space["id"], GUIDE, "x")
+        issue = _issue(c, proj["id"], "Onboard", f"follow the {GUIDE} today")
+    with TestClient(app) as browser:
+        _login(browser)
+        resp = browser.post(
+            f"/aegis/issues/{issue['id']}/link-mention",
+            data={"target_kind": "page", "target_id": guide["id"]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert resp.headers["location"] == f"/mentor/pages/{guide['id']}/graph"
+        assert (
+            browser.post(
+                f"/aegis/issues/{issue['id']}/link-mention",
+                data={"target_kind": "page", "target_id": guide["id"]},
+                follow_redirects=False,
+            ).status_code
+            == 409
+        )
+
+
+@pytest.mark.parametrize("base", ["/mentor/pages", "/aegis/issues"])
+def test_linking_refuses_an_unknown_kind_and_a_missing_target(tmp_path, base):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space, proj = _space(c), _project(c)
+        source = (
+            _page(c, space["id"], "Src", "text")
+            if base == "/mentor/pages"
+            else _issue(c, proj["id"], "Src", "text")
+        )
+    with TestClient(app) as browser:
+        _login(browser)
+        assert (
+            browser.post(
+                f"{base}/{source['id']}/link-mention",
+                data={"target_kind": "sprint", "target_id": 1},
+            ).status_code
+            == 422
+        )
+        # A target with no mention text cannot be linked to — 404, not a guess.
+        assert (
+            browser.post(
+                f"{base}/{source['id']}/link-mention",
+                data={"target_kind": "page", "target_id": 99999},
+            ).status_code
+            == 404
+        )
+
+
+@pytest.mark.parametrize(
+    "path,data",
+    [
+        ("/mentor/pages/1/link-mention", {"target_kind": "page", "target_id": 1}),
+        ("/aegis/issues/1/link-mention", {"target_kind": "page", "target_id": 1}),
+        ("/mentor/spaces/1/daily", {}),
+        ("/mentor/spaces/1/pages/from-template", {"template_id": 1, "title": "X"}),
+    ],
+)
+def test_every_new_browser_write_is_gated_on_the_session(tmp_path, path, data):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+        _page(c, space["id"], GUIDE, "x")
+    with TestClient(app) as anon:
+        # Signed out: a write is 401, never a silent no-op.
+        anon.headers["X-CSRF-Token"] = anon.cookies.get("athena_csrf", "")
+        assert anon.post(path, data=data).status_code in (401, 403)
+
+
+def test_a_read_only_viewer_cannot_grow_the_graph(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        _viewer(c, tmp_path)
+        space = _space(c)
+        guide = _page(c, space["id"], GUIDE, "x")
+        doc = _page(c, space["id"], "Prose", f"read the {GUIDE} first")
+    with TestClient(app) as browser:
+        _login(browser, "v@e.com")
+        assert (
+            browser.post(
+                f"/mentor/pages/{doc['id']}/link-mention",
+                data={"target_kind": "page", "target_id": guide["id"]},
+            ).status_code
+            == 403
+        )
+        assert browser.post(f"/mentor/spaces/{space['id']}/daily").status_code == 403
+        # And the suggestion is shown without a button they cannot use.
+        assert "Link it" not in browser.get(f"/mentor/pages/{guide['id']}/graph").text
+
+
+def test_the_browser_daily_note_opens_the_same_page_twice(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+    with TestClient(app) as browser:
+        _login(browser)
+        # The control is on the space page.
+        assert "Open today" in browser.get(f"/mentor/spaces/{space['id']}").text
+        first = browser.post(
+            f"/mentor/spaces/{space['id']}/daily", follow_redirects=False
+        )
+        second = browser.post(
+            f"/mentor/spaces/{space['id']}/daily", follow_redirects=False
+        )
+        assert first.status_code == 303
+        assert first.headers["location"] == second.headers["location"]
+        assert (
+            browser.post(
+                "/mentor/spaces/99999/daily", follow_redirects=False
+            ).status_code
+            == 404
+        )
+
+
+def test_the_browser_creates_a_page_from_a_template(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+        tmpl = _make_template(c, space["id"], "Postmortem", "## What happened")
+        ordinary = _page(c, space["id"], "Ordinary", "x")
+    with TestClient(app) as browser:
+        _login(browser)
+        # The picker only renders once the space actually has a template.
+        assert (
+            "New page from template"
+            in browser.get(f"/mentor/spaces/{space['id']}").text
+        )
+        made = browser.post(
+            f"/mentor/spaces/{space['id']}/pages/from-template",
+            data={"template_id": tmpl["id"], "title": "Outage 1"},
+            follow_redirects=False,
+        )
+        assert made.status_code == 303
+        # The page renders Markdown, so the heading arrives as HTML.
+        assert "<h2>What happened</h2>" in browser.get(made.headers["location"]).text
+        # A title is required, and a non-template is refused by the command.
+        assert (
+            browser.post(
+                f"/mentor/spaces/{space['id']}/pages/from-template",
+                data={"template_id": tmpl["id"], "title": "   "},
+            ).status_code
+            == 400
+        )
+        assert (
+            browser.post(
+                f"/mentor/spaces/{space['id']}/pages/from-template",
+                data={"template_id": ordinary["id"], "title": "Nope"},
+            ).status_code
+            == 422
+        )
+        assert (
+            browser.post(
+                "/mentor/spaces/99999/pages/from-template",
+                data={"template_id": tmpl["id"], "title": "Nope"},
+            ).status_code
+            == 404
+        )
+
+
+def test_the_space_page_hides_the_template_picker_when_there_are_none(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+    with TestClient(app) as browser:
+        _login(browser)
+        assert (
+            "New page from template"
+            not in browser.get(f"/mentor/spaces/{space['id']}").text
+        )
+
+
+def test_a_backlog_issues_graph_page_explains_the_empty_mention_list(tmp_path):
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = c.post("/issues", json={"title": "Loose end"}, headers=H1).json()
+    with TestClient(app) as browser:
+        _login(browser)
+        html = browser.get(f"/aegis/issues/{issue['id']}/graph").text
+        # Not an empty list that reads as "nothing mentions this".
+        assert "no key yet" in html
+        # A lone item still draws itself — one circle, and a scope line saying so,
+        # rather than an empty frame the reader has to interpret.
+        assert html.count("<circle") == 1
+        assert "1 item within" in html
