@@ -24,10 +24,12 @@ search snippets are short, untrusted, and want literal text, not formatting.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 import re
 import secrets
 import sqlite3
 from html import unescape
+from urllib.parse import urlparse
 
 from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
@@ -89,6 +91,51 @@ def render_plaintext(text: str | None) -> Markup:
     if not text:
         return Markup("")
     return Markup(str(escape(text)).replace("\n", "<br>"))
+
+
+#: A bare http(s) URL inside an activity detail. Kept narrow on purpose: the
+#: trailing character class excludes the punctuation that usually ends a sentence,
+#: so "see https://x/y." does not swallow the full stop into the href.
+_URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:)]")
+
+
+def render_forge_detail(text: str | None, hosts: Collection[str]) -> Markup:
+    """Render an activity detail, linking URLs that belong to a REGISTERED source.
+
+    A forge event's detail carries a commit or pull-request URL, and it is far
+    more useful as a link. But the detail is text an outside system supplied, so
+    linking every URL in it would let anyone holding a source secret plant an
+    arbitrary outbound link on an issue's trail.
+
+    The host allowlist is what makes this safe: a URL renders as an anchor only
+    when its host is one the operator registered a source for. Everything else —
+    including a URL on a *plausible* host nobody registered — stays inert text.
+    Escaping happens first and the anchor is built from the escaped value, so this
+    can only ever turn safe text into a link, never introduce markup.
+    """
+    if not text:
+        return Markup("")
+    allowed = {host.strip().lower() for host in hosts if host}
+    escaped = str(escape(text))
+    if not allowed:
+        return Markup(escaped.replace("\n", "<br>"))
+
+    def _link(match: re.Match[str]) -> str:
+        url = match.group(0)
+        try:
+            host = urlparse(url).hostname
+        except ValueError:  # a malformed authority is not a link
+            return url
+        if not host or host.lower() not in allowed:
+            return url
+        # noopener/noreferrer: the trail must not hand a third-party page a
+        # window handle or the URL of the issue someone was reading.
+        return (
+            f'<a href="{url}" class="xref" rel="noopener noreferrer nofollow" '
+            f'target="_blank">{url}</a>'
+        )
+
+    return Markup(_URL_RE.sub(_link, escaped).replace("\n", "<br>"))
 
 
 def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:

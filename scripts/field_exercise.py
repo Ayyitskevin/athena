@@ -26,6 +26,8 @@ Run it from a checkout with the venv installed:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -598,6 +600,94 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                     f"vs {day_two['id']}"
                 )
             step("today's note opens twice and is one page", day_one["title"])
+
+            # --- the forge reports in ---------------------------------------
+            # Inbound integration over real HTTP: a registered source signs a
+            # synthetic push naming this issue, and Athena lands it as FOREIGN
+            # history. The assertions that matter are the ones about what it is
+            # NOT — not a native event, not part of any run, not undoable, and
+            # not able to move the issue.
+            _, forge_source, _ = _request(
+                "POST",
+                f"{athena}/event-sources",
+                headers=admin_h,
+                body={"name": "fx-forge", "host": "github.com"},
+                expect=(200, 201),
+            )
+            assert forge_source is not None
+            forge_secret = forge_source["secret"]
+
+            issue_key = issue.get("key") or f"FX-{issue['id']}"
+            push_payload = {
+                "ref": f"refs/heads/{issue_key}-work",
+                "commits": [
+                    {
+                        "message": f"{issue_key} wire the executor callback",
+                        "url": "https://github.com/example/repo/commit/f1e1d",
+                    }
+                ],
+            }
+            # Sign the EXACT bytes _request will send.
+            push_body = json.dumps(push_payload).encode()
+            push_signature = (
+                "sha256="
+                + hmac.new(forge_secret.encode(), push_body, hashlib.sha256).hexdigest()
+            )
+            _, accepted, _ = _request(
+                "POST",
+                f"{athena}/forge/fx-forge",
+                headers={
+                    "X-Hub-Signature-256": push_signature,
+                    "X-GitHub-Event": "push",
+                },
+                body=push_payload,
+                expect=(202,),
+            )
+            assert accepted is not None
+            if accepted["landed"] != 1 or accepted["issues"] != [issue["id"]]:
+                raise Failure(f"the forge event did not land on the issue: {accepted}")
+
+            # An unsigned replay of the same delivery must be refused.
+            _request(
+                "POST",
+                f"{athena}/forge/fx-forge",
+                headers={"X-GitHub-Event": "push"},
+                body=push_payload,
+                expect=(401,),
+            )
+
+            _, trail, _ = _request(
+                "GET",
+                f"{athena}/activity?target_kind=issue&target_id={issue['id']}",
+                headers=admin_h,
+            )
+            assert trail is not None
+            landed_event = next((e for e in trail if e["verb"] == "forge_commit"), None)
+            if landed_event is None:
+                raise Failure("the forge commit is not on the issue trail")
+            if landed_event["imported_at"] is None:
+                raise Failure(
+                    f"the forge event was recorded as NATIVE history: {landed_event}"
+                )
+            if landed_event["run_id"] is not None:
+                raise Failure(f"the forge event claimed an Athena run: {landed_event}")
+            # 0041's guarantee, exercised rather than assumed.
+            _request(
+                "POST",
+                f"{athena}/activity/{landed_event['id']}/undo",
+                headers=admin_h,
+                expect=(422,),
+            )
+            _, still, _ = _request(
+                "GET", f"{athena}/issues/{issue['id']}", headers=admin_h
+            )
+            assert still is not None
+            if still["status"] != "in_progress":
+                raise Failure(f"the forge event moved the issue: {still['status']}")
+            step(
+                "the forge reported in; it landed as imported and moved nothing",
+                f"{issue_key} \u2190 commit f1e1d",
+            )
 
             # --- Close, and the operator's undo -----------------------------
             _request(

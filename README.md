@@ -223,6 +223,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/QUERY.md](docs/QUERY.md) — the work query language, and why unknown atoms are errors
 - [docs/EMBEDS.md](docs/EMBEDS.md) — live embeds: pages that show real work
 - [docs/GRAPH.md](docs/GRAPH.md) — the knowledge graph: unlinked mentions, the graph view, templates, the daily note
+- [docs/FORGE.md](docs/FORGE.md) — forge integration: inbound signed events as imported history
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals

@@ -27,6 +27,8 @@ from athena.aegis import automation as aegis_automation
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import dispatch_api as aegis_dispatch_api
+from athena.aegis import forge_api as aegis_forge_api
+from athena.web import render
 from athena.aegis import embeds_api as aegis_embeds_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
@@ -1382,6 +1384,11 @@ def create_app(
         name="static",
     )
     templates = Jinja2Templates(directory=package_root / "templates")
+    # Forge event details carry a URL supplied by an outside system. The filter
+    # links it only when its host belongs to a registered source; a template that
+    # passes no hosts renders inert text, so a surface that has not opted in
+    # degrades to today's behavior rather than breaking.
+    templates.env.filters["forge_detail"] = render.render_forge_detail
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)
@@ -1403,6 +1410,7 @@ def create_app(
     app.include_router(mentor_learnings_api.router)
     app.include_router(aegis_dispatch_api.router)
     app.include_router(aegis_embeds_api.router)
+    app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(search_api.router)

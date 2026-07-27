@@ -37,6 +37,7 @@ from athena.core import (
     activity,
     attachment_commands,
     attachments,
+    event_sources,
     graph,
     identity,
     labels,
@@ -1088,6 +1089,10 @@ def _render_issue_detail(
         "activity": activity.list_activity(
             conn, target_kind="issue", target_id=issue_id, actor=user
         ),
+        # Hosts Athena was told to expect events from. The trail links a forge
+        # URL only when its host is one of these — otherwise anyone holding a
+        # source secret could plant an arbitrary outbound link on an issue.
+        "forge_hosts": event_sources.registered_hosts(conn),
     }
     if extra:
         context.update(extra)

@@ -12,6 +12,47 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Forge integration: evidence flows in** (migration 0069). A registered event
+  source can deliver signed GitHub webhooks to `POST /forge/{name}`, and an event
+  naming an issue key — in a commit message, a branch name, or a PR title — lands
+  on that issue's trail. Your commits and pull requests are finally visible from
+  the work item that caused them. See [docs/FORGE.md](docs/FORGE.md).
+
+  **Inbound only.** Athena never calls the forge: no polling, no API calls, no
+  stored third-party token. The secret held against a source is *Athena's* — the
+  value an inbound request must prove knowledge of — so there is no new egress
+  surface and no forge credential in the database to leak. The honest cost is
+  that Athena cannot backfill; it knows only what was delivered while a source
+  was enabled.
+
+  **Every landed event is imported history** (`imported_at`, migration 0041), and
+  that one decision is the whole safety argument: undo already refuses imported
+  events, and the lifecycle facts, claim handoffs, assignee facts, fleet metrics,
+  and attention rollup all already filter `imported_at IS NULL`. So a forge
+  **cannot move an issue's status**, cannot shift a completion-cycle median, and
+  cannot be undone into a native write. A merged PR saying "closes ATH-12" is
+  recorded as *the source said so*. Imported rows also carry no run coordinates,
+  enforced in `activity.record` rather than in each caller, so a delivery can
+  never be spliced into an Athena run's replay.
+
+  **Key matching proposes; the database disposes.** `UTF-8`, `SHA-256`, and
+  `ISO-8601` are shaped exactly like issue keys; a candidate lands only when its
+  prefix is a real project key and its number a real issue. An event matching
+  nothing is **counted, not stored** — landing it nowhere would be silent, and
+  storing it somewhere would be noise.
+
+  **The signature is verified before the payload is parsed.** The handler takes
+  the raw request and declares no body model, because a declared model would put
+  FastAPI's JSON parsing ahead of authentication on the one route an
+  unauthenticated stranger is expected to hit. A bad signature, a missing
+  signature, and an unknown source name all return an identical 401, so the
+  endpoint is not a directory of your integrations. Bounded at 512 KB per
+  delivery, 20 commits per push, and 10 issues landed per delivery.
+
+  Source registration, pause, resume, and revocation are audited commands. The
+  secret is shown once and never again; revoking a source keeps the history it
+  already landed, because those events were authentic when recorded.
+
 - **The knowledge graph earns its name.** Athena has stored a link graph since
   migration 0012; it is now traversable, growable, and honest about its bounds.
   See [docs/GRAPH.md](docs/GRAPH.md). Four things, reachable from a
