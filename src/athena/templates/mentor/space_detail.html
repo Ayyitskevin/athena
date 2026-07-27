@@ -46,6 +46,51 @@
 <p class="empty-state">No pages in this space yet.</p>
 {% endif %}
 
+{% if can_write %}
+<div class="form-container">
+    <h3>Daily note</h3>
+    <p class="note-small">
+        Today's page in this space, created from the
+        <code>Daily Note Template</code> if there is one. Opening it twice opens
+        the same page — dates are UTC.
+    </p>
+    <form method="post" action="/mentor/spaces/{{ space.id }}/daily">
+        {% include "partials/csrf.html" %}
+        <button type="submit" class="button">Open today's note</button>
+    </form>
+</div>
+
+{% if templates %}
+<div class="form-container">
+    <h3>New page from template</h3>
+    <p class="note-small">
+        A template is any page in this space carrying the <code>template</code>
+        label. The new page copies the body — never the label.
+    </p>
+    <form method="post" action="/mentor/spaces/{{ space.id }}/pages/from-template"
+          class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="tmpl-id">Template</label>
+            <select id="tmpl-id" name="template_id">
+                {% for t in templates %}
+                <option value="{{ t.id }}">{{ t.title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="tmpl-title">New page title</label>
+            <input type="text" id="tmpl-title" name="title" required
+                   placeholder="e.g. Postmortem 2026-07-27">
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Create from template</button>
+        </div>
+    </form>
+</div>
+{% endif %}
+{% endif %}
+
 <div class="form-container">
     {% if can_write %}
     <h3>New Page</h3>

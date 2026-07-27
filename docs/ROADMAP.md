@@ -210,8 +210,12 @@ under exactly the same architecture rules, none of which are amended.
       time, with the *viewer's* visibility rather than the author's. Nothing is
       snapshotted into page content; a directive that cannot render says so in
       place. The stage where docs and tracker become one product.
-- [ ] **Knowledge graph**: unlinked mentions, a bounded server-rendered graph
-      view over the links already stored, page templates, an operator daily note.
+- [x] **Knowledge graph** ([GRAPH.md](GRAPH.md)): unlinked mentions that propose
+      edges without ever creating one (the "link it" click is an ordinary audited
+      edit of the *source*), a bounded server-rendered ego graph over the links
+      already stored — visibility applied during traversal, and a "showing N of M"
+      line whenever the ceiling bites — plus label-based page templates (no new
+      table) and an idempotent operator daily note that writes nothing on revisit.
 - [ ] **Forge integration**: inbound signed events landing as imported activity on
       the issues they name. Integrate with a forge; never become one.
 - [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.

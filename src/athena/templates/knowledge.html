@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{# One template for both sides of the house: a page's neighbourhood and an
+   issue's are the same view of the same graph, so they share it rather than
+   drifting into two. The caller supplies what differs. #}
+
+{% block title %}Connections — {{ subject_title }}{% endblock %}
+
+{% block content %}
+<p class="note-small">
+    <a href="{{ back_url }}">← {{ subject_title }}</a>
+</p>
+
+<h2>Connections</h2>
+
+<div class="form-container">
+    <h3>Graph</h3>
+    {% include "partials/link_graph.html" %}
+</div>
+
+<div class="form-container">
+    <h3>Unlinked mentions</h3>
+    {% include "partials/unlinked_mentions.html" %}
+</div>
+{% endblock %}

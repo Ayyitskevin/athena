@@ -1,0 +1,46 @@
+{# The bounded ego graph, drawn server-side.
+
+   No JavaScript: the layout arrived as coordinates from core/graph.py, so this
+   template only places what it was given. Each node is a real <a>, which means
+   the graph is keyboard-navigable and works in a text browser — the same
+   no-build-chain rule the rest of Athena follows.
+
+   `graph` is the dict ego_graph() returns. #}
+{% if graph.nodes %}
+<div class="graph-wrap" style="overflow-x: auto;">
+    <svg viewBox="0 0 {{ graph.width }} {{ graph.height }}"
+         width="100%" style="max-width: {{ graph.width }}px; height: auto;"
+         role="img" aria-label="Link graph around this item">
+        {# Edges first so nodes paint over them. #}
+        {% for edge in graph.edges %}
+        <line x1="{{ edge.x1 }}" y1="{{ edge.y1 }}" x2="{{ edge.x2 }}" y2="{{ edge.y2 }}"
+              stroke="#9ca3af" stroke-width="1.5" />
+        {% endfor %}
+        {% for node in graph.nodes %}
+        <a href="{% if node.kind == 'issue' %}/aegis/issues/{{ node.id }}{% else %}/mentor/pages/{{ node.id }}{% endif %}">
+            <title>{{ node.title }}{% if node.key %} ({{ node.key }}){% endif %}</title>
+            <circle cx="{{ node.x }}" cy="{{ node.y }}"
+                    r="{% if node.is_focus %}13{% else %}9{% endif %}"
+                    fill="{% if node.is_focus %}#1d4ed8{% elif node.kind == 'issue' %}#f59e0b{% else %}#10b981{% endif %}"
+                    stroke="#ffffff" stroke-width="2" />
+            <text x="{{ node.x }}" y="{{ node.y + 24 }}" text-anchor="middle"
+                  font-size="11" fill="#374151">{{ node.title[:22] }}{% if node.title|length > 22 %}…{% endif %}</text>
+        </a>
+        {% endfor %}
+    </svg>
+</div>
+<p class="note-small">
+    {# Say what was NOT drawn. An unlabelled partial graph reads as the whole
+       neighbourhood, which is the quiet lie this line exists to prevent. #}
+    {% if graph.truncated %}
+    Showing {{ graph.shown }} of {{ graph.total }} connected items within
+    {{ graph.depth }} {{ "hop" if graph.depth == 1 else "hops" }} — the closest ones.
+    {% else %}
+    {{ graph.shown }} {{ "item" if graph.shown == 1 else "items" }} within
+    {{ graph.depth }} {{ "hop" if graph.depth == 1 else "hops" }}.
+    {% endif %}
+    Only items you can see are drawn.
+</p>
+{% else %}
+<p class="note-small">Nothing links here yet, so there is no graph to draw.</p>
+{% endif %}

@@ -776,6 +776,46 @@ class AthenaClient:
         """What this page references — the outgoing edges of the knowledge graph."""
         return self._result(self._client.get(f"/pages/{page_id}/outgoing-links"))
 
+    def link_graph(
+        self,
+        kind: str,
+        node_id: int,
+        depth: int | None = None,
+        max_nodes: int | None = None,
+    ) -> Any:
+        """The bounded neighbourhood around one issue or page, as positioned data."""
+        params: dict[str, Any] = {}
+        if depth is not None:
+            params["depth"] = depth
+        if max_nodes is not None:
+            params["max_nodes"] = max_nodes
+        base = "issues" if kind == "issue" else "pages"
+        return self._result(
+            self._client.get(f"/{base}/{node_id}/graph", params=params or None)
+        )
+
+    def unlinked_mentions(
+        self, kind: str, node_id: int, limit: int | None = None
+    ) -> Any:
+        """Documents naming this issue/page without linking to it."""
+        params = {"limit": limit} if limit is not None else None
+        base = "issues" if kind == "issue" else "pages"
+        return self._result(
+            self._client.get(f"/{base}/{node_id}/unlinked-mentions", params=params)
+        )
+
+    def link_mention(
+        self, source_kind: str, source_id: int, target_kind: str, target_id: int
+    ) -> Any:
+        """Rewrite the SOURCE's body so its first unlinked mention becomes a link."""
+        base = "issues" if source_kind == "issue" else "pages"
+        return self._result(
+            self._client.post(
+                f"/{base}/{source_id}/link-mention",
+                json={"target_kind": target_kind, "target_id": target_id},
+            )
+        )
+
     def list_page_versions(self, page_id: int) -> Any:
         """The page's superseded revisions, newest first (the live page is not one)."""
         return self._result(self._client.get(f"/pages/{page_id}/versions"))

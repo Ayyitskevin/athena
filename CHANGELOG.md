@@ -12,6 +12,49 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The knowledge graph earns its name.** Athena has stored a link graph since
+  migration 0012; it is now traversable, growable, and honest about its bounds.
+  See [docs/GRAPH.md](docs/GRAPH.md). Four things, reachable from a
+  **Connections** link on any page or issue:
+
+  **Unlinked mentions.** Documents whose text names a thing without linking to
+  it — a page by its title, an issue by its key (`ATH-12`, never its title:
+  issue titles are sentences that recur in prose, and matching them would bury
+  the operator in false positives). Finding a mention **proposes** an edge and
+  never creates one; "Link it" rewrites the *source* document through the
+  ordinary page or issue command, so the edge arrives attributed, versioned, and
+  on the activity trail like any other edit. Full-text search narrows and Python
+  confirms against the real body, because returning an unconfirmed prefix-token
+  hit would be inventing a mention. Code is not prose: an occurrence inside a
+  fence or an inline code span is a literal, not a mention, while a blockquote
+  still is one. Text already inside `[[...]]` is skipped even when it resolved to
+  no link. If the mention is gone by the time you click, the edit is **refused**
+  rather than applied somewhere you did not see.
+
+  **A bounded ego graph**, server-rendered as SVG with no JavaScript — one focus,
+  depth ≤ 2 by default, a node ceiling, and a "showing N of M" line whenever the
+  ceiling bites, because an unlabelled partial graph reads as the whole
+  neighbourhood. Layout is pure arithmetic over a stable ordering, so there is no
+  seed to fix and the same graph renders identically every time. Visibility is
+  applied **during** traversal: a node you cannot see is not a node and does not
+  conduct a path — filtering a finished graph would leave its edges shaping the
+  picture and a gap at a known position, which is an existence oracle.
+
+  **Page templates**, with **no new table and no `is_template` column**: a
+  template is a page carrying the `template` label, which makes marking one an
+  already-audited, already-reversible write and makes "which pages are templates"
+  a query Athena already answers. Creating from a template copies the body and
+  never the labels — inheriting them would make every page created from a
+  template a template itself. Substitution is `{{title}}` and `{{date}}` and
+  nothing else; an unknown `{{...}}` is left as written, because it is content.
+
+  **The operator's daily note**: one button per space for today's page, seeded
+  from that space's `Daily Note Template` if it has one. Idempotent by
+  construction — the lookup and the insert share one transaction, so a
+  double-click cannot produce two notes — and revisiting writes **nothing at
+  all**: no event, no budget charge, because visiting an existing note is a read
+  and an event per visit would make the trail lie about when the page came to be.
+
 - **Live embeds: a page can show real work.** A Mentor page may carry a fenced
   ` ```athena ` directive — `kind: issues` with a [work query](docs/QUERY.md),
   `kind: count`, or `kind: issue` — that renders at view time as real rows. A

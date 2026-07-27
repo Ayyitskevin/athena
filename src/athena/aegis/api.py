@@ -48,8 +48,10 @@ from athena.core import (
     access,
     attachment_commands,
     attachments,
+    graph,
     labels,
     links,
+    mentions,
     users,
     work_query,
 )
@@ -739,6 +741,83 @@ def backlinks(
     # gated by the viewer so a hidden project's/space's reference never reveals itself.
     _issue_for_read(conn, issue_id, actor)
     return links.backlinks(conn, target_kind="issue", target_id=issue_id, actor=actor)
+
+
+@router.get("/{issue_id}/graph")
+def issue_graph(
+    issue_id: int,
+    depth: int = graph.DEFAULT_DEPTH,
+    max_nodes: int = graph.DEFAULT_MAX_NODES,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The bounded neighbourhood around this issue, as positioned data rather than
+    # markup — the Aegis twin of the page graph.
+    _issue_for_read(conn, issue_id, actor)
+    return graph.ego_graph(
+        conn,
+        kind="issue",
+        node_id=issue_id,
+        actor=actor,
+        depth=depth,
+        max_nodes=max_nodes,
+    )
+
+
+@router.get("/{issue_id}/unlinked-mentions")
+def issue_unlinked_mentions(
+    issue_id: int,
+    limit: int = mentions.DEFAULT_LIMIT,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Text naming this issue's key without linking to it. A read: it proposes
+    # edges, never creates them.
+    _issue_for_read(conn, issue_id, actor)
+    return mentions.unlinked_mentions(
+        conn, kind="issue", target_id=issue_id, actor=actor, limit=limit
+    )
+
+
+class LinkMentionIn(BaseModel):
+    # Which target to link to. The SOURCE is the issue in the path — this endpoint
+    # edits that issue's body.
+    target_kind: str
+    target_id: int
+
+
+@router.post("/{issue_id}/link-mention", response_model=IssueOut)
+def link_issue_mention(
+    issue_id: int,
+    payload: LinkMentionIn,
+    response: Response,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | JSONResponse:
+    # Rewrite THIS issue's body so its first unlinked mention of the target becomes
+    # a reference. The endpoint lives on the source's own domain because the source
+    # is what gets edited — and it goes through update_issue, so the edit carries
+    # the same authorization, projections, and audit as any other issue edit.
+    issue = _issue_for_read(conn, issue_id, actor)
+    if payload.target_kind not in ("issue", "page"):
+        raise HTTPException(status_code=422, detail="target_kind must be issue or page")
+    needle = mentions.mention_text(conn, payload.target_kind, payload.target_id)
+    if not needle:
+        raise HTTPException(status_code=404, detail="no such link target")
+    token = mentions.link_token(conn, payload.target_kind, payload.target_id)
+    body = mentions.linkify_first(issue["body"] or "", needle, token)
+    if body is None:
+        # The body moved under the caller: the mention they acted on is gone.
+        raise HTTPException(
+            status_code=409, detail="that mention is no longer in this issue"
+        )
+    try:
+        updated = issue_commands.update_issue(
+            conn, actor=actor, issue_id=issue_id, body=body
+        )
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_error_response(exc)
+    return _tagged_issue(conn, updated, response)
 
 
 class IssueStateOut(BaseModel):

@@ -24,7 +24,7 @@ from __future__ import annotations
 import sqlite3
 
 from athena.core import budgets, db, etag, labels
-from athena.mentor import page_activity, page_etags, pages
+from athena.mentor import page_activity, page_etags, page_templates, pages
 
 _ERROR_KINDS = (
     "not_found",
@@ -318,3 +318,115 @@ def set_page_archived(
             commit=False,
         )
         return after
+
+
+def create_page_from_template(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    space_id: int,
+    template_id: int,
+    title: str,
+    parent_id: int | None = None,
+) -> dict:
+    """Create a page whose body starts as a template's, atomically with its
+    ``page_created`` event.
+
+    The template is re-read and re-checked INSIDE the write lock, not at the
+    boundary: a page can lose its ``template`` label between the moment the
+    operator sees the menu and the moment they submit, and a stale menu must not
+    be able to seed a page from something that is no longer a template.
+
+    The new page deliberately does NOT inherit the template's labels. Copying
+    them would carry the ``template`` label across and make every page created
+    from a template a template itself — a self-replicating menu. The body is
+    copied; the marking is not.
+
+    Raises ``PageCommandError('not_found')`` if the template is gone or lives in
+    another space, and ``('invalid')`` if it is not actually a template.
+
+    Metered: a budgeted actor spends one action here (see ``core.budgets``).
+    """
+    with db.transaction(conn, immediate=True):
+        budgets.charge(conn, {"id": actor_id})
+        template = pages.get_page(conn, template_id)
+        if (
+            template is None
+            or template["space_id"] != space_id
+            or template["archived_at"] is not None
+        ):
+            raise PageCommandError("not_found", "no such template in this space")
+        if not page_templates.is_template(conn, template_id):
+            raise PageCommandError("invalid", "that page is not a template")
+        body = page_templates.fill(
+            template["body"], title=title, date=page_templates.today()
+        )
+        page = pages.create_page(
+            conn,
+            space_id=space_id,
+            title=title,
+            body=body,
+            parent_id=parent_id,
+            created_by=actor_id,
+            commit=False,
+        )
+        page_activity.record_page_created(
+            conn,
+            actor_id=actor_id,
+            page_id=page["id"],
+            title=page["title"],
+            body=page["body"],
+            commit=False,
+        )
+        return page
+
+
+def ensure_daily_page(
+    conn: sqlite3.Connection, *, actor_id: int, space_id: int, day: str | None = None
+) -> tuple[dict, bool]:
+    """Find-or-create the space's daily note for ``day`` (default: today, UTC).
+
+    Returns ``(page, created)``. This is the one command in Mentor that may
+    perform NO write at all: visiting an existing daily note is a read, so the
+    already-exists path charges no budget and records no event. Stamping a
+    ``page_created`` event on every visit would turn the operator's morning habit
+    into audit noise and make the trail lie about when the page came to be.
+
+    Idempotency is structural, not best-effort: the lookup and the insert share
+    one ``BEGIN IMMEDIATE`` transaction, so two concurrent first-visits serialize
+    and the second finds the first's page instead of racing it. A daily note is
+    exactly the surface a double-click or a prefetching browser hits twice.
+
+    The body comes from the space's ``Daily Note Template`` if it has one. A
+    space without one still gets a note — empty — because the feature must not
+    require setup the operator has not done yet.
+    """
+    with db.transaction(conn, immediate=True):
+        title = day or page_templates.today()
+        existing = pages.find_pages_by_title(conn, title, space_id=space_id)
+        if existing:
+            return existing[0], False
+        budgets.charge(conn, {"id": actor_id})
+        template = page_templates.daily_template(conn, space_id)
+        body = (
+            page_templates.fill(template["body"], title=title, date=title)
+            if template is not None
+            else ""
+        )
+        page = pages.create_page(
+            conn,
+            space_id=space_id,
+            title=title,
+            body=body,
+            created_by=actor_id,
+            commit=False,
+        )
+        page_activity.record_page_created(
+            conn,
+            actor_id=actor_id,
+            page_id=page["id"],
+            title=page["title"],
+            body=page["body"],
+            commit=False,
+        )
+        return page, True

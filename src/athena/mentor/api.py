@@ -22,12 +22,22 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from athena import config
-from athena.core import access, attachment_commands, attachments, labels, links, users
+from athena.core import (
+    access,
+    attachment_commands,
+    attachments,
+    graph,
+    labels,
+    links,
+    mentions,
+    users,
+)
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
 from athena.mentor import (
     page_commands,
+    page_templates,
     page_comment_commands,
     page_comments,
     page_etags,
@@ -154,6 +164,19 @@ class LinkOut(BaseModel):
     id: int
     title: str | None = None
     exists: bool
+
+
+class LinkMentionIn(BaseModel):
+    # Which target to link the mention to. The SOURCE is the page in the path —
+    # this endpoint edits that page — so only the target needs naming.
+    target_kind: str
+    target_id: int
+
+
+class PageFromTemplate(BaseModel):
+    template_id: int
+    title: str
+    parent_id: int | None = None
 
 
 class PageCommentCreate(BaseModel):
@@ -774,6 +797,136 @@ def outgoing_links(
     return links.outgoing_links(
         conn, source_kind="page", source_id=page_id, actor=actor
     )
+
+
+@pages_router.get("/{page_id}/graph")
+def page_graph(
+    page_id: int,
+    depth: int = graph.DEFAULT_DEPTH,
+    max_nodes: int = graph.DEFAULT_MAX_NODES,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The bounded neighbourhood around this page, as DATA — positioned nodes and
+    # edges, not markup. An agent asking "what is this connected to" gets the same
+    # graph the browser draws, without scraping an SVG.
+    _page_for_read(conn, page_id, actor)
+    return graph.ego_graph(
+        conn,
+        kind="page",
+        node_id=page_id,
+        actor=actor,
+        depth=depth,
+        max_nodes=max_nodes,
+    )
+
+
+@pages_router.get("/{page_id}/unlinked-mentions")
+def page_unlinked_mentions(
+    page_id: int,
+    limit: int = mentions.DEFAULT_LIMIT,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Text that names this page without linking to it. A pure read: it proposes
+    # edges, never creates them.
+    _page_for_read(conn, page_id, actor)
+    return mentions.unlinked_mentions(
+        conn, kind="page", target_id=page_id, actor=actor, limit=limit
+    )
+
+
+@pages_router.post("/{page_id}/link-mention", response_model=PageOut)
+def link_page_mention(
+    page_id: int,
+    payload: LinkMentionIn,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | JSONResponse:
+    # Take one proposed edge: rewrite THIS page's body so its first unlinked
+    # mention of the target becomes a reference. The endpoint lives here, on the
+    # source's own domain, because the source is what gets edited — a mention of
+    # an issue inside a page is a PAGE edit, and it goes through the page command
+    # like every other page edit, with the same event, version, and attribution.
+    page = _page_for_read(conn, page_id, actor)
+    if payload.target_kind not in ("issue", "page"):
+        raise HTTPException(status_code=422, detail="target_kind must be issue or page")
+    needle = mentions.mention_text(conn, payload.target_kind, payload.target_id)
+    if not needle:
+        raise HTTPException(status_code=404, detail="no such link target")
+    token = mentions.link_token(conn, payload.target_kind, payload.target_id)
+    body = mentions.linkify_first(page["body"] or "", needle, token)
+    if body is None:
+        # The mention the caller acted on is no longer there — the body changed
+        # under them. Refuse rather than edit something they did not see.
+        raise HTTPException(
+            status_code=409, detail="that mention is no longer in this page"
+        )
+    try:
+        return page_commands.edit_page(
+            conn, actor_id=actor["id"], page_id=page_id, body=body
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
+
+
+# --- Templates and the daily note -----------------------------------------
+
+
+@spaces_router.get("/{space_id}/templates", response_model=list[PageOut])
+def list_space_templates(
+    space_id: int,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
+    # Template pages in this space — the pages carrying the `template` label.
+    if not access.can_see_space(conn, actor, space_id):
+        raise HTTPException(status_code=404, detail="no such space")
+    return _with_labels_many(conn, page_templates.list_templates(conn, space_id))
+
+
+@spaces_router.post("/{space_id}/pages/from-template", response_model=PageOut)
+def create_page_from_template(
+    space_id: int,
+    payload: PageFromTemplate,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | JSONResponse:
+    if not access.can_see_space(conn, actor, space_id):
+        raise HTTPException(status_code=404, detail="no such space")
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="page title is required")
+    try:
+        return page_commands.create_page_from_template(
+            conn,
+            actor_id=actor["id"],
+            space_id=space_id,
+            template_id=payload.template_id,
+            title=title,
+            parent_id=payload.parent_id,
+        )
+    except page_commands.PageCommandError as exc:
+        return _page_command_error_response(exc)
+
+
+@spaces_router.post("/{space_id}/daily", response_model=PageOut)
+def open_daily_note(
+    space_id: int,
+    response: Response,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Find-or-create today's note. 200 when it already existed, 201 when this call
+    # created it — so a caller can tell "opened" from "started" without the
+    # endpoint having to lie about having written something.
+    if not access.can_see_space(conn, actor, space_id):
+        raise HTTPException(status_code=404, detail="no such space")
+    page, created = page_commands.ensure_daily_page(
+        conn, actor_id=actor["id"], space_id=space_id
+    )
+    response.status_code = 201 if created else 200
+    return page
 
 
 # --- Page comments: the discussion thread on a page -----------------------

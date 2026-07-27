@@ -254,6 +254,58 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.embed_help()
 
     @mcp.tool()
+    def link_graph(
+        kind: str, id: int, depth: int | None = None, max_nodes: int | None = None
+    ) -> dict:
+        """The link neighbourhood around an issue or page, as you can see it.
+
+        `kind` is "issue" or "page". Returns positioned nodes and edges — the same
+        graph the browser draws, as data rather than a picture. Adjacency is
+        undirected: what points here and what this points at are both neighbours.
+
+        Bounded on purpose: depth 2 and 40 nodes by default. When the ceiling
+        bites, `truncated` is true and `total` says how many visible nodes were
+        within range — so a partial neighbourhood is never mistaken for the whole
+        one. Nodes you cannot see are absent, and do not conduct a path.
+
+        Use it to orient before editing: what already references this runbook, and
+        what does it reach."""
+        return client.link_graph(kind, id, depth, max_nodes)
+
+    @mcp.tool()
+    def unlinked_mentions(kind: str, id: int, limit: int | None = None) -> dict:
+        """Documents whose text NAMES this issue/page without linking to it.
+
+        `kind` is "issue" or "page". A page is named by its title; an issue by its
+        key (ATH-12), never its title. Each result carries the source and an
+        excerpt showing the mention in context.
+
+        This is a READ. It proposes edges and creates none — use `link_mention` to
+        take one. Occurrences inside code fences, inline code, existing [[refs]],
+        and link targets are deliberately not mentions.
+
+        Use it after writing a page: find the docs that already talk about it and
+        connect them, instead of hoping someone links it later."""
+        return client.unlinked_mentions(kind, id, limit)
+
+    @mcp.tool()
+    def link_mention(
+        source_kind: str, source_id: int, target_kind: str, target_id: int
+    ) -> dict:
+        """Rewrite the SOURCE document so its first unlinked mention of the target
+        becomes a real reference.
+
+        This edits `source_id` — not the target — through the ordinary page/issue
+        command, so it snapshots a version, records an edit event, and is
+        attributed to you like any other write. It rewrites ONE occurrence; call
+        again for the next.
+
+        Refused with 409 if the mention is no longer there (the body changed under
+        you). That is deliberate: editing anyway would rewrite text you never
+        read."""
+        return client.link_mention(source_kind, source_id, target_kind, target_id)
+
+    @mcp.tool()
     def query_help() -> dict:
         """The work-query vocabulary as data: every field, its accepted values,
         and the limits. Emitted by the parser itself, so it cannot drift from
