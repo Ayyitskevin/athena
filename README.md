@@ -70,7 +70,9 @@ the authority and evidence needed to supervise it.
 Spaces, nested Markdown pages, version history, comments, labels, search,
 wikilinks, and backlinks. A page can reference `[[issue:42]]` or
 `[[ATH-12]]`; the shared link index makes the relationship visible from both
-sides.
+sides. That index is now traversable: a bounded
+[knowledge graph](docs/GRAPH.md) view, unlinked mentions that propose the edges
+prose forgot to write, label-based page templates, and an operator daily note.
 
 ### Aegis — work
 
@@ -220,6 +222,7 @@ at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/APPROVALS.md](docs/APPROVALS.md) — opt-in human-in-the-loop approval gates
 - [docs/QUERY.md](docs/QUERY.md) — the work query language, and why unknown atoms are errors
 - [docs/EMBEDS.md](docs/EMBEDS.md) — live embeds: pages that show real work
+- [docs/GRAPH.md](docs/GRAPH.md) — the knowledge graph: unlinked mentions, the graph view, templates, the daily note
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals

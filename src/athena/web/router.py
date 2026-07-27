@@ -37,9 +37,11 @@ from athena.core import (
     activity,
     attachment_commands,
     attachments,
+    graph,
     identity,
     labels,
     links,
+    mentions,
     notifications,
     search,
     users,
@@ -875,6 +877,93 @@ def change_issue_priority(
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.get("/aegis/issues/{issue_id}/graph", response_class=HTMLResponse)
+def issue_graph(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """An issue's neighbourhood: the bounded link graph plus its unlinked mentions.
+
+    A separate route rather than a panel on the issue, for the same reason the page
+    version is: a mention scan and a graph walk are both per-view work that reading
+    should not pay for.
+    """
+    user = getattr(request.state, "user", None)
+    issue, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
+    assert issue is not None
+    return get_templates().TemplateResponse(
+        request=request,
+        name="knowledge.html",
+        context={
+            "subject_title": issue["title"],
+            "back_url": f"/aegis/issues/{issue_id}",
+            "target_kind": "issue",
+            "target_id": issue_id,
+            # The VIEWER's visibility, never the issue author's.
+            "graph": graph.ego_graph(conn, kind="issue", node_id=issue_id, actor=user),
+            "mentions": mentions.unlinked_mentions(
+                conn, kind="issue", target_id=issue_id, actor=user
+            ),
+            "can_write": user is not None and identity.can_write(user),
+        },
+    )
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/link-mention", dependencies=[Depends(verify_csrf)]
+)
+def link_issue_mention(
+    request: Request,
+    issue_id: int,
+    target_kind: str = Form(...),
+    target_id: int = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Rewrite THIS issue's body so its first unlinked mention of the target becomes
+    a real reference — an ordinary issue edit, through the ordinary command."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to link.</div>',
+            status_code=401,
+        )
+    if not identity.can_write(user):
+        return _readonly_response()
+    issue, err = _issue_visible_or_404(conn, issue_id, user)
+    if err is not None:
+        return err
+    assert issue is not None
+    if target_kind not in ("issue", "page"):
+        return HTMLResponse('<div class="error">Unknown target.</div>', status_code=422)
+    needle = mentions.mention_text(conn, target_kind, target_id)
+    if not needle:
+        return HTMLResponse(
+            '<div class="error">That link target no longer exists.</div>',
+            status_code=404,
+        )
+    body = mentions.linkify_first(
+        issue["body"] or "", needle, mentions.link_token(conn, target_kind, target_id)
+    )
+    if body is None:
+        # The mention the operator clicked is gone; refuse rather than rewrite
+        # text they never saw.
+        return HTMLResponse(
+            '<div class="error">That mention is no longer in this issue.</div>',
+            status_code=409,
+        )
+    try:
+        issue_commands.update_issue(conn, actor=user, issue_id=issue_id, body=body)
+    except issue_commands.IssueCommandError as exc:
+        return _issue_command_response(exc)
+    back = (
+        f"/mentor/pages/{target_id}/graph"
+        if target_kind == "page"
+        else f"/aegis/issues/{target_id}/graph"
+    )
+    return RedirectResponse(back, status_code=303)
 
 
 @router.get("/aegis/issues/{ref}", response_class=HTMLResponse)

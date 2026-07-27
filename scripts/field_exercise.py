@@ -505,6 +505,100 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                 f"= {embed['item']['status']}",
             )
 
+            # --- the graph grows: an unlinked mention becomes an edge --------
+            # A page names the issue by key in prose. Athena must SUGGEST that
+            # edge and never take it on its own; the operator's click is an
+            # ordinary audited edit of the mentioning page.
+            _, note_space, _ = _request(
+                "POST",
+                f"{athena}/spaces",
+                headers=admin_h,
+                body={"key": "OPS", "name": "Operator notes"},
+                expect=(200, 201),
+            )
+            assert note_space is not None
+            issue_key = issue.get("key") or f"FX-{issue['id']}"
+            _, mentioning, _ = _request(
+                "POST",
+                f"{athena}/spaces/{note_space['id']}/pages",
+                headers=admin_h,
+                body={
+                    "title": "Shift handover",
+                    "body": (
+                        f"Watch {issue_key} through the night. "
+                        f"Do not touch `{issue_key}` in the deploy script."
+                    ),
+                },
+                expect=(200, 201),
+            )
+            assert mentioning is not None
+            _, found, _ = _request(
+                "GET",
+                f"{athena}/issues/{issue['id']}/unlinked-mentions",
+                headers=admin_h,
+            )
+            assert found is not None
+            if found["needle"] != issue_key:
+                raise Failure(f"mentions searched for the wrong name: {found}")
+            if [i["id"] for i in found["items"]] != [mentioning["id"]]:
+                raise Failure(f"the prose mention was not suggested: {found}")
+            # The SAME page also names the issue inside an inline code span. If the
+            # code rule were broken, that occurrence would be linkified and the
+            # deploy script line would be corrupted.
+            _request(
+                "POST",
+                f"{athena}/pages/{mentioning['id']}/link-mention",
+                headers=admin_h,
+                body={"target_kind": "issue", "target_id": issue["id"]},
+            )
+            _, linked_page, _ = _request(
+                "GET", f"{athena}/pages/{mentioning['id']}", headers=admin_h
+            )
+            assert linked_page is not None
+            if f"[[{issue_key}]]" not in linked_page["body"]:
+                raise Failure(f"the mention was not linked: {linked_page['body']}")
+            if f"`{issue_key}`" not in linked_page["body"]:
+                raise Failure(f"the code span was rewritten: {linked_page['body']}")
+            _, issue_backlinks, _ = _request(
+                "GET", f"{athena}/issues/{issue['id']}/backlinks", headers=admin_h
+            )
+            assert issue_backlinks is not None
+            if mentioning["id"] not in [b["id"] for b in issue_backlinks]:
+                raise Failure(f"the new edge is not a backlink: {issue_backlinks}")
+            _, ego, _ = _request(
+                "GET", f"{athena}/issues/{issue['id']}/graph", headers=admin_h
+            )
+            assert ego is not None
+            if mentioning["id"] not in [
+                n["id"] for n in ego["nodes"] if n["kind"] == "page"
+            ]:
+                raise Failure(f"the new edge is not in the graph: {ego}")
+            step(
+                "an unlinked mention became a real edge, and code was left alone",
+                f"{issue_key} \u2190 page {mentioning['id']}",
+            )
+
+            # --- the operator's daily note ----------------------------------
+            _, day_one, _ = _request(
+                "POST",
+                f"{athena}/spaces/{note_space['id']}/daily",
+                headers=admin_h,
+                expect=(200, 201),
+            )
+            _, day_two, _ = _request(
+                "POST",
+                f"{athena}/spaces/{note_space['id']}/daily",
+                headers=admin_h,
+                expect=(200, 201),
+            )
+            assert day_one is not None and day_two is not None
+            if day_one["id"] != day_two["id"]:
+                raise Failure(
+                    f"the daily note is not idempotent: {day_one['id']} "
+                    f"vs {day_two['id']}"
+                )
+            step("today's note opens twice and is one page", day_one["title"])
+
             # --- Close, and the operator's undo -----------------------------
             _request(
                 "PATCH",

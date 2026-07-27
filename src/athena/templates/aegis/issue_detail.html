@@ -198,6 +198,11 @@
             {% else %}
             <p class="muted">Nothing references this issue yet.</p>
             {% endif %}
+            <p class="note-small">
+                <a href="/aegis/issues/{{ issue.id }}/graph">Connections →</a>
+                the link graph around this issue, and text that names it without
+                linking.
+            </p>
         </div>
 
         <div class="relationships">

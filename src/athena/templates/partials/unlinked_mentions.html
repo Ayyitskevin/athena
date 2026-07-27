@@ -1,0 +1,61 @@
+{# Unlinked mentions: text that names this thing without linking to it.
+
+   Every row is a PROPOSAL. The "Link it" button posts to the SOURCE's own
+   endpoint, which edits that source's body through its ordinary command — so
+   taking a suggestion is an attributed, versioned, audited edit like any other,
+   and nothing here links anything on its own.
+
+   Expects `mentions` (the dict unlinked_mentions() returns), `target_kind`,
+   `target_id`, and `can_write`.
+
+   NOTE the subscript below: `mentions.items` would resolve to dict.items — the
+   METHOD — because Jinja tries attribute access before key access, and every
+   dict has one. It renders as a silent truthy object rather than an error, so
+   the list quietly disappears. `mentions['items']` is the only correct form,
+   and the payload keeps the key name the rest of the REST API uses. #}
+{% set rows = mentions['items'] %}
+{% if not mentions.needle %}
+<p class="note-small">
+    This issue has no key yet (it is in the backlog), so there is no name for
+    other documents to mention it by.
+</p>
+{% elif rows %}
+<p class="note-small">
+    Documents whose text says <code>{{ mentions.needle }}</code> without linking
+    to it. Linking one rewrites that document's body to
+    <code>{{ mentions.token }}</code> — an ordinary, recorded edit.
+</p>
+<ul class="backlink-list">
+    {% for item in rows %}
+    <li>
+        {% if item.kind == "issue" %}
+        <a href="/aegis/issues/{{ item.id }}" class="xref">{{ item.title }}</a>
+        {% if item.key %}<span class="muted">{{ item.key }}</span>{% endif %}
+        {% else %}
+        <a href="/mentor/pages/{{ item.id }}" class="xref">{{ item.title }}</a>
+        {% if item.space_key %}<span class="muted">{{ item.space_key }}</span>{% endif %}
+        {% endif %}
+        <div class="note-small">{{ item.excerpt }}</div>
+        {% if can_write %}
+        <form method="post"
+              action="{% if item.kind == 'issue' %}/aegis/issues/{{ item.id }}/link-mention{% else %}/mentor/pages/{{ item.id }}/link-mention{% endif %}"
+              style="display:inline">
+            {% include "partials/csrf.html" %}
+            <input type="hidden" name="target_kind" value="{{ target_kind }}">
+            <input type="hidden" name="target_id" value="{{ target_id }}">
+            <button type="submit" class="btn-small">Link it</button>
+        </form>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% if mentions.truncated %}
+<p class="note-small">
+    Showing {{ mentions.shown }} of {{ mentions.total }} unlinked mentions.
+</p>
+{% endif %}
+{% else %}
+<p class="note-small">
+    Nothing mentions <code>{{ mentions.needle }}</code> without already linking to it.
+</p>
+{% endif %}

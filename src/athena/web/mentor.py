@@ -27,15 +27,18 @@ from athena.core import (
     activity,
     attachment_commands,
     attachments,
+    graph,
     identity,
     labels,
     links,
+    mentions,
     notifications,
     users,
 )
 from athena.core.deps import get_conn
 from athena.mentor import (
     page_commands,
+    page_templates,
     page_comment_commands,
     page_comments,
     pages,
@@ -104,6 +107,105 @@ def _tree_rows(page_rows: list[dict]) -> list[dict]:
 
     walk(None, 0)
     return ordered
+
+
+# --- The knowledge graph ----------------------------------------------------
+
+
+@router.get("/mentor/pages/{page_id}/graph", response_class=HTMLResponse)
+def page_graph(
+    request: Request, page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """A page's neighbourhood: the bounded link graph plus its unlinked mentions.
+
+    This is a SEPARATE route rather than a panel on the page itself, and that is a
+    cost decision worth stating. A mention scan is a full-text query plus a body
+    read per candidate, and a graph is a breadth-first walk with a visibility check
+    per node; putting either on every page view would tax reading — the thing
+    people do most — to serve the thing they do occasionally. One click keeps page
+    rendering flat.
+    """
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    assert page is not None
+    return templates.TemplateResponse(
+        request=request,
+        name="knowledge.html",
+        context={
+            "subject_title": page["title"],
+            "back_url": f"/mentor/pages/{page_id}",
+            "target_kind": "page",
+            "target_id": page_id,
+            # Both reads take the VIEWER, never the page's author: the graph and
+            # the mention list are each capable of revealing private work through
+            # a public page, so they are gated exactly like every other read.
+            "graph": graph.ego_graph(conn, kind="page", node_id=page_id, actor=user),
+            "mentions": mentions.unlinked_mentions(
+                conn, kind="page", target_id=page_id, actor=user
+            ),
+            "can_write": user is not None and identity.can_write(user),
+        },
+    )
+
+
+@router.post(
+    "/mentor/pages/{page_id}/link-mention", dependencies=[Depends(verify_csrf)]
+)
+def link_page_mention(
+    request: Request,
+    page_id: int,
+    target_kind: str = Form(...),
+    target_id: int = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Take one proposed edge: rewrite THIS page's body so its first unlinked
+    mention of the target becomes a real reference.
+
+    The page in the path is the SOURCE — the document being edited — so this is an
+    ordinary page edit and goes through the ordinary page command, with its event,
+    its version snapshot, and its attribution. Nothing here writes to the target.
+    """
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "link mentions")
+    if err is not None:
+        return err
+    assert user is not None, "_write_required accepted a missing user"
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    assert page is not None
+    if target_kind not in ("issue", "page"):
+        return HTMLResponse('<div class="error">Unknown target.</div>', status_code=422)
+    needle = mentions.mention_text(conn, target_kind, target_id)
+    if not needle:
+        return HTMLResponse(
+            '<div class="error">That link target no longer exists.</div>',
+            status_code=404,
+        )
+    body = mentions.linkify_first(
+        page["body"] or "", needle, mentions.link_token(conn, target_kind, target_id)
+    )
+    if body is None:
+        # The body changed under the operator; the mention they clicked is gone.
+        # Refusing is the honest answer — editing anyway would rewrite text they
+        # never saw.
+        return HTMLResponse(
+            '<div class="error">That mention is no longer in this page.</div>',
+            status_code=409,
+        )
+    try:
+        page_commands.edit_page(conn, actor_id=user["id"], page_id=page_id, body=body)
+    except page_commands.PageCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    back = (
+        f"/mentor/pages/{target_id}/graph"
+        if target_kind == "page"
+        else (f"/aegis/issues/{target_id}/graph")
+    )
+    return RedirectResponse(back, status_code=303)
 
 
 # --- Spaces -----------------------------------------------------------------
@@ -491,6 +593,10 @@ def space_detail(
             "tree": _tree_rows(page_rows),
             # Flat list (alpha) for the optional "nest under" parent select.
             "all_pages": page_rows,
+            # The space's template pages, driving the "new page from template"
+            # picker. Empty is the normal case for a space that has not set any
+            # up, and the picker simply does not render.
+            "templates": page_templates.list_templates(conn, space_id),
             # Drives the danger zone: only the creator sees Delete (creator-only,
             # tighter than Mentor's open write model), and it's disabled while the
             # space still holds pages (the API would refuse that delete with 409).
@@ -505,6 +611,77 @@ def space_detail(
             ),
         },
     )
+
+
+@router.post("/mentor/spaces/{space_id}/daily", dependencies=[Depends(verify_csrf)])
+def open_daily_note(
+    request: Request, space_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Open today's daily note in this space, creating it on the first visit.
+
+    The operator's morning page: one button, always the same page for a given day.
+    Idempotency lives in the command (find-or-create in one transaction), not here,
+    so a double-click cannot produce two notes.
+    """
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "open the daily note")
+    if err is not None:
+        return err
+    assert user is not None, "_write_required accepted a missing user"
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
+        conn, user, space_id
+    ):
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
+    page, _created = page_commands.ensure_daily_page(
+        conn, actor_id=user["id"], space_id=space_id
+    )
+    return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
+
+
+@router.post(
+    "/mentor/spaces/{space_id}/pages/from-template", dependencies=[Depends(verify_csrf)]
+)
+def create_page_from_template(
+    request: Request,
+    space_id: int,
+    template_id: int = Form(...),
+    title: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Create a page whose body starts as a template's. The command re-checks that
+    the chosen page is still a template under the write lock."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "create pages")
+    if err is not None:
+        return err
+    assert user is not None, "_write_required accepted a missing user"
+    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
+        conn, user, space_id
+    ):
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
+    title = title.strip()
+    if not title:
+        return HTMLResponse(
+            '<div class="error">Page title is required.</div>', status_code=400
+        )
+    try:
+        page = page_commands.create_page_from_template(
+            conn,
+            actor_id=user["id"],
+            space_id=space_id,
+            template_id=template_id,
+            title=title,
+        )
+    except page_commands.PageCommandError as exc:
+        return HTMLResponse(
+            f'<div class="error">{html.escape(exc.detail)}</div>',
+            status_code=404 if exc.kind == "not_found" else 422,
+        )
+    return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
 @router.post("/mentor/spaces/{space_id}/pages", dependencies=[Depends(verify_csrf)])
