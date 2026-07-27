@@ -216,8 +216,12 @@ under exactly the same architecture rules, none of which are amended.
       already stored — visibility applied during traversal, and a "showing N of M"
       line whenever the ceiling bites — plus label-based page templates (no new
       table) and an idempotent operator daily note that writes nothing on revisit.
-- [ ] **Forge integration**: inbound signed events landing as imported activity on
-      the issues they name. Integrate with a forge; never become one.
+- [x] **Forge integration** ([FORGE.md](FORGE.md)): inbound signed events landing
+      as imported activity on the issues they name — verified before the payload is
+      parsed, matched against real project keys so `UTF-8` cannot land on anyone's
+      work, counted rather than stored when they match nothing, and excluded from
+      undo, the lifecycle facts, and every metric because they are foreign history.
+      Athena never calls the forge: inbound only, no stored third-party token.
 - [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.
 - [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.
 

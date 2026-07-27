@@ -49,6 +49,13 @@
             edited space <span class="activity-detail">{{ e.detail }}</span>
         {% elif e.verb == "space_deleted" %}
             deleted space <span class="activity-detail">{{ e.detail }}</span>
+        {% elif e.verb in ["forge_commit", "forge_pull_request", "forge_branch"] %}
+            {# Foreign history: what a registered source SAID happened. The detail
+               names the source and carries its URL; the filter links that URL only
+               when its host is one the operator registered, and renders inert text
+               otherwise (including when no hosts were passed). #}
+            <span class="muted">reported</span>
+            <span class="activity-detail">{{ e.detail | forge_detail(forge_hosts | default([])) }}</span>
         {% else %}
             {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
         {% endif %}

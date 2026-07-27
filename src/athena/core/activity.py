@@ -202,10 +202,23 @@ def record(
     detail: str = "",
     commit: bool = True,
     issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
+    imported_at: str | None = None,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
     actor_id isn't a real user (the foreign key refuses the orphan). Callers pass
     a controlled verb; this layer only writes.
+
+    ``imported_at`` marks the row as FOREIGN history (0041) — something Athena was
+    *told*, not something it did. Passing it forces the run coordinates to NULL and
+    skips run binding, because an event Athena did not perform belongs to no
+    Athena run and must never be spliceable into one's replay. That neutralization
+    lives here, in the single writer, rather than in each caller: forgetting it
+    would let an inbound source forge a native-looking row.
+
+    An imported row still gets the full access envelope and watcher fan-out. That
+    is the reason inbound history is recorded through this function instead of a
+    direct INSERT — a forge event landing on a private project's issue must obey
+    the same visibility rules as every other event on that issue.
 
     The event is stamped with the ambient run id, parent run id, and fork point (the
     X-Athena-Run / X-Athena-Parent-Run / X-Athena-Fork-From-Event headers for the
@@ -252,21 +265,31 @@ def record(
             else:
                 resolved_scope_keys.add(scope["activity_scope_key"])
 
-        run_id = run_context.get_run_id()
-        if run_id is not None:
-            _bind_run(conn, run_id, actor_id)
-        # Validate the lineage coordinates AFTER binding, so a run may legitimately
-        # name itself and so the current run counts as real.
-        parent_run_id, forked_from_event_id = _validated_lineage(
-            conn,
-            run_context.get_parent_run_id(),
-            run_context.get_forked_from_event_id(),
-        )
+        # Foreign history carries NO run coordinates and claims no binding: the
+        # ambient run belongs to whatever request happened to deliver the event,
+        # not to the actor who performed it on the far side. Stamping it would
+        # splice someone else's history into an Athena run's replay.
+        if imported_at is not None:
+            run_id = None
+            parent_run_id: str | None = None
+            forked_from_event_id: int | None = None
+        else:
+            run_id = run_context.get_run_id()
+            if run_id is not None:
+                _bind_run(conn, run_id, actor_id)
+            # Validate the lineage coordinates AFTER binding, so a run may
+            # legitimately name itself and so the current run counts as real.
+            parent_run_id, forked_from_event_id = _validated_lineage(
+                conn,
+                run_context.get_parent_run_id(),
+                run_context.get_forked_from_event_id(),
+            )
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
-            "forked_from_event_id, visibility_restricted, reverses_event_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "forked_from_event_id, visibility_restricted, reverses_event_id, "
+            "imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 actor_id,
                 verb,
@@ -278,6 +301,7 @@ def record(
                 forked_from_event_id,
                 0 if scope_is_complete else 1,
                 _take_pending_reversal(),
+                imported_at,
             ),
         )
         event_id = cur.lastrowid

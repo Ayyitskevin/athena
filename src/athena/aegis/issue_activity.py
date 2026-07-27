@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 import sqlite3
+from typing import TypedDict
 
 from athena.aegis import issues, projects, sprints
 from athena.core import activity, db, labels, notifications, users
@@ -143,9 +144,20 @@ def assignee_fact_for_event(conn: sqlite3.Connection, event_id: int) -> dict | N
     return dict(row) if row is not None else None
 
 
-def _scope_kwargs(
-    project_ids: Collection[int | None] | None,
-) -> dict[str, object]:
+class _ScopeKwargs(TypedDict, total=False):
+    """The one optional kwarg this module forwards to ``activity.record``.
+
+    A ``TypedDict`` rather than ``dict[str, object]``, because a broad mapping
+    splatted into a keyword-argument list type-checks against ANY parameter it
+    could land on. When ``record`` grew an ``imported_at`` argument, the old
+    annotation started matching that instead — the checker cannot tell which key
+    a plain dict carries. Naming the key makes the splat verifiable.
+    """
+
+    issue_project_ids: Collection[int | None]
+
+
+def _scope_kwargs(project_ids: Collection[int | None] | None) -> _ScopeKwargs:
     return {} if project_ids is None else {"issue_project_ids": project_ids}
 
 
