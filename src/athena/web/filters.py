@@ -256,15 +256,15 @@ def delete_filter(
     request: Request, filter_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     """Delete one of the logged-in user's filters, then back to the list. Owner-only
-    (404 if it isn't theirs), so a user can't delete another's saved query."""
+    (404 if it isn't theirs), so a user can't delete another's saved query.
+    Ownership is enforced in the DELETE's own WHERE clause — the same owner-scoped
+    SQL the REST adapter relies on, not a fetch-then-check outside a transaction."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    flt = saved_filters.get_filter(conn, filter_id)
-    if flt is None or flt["owner_id"] != user["id"]:
+    if not saved_filters.delete_filter(conn, filter_id, owner_id=user["id"]):
         return HTMLResponse('<div class="error">No such filter.</div>', status_code=404)
-    saved_filters.delete_filter(conn, filter_id)
     return RedirectResponse("/aegis/filters", status_code=303)

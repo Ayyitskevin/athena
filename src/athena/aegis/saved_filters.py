@@ -25,7 +25,7 @@ import json
 import sqlite3
 
 from athena.aegis import issue_query, issues
-from athena.core import labels, work_query
+from athena.core import db, labels, work_query
 
 # The legal criteria dimensions — anything else in a submitted criteria object is
 # rejected by normalize_criteria, so a stored filter can only constrain what the
@@ -234,18 +234,22 @@ def create_filter(
 ) -> dict:
     """Insert a filter and return it. criteria is normalized before storage. Raises
     sqlite3.IntegrityError if the owner already has a filter with this name
-    (UNIQUE per owner, case-insensitive) — the boundary maps that to 409."""
+    (UNIQUE per owner, case-insensitive) — the boundary maps that to 409.
+
+    One immediate transaction, no self-commit: saved filters are PERSONAL STATE
+    (see docs/COMMAND_MIGRATION.md), so this module is the single writer and the
+    mutation is owner-scoped by construction (owner_id is an INSERT column)."""
     payload = json.dumps(normalize_criteria(criteria))
-    cur = conn.execute(
-        "INSERT INTO saved_filters (owner_id, name, criteria) VALUES (?, ?, ?)",
-        (owner_id, name, payload),
-    )
-    filter_id = cur.lastrowid
-    assert filter_id is not None
-    conn.commit()
-    saved_filter = get_filter(conn, filter_id)
-    assert saved_filter is not None
-    return saved_filter
+    with db.transaction(conn, immediate=True):
+        cur = conn.execute(
+            "INSERT INTO saved_filters (owner_id, name, criteria) VALUES (?, ?, ?)",
+            (owner_id, name, payload),
+        )
+        filter_id = cur.lastrowid
+        assert filter_id is not None
+        saved_filter = get_filter(conn, filter_id)
+        assert saved_filter is not None
+        return saved_filter
 
 
 def get_filter(conn: sqlite3.Connection, filter_id: int) -> dict | None:
@@ -268,13 +272,21 @@ def update_filter(
     conn: sqlite3.Connection,
     filter_id: int,
     *,
+    owner_id: int,
     name: str | None = None,
     criteria: dict | None = None,
 ) -> dict | None:
     """Partial update: only the fields passed as non-None change. Returns the
-    updated filter, or None if no filter has that id. criteria, when given, is
-    normalized. Bumps updated_at on any real change. Raises sqlite3.IntegrityError
-    on a rename that collides with another of the owner's filters."""
+    updated filter, or None if no filter has that id FOR THIS OWNER. criteria,
+    when given, is normalized. Bumps updated_at on any real change. Raises
+    sqlite3.IntegrityError on a rename that collides with another of the owner's
+    filters.
+
+    Owner-scoped in SQL (``WHERE id = ? AND owner_id = ?``) inside one immediate
+    transaction: a filter that isn't the caller's is indistinguishable from a
+    missing one (0 rows → None → the boundary's 404), and no fetch-then-check
+    outside a transaction can land a stale ownership verdict on a row id that —
+    through SQLite rowid reuse — now belongs to another user."""
     sets: list[str] = []
     params: list = []
     if name is not None:
@@ -283,22 +295,32 @@ def update_filter(
     if criteria is not None:
         sets.append("criteria = ?")
         params.append(json.dumps(normalize_criteria(criteria)))
-    if not sets:
+    with db.transaction(conn, immediate=True):
+        if not sets:
+            row = conn.execute(
+                "SELECT * FROM saved_filters WHERE id = ? AND owner_id = ?",
+                (filter_id, owner_id),
+            ).fetchone()
+            return _to_filter(row) if row else None
+        sets.append("updated_at = datetime('now')")
+        cur = conn.execute(
+            f"UPDATE saved_filters SET {', '.join(sets)} WHERE id = ? AND owner_id = ?",
+            (*params, filter_id, owner_id),
+        )
+        if cur.rowcount == 0:
+            return None
         return get_filter(conn, filter_id)
-    sets.append("updated_at = datetime('now')")
-    cur = conn.execute(
-        f"UPDATE saved_filters SET {', '.join(sets)} WHERE id = ?",
-        (*params, filter_id),
-    )
-    conn.commit()
-    if cur.rowcount == 0:
-        return None
-    return get_filter(conn, filter_id)
 
 
-def delete_filter(conn: sqlite3.Connection, filter_id: int) -> bool:
-    """Delete a filter. Returns False if no filter had that id (so the caller can
-    404). Ownership is the boundary's concern — it fetches-and-checks first."""
-    cur = conn.execute("DELETE FROM saved_filters WHERE id = ?", (filter_id,))
-    conn.commit()
-    return cur.rowcount > 0
+def delete_filter(conn: sqlite3.Connection, filter_id: int, *, owner_id: int) -> bool:
+    """Delete a filter owned by owner_id. Returns False when no row matched —
+    missing OR another user's, which are indistinguishable — so the boundary
+    404s. Owner-scoped in SQL inside one immediate transaction: ownership is
+    enforced by the mutation itself, not by a fetch-then-check a rowid-reuse
+    race can stale."""
+    with db.transaction(conn, immediate=True):
+        cur = conn.execute(
+            "DELETE FROM saved_filters WHERE id = ? AND owner_id = ?",
+            (filter_id, owner_id),
+        )
+        return cur.rowcount > 0

@@ -137,6 +137,12 @@ honest reading is: *you allowed this channel, and this came through it.*
 ## Limits, stated
 
 - **No backfill, ever.** Only what was delivered while the source was enabled.
+- **Rate limited like every other anonymous path.** Each delivery attempt is
+  charged against the anonymous per-IP limiter
+  (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default) **before** the source is
+  looked up or the body is read — so unsigned bursts, including against unknown
+  or paused source names, get a 429 instead of free HMAC work and database
+  lookups.
 - **512 KB** per delivery, **20 commits** examined per push, **10 issues** landed
   per delivery. Overflow counts as unmatched, so the operator still sees that
   something arrived and did not land.

@@ -143,7 +143,6 @@ def update(
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    _owned_filter_or_404(conn, filter_id, actor)
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=422, detail="no fields to update")
@@ -154,8 +153,11 @@ def update(
         _clean_criteria(payload.criteria) if payload.criteria is not None else None
     )
     try:
+        # Ownership is enforced IN the mutation's SQL (owner-scoped WHERE), not
+        # by a fetch-then-check here: 0 rows means missing-or-not-yours, and no
+        # rowid-reuse race can land this write on another user's filter.
         updated = saved_filters.update_filter(
-            conn, filter_id, name=name, criteria=criteria
+            conn, filter_id, owner_id=actor["id"], name=name, criteria=criteria
         )
     except sqlite3.IntegrityError as exc:
         raise HTTPException(
@@ -172,8 +174,8 @@ def delete(
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    _owned_filter_or_404(conn, filter_id, actor)
-    saved_filters.delete_filter(conn, filter_id)
+    if not saved_filters.delete_filter(conn, filter_id, owner_id=actor["id"]):
+        raise HTTPException(status_code=404, detail="no such filter")
 
 
 @router.get("/{filter_id}/issues", response_model=list[api.IssueOut])

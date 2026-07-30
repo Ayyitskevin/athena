@@ -176,21 +176,31 @@ async def icarus_callback(
     if not x_athena_signature or not hmac.compare_digest(x_athena_signature, expected):
         raise HTTPException(status_code=401, detail="invalid signature")
 
-    record = dispatch.get_by_icarus_run(conn, payload.icarus_run_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="no such dispatch")
+    with db.transaction(conn, immediate=True):
+        # The dispatch row is read INSIDE the write reservation, not before it:
+        # the terminal-state decision below must consult the row as it is under
+        # the lock. A snapshot taken before BEGIN IMMEDIATE can be stale the
+        # moment a second worker's callback settles the same dispatch first —
+        # the exact check-then-write race the immediate transaction exists to
+        # close. (record_terminal's own predicated UPDATE is the backstop that
+        # makes a lost race a no-op rather than a flipped outcome.)
+        record = dispatch.get_by_icarus_run(conn, payload.icarus_run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="no such dispatch")
 
-    digest_matches = hmac.compare_digest(payload.policy_digest, record["policy_digest"])
-    # Stamp everything recorded here with the dispatch's own run, so the executor's
-    # reports join the control-plane trail as that run's events and appear in its
-    # replay and lineage.
-    # set_run_id, not set_client_run_id: `icarus:` is a RESERVED namespace, and the
-    # client form drops reserved ids to None precisely so a caller cannot forge one.
-    # Athena is the one stamping here — it minted this run, it created this dispatch,
-    # and it authenticated the callback before reaching this line.
-    token = run_context.set_run_id(record["run_id"])
-    try:
-        with db.transaction(conn, immediate=True):
+        digest_matches = hmac.compare_digest(
+            payload.policy_digest, record["policy_digest"]
+        )
+        # Stamp everything recorded here with the dispatch's own run, so the
+        # executor's reports join the control-plane trail as that run's events and
+        # appear in its replay and lineage.
+        # set_run_id, not set_client_run_id: `icarus:` is a RESERVED namespace, and
+        # the client form drops reserved ids to None precisely so a caller cannot
+        # forge one. Athena is the one stamping here — it minted this run, it
+        # created this dispatch, and it authenticated the callback before reaching
+        # this line.
+        token = run_context.set_run_id(record["run_id"])
+        try:
             if not digest_matches:
                 activity.record(
                     conn,
@@ -219,28 +229,30 @@ async def icarus_callback(
                     detail=payload.evidence_ref[: dispatch.MAX_REF_CHARS],
                     commit=False,
                 )
-            if payload.outcome is not None and record["state"] not in (
-                dispatch.TERMINAL_STATES
-            ):
-                dispatch.record_terminal(
+            if payload.outcome is not None:
+                # False when the dispatch was already settled: the replayed or
+                # racing callback is accepted and ignored — no state change, and
+                # no second terminal event on the trail.
+                landed = dispatch.record_terminal(
                     conn,
                     dispatch_id=record["id"],
                     state=payload.outcome,
                     completion_ref=payload.completion_ref,
                 )
-                activity.record(
-                    conn,
-                    actor_id=record["dispatched_by"],
-                    verb=dispatch.VERB_TERMINAL,
-                    target_kind="issue",
-                    target_id=record["work_item_id"],
-                    detail=f"{payload.outcome}: {payload.completion_ref or 'no ref'}"[
-                        : dispatch.MAX_REF_CHARS
-                    ],
-                    commit=False,
-                )
-    finally:
-        run_context.reset_run_id(token)
+                if landed:
+                    activity.record(
+                        conn,
+                        actor_id=record["dispatched_by"],
+                        verb=dispatch.VERB_TERMINAL,
+                        target_kind="issue",
+                        target_id=record["work_item_id"],
+                        detail=(
+                            f"{payload.outcome}: {payload.completion_ref or 'no ref'}"
+                        )[: dispatch.MAX_REF_CHARS],
+                        commit=False,
+                    )
+        finally:
+            run_context.reset_run_id(token)
     return {
         "dispatch_id": record["id"],
         "policy_digest_matches": digest_matches,

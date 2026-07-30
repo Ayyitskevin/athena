@@ -105,6 +105,7 @@ def test_direct_filter_writes_reject_invalid_criteria_before_sql(tmp_path):
             saved_filters.update_filter(
                 conn,
                 created["id"],
+                owner_id=1,
                 name="must-not-apply",
                 criteria={"assignee_id": True},
             )

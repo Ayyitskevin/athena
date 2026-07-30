@@ -36,6 +36,31 @@ Before changing a listed legacy path, inspect both REST and browser adapters;
 some pairs already share lower-level validation while still split the mutation
 from activity emission.
 
+## Personal state (a documented exception, not a gap)
+
+Some writes are **personal state**: rows that belong to one user, change nothing
+anyone else can observe, and carry no shared-history significance. Today that is
+**saved filters**, **watches**, and **notification read-marks**. These do NOT get
+a command owner or audit events — recording "you marked your own inbox read" on
+the append-only trail would be noise, and an audit log is load-bearing precisely
+because it is not a dumping ground.
+
+The category is not an anything-goes lane. Its rules are as mandatory as the
+command rule above:
+
+1. **Owner-scoped SQL is mandatory.** Every mutation carries the owner in its
+   own `WHERE` clause (`… WHERE id = ? AND owner_id = ?`, 0 rows → 404), inside
+   one immediate transaction. Transports never fetch-then-check ownership
+   outside a transaction — SQLite reuses rowids, and a stale check can land on
+   another user's row.
+2. **No audit events.** Personal state records nothing on the activity trail.
+3. **One data-module writer.** The owning data module (e.g.
+   `aegis/saved_filters.py`, `core/notifications.py`) is the single writer;
+   REST and browser adapters call it and translate the result.
+
+Anything that fails these rules is not personal state — it needs a command
+owner like every other write.
+
 ## Rules for migration slices
 
 A migration is complete only when:

@@ -263,13 +263,27 @@ def record_terminal(
     dispatch_id: int,
     state: str,
     completion_ref: str | None,
-) -> None:
-    """The executor reported an outcome. Does not commit."""
-    conn.execute(
+) -> bool:
+    """The executor reported an outcome. Does not commit.
+
+    Predicated on the dispatch still being OPEN: a settled dispatch is never
+    re-settled, so a late or replayed callback that RACES the first terminal
+    report (both read the row as open before either committed) is a 0-row
+    update — the accepted-and-ignored path — and returns False. The caller
+    records its audit event only when this returns True, so a lost race can
+    produce neither a flipped outcome nor a duplicate terminal event."""
+    cur = conn.execute(
         "UPDATE icarus_dispatches SET state = ?, completion_ref = ?, "
-        "updated_at = datetime('now') WHERE id = ?",
-        (state, (completion_ref or "")[:MAX_REF_CHARS] or None, dispatch_id),
+        "updated_at = datetime('now') "
+        "WHERE id = ? AND state NOT IN (?, ?)",
+        (
+            state,
+            (completion_ref or "")[:MAX_REF_CHARS] or None,
+            dispatch_id,
+            *TERMINAL_STATES,
+        ),
     )
+    return cur.rowcount > 0
 
 
 def envelope(dispatch: dict, *, fork_runs: list[str]) -> dict:

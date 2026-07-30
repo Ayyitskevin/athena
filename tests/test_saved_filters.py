@@ -8,6 +8,8 @@ validated while open ones (status/label/assignee) stay resilient; and the web an
 API surfaces agree because they share normalize/validate/run.
 """
 
+from athena.aegis import saved_filters
+from athena.core import db
 from athena.main import create_app
 from fastapi.testclient import TestClient
 
@@ -267,6 +269,61 @@ def test_delete_filter(tmp_path):
         assert client.delete(f"/filters/{fid}", headers=H1).status_code == 204
         assert client.get(f"/filters/{fid}", headers=H1).status_code == 404
         assert client.get(f"/filters/{fid}/issues", headers=H1).status_code == 404
+
+
+def test_cross_user_update_and_delete_leave_the_victim_untouched(tmp_path):
+    """A PATCH/DELETE against another user's filter is a 404 AND leaves the row
+    byte-identical — ownership is enforced in the mutation's own SQL, so the
+    refusal can't be a stale verdict and the response never carries the
+    victim's row back."""
+    with TestClient(create_app(tmp_path / "xo.db")) as client:
+        _admin(client)
+        _user2(client)
+        fid = client.post(
+            "/filters",
+            json={"name": "mine", "criteria": {"priority": "high"}},
+            headers=H1,
+        ).json()["id"]
+        refused = client.patch(f"/filters/{fid}", json={"name": "stolen"}, headers=H2)
+        assert refused.status_code == 404
+        assert "stolen" not in refused.text  # never the victim's row, renamed
+        assert client.delete(f"/filters/{fid}", headers=H2).status_code == 404
+        victim = client.get(f"/filters/{fid}", headers=H1).json()
+        assert victim["name"] == "mine"
+        assert victim["criteria"] == {"priority": "high"}
+
+
+def test_rowid_reuse_cannot_leak_a_strangers_filter(tmp_path):
+    """saved_filters has no AUTOINCREMENT: deleting the max rowid lets the next
+    insert reuse it. A mutation keyed on the STALE (id, old-owner) pair must hit
+    0 rows — never return, rename, or delete the row another user now owns.
+    This is why owner_id rides in the mutation's WHERE, not in a check above it."""
+    db_file = tmp_path / "reuse.db"
+    with TestClient(create_app(db_file)) as client:
+        _admin(client)
+        _user2(client)
+        # user1's only filter takes the first id; deleting it frees the max rowid.
+        fid = client.post("/filters", json={"name": "gone"}, headers=H1).json()["id"]
+        assert client.delete(f"/filters/{fid}", headers=H1).status_code == 204
+        # user2's first filter reuses that exact rowid.
+        reused = client.post(
+            "/filters",
+            json={"name": "mine", "criteria": {"priority": "high"}},
+            headers=H2,
+        ).json()
+        assert reused["id"] == fid
+
+    conn = db.connect(db_file)
+    try:
+        # user1's stale handle on the id matches nothing it owns.
+        assert saved_filters.update_filter(conn, fid, owner_id=1, name="stolen") is None
+        assert saved_filters.delete_filter(conn, fid, owner_id=1) is False
+        victim = saved_filters.get_filter(conn, fid)
+        assert victim["owner_id"] == 2
+        assert victim["name"] == "mine"
+        assert victim["criteria"] == {"priority": "high"}
+    finally:
+        conn.close()
 
 
 # --- API: the extended issue list (the dimensions a filter persists) --------
