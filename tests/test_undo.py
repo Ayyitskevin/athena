@@ -277,8 +277,10 @@ def test_an_undo_that_would_change_nothing_is_refused(tmp_path):
         refused = _undo(c, archived["id"])
         assert refused.status_code == 409
         assert refused.json()["code"] == "undo_no_effect"
-        # And the refusal left nothing behind.
-        assert c.get(f"/activity/{archived['id']}/undo") is not None
+        # And the refusal left nothing behind: no event on the trail reverses the
+        # one it refused to undo.
+        feed = c.get("/activity", headers=H1).json()
+        assert all(e["reverses_event_id"] != archived["id"] for e in feed)
         assert _event(c, "unarchived")["reverses_event_id"] is None
 
 

@@ -634,7 +634,12 @@ def test_the_daily_note_is_the_same_page_on_a_second_visit(tmp_path):
         assert first.status_code == 201  # created
         assert second.status_code == 200  # found
         assert first.json()["id"] == second.json()["id"]
-        assert first.json()["title"] == page_templates.today()
+        # Named for the day it was opened. Not compared against page_templates
+        # .today() here: a test running across a UTC midnight would compute a
+        # different "today" than the server did and flake (test_today_is_utc
+        # pins the UTC rule itself, against an explicit stamp).
+        assert first.json()["title"] == second.json()["title"]
+        assert dt.date.fromisoformat(first.json()["title"])
 
 
 def test_revisiting_the_daily_note_writes_nothing_at_all(tmp_path):
@@ -662,7 +667,9 @@ def test_the_daily_note_starts_from_the_spaces_template_when_it_has_one(tmp_path
             "# {{date}}\n\n## Focus",
         )
         page = c.post(f"/spaces/{space['id']}/daily", headers=H1).json()
-        assert page["body"] == f"# {page_templates.today()}\n\n## Focus"
+        # {{date}} fills with the note's own day — read from the created page, not
+        # the test's clock, so a UTC midnight mid-test cannot flake this.
+        assert page["body"] == f"# {page['title']}\n\n## Focus"
 
 
 def test_a_space_with_no_template_still_gets_a_daily_note(tmp_path):

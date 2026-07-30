@@ -266,6 +266,38 @@ def attach_page_label(
         return page
 
 
+def attach_page_label_by_name(
+    conn: sqlite3.Connection, *, actor_id: int, page_id: int, name: str
+) -> dict:
+    """Attach a label to a page by NAME, find-or-creating the vocabulary entry —
+    the Mentor twin of aegis issue_commands.attach_label_by_name.
+
+    The browser route lets a user type a label name without a separate
+    vocabulary-management step. The find-or-create lives HERE, not in the
+    transport: one command owns each write, and the vocabulary write now shares
+    the attach's transaction, so a crash between them cannot plant a label that
+    was never attached. Visibility/existence authorization stays at the transport
+    boundary, as with the other page commands (the Mentor asymmetry): the route's
+    gates run first, so a refused attach — a viewer, a hidden or nonexistent page
+    — never reaches this code and the vocabulary never grows. Raises
+    ``PageCommandError('not_found')`` if the page vanished in the race past the
+    boundary's gate. Returns the page."""
+    with db.transaction(conn, immediate=True):
+        page = pages.get_page(conn, page_id)
+        if page is None:
+            raise PageCommandError("not_found", "no such page")
+        label = labels.get_or_create_label(conn, name=name, commit=False)
+        if labels.add_label_to_page(conn, page_id, label["id"], commit=False):
+            page_activity.record_page_label_added(
+                conn,
+                actor_id=actor_id,
+                page_id=page_id,
+                label_id=label["id"],
+                commit=False,
+            )
+        return page
+
+
 def detach_page_label(
     conn: sqlite3.Connection, *, actor_id: int, page_id: int, label_id: int
 ) -> dict:

@@ -21,6 +21,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+from athena import config
 from athena.core import db, forge_events
 from athena.core.forge_events import ForgeEventError
 from athena.main import create_app
@@ -443,6 +444,63 @@ def test_source_crud_requires_an_admin_scoped_token_not_just_the_role(tmp_path):
             ).status_code
             == 403
         )
+
+
+def test_hardened_mode_ignores_the_spoofable_actor_header(tmp_path, monkeypatch):
+    # WHY: TRUST_ACTOR_HEADER defaults OFF in production (conftest re-enables it
+    # to model the trusted local box). Registering a source hands out a credential
+    # that writes history, so in hardened mode the management routes must refuse
+    # the spoofable header outright — not mint a secret for it.
+    with TestClient(_app(tmp_path)) as c:
+        _bootstrap(c)
+        source = _source(c)  # registered while the suite's trusted-box flag is on
+        monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+        assert (
+            c.post("/event-sources", json={"name": "spoofed"}, headers=H1).status_code
+            == 401
+        )
+        assert c.get("/event-sources", headers=H1).status_code == 401
+        assert (
+            c.put(
+                f"/event-sources/{source['id']}/enabled",
+                json={"enabled": False},
+                headers=H1,
+            ).status_code
+            == 401
+        )
+        assert c.delete(f"/event-sources/{source['id']}", headers=H1).status_code == 401
+
+
+def test_hardened_mode_still_trusts_the_signature_not_the_header(tmp_path, monkeypatch):
+    # WHY: the delivery route is unauthenticated BY DESIGN — its credential is the
+    # HMAC over the exact body, checked before parsing. Hardened mode must not
+    # break a real delivery, and a spoofed actor header must not substitute for
+    # the signature.
+    with TestClient(_app(tmp_path)) as c:
+        _bootstrap(c)
+        source = _source(c)
+        issue = _project_issue(c)
+        monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+        # No actor header at all: a correctly signed delivery still lands.
+        landed = _deliver(c, "gh", "push", _push("fix ATH-1"), source["secret"])
+        assert landed.status_code == 202
+        assert landed.json()["issues"] == [issue["id"]]
+
+        # A spoofed header alongside a wrong signature is the same flat refusal.
+        body = json.dumps(_push("fix ATH-1")).encode()
+        refused = c.post(
+            "/forge/gh",
+            content=body,
+            headers={
+                "X-Hub-Signature-256": _sign("wrong-secret", body),
+                "X-GitHub-Event": "push",
+                "X-Athena-Actor": "1",
+            },
+        )
+        assert refused.status_code == 401
+        assert refused.json()["detail"] == "invalid signature"
 
 
 def test_an_unknown_source_kind_cannot_be_registered(tmp_path):

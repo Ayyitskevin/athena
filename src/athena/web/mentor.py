@@ -1350,14 +1350,14 @@ def add_page_label(
         return HTMLResponse(
             '<div class="error">Label name is required.</div>', status_code=400
         )
-    # Find-or-create the label (web vocabulary convenience), then the command owns
-    # the atomic attach + 'page_labeled' event — the same one REST calls. A page
+    # The command owns the find-or-create, the atomic attach, and the
+    # 'page_labeled' event in one transaction — the page twin of the issue-side
+    # attach_label_by_name, so the transport performs no vocabulary write. A page
     # that vanished in the race past the visibility gate lands back on the page
     # route (which 404s) rather than erroring here.
-    label = labels.get_or_create_label(conn, name=name)
     try:
-        page_commands.attach_page_label(
-            conn, actor_id=user["id"], page_id=page_id, label_id=label["id"]
+        page_commands.attach_page_label_by_name(
+            conn, actor_id=user["id"], page_id=page_id, name=name
         )
     except page_commands.PageCommandError:
         pass

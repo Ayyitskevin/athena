@@ -40,10 +40,6 @@ KINDS = (KIND_PUSH, KIND_PULL_REQUEST, KIND_BRANCH)
 SOURCE_GITHUB = "github"
 SOURCE_KINDS = (SOURCE_GITHUB,)
 
-# The signature header each dialect signs with, and the header naming the event.
-GITHUB_SIGNATURE_HEADER = "x-hub-signature-256"
-GITHUB_EVENT_HEADER = "x-github-event"
-
 # A delivery larger than this is refused unread. A forge push event carries a
 # commit list, which is unbounded in principle; the cap keeps an inbound endpoint
 # from being a memory amplifier for anyone holding the secret.

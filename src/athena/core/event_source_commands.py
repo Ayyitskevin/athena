@@ -13,6 +13,7 @@ them.
 from __future__ import annotations
 
 import sqlite3
+from typing import Literal
 
 from athena.core import activity, db, event_sources
 
@@ -22,13 +23,21 @@ VERB_RESUMED = "resumed_event_source"
 VERB_DELETED = "deleted_event_source"
 
 
-class EventSourceCommandError(Exception):
-    """A transport-neutral rejection carrying the status the boundary should use."""
+ErrorKind = Literal["invalid", "not_found", "conflict"]
 
-    def __init__(self, detail: str, *, status_code: int = 422) -> None:
+
+class EventSourceCommandError(Exception):
+    """A transport-neutral rejection.
+
+    Carries a ``kind``, never an HTTP status: the boundary maps kind to its own
+    status vocabulary (AGENTS.md's command-error dialect rule) without the command
+    knowing a transport exists.
+    """
+
+    def __init__(self, kind: ErrorKind, detail: str) -> None:
         super().__init__(detail)
+        self.kind = kind
         self.detail = detail
-        self.status_code = status_code
 
 
 def _detail(source: dict) -> str:
@@ -51,11 +60,11 @@ def register_source(
     a trail entry naming a source is unambiguous).
     """
     if not event_sources.valid_kind(kind):
-        raise EventSourceCommandError(f"unknown source kind '{kind}'", status_code=422)
+        raise EventSourceCommandError("invalid", f"unknown source kind '{kind}'")
     with db.transaction(conn, immediate=True):
         if event_sources.get_source_by_name(conn, name) is not None:
             raise EventSourceCommandError(
-                "an event source with that name already exists", status_code=409
+                "conflict", "an event source with that name already exists"
             )
         created = event_sources.create_source(
             conn,
@@ -88,7 +97,7 @@ def set_source_enabled(
     with db.transaction(conn, immediate=True):
         before = event_sources.get_source(conn, source_id)
         if before is None:
-            raise EventSourceCommandError("no such event source", status_code=404)
+            raise EventSourceCommandError("not_found", "no such event source")
         after = event_sources.set_enabled(conn, source_id, enabled, commit=False)
         assert after is not None
         if before["enabled"] != after["enabled"]:

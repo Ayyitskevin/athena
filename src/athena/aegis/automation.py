@@ -814,9 +814,13 @@ def _schedule_target_query(rule: dict, scheduled_for: datetime) -> tuple[str, li
         cutoff = (scheduled_for - timedelta(seconds=inactive_for)).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
+        # Native activity only: a forge delivery or import bundle is foreign
+        # history — it must not reset the inactivity clock on work it never
+        # touched (same rule the event-side scan enforces with native_only=True).
         clauses.append(
             "COALESCE((SELECT MAX(a.created_at) FROM activity a "
-            "WHERE a.target_kind = 'issue' AND a.target_id = i.id), i.created_at) "
+            "WHERE a.target_kind = 'issue' AND a.target_id = i.id "
+            "AND a.imported_at IS NULL), i.created_at) "
             "<= ?"
         )
         params.append(cutoff)
