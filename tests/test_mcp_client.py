@@ -480,6 +480,19 @@ class _MCPFailingAthenaClient(_MCPRecordingAthenaClient):
         )
 
 
+class _MCPFailingReadAthenaClient(_MCPRecordingAthenaClient):
+    def get_issue(self, ref):
+        raise AthenaError(
+            method="GET",
+            path=f"/issues/{ref}",
+            status_code=429,
+            detail="slow down",
+            code="rate_limited",
+            retry_after="11",
+            current_etag='"fresh"',
+        )
+
+
 @pytest.mark.parametrize(
     ("name", "method", "path", "invoke"),
     MUTATION_CASES,
@@ -1444,6 +1457,28 @@ def test_mcp_error_text_preserves_structured_retry_metadata():
     assert payload["retry_after"] == "7"
     assert payload["current_etag"] == '"current"'
     assert payload["message"] == "POST /issues -> 409: still running"
+
+
+def test_mcp_read_error_text_preserves_structured_retry_metadata():
+    import asyncio
+    import json
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    server = build_server(_MCPFailingReadAthenaClient())
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(server.call_tool("get_issue", {"ref": "ATH-7"}))
+
+    marker = "ATHENA_ERROR_JSON="
+    assert marker in str(exc.value)
+    payload = json.loads(str(exc.value).split(marker, 1)[1])
+    assert payload["status_code"] == 429
+    assert payload["code"] == "rate_limited"
+    assert payload["retry_after"] == "11"
+    assert payload["current_etag"] == '"fresh"'
+    assert payload["message"] == "GET /issues/ATH-7 -> 429: slow down"
 
 
 def test_work_context_mcp_tool_forwards_only_the_issue_ref():

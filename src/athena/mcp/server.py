@@ -148,8 +148,8 @@ def build_server(client: AthenaClient) -> FastMCP:
         "different call."
     )
 
-    def mutation_tool(function):
-        """Register a write tool with the shared retry-key contract."""
+    def preserve_athena_errors(function):
+        """Keep REST error metadata machine-readable across the MCP boundary."""
 
         @wraps(function)
         def guarded(*args, **kwargs):
@@ -161,18 +161,27 @@ def build_server(client: AthenaClient) -> FastMCP:
                 )
                 raise RuntimeError(f"{exc}\nATHENA_ERROR_JSON={error_json}") from exc
 
+        return guarded
+
+    def tool(function):
+        """Register a tool with the shared structured-error contract."""
+        return mcp.tool()(preserve_athena_errors(function))
+
+    def mutation_tool(function):
+        """Register a write tool with the shared retry-key contract."""
+        guarded = preserve_athena_errors(function)
         guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{idempotency_guidance}"
         return mcp.tool()(guarded)
 
     # --- search & read ------------------------------------------------------
 
-    @mcp.tool()
+    @tool
     def search(query: str, kind: str | None = None) -> list:
         """Full-text search across Aegis issues and Mentor pages. Optionally narrow
         to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
         return client.search(query, kind=kind)
 
-    @mcp.tool()
+    @tool
     def list_issues(
         status: str | None = None,
         project: str | None = None,
@@ -196,7 +205,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             include_archived=include_archived,
         )
 
-    @mcp.tool()
+    @tool
     def search_work(q: str, limit: int = 50, offset: int = 0) -> list:
         """Find issues with a work query — the precise way to ask for work.
 
@@ -218,13 +227,13 @@ def build_server(client: AthenaClient) -> FastMCP:
         work". Call query_help() for the vocabulary as data."""
         return client.search_work(q, limit=limit, offset=offset)
 
-    @mcp.tool()
+    @tool
     def count_work(q: str) -> dict:
         """How many issues a work query matches, ignoring paging — so a bounded
         page can be reported as "50 of 340" rather than as the whole answer."""
         return client.count_work(q)
 
-    @mcp.tool()
+    @tool
     def read_page_embeds(page_id: int) -> list:
         """Resolve a Mentor page's live embeds to DATA, as you.
 
@@ -240,7 +249,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         the data is resolved per reader."""
         return client.page_embeds(page_id)
 
-    @mcp.tool()
+    @tool
     def resolve_embeds(text: str) -> list:
         """Resolve embed directives in arbitrary text, as you.
 
@@ -249,14 +258,14 @@ def build_server(client: AthenaClient) -> FastMCP:
         render an error — without writing them first."""
         return client.resolve_embeds(text)
 
-    @mcp.tool()
+    @tool
     def embed_help() -> dict:
         """The embed vocabulary as data: every kind, its keys, and the limits.
         Emitted by the parser itself, so it cannot drift from what actually
         renders."""
         return client.embed_help()
 
-    @mcp.tool()
+    @tool
     def link_graph(
         kind: str, id: int, depth: int | None = None, max_nodes: int | None = None
     ) -> dict:
@@ -275,7 +284,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         what does it reach."""
         return client.link_graph(kind, id, depth, max_nodes)
 
-    @mcp.tool()
+    @tool
     def unlinked_mentions(kind: str, id: int, limit: int | None = None) -> dict:
         """Documents whose text NAMES this issue/page without linking to it.
 
@@ -291,7 +300,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         connect them, instead of hoping someone links it later."""
         return client.unlinked_mentions(kind, id, limit)
 
-    @mcp.tool()
+    @tool
     def link_mention(
         source_kind: str, source_id: int, target_kind: str, target_id: int
     ) -> dict:
@@ -308,14 +317,14 @@ def build_server(client: AthenaClient) -> FastMCP:
         read."""
         return client.link_mention(source_kind, source_id, target_kind, target_id)
 
-    @mcp.tool()
+    @tool
     def query_help() -> dict:
         """The work-query vocabulary as data: every field, its accepted values,
         and the limits. Emitted by the parser itself, so it cannot drift from
         what search_work actually accepts."""
         return client.query_help()
 
-    @mcp.tool()
+    @tool
     def list_my_delegated_work(
         include_closed: bool = False,
         limit: DelegationLimit = 50,
@@ -333,7 +342,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             offset=offset,
         )
 
-    @mcp.tool()
+    @tool
     def get_fleet_active_work(
         agent_id: FleetAgentId | None = None,
         limit: FleetWorkLimit = fleet_work.DEFAULT_LIMIT,
@@ -352,14 +361,14 @@ def build_server(client: AthenaClient) -> FastMCP:
             agent_id=agent_id, limit=limit, attention_state=attention_state
         )
 
-    @mcp.tool()
+    @tool
     def get_issue(ref: str) -> dict:
         """Get one issue by numeric id ('12') or project key ('ATH-12'). The
         response includes the server's opaque ETag as _etag; copy it exactly into
         if_match on a guarded update."""
         return client.get_issue(ref)
 
-    @mcp.tool()
+    @tool
     def get_issue_work_context(ref: str) -> dict:
         """Get a bounded, current packet containing one visible issue and its
         visible supporting docs. claim_handoffs.open is the exact handoff awaiting
@@ -369,7 +378,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         unblocked status, agent liveness, or replayability."""
         return client.get_issue_work_context(ref)
 
-    @mcp.tool()
+    @tool
     def get_fleet_metrics(
         start: FleetMetricDate | None = None,
         end: FleetMetricDate | None = None,
@@ -390,27 +399,27 @@ def build_server(client: AthenaClient) -> FastMCP:
             actor_limit=actor_limit,
         )
 
-    @mcp.tool()
+    @tool
     def list_issue_comments(issue_id: int) -> list:
         """Read one issue's comment thread, oldest first — the discussion a
         delegated agent needs before acting. Write replies with comment_on_issue."""
         return client.list_issue_comments(issue_id)
 
-    @mcp.tool()
+    @tool
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
         """Reconstruct an issue's lifecycle state from the activity log. Pass
         as_of_event_id to time-travel to the state at that activity checkpoint; omit
         it for the current lifecycle state. Content fields are intentionally absent."""
         return client.get_issue_state(issue_id, as_of_event_id=as_of_event_id)
 
-    @mcp.tool()
+    @tool
     def recent_events(after: int | None = None, kind: str | None = None) -> dict:
         """Read the audit/event feed in order. Pass the last event id you saw as
         `after` to get only newer events; optionally filter by kind (issue/page).
         Returns {events, next_after, has_more}."""
         return client.recent_events(after=after, kind=kind)
 
-    @mcp.tool()
+    @tool
     def whoami() -> dict:
         """Who am I? Your identity (id, email, role, agent flag), the acting
         token's effective scopes (null means the auth is not scope-limited), your
@@ -420,7 +429,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         what you may do instead of discovering limits through 403s."""
         return {**client.whoami(), "run": client.current_run()}
 
-    @mcp.tool()
+    @tool
     def list_notifications(unread: bool = False, limit: int = 50) -> list:
         """Read YOUR notification inbox — mentions, watched-issue changes, and
         work delegated to you land here. Pass unread=true for just the unseen."""
@@ -433,14 +442,14 @@ def build_server(client: AthenaClient) -> FastMCP:
         surfaces only what is genuinely new."""
         return client.mark_all_notifications_read()
 
-    @mcp.tool()
+    @tool
     def heartbeat_agent_run(run_id: RunId) -> dict:
         """Report that this authenticated agent is still working on `run_id`.
         Athena binds the heartbeat to the token's actor and its own server clock;
         call repeatedly because every PUT intentionally refreshes last-seen state."""
         return client.heartbeat_agent_run(run_id)
 
-    @mcp.tool()
+    @tool
     def begin_run(
         run_id: RunId,
         parent_run_id: RunId | None = None,
@@ -459,26 +468,26 @@ def build_server(client: AthenaClient) -> FastMCP:
             fork_from_event_id=fork_from_event_id,
         )
 
-    @mcp.tool()
+    @tool
     def current_run() -> dict:
         """Read the run identity this session is currently stamping on writes:
         {run_id, parent_run_id, fork_from_event_id}."""
         return client.current_run()
 
-    @mcp.tool()
+    @tool
     def get_agent_run_health(agent_id: int | None = None) -> dict:
         """Read the admin-only fleet cockpit rollup: each agent's bounded recent
         runs, cooperative check-ins, replay posture, lineage counts, and totals.
         Check-ins are self-reports; they do not prove an OS process is alive."""
         return client.get_agent_run_health(agent_id=agent_id)
 
-    @mcp.tool()
+    @tool
     def list_automation_rules() -> list:
         """List every admin-only automation rule with its event or schedule
         configuration, progress, failure health, and enabled state."""
         return client.list_automation_rules()
 
-    @mcp.tool()
+    @tool
     def get_automation_rule(rule_id: int) -> dict:
         """Get one admin-only automation rule by id, including schedule progress,
         configuration errors, failure health, and enabled state."""
@@ -540,13 +549,13 @@ def build_server(client: AthenaClient) -> FastMCP:
             idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @tool
     def list_automation_failures() -> list:
         """Read the admin-only exception list of automation rules whose actions have
         failed. Failure counts are cumulative; inspect the rule before intervening."""
         return client.list_automation_failures()
 
-    @mcp.tool()
+    @tool
     def list_activity_runs(
         actor_id: int, gap_seconds: int = 1800, limit: int = 200
     ) -> list:
@@ -556,7 +565,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
         )
 
-    @mcp.tool()
+    @tool
     def list_run_events(
         run_id: str, before_id: int | None = None, limit: int = 100
     ) -> list:
@@ -565,13 +574,13 @@ def build_server(client: AthenaClient) -> FastMCP:
         a run — yours or another agent's — actually did."""
         return client.list_run_events(run_id, before_id=before_id, limit=limit)
 
-    @mcp.tool()
+    @tool
     def get_run_lineage(run_id: str) -> dict:
         """Read a tagged run's causal tree: ancestors, the focal run's replayable
         events, and descendant runs spawned from it."""
         return client.get_run_lineage(run_id)
 
-    @mcp.tool()
+    @tool
     def get_run_replay(run_id: str) -> dict:
         """Export one run as its portable replay ARTIFACT: the events in replay
         order plus lineage placement and a determinism contract, frozen from one
@@ -580,7 +589,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         unknown runs are a clean not-found."""
         return client.get_run_replay(run_id)
 
-    @mcp.tool()
+    @tool
     def get_run_fork_contract(
         run_id: str, fork_from_event_id: int, fork_run_id: str
     ) -> dict:
@@ -673,7 +682,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @tool
     def list_dispatches(
         work_item_id: int | None = None,
         state: str | None = None,
@@ -720,14 +729,14 @@ def build_server(client: AthenaClient) -> FastMCP:
             idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @tool
     def get_issue_runbook(issue_id: int) -> dict | None:
         """The issue's runbook page — accumulated learnings from earlier runs — or
         null when nobody has recorded one yet. Read it before starting work, and
         add to it with `record_run_learning` when you finish."""
         return client.get_issue_runbook(issue_id)
 
-    @mcp.tool()
+    @tool
     def list_security_events(
         verb: str | None = None,
         since: str | None = None,
@@ -771,7 +780,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             idempotency_key=idempotency_key,
         )
 
-    @mcp.tool()
+    @tool
     def list_workers(agent_id: int | None = None, limit: int = 100) -> list:
         """The worker registry — which agent processes are reporting, on what node,
         with what capabilities, and which were asked to stop. Admins see the whole
@@ -826,7 +835,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         `list_events` or `list_activity`."""
         return client.undo_action(event_id, idempotency_key=idempotency_key)
 
-    @mcp.tool()
+    @tool
     def list_approvals(state: str | None = None, limit: int = 100) -> list:
         """The operator's approval queue — actions an agent asked to take that are
         waiting on a human decision. Pass state='pending' for just the open ones.
@@ -867,7 +876,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             user_id, action_kind=action_kind, idempotency_key=idempotency_key
         )
 
-    @mcp.tool()
+    @tool
     def get_agent_budget(user_id: int) -> dict | None:
         """Read a user's durable action budget — how many metered writes it may
         make per fixed window, how many it has used, and how many remain — or null
@@ -998,7 +1007,7 @@ def build_server(client: AthenaClient) -> FastMCP:
             issue_id, agent_user_id, idempotency_key=idempotency_key
         )
 
-    @mcp.tool()
+    @tool
     def get_issue_lease(issue_id: int) -> dict | None:
         """Who holds the exclusive claim on this issue right now — {holder_id, holder_name,
         claimed_at, expires_at, generation, active, open_claim_handoff}, or null if
@@ -1175,14 +1184,14 @@ def build_server(client: AthenaClient) -> FastMCP:
             issue_id, parent_id, idempotency_key=idempotency_key
         )
 
-    @mcp.tool()
+    @tool
     def list_subtasks(issue_id: int) -> list:
         """List the direct child issues (sub-tasks) nested under this issue."""
         return client.list_subtasks(issue_id)
 
     # --- dependencies (blocks / relates) ------------------------------------
 
-    @mcp.tool()
+    @tool
     def list_issue_links(issue_id: int) -> dict:
         """Read an issue's dependency links — what it blocks, what blocks it, and
         what it relates to. Returns {blocks, blocked_by, relates}."""
@@ -1217,7 +1226,7 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     # --- sprints ------------------------------------------------------------
 
-    @mcp.tool()
+    @tool
     def list_sprints(project_id: int, state: str | None = None) -> list:
         """List a project's sprints, optionally filtered by state
         (planned/active/completed)."""
@@ -1242,7 +1251,7 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     # --- labels -------------------------------------------------------------
 
-    @mcp.tool()
+    @tool
     def list_labels() -> list:
         """List the shared label vocabulary (id, name, color)."""
         return client.list_labels()
@@ -1274,37 +1283,37 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     # --- projects & users ---------------------------------------------------
 
-    @mcp.tool()
+    @tool
     def list_projects() -> list:
         """List Aegis projects (id, key, name)."""
         return client.list_projects()
 
-    @mcp.tool()
+    @tool
     def list_users() -> list:
         """List users (id, name, role) — useful for resolving an assignee."""
         return client.list_users()
 
     # --- pages (Mentor) -----------------------------------------------------
 
-    @mcp.tool()
+    @tool
     def list_spaces() -> list:
         """List Mentor spaces (id, key, name)."""
         return client.list_spaces()
 
-    @mcp.tool()
+    @tool
     def list_pages(space_id: int, include_archived: bool = False) -> list:
         """List the pages in a space. Archived (soft-deleted) pages are hidden by
         default; pass include_archived=true to see them."""
         return client.list_pages(space_id, include_archived=include_archived)
 
-    @mcp.tool()
+    @tool
     def get_page(page_id: int) -> dict:
         """Get one Mentor page (title + Markdown body). The response includes the
         server's opaque ETag as _etag; copy it exactly into if_match on a guarded
         update_page to make the edit fail rather than clobber a concurrent change."""
         return client.get_page(page_id)
 
-    @mcp.tool()
+    @tool
     def find_pages_by_title(title: str, space_id: int | None = None) -> list:
         """Find Mentor pages by their TITLE instead of a numeric id — the address you can
         recall without a lookup (numeric ids are exactly what an agent is worst at).
@@ -1314,7 +1323,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         turn a remembered title into a page id for get_page / update_page."""
         return client.find_pages_by_title(title, space_id=space_id)
 
-    @mcp.tool()
+    @tool
     def page_backlinks(page_id: int) -> list:
         """What references this page — the INCOMING edges of the knowledge graph. Each
         item is {kind, id, title, exists}: another issue or page whose body cross-links
@@ -1322,7 +1331,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         to find what depends on a doc before editing it."""
         return client.page_backlinks(page_id)
 
-    @mcp.tool()
+    @tool
     def page_outgoing_links(page_id: int) -> list:
         """What this page references — the OUTGOING edges of the knowledge graph (the
         [[issue:N]]/[[page:N]] cross-links in its body). Each item is {kind, id, title,
@@ -1330,14 +1339,14 @@ def build_server(client: AthenaClient) -> FastMCP:
         Use it to walk from a doc to the things it points at."""
         return client.page_outgoing_links(page_id)
 
-    @mcp.tool()
+    @tool
     def list_page_versions(page_id: int) -> list:
         """The page's superseded revisions, newest first (the live page is NOT one of
         them — get it with get_page). Each is {id, page_id, version, title, body,
         edited_by, created_at}. Pair with restore_page_version to roll back."""
         return client.list_page_versions(page_id)
 
-    @mcp.tool()
+    @tool
     def get_page_version(page_id: int, version: int) -> dict:
         """Fetch one historical page revision by its version number (title + body as of
         that revision), for diffing against the live page or another version."""

@@ -817,7 +817,7 @@ commit** items are done; the rest are the deferred backlog Opus should schedule 
 | F-10 | med | agent check-in cap has a purge path | `core/agent_run_commands.py` heartbeat cap | deferred — permanent dead-end at `MAX_CHECKINS_PER_AGENT`, no retention/purge |
 | F-11 | low | run-id canonicalization consistency | `core/run_context.py` `normalize` vs `strict_run_id` | deferred — NFC divergence → false `checkin_missing`; and >200-char header ending in space can 500 a tagged write |
 | F-12 | low | in-transaction actor liveness | `core/identity.py` `_refuse_paused` | deferred — one-request window: an in-flight request commits after pause lands (no command re-checks `paused_at` in-tx) |
-| F-13 | low | MCP error ergonomics | `mcp/server.py` read tools | deferred — read-tool errors drop `Retry-After`/`code`/`current_etag` the client already parsed |
+| F-13 | low | MCP error ergonomics | `mcp/server.py` read tools | **FIXED** — every registered read tool now preserves parsed `Retry-After`/`code`/`current_etag` fields in `ATHENA_ERROR_JSON`, matching mutation tools |
 
 **Open product decisions (need an owner, not just code):**
 
