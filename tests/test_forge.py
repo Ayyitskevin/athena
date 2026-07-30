@@ -197,6 +197,30 @@ def test_an_unknown_source_and_a_bad_signature_refuse_identically(tmp_path):
         assert wrong_signature.json() == unknown_source.json()
 
 
+def test_a_non_ascii_signature_is_a_wrong_signature_not_a_crash(tmp_path):
+    # WHY: hmac.compare_digest raises TypeError on a non-ASCII str. Before this
+    # fix, `sha256=ÿÿ` against a REGISTERED source 500'd (the compare ran) while
+    # an unknown source refused cleanly — a one-request oracle for which source
+    # names exist, defeating the identical-401 property above. A malformed header
+    # is a wrong signature: same 401, same body, for known and unknown alike.
+    with TestClient(_app(tmp_path)) as c:
+        _bootstrap(c)
+        _source(c)
+        body = json.dumps(_push("ATH-1 x")).encode()
+        # Sent as raw bytes (a str header must be ASCII for httpx to encode it);
+        # the server decodes header bytes as latin-1, so the handler still sees
+        # the non-ASCII str that used to crash the compare.
+        headers = {
+            b"X-Hub-Signature-256": b"sha256=\xff\xff",
+            "X-GitHub-Event": "push",
+            "Content-Type": "application/json",
+        }
+        known = c.post("/forge/gh", content=body, headers=headers)
+        unknown = c.post("/forge/nope", content=body, headers=headers)
+        assert known.status_code == unknown.status_code == 401
+        assert known.json() == unknown.json()
+
+
 def test_an_unsigned_delivery_is_refused(tmp_path):
     with TestClient(_app(tmp_path)) as c:
         _bootstrap(c)
@@ -294,6 +318,46 @@ def test_registering_a_source_is_admin_only_and_the_secret_is_shown_once(tmp_pat
         listed = c.get("/event-sources", headers=H1).json()
         assert [row["name"] for row in listed] == ["gh"]
         assert "secret" not in listed[0]
+
+
+def test_source_crud_requires_an_admin_scoped_token_not_just_the_role(tmp_path):
+    # WHY: a bearer token's SCOPES bound what the admin holding it may do — the
+    # same boundary every parallel admin surface (webhooks, security, approvals,
+    # automation, users) enforces through require_admin. Before this fix the
+    # event-source routes checked only the admin ROLE, so an admin's read-scoped
+    # token could register a source and walk off with its evtsec_ signing secret.
+    with TestClient(_app(tmp_path)) as c:
+        _bootstrap(c)
+        source = _source(c)  # registered by the header-trusted admin (control)
+        raw = c.post(
+            "/tokens", json={"name": "ro", "scopes": ["read"]}, headers=H1
+        ).json()["token"]
+        bearer = {"Authorization": f"Bearer {raw}"}
+
+        refused = [
+            c.get("/event-sources", headers=bearer),
+            c.post("/event-sources", json={"name": "sneaky"}, headers=bearer),
+            c.put(
+                f"/event-sources/{source['id']}/enabled",
+                json={"enabled": False},
+                headers=bearer,
+            ),
+            c.delete(f"/event-sources/{source['id']}", headers=bearer),
+        ]
+        assert [r.status_code for r in refused] == [403, 403, 403, 403]
+        assert all(r.json()["detail"] == "token scope required: admin" for r in refused)
+        # Nothing landed: no second source, the original still enabled and present.
+        listed = c.get("/event-sources", headers=H1).json()
+        assert [row["name"] for row in listed] == ["gh"]
+        assert listed[0]["enabled"] is True
+        # The parallel admin surface already refused this token the same way —
+        # this test mirrors that boundary onto the forge routes.
+        assert (
+            c.post(
+                "/webhooks", json={"url": "http://localhost:9/x"}, headers=bearer
+            ).status_code
+            == 403
+        )
 
 
 def test_an_unknown_source_kind_cannot_be_registered(tmp_path):

@@ -530,12 +530,19 @@ def process_pending(
     attributes its own actions to a system automation actor and skips that actor's
     events, so a rule whose action emits a new event can't re-trigger itself forever.
 
+    Imported rows are excluded in the scan itself (native_only): a forge delivery
+    or an import bundle is foreign history — something Athena was TOLD, not work
+    it did — and must never fire a rule, whatever the verb. A wildcard rule
+    (trigger_verb='*') would otherwise treat a back-dated import as a trigger.
+
     The cursor advances past every event read (matched or not), so an event is processed
     at most once (best-effort, fire-and-forget — unlike webhooks' at-least-once retry).
     An executor that raises is caught per (rule, event) so one bad action neither strands
     the cursor nor blocks the rest of the batch."""
     cursor = get_cursor(conn)
-    events = activity.list_events(conn, after_id=cursor, limit=max_batch)
+    events = activity.list_events(
+        conn, after_id=cursor, native_only=True, limit=max_batch
+    )
     if not events:
         return 0
     enabled = [
@@ -730,9 +737,12 @@ def _perform_action(
         name = (params.get("label") or "").strip()
         if not name:
             return False
-        # Resolving a name to a label stays in the adapter, exactly as the browser
-        # route does it: the command takes a label id, because "create the label if
-        # it is missing" is a transport convenience, not part of the write it owns.
+        # Resolving a name to a label stays in the adapter here: a rule fires as
+        # the system Automation actor under explicit policy, so creating the
+        # vocabulary entry first is safe. (The browser route does the opposite —
+        # its find-or-create lives inside issue_commands.attach_label_by_name,
+        # after the write gate, because a refused request must not grow the
+        # shared vocabulary.)
         label = labels.get_or_create_label(conn, name=name)
         try:
             return issue_commands.attach_label_as_automation(

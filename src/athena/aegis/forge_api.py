@@ -31,9 +31,15 @@ from pydantic import BaseModel
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor, is_admin
+from athena.core.identity import admin_actor
 
 router = APIRouter(tags=["forge"])
+
+# Every route that manages sources goes through the SAME admin dependency as the
+# parallel admin surfaces (webhooks, security, approvals, automation, users):
+# admin role AND an admin-scoped token. Registering a source hands out a
+# credential that writes history — an admin role holding only a read-scoped
+# token must not do it.
 
 
 class SourceCreate(BaseModel):
@@ -46,27 +52,19 @@ class EnabledUpdate(BaseModel):
     enabled: bool
 
 
-def _admin_or_403(actor: dict) -> None:
-    # Registering a source hands out a credential that writes history. That is an
-    # admin decision, like minting a token or registering a webhook.
-    if not is_admin(actor):
-        raise HTTPException(status_code=403, detail="admin only")
-
-
 @router.get("/event-sources")
 def list_event_sources(
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     """Registered sources and their health. Never includes a secret."""
-    _admin_or_403(actor)
     return event_sources.list_sources(conn)
 
 
 @router.post("/event-sources", status_code=201)
 def create_event_source(
     payload: SourceCreate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Register a source, returning its signing secret **once**.
@@ -75,7 +73,6 @@ def create_event_source(
     same contract as a webhook secret or an API token. Losing it means
     re-registering.
     """
-    _admin_or_403(actor)
     name = payload.name.strip()
     host = payload.host.strip().lower()
     if not name:
@@ -94,11 +91,10 @@ def create_event_source(
 def set_event_source_enabled(
     source_id: int,
     payload: EnabledUpdate,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Pause or resume acceptance without rotating the secret."""
-    _admin_or_403(actor)
     try:
         return event_source_commands.set_source_enabled(
             conn, actor_id=actor["id"], source_id=source_id, enabled=payload.enabled
@@ -110,13 +106,12 @@ def set_event_source_enabled(
 @router.delete("/event-sources/{source_id}", status_code=204)
 def delete_event_source(
     source_id: int,
-    actor: dict = Depends(current_actor),
+    actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     """Revoke a source. History it already landed is kept — those events were
     authentic when recorded, and revoking a credential is not a reason to rewrite
     the trail."""
-    _admin_or_403(actor)
     if not event_source_commands.delete_source(
         conn, actor_id=actor["id"], source_id=source_id
     ):
@@ -162,10 +157,14 @@ async def receive_forge_event(
 
     # An unknown source and a bad signature are the SAME refusal. Answering "no
     # such source" would turn this route into a directory of the workspace's
-    # integrations for anyone who can reach it.
-    if source is None or not event_sources.verify_signature(
-        conn, source["id"], body, x_hub_signature_256
-    ):
+    # integrations for anyone who can reach it. Verify even when the source is
+    # unknown (id 0 matches nothing, and verify_signature does the same HMAC
+    # work against a stand-in secret), so the refusal is identical in status,
+    # body, and shape of work — not just in text.
+    verified = event_sources.verify_signature(
+        conn, source["id"] if source is not None else 0, body, x_hub_signature_256
+    )
+    if source is None or not verified:
         raise HTTPException(status_code=401, detail="invalid signature")
     if not source["enabled"]:
         # Authenticated, but the operator has switched this channel off. 403 (not

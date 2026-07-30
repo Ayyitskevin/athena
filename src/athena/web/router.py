@@ -1395,12 +1395,13 @@ def add_issue_label(
         return HTMLResponse(
             '<div class="error">Label name is required.</div>', status_code=400
         )
-    # Find-or-create the label (web vocabulary convenience), then the command owns
-    # the gate, the attach, and its atomic 'labeled' event — the same REST calls.
-    label = labels.get_or_create_label(conn, name=name)
+    # One command owns the whole write: the gate FIRST, then find-or-create, the
+    # attach, and its atomic 'labeled' event — one transaction, like REST. When
+    # the find-or-create ran here (before the gate), a refused request still
+    # grew the shared vocabulary.
     try:
-        issue_commands.attach_label(
-            conn, actor=user, issue_id=issue_id, label_id=label["id"]
+        issue_commands.attach_label_by_name(
+            conn, actor=user, issue_id=issue_id, name=name
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)

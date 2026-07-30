@@ -477,6 +477,7 @@ def list_events(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     verb: str | None = None,
+    native_only: bool = False,
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
@@ -494,7 +495,9 @@ def list_events(
     only, False for humans only — so an integration can subscribe to just the agents'
     stream, or just the humans'), one run_id (the exact events of a known run, for
     deterministic replay), or one parent_run_id (the events of the child runs a run
-    spawned, for walking lineage).
+    spawned, for walking lineage). native_only drops imported rows (foreign history
+    Athena was told, not work it did) — the automation engine's scan uses it so a
+    forge delivery or import bundle can never fire a rule.
 
     `actor` gates the stream by visibility, exactly like list_activity: an event on a
     target the consumer can't see is dropped (in SQL, before the limit). The default
@@ -535,6 +538,11 @@ def list_events(
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
+    if native_only:
+        # Foreign history (a forge delivery, an import bundle) is something
+        # Athena was TOLD, not something it did — consumers that ACT on the
+        # stream (the automation engine) must not treat it as a trigger.
+        clauses.append("a.imported_at IS NULL")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
     rows = conn.execute(

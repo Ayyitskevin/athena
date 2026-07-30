@@ -8,10 +8,12 @@ counted.**
 Everything interesting follows from *imported*:
 
   * Migration 0041 marks foreign history so it can never be mistaken for something
-    Athena did. Every native-only mechanism already excludes it — undo refuses an
+    Athena did. Every native-only mechanism excludes it — undo refuses an
     imported event, and the lifecycle facts (0055), claim handoffs (0058),
-    assignee facts (0068), fleet metrics, and the attention rollup all filter on
-    ``imported_at IS NULL``. Landing forge events this way inherits every one of
+    assignee facts (0068), fleet metrics, the attention rollup, and the security
+    refusal counters all filter on ``imported_at IS NULL`` (the last two added
+    after the adversarial review found the guard missing where this docstring
+    claimed it). Landing forge events this way inherits every one of
     those exclusions rather than re-deriving them, which is exactly why the rule
     is cheap **and** safe: a forge cannot move an issue's status, cannot alter a
     completion-cycle median, and cannot be undone into a native write.

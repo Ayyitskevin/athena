@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import fleet_attention, fleet_work
-from athena.core import db, security_events
+from athena.core import activity, budgets, db, security_events
 from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
@@ -222,6 +222,67 @@ def test_the_security_surface_is_admin_only(tmp_path):
         assert c.get("/security/events", headers=member_headers).status_code == 403
         assert c.get("/security/counts", headers=member_headers).status_code == 403
         assert c.get("/security/events").status_code == 401
+
+
+def test_imported_rows_plant_no_fake_refusals_or_exhaustions(tmp_path):
+    # WHY: the security counters and the attention rollup counted imported rows —
+    # a hostile import bundle could back-date security verbs into the 24h window,
+    # planting fake refusals on /admin/security and inflating the attention card.
+    # The forge docs claimed `imported_at IS NULL` was already filtered here; it
+    # was not. The guard was added after the adversarial review (Wave H-0).
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+
+    conn = db.connect(db_file)
+    planted = (*security_events.SECURITY_VERBS, budgets.VERB_BUDGET_EXHAUSTED)
+    for verb in planted:
+        activity.record(
+            conn,
+            actor_id=1,
+            verb=verb,
+            target_kind="user",
+            target_id=1,
+            detail="planted by an import bundle",
+            imported_at="2026-01-01 00:00:00",
+        )
+    # The planted rows ARE on the trail — the exclusion governs the counters,
+    # not the append-only log itself.
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM activity WHERE imported_at IS NOT NULL"
+    ).fetchone()["n"] == len(planted)
+
+    assert security_events.list_failures(conn) == []
+    assert set(security_events.failure_counts(conn).values()) == {0}
+    rollup = fleet_attention.build_attention(conn)
+    counts = {signal["key"]: signal["count"] for signal in rollup["signals"]}
+    assert counts["security_refusals"] == 0
+    assert counts["budget_exhaustions"] == 0
+    assert set(rollup["refusals_by_verb"].values()) == {0}
+
+    # Control: the same verbs recorded NATIVELY count as usual — the guard
+    # excludes foreign history, not the verbs.
+    activity.record(
+        conn,
+        actor_id=1,
+        verb=security_events.VERB_LOGIN_FAILED,
+        target_kind="user",
+        target_id=1,
+    )
+    activity.record(
+        conn,
+        actor_id=1,
+        verb=budgets.VERB_BUDGET_EXHAUSTED,
+        target_kind="user",
+        target_id=1,
+    )
+    assert security_events.failure_counts(conn)[security_events.VERB_LOGIN_FAILED] == 1
+    assert len(security_events.list_failures(conn)) == 1
+    rollup = fleet_attention.build_attention(conn)
+    counts = {signal["key"]: signal["count"] for signal in rollup["signals"]}
+    assert counts["security_refusals"] == 1
+    assert counts["budget_exhaustions"] == 1
+    conn.close()
 
 
 def test_the_rollup_counts_every_exception_surface(tmp_path):

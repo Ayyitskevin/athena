@@ -159,6 +159,72 @@ def test_loop_guard_prevents_runaway(tmp_path):
         assert len(comments.list_comments(db.connect(db_file), iid)) == n1
 
 
+def test_imported_history_never_fires_a_rule(tmp_path):
+    # WHY: an imported event (a forge delivery, an import bundle) is foreign
+    # history — something Athena was TOLD, not work it did. Before this fix the
+    # engine's scan read every row with no imported_at filter, so an imported
+    # forge_commit fired a wildcard rule: it moved the issue and minted writes
+    # off history Athena never made. The scan now excludes imported rows in SQL.
+    db_file = tmp_path / "imported.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        pid = client.post(
+            "/projects", json={"name": "P", "key": "P"}, headers=H1
+        ).json()["id"]
+        iid = client.post(
+            "/issues", json={"title": "x", "project_id": pid}, headers=H1
+        ).json()["id"]
+        # Drain the native setup events (issue 'created' et al.) past the cursor
+        # before the rule exists, so the passes below see ONLY the planted rows.
+        assert automation.run_pass(db_file) == 0
+
+        conn = db.connect(db_file)
+        start_status = issues.get_issue(conn, iid)["status"]
+        target_status = next(
+            n for n in statuses.status_names(conn, pid) if n != start_status
+        )
+        automation.create_rule(
+            conn,
+            name="wild",
+            trigger_verb="*",
+            action_type="set_status",
+            action_params={"status": target_status},
+            created_by=1,
+        )
+        # What a forge delivery lands as (0041): same verb and target as the
+        # native control below, marked imported.
+        activity.record(
+            conn,
+            actor_id=1,
+            verb="forge_commit",
+            target_kind="issue",
+            target_id=iid,
+            detail="gh: commit",
+            imported_at="2026-01-01 00:00:00",
+        )
+        conn.close()
+
+        assert automation.run_pass(db_file) == 0
+        after = issues.get_issue(db.connect(db_file), iid)
+        assert after["status"] == start_status  # nothing fired, nothing moved
+
+        # Control: the identical NATIVE event fires the same rule — the filter
+        # excludes foreign history, not the verb.
+        conn = db.connect(db_file)
+        activity.record(
+            conn,
+            actor_id=1,
+            verb="forge_commit",
+            target_kind="issue",
+            target_id=iid,
+            detail="native",
+        )
+        conn.close()
+        assert automation.run_pass(db_file) == 1
+        fired = issues.get_issue(db.connect(db_file), iid)
+        assert fired["status"] == target_status
+
+
 def test_idle_pass_does_not_consume_admin_bootstrap(tmp_path):
     db_file = tmp_path / "boot.db"
     with TestClient(create_app(db_file)) as client:

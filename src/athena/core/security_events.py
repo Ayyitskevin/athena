@@ -98,6 +98,12 @@ def list_failures(
     a refusal names the account whose boundary was hit, which is the fact an
     operator needs. `verb` is checked against the closed set rather than passed
     through, so this cannot become a general activity reader with a different name.
+
+    Imported rows are excluded: a hostile import bundle could back-date security
+    verbs into the window and plant fake refusals on /admin/security. Foreign
+    history is something Athena was told, not a boundary it enforced. The row
+    still SELECTs its imported_at so a future surface could label such rows
+    instead of hiding them.
     """
     if isinstance(limit, bool) or not isinstance(limit, int):
         raise ValueError("limit must be an integer")
@@ -109,7 +115,10 @@ def list_failures(
         if verb not in SECURITY_VERBS:
             raise ValueError(f"verb must be one of: {', '.join(SECURITY_VERBS)}")
         verbs = (verb,)
-    clauses = [f"a.verb IN ({','.join('?' * len(verbs))})"]
+    clauses = [
+        f"a.verb IN ({','.join('?' * len(verbs))})",
+        "a.imported_at IS NULL",
+    ]
     params: list[object] = list(verbs)
     if since is not None:
         # Compared as text against the stored 'YYYY-MM-DD HH:MM:SS' server clock,
@@ -119,7 +128,7 @@ def list_failures(
     params.append(bounded)
     rows = conn.execute(
         "SELECT a.id, a.actor_id, a.verb, a.target_kind, a.target_id, a.detail, "
-        "a.created_at, u.name AS actor_name, u.email AS actor_email, "
+        "a.created_at, a.imported_at, u.name AS actor_name, u.email AS actor_email, "
         "u.is_agent AS actor_is_agent "
         "FROM activity a JOIN users u ON u.id = a.actor_id "
         f"WHERE {' AND '.join(clauses)} ORDER BY a.id DESC LIMIT ?",
@@ -132,8 +141,13 @@ def failure_counts(
     conn: sqlite3.Connection, *, since: str | None = None
 ) -> dict[str, int]:
     """How many of each refusal, for the attention rollup. Zero-filled, so a quiet
-    fleet reads as an explicit zero rather than a missing key."""
-    clauses = [f"verb IN ({','.join('?' * len(SECURITY_VERBS))})"]
+    fleet reads as an explicit zero rather than a missing key. Imported rows are
+    excluded (same rule as list_failures): a back-dated import must not inflate
+    the counts an operator steers by."""
+    clauses = [
+        f"verb IN ({','.join('?' * len(SECURITY_VERBS))})",
+        "imported_at IS NULL",
+    ]
     params: list[object] = list(SECURITY_VERBS)
     if since is not None:
         clauses.append("created_at >= ?")
