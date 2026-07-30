@@ -60,8 +60,9 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
 - **Project visibility/membership** — data-layer writes exist and are correct, but
   they are **not** command-owned: three separate commits, and a crash mid-flight
   leaves a permanent unaudited access-control change (deferred F-3).
-- **Sprint + project-status lifecycle** — durable writes with **no audit event on
-  any transport** and absent from the migration inventory (deferred F-4).
+- **Sprint + project-status lifecycle** — **closed** by
+  `aegis/sprint_commands.py` and `aegis/status_commands.py`: each durable change
+  and its actor-attributed event now share one transaction (fixed F-4).
 - **Human-in-the-loop gating** — ~~the only gate is the per-project blocked-close
   policy~~ — **closed** by the opt-in approval gates in `core/approvals.py`
   (migration 0063; see [`APPROVALS.md`](APPROVALS.md)). `issue.close` is the only
@@ -77,9 +78,9 @@ capability) an MCP tool, plus tests. Citations are to files at this commit.
   human-readable prose, not structured before/after — see §6 for what that would
   actually take.
 - **MCP parity** — write parity is good for issues/pages, but several shipped REST
-  surfaces have **no MCP tool**: webhooks, saved filters, sprint lifecycle,
-  attachments, watches, project/space create, event-feed verb/actor filters
-  (deferred F-2). This directly violates steering rule 1.
+  surfaces have **no MCP tool**: webhooks, saved filters, project-status
+  configuration, attachments, watches, project/space create, event-feed filters
+  (partial F-2). This directly violates steering rule 1.
 
 ### Missing (roadmap)
 
@@ -309,7 +310,7 @@ Recommended sequence (each is one reviewable slice with its own PR):
 | 0064 | `activity_reverses` | `activity.reverses_event_id` | §6 undo |
 | 0065 | `worker_registry` | **shipped** as `agent_workers(id, agent_id, worker_key, node_label, capabilities, first_seen_at, last_seen_at, last_token_id, kill_requested_at, kill_requested_by, kill_acknowledged_at, stopped_at)`, UNIQUE(agent_id, worker_key). Three kill columns, not one flag | §12 workers |
 | 0066 | `project_visibility_membership_commands` | no schema change; a *code* migration porting F-3 to commands (may need an index) | close F-3 debt |
-| 0067 | `sprint_status_audit` | no schema; code migration adding audit to sprint/status writes (F-4) | close F-4 debt |
+| — | `sprint_status_audit` | **shipped as code-only commands; no schema migration was needed** | F-4 closed |
 | 0068 | `icarus_dispatch` | `icarus_dispatches(id, issue_id, run_id, parent_run_id, icarus_run_id, repo, base_commit, capability, policy_digest, approval_state, idempotency_key, evidence_ref, completion_ref, state)` | §14 integration |
 
 Migration rules to honor for every one: add a matching authorization-revision
@@ -653,8 +654,9 @@ closing the loop and paying down the highest-severity confirmed debt first.
   `aegis/api.py`, `web/projects.py`, `tests/test_project_privacy_ui.py` (+ rollback
   test).
 - F-6 lineage validation: `core/activity.py` `record`, `tests/test_run_binding.py`.
-- F-4 sprint/status audit: `aegis/sprint_commands.py` (new), `aegis/sprints_api.py`,
-  add to `COMMAND_MIGRATION.md`.
+- F-4 sprint/status audit: `aegis/sprint_commands.py`, `aegis/status_commands.py`,
+  REST/browser adapters, `tests/test_sprint_command_migration.py`,
+  `tests/test_status_config_commands.py`, and the `COMMAND_MIGRATION.md` inventory.
 
 **Stage B — Budgets. — SHIPPED** (`docs/AGENT_BUDGETS.md`). `core/budgets.py`,
 `0062_agent_budgets.sql`, charge points in `aegis/issue_commands.py` +
@@ -733,8 +735,8 @@ status. Dispatch is **off unless configured**, and refuses with a 503 rather tha
 accumulating undeliverable rows.
 
 **MCP parity backfill (F-2)** runs alongside every stage: any REST surface a stage
-touches gets its MCP tool in the same PR (webhooks, filters, sprints, attachments,
-watches, project/space create, event-feed filters).
+touches gets its MCP tool in the same PR (webhooks, filters, project-status
+configuration, attachments, watches, project/space create, event-feed filters).
 
 ---
 
@@ -806,9 +808,9 @@ commit** items are done; the rest are the deferred backlog Opus should schedule 
 | **P-2** | med | fail-closed authz; pause freezes every authenticated action | `main.py` `IdempotencyMiddleware`; `0043`/`0049` | **FIXED** — paused keyed requests skip replay + `0061` fences receipts, tests (verified independently by review) |
 | **P-3** | med | run identity / replay integrity | `aegis/automation.py` `_already_fired`/`automation_run_id`; `run_context.py` | **FIXED** — `automation:` namespace reserved on client header path, tests (CONFIRMED by adversarial verify) |
 | F-1a | info | command ownership (automation actions) | `aegis/automation.py` `_perform_action` add_label/add_contributor | deferred — route through `issue_commands` w/ automation policy |
-| F-2 | med | steering rule 1 (MCP parity) | `mcp/server.py` surface | deferred — webhooks, filters, sprints, attachments, watches, project/space create, event filters have no MCP tool |
+| F-2 | med | steering rule 1 (MCP parity) | `mcp/server.py` surface | **PARTIAL** — sprint read/create/edit/start/complete/delete parity shipped; webhooks, filters, project-status configuration, attachments, watches, project/space create, and event filters remain |
 | F-3 | med | command ownership + audit atomicity | `aegis/api.py` set_project_visibility/add/remove_member; `aegis/projects.py`; `core/access.py` | deferred — three-commit access-control write, permanent unaudited change on crash (CONFIRMED) |
-| F-4 | med | durable writes are audited | `aegis/sprints_api.py`, `aegis/statuses.py` | deferred — sprint/status lifecycle has no audit event on any transport |
+| F-4 | med | durable writes are audited | `aegis/sprint_commands.py`, `aegis/status_commands.py` | **FIXED** — sprint and project-status mutations commit their actor-attributed events atomically across REST/browser paths, with migration-inventory tests |
 | F-5 | med | steer by exception | `core/security_events.py`; `web/`, `templates/` | deferred — recorded security failures surfaced nowhere |
 | F-6 | med | run lineage attribution | `core/activity.py` `record` (parent/fork unvalidated) | deferred — cross-actor lineage spoofing |
 | F-7 | med | cockpit surfaces decisions | `web/router.py` `aegis_dashboard`; `base.html` | deferred — no needs-attention rollup on landing surface |
@@ -859,9 +861,9 @@ before any new surface (correctness/security first); 5–10 build the loop.
 3. **F-6 — validate run lineage.** In `core/activity.record`, check `parent_run_id`
    against `run_bindings` (same-actor or delegated); null it otherwise. Tests in
    `test_run_binding.py`: cross-actor parent rejected, legitimate fork preserved.
-4. **F-4 — sprint/status audit commands.** `aegis/sprint_commands.py` recording
-   `sprint_created/started/completed/deleted`; add to `COMMAND_MIGRATION.md`. Tests:
-   audit present on every transport, parity.
+4. ~~**F-4 — sprint/status audit commands.**~~ **SHIPPED:** dedicated sprint and
+   project-status commands, atomic lifecycle events, REST/browser parity, and
+   command-migration coverage.
 5. **Budgets (Stage B).** `core/budgets.py` + `0062_agent_budgets.sql`; charge in
    issue/page commands; `PUT /agents/{id}/budget` + MCP `set_agent_budget` +
    `whoami` budget; cockpit panel. Tests: reject-at-zero, no-double-charge-on-retry,
