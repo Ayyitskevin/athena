@@ -5,8 +5,10 @@ API with a scoped bearer token. These tests exercise AthenaClient against the RE
 app (an injected TestClient + a real minted token), so the full path tool ->
 client -> HTTP -> API -> DB is covered, including auth.
 
-The MCP-SDK wiring itself is tested separately and SKIPPED when the optional `mcp`
-extra isn't installed (e.g. in core CI), so the suite stays green without it.
+The MCP-SDK wiring itself is tested separately below. Nothing here skips: the
+`dev` dependency group always installs the `mcp` extra (see pyproject.toml), so
+the wiring tests import the SDK directly and FAIL on an incomplete environment
+rather than reporting a green run with the product differentiator untested.
 """
 
 import httpx
@@ -1619,7 +1621,8 @@ def test_error_surfaces_status_and_detail(tmp_path):
         tc.__exit__(None, None, None)
 
 
-# --- MCP wiring (skipped without the optional `mcp` extra) ------------------
+# --- MCP wiring (requires the `mcp` extra; installed by the dev group, so these
+# fail on an incomplete environment rather than skipping) -------------------------
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     MCP_MUTATION_CASES,

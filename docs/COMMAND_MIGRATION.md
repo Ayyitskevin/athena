@@ -6,7 +6,12 @@ event in one SQLite transaction. REST and browser handlers translate transport
 input/output; MCP uses REST.
 
 This is a migration rule, not a completed-system claim. The inventory below is
-the review-facing source of truth for the `0.1.0a1` line.
+the review-facing source of truth for the `0.1.0a1` line. The transport side of
+the rule is mechanically enforced: `scripts/check_write_ownership.py` fails the
+build if a transport (`web/*`, `mcp/*`, `*_api.py`) executes write SQL or calls
+a data-module mutating helper that is neither a `*_commands.py` module nor one
+of the designated writers it names (personal state, the login/session flow,
+the documented owners below).
 
 ## Current inventory
 

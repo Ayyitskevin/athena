@@ -25,12 +25,21 @@ python3.12 -m venv .venv
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
+.venv/bin/python scripts/check_write_ownership.py
+.venv/bin/python scripts/check_imported_at_guards.py
 scripts/coverage.sh
 ```
 
 The constraints file is the exact verified Linux/Python 3.12 CI graph. The
 freeze diff rejects dependency drift; `pip check` rejects incompatible
-installed metadata. `scripts/coverage.sh` runs the complete test suite with
+installed metadata. The three `check_*` scripts fail the build on doctrinal
+drift the tests cannot see: `check_import_contracts.py` keeps the layer
+direction (`web → aegis|mentor → core`), `check_write_ownership.py` keeps
+transports from writing except through command modules and the designated
+writers named in it, and `check_imported_at_guards.py` pins every native-only
+activity reader to its `imported_at IS NULL` guard (and FORGE.md's guard
+table to the checker, via `tests/test_imported_at_guards.py`).
+`scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`.
 

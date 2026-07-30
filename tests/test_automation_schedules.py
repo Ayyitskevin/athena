@@ -507,6 +507,46 @@ def test_inactivity_condition_uses_slot_time_and_durable_snapshot(tmp_path):
     assert calls == [issue_ids[0]]
 
 
+def test_inactivity_condition_ignores_imported_activity(tmp_path):
+    # WHY: imported rows are foreign history (0041). A forge delivery or an import
+    # bundle touching an issue must not reset the inactivity clock on work it
+    # never did — the schedule-side twin of the event scan's native_only guard.
+    db_file, issue_ids = _database(tmp_path, issue_count=2)
+    conn = db.connect(db_file)
+    # Issue A: its recent activity is IMPORTED — it does not count, so the issue
+    # still reads as inactive (its native trail is older than the cutoff).
+    conn.execute(
+        "UPDATE activity SET created_at = '2030-01-01 00:00:00', "
+        "imported_at = '2030-01-01 00:00:00' "
+        "WHERE target_kind = 'issue' AND target_id = ?",
+        (issue_ids[0],),
+    )
+    # Issue B: the same recent activity, NATIVE — it counts, and suppresses.
+    conn.execute(
+        "UPDATE activity SET created_at = '2030-01-01 00:00:00' "
+        "WHERE target_kind = 'issue' AND target_id = ?",
+        (issue_ids[1],),
+    )
+    conn.commit()
+    _schedule(
+        conn,
+        at="2030-01-01T00:00:00Z",
+        conditions={"inactive_for_seconds": 3600},
+    )
+    actor_id = automation.system_actor_id(conn)
+    calls: list[int] = []
+    assert (
+        automation.process_schedules(
+            conn,
+            executor=lambda _c, _r, event: calls.append(event["target_id"]),
+            actor_id=actor_id,
+            now=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+        == 1
+    )
+    assert calls == [issue_ids[0]]
+
+
 def test_0059_upgrades_existing_event_rules_without_moving_event_cursor(
     tmp_path, monkeypatch
 ):

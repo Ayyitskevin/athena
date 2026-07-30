@@ -52,6 +52,15 @@ class EnabledUpdate(BaseModel):
     enabled: bool
 
 
+# The adapter's half of the command-error dialect: the command names WHAT was
+# refused (a closed kind vocabulary), the transport owns which status that means.
+_STATUS_BY_KIND = {
+    "invalid": 422,
+    "not_found": 404,
+    "conflict": 409,
+}
+
+
 @router.get("/event-sources")
 def list_event_sources(
     actor: dict = Depends(admin_actor),
@@ -84,7 +93,9 @@ def create_event_source(
             conn, actor_id=actor["id"], name=name, kind=payload.kind, host=host
         )
     except event_source_commands.EventSourceCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise HTTPException(
+            status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
 
 
 @router.put("/event-sources/{source_id}/enabled")
@@ -100,7 +111,9 @@ def set_event_source_enabled(
             conn, actor_id=actor["id"], source_id=source_id, enabled=payload.enabled
         )
     except event_source_commands.EventSourceCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise HTTPException(
+            status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
 
 
 @router.delete("/event-sources/{source_id}", status_code=204)

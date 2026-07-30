@@ -37,7 +37,6 @@ ACCEPTED = "accepted"
 UNDELIVERABLE = "undeliverable"
 COMPLETED = "completed"
 FAILED = "failed"
-OPEN_STATES = (PENDING_DELIVERY, ACCEPTED)
 TERMINAL_STATES = (COMPLETED, FAILED)
 
 VERB_REQUESTED = "dispatch_requested"

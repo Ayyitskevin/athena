@@ -172,3 +172,90 @@ def test_web_label_requires_login(tmp_path):
             f"/mentor/pages/{pid}/labels", data={"name": "x"}, follow_redirects=False
         ).status_code in (401, 403)
         assert client.get(f"/pages/{pid}").json()["labels"] == []
+
+
+def _login_session(client, email, password="pw"):
+    """Log in as an ALREADY-created user and arm CSRF."""
+    r = client.post(
+        "/login", data={"email": email, "password": password}, follow_redirects=False
+    )
+    assert r.status_code == 303
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
+
+
+def test_refused_page_label_attach_does_not_grow_the_vocabulary(tmp_path):
+    # WHY: the page-label form attaches by NAME, find-or-creating the vocabulary
+    # entry — the page twin of issue-side H-0.5. The find-or-create lives inside
+    # the page command now, and the route's gates run before it, so a refused
+    # attach (a viewer, a hidden or nonexistent page) performs no vocabulary
+    # write at all.
+    with TestClient(create_app(tmp_path / "refused.db")) as client:
+        _login(client)  # user 1 — admin, creator
+        pid = _page(client, _space(client))
+
+        # A viewer is read-only: refused, and the vocabulary is untouched.
+        client.post(
+            "/users",
+            json={
+                "email": "v@e.com",
+                "name": "Vic",
+                "password": "pw",
+                "role": "viewer",
+            },
+            headers=H1,
+        )
+        _login_session(client, "v@e.com")
+        r = client.post(
+            f"/mentor/pages/{pid}/labels",
+            data={"name": "planted"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 403
+        assert client.get("/labels").json() == []
+
+        # A hidden page: an outsider's probe 404s — and still plants nothing.
+        hidden_space = client.post(
+            "/spaces", json={"key": "SEC", "name": "Secret"}, headers=H1
+        ).json()["id"]
+        hidden_page = client.post(
+            f"/spaces/{hidden_space}/pages", json={"title": "Hidden"}, headers=H1
+        ).json()["id"]
+        client.put(
+            f"/spaces/{hidden_space}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+        client.post(
+            "/users",
+            json={"email": "o@e.com", "name": "Out", "password": "pw"},
+            headers=H1,
+        )
+        _login_session(client, "o@e.com")
+        r = client.post(
+            f"/mentor/pages/{hidden_page}/labels",
+            data={"name": "planted"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 404
+        assert client.get("/labels").json() == []
+        # A nonexistent page refuses identically, with the same side effect: none.
+        r = client.post(
+            "/mentor/pages/99999/labels",
+            data={"name": "planted"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 404
+        assert client.get("/labels").json() == []
+
+        # Control: an authorized attach by name still find-or-creates.
+        _login_session(client, "a@e.com")
+        r = client.post(
+            f"/mentor/pages/{pid}/labels",
+            data={"name": "runbook"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert [la["name"] for la in client.get("/labels").json()] == ["runbook"]
+        assert [la["name"] for la in client.get(f"/pages/{pid}").json()["labels"]] == [
+            "runbook"
+        ]

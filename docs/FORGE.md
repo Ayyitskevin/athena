@@ -121,6 +121,12 @@ every native-only mechanism *already* excludes imported rows:
 | Assignee facts (0068) | `imported_at IS NULL` |
 | Fleet metrics | `imported_at IS NULL` |
 | Attention rollup, security refusal counters | `imported_at IS NULL` — **added after the adversarial review** (Wave H-0); this table claimed the guard before it existed. A back-dated import could otherwise plant fake refusals on `/admin/security` and inflate the attention card |
+| Automation scan | `native_only=True` → `imported_at IS NULL` — **added after the adversarial review** (Wave H-0); a wildcard rule firing on an imported event is how the review moved an issue's status |
+
+This table is not maintained by hand: `tests/test_imported_at_guards.py` pins
+its rows to `scripts/check_imported_at_guards.py`, which fails the build when a
+listed guard disappears from the code — and when any *new* reader of the
+activity table appears that is neither guarded nor explicitly exempted.
 
 So a forge **cannot move an issue's status**, cannot shift a completion-cycle
 median, cannot be undone into a native write, and cannot appear as agent

@@ -76,6 +76,20 @@ Therefore:
   is the first migrated slice; legacy mutation+activity pairs remain migration
   debt, not a pattern to copy. Any new write—or existing split write you change—
   must move behind a shared command rather than adding another transport copy.
+- **One command-error dialect.** A command refuses with a transport-neutral
+  *kind* — a closed string vocabulary per command module (`"not_found"`,
+  `"invalid"`, `"conflict"`, ...) plus a human `detail` — never an HTTP status
+  code. The adapter owns the kind→status mapping (`_STATUS_BY_KIND` tables in
+  the route module), so the same refusal can be a 422 in REST and a 400 in a
+  form without the command knowing a transport exists. `issue_commands`,
+  `page_commands`, `worker_commands`, `agent_run_commands`, and
+  `event_source_commands` carry the target shape; command modules that still
+  raise `status_code`-carrying errors (e.g. `space_commands`,
+  `comment_commands`, `sprint_commands`, `user_commands`, `agent_commands`,
+  `token_commands`, `webhook_commands`, `automation_commands`,
+  `status_commands`, `attachment_commands`, `page_comment_commands`) are
+  migration debt — migrate them when you touch them, do not copy the shape into
+  anything new.
 - If the endpoint you need doesn't exist, that is a **blocker to flag**, not a
   reason to fake it. Stop and say so (see "When scope grows").
 - One concept, one owner. Two code paths that both "create an issue" is a bug,
@@ -120,7 +134,9 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 ## Definition of done (all must hold before you call it done)
 
-1. `ruff check .`, `python scripts/check_import_contracts.py`, and `pytest -q`
+1. `ruff check .`, `python scripts/check_import_contracts.py`,
+   `python scripts/check_write_ownership.py`,
+   `python scripts/check_imported_at_guards.py`, and `pytest -q`
    are **green** — no skipped or mocked-away tests passed off as passing.
 2. You **ran it**: the app boots and the feature works against the real DB
    (`uvicorn athena.main:app`, hit the route). "Should work" is not "works."
@@ -156,6 +172,8 @@ tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
 
-Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`, and
-`pytest -q -n 4` (plain `pytest -q` remains valid).
+Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`,
+`python scripts/check_write_ownership.py`,
+`python scripts/check_imported_at_guards.py`, and `pytest -q -n 4` (plain
+`pytest -q` remains valid).
 Run the app: `uvicorn athena.main:app --reload`.
