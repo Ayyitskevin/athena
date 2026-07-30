@@ -27,6 +27,11 @@ from athena.core import forge_events, webhooks
 #: convention API tokens and webhook secrets already use.
 SECRET_PREFIX = "evtsec_"
 
+#: Stand-in secret used to verify a delivery naming an UNKNOWN source, so the
+#: refusal does the same HMAC work as a real check. Never stored; a match
+#: against it still refuses (verify_signature requires a real row).
+_UNKNOWN_SOURCE_SECRET = "unknown-source"
+
 
 def generate_secret() -> str:
     return SECRET_PREFIX + secrets.token_urlsafe(32)
@@ -110,15 +115,32 @@ def verify_signature(
     deliberately does not carry it. The comparison is constant-time, and a missing
     header is a mismatch rather than a special case, so an unsigned delivery and a
     wrongly-signed one are refused identically and take the same path.
+
+    Two refusal-shape rules keep this endpoint from becoming a source-name oracle:
+
+    * A malformed header (anything non-ASCII — a well-formed one is
+      ``sha256=<hex>``) is a WRONG SIGNATURE, not an error: ``compare_digest``
+      raises TypeError on non-ASCII str operands, which would turn the refusal
+      into a 500 for a registered source while an unknown one refused cleanly.
+    * An unknown source id still pays for one HMAC (against a stand-in secret
+      whose comparison is discarded), so "registered" and "unregistered" do the
+      same work on the way to the same 401.
     """
     if not provided:
         return False
     row = conn.execute(
         "SELECT secret FROM event_sources WHERE id = ?", (source_id,)
     ).fetchone()
-    if row is None:
-        return False
-    return hmac.compare_digest(provided, webhooks.sign(row["secret"], body))
+    try:
+        supplied = provided.encode("ascii")
+    except UnicodeEncodeError:
+        supplied = b""  # malformed: take the ordinary mismatch path below
+    secret = row["secret"] if row is not None else _UNKNOWN_SOURCE_SECRET
+    expected = webhooks.sign(secret, body).encode("ascii")
+    matched = bool(supplied) and hmac.compare_digest(supplied, expected)
+    # A match against the stand-in secret is not authentication: no real source,
+    # no acceptance.
+    return row is not None and matched
 
 
 def record_delivery(

@@ -496,6 +496,77 @@ def test_web_logged_out_cannot_label(tmp_path):
         assert r.status_code == 401
 
 
+def _login_session(client, email):
+    """Log in as an ALREADY-created user (password 'secret') and arm CSRF."""
+    client.post("/login", data={"email": email, "password": "secret"})
+    client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
+
+
+def test_refused_label_attach_does_not_grow_the_vocabulary(tmp_path):
+    # WHY: the browser route attaches by NAME, find-or-creating the vocabulary
+    # entry. That find-or-create used to run BEFORE the write gate, so a viewer,
+    # or anyone probing a hidden/nonexistent issue, durably grew the shared
+    # label vocabulary on a refused request — a write REST never performs. The
+    # find-or-create now lives inside the command, after the gate.
+    db_file = tmp_path / "w6.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        client.post(
+            "/users",
+            json={"email": "ann@e.com", "name": "Ann", "password": "secret"},
+        )  # user 1 — admin, creator
+        for email, name, role in (
+            ("vic@e.com", "Vic", "viewer"),
+            ("out@e.com", "Out", "member"),
+        ):
+            client.post(
+                "/users",
+                json={"email": email, "name": name, "password": "secret", "role": role},
+                headers={"X-Athena-Actor": "1"},
+            )
+        issue = _make_issue(client, actor="1")
+
+        # A viewer is read-only: refused, and the vocabulary is untouched.
+        _login_session(client, "vic@e.com")
+        r = client.post(f"/aegis/issues/{issue['id']}/labels", data={"name": "planted"})
+        assert r.status_code == 403
+        assert client.get("/labels").json() == []
+
+        # A hidden issue: an outsider's probe 404s — and still plants nothing.
+        pid = client.post(
+            "/projects",
+            json={"name": "Secret", "key": "SEC"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()["id"]
+        hidden = client.post(
+            "/issues",
+            json={"title": "h", "project_id": pid},
+            headers={"X-Athena-Actor": "1"},
+        ).json()["id"]
+        conn = db.connect(db_file)
+        conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (pid,))
+        conn.commit()
+        conn.close()
+        _login_session(client, "out@e.com")
+        r = client.post(f"/aegis/issues/{hidden}/labels", data={"name": "planted"})
+        assert r.status_code == 404
+        assert client.get("/labels").json() == []
+        # A nonexistent issue refuses identically, with the same side effect: none.
+        r = client.post("/aegis/issues/999999/labels", data={"name": "planted"})
+        assert r.status_code == 404
+        assert client.get("/labels").json() == []
+
+        # Control: an authorized attach by name still find-or-creates.
+        _login_session(client, "ann@e.com")
+        r = client.post(
+            f"/aegis/issues/{issue['id']}/labels",
+            data={"name": "real"},
+            follow_redirects=False,
+        )
+        assert r.status_code == 303
+        assert [label["name"] for label in client.get("/labels").json()] == ["real"]
+
+
 # --- web list: filter by label --------------------------------------------
 
 

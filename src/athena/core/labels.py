@@ -27,13 +27,20 @@ def normalize_color(color: str = _DEFAULT_COLOR) -> str:
 
 
 def create_label(
-    conn: sqlite3.Connection, *, name: str, color: str = _DEFAULT_COLOR
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    color: str = _DEFAULT_COLOR,
+    commit: bool = True,
 ) -> dict:
     """Insert a label and return it. Raises sqlite3.IntegrityError if a label
-    with this name already exists (name is UNIQUE, case-insensitive)."""
+    with this name already exists (name is UNIQUE, case-insensitive).
+    ``commit=False`` lets an audited command fold the insert into its own
+    transaction, so a refused or rolled-back command leaves no row."""
     color = normalize_color(color)
     cur = conn.execute("INSERT INTO labels (name, color) VALUES (?, ?)", (name, color))
-    conn.commit()
+    if commit:
+        conn.commit()
     label_id = cur.lastrowid
     assert label_id is not None
     label = get_label(conn, label_id)
@@ -53,14 +60,21 @@ def get_label_by_name(conn: sqlite3.Connection, name: str) -> dict | None:
 
 
 def get_or_create_label(
-    conn: sqlite3.Connection, *, name: str, color: str = _DEFAULT_COLOR
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    color: str = _DEFAULT_COLOR,
+    commit: bool = True,
 ) -> dict:
     """Return the existing label with this name, or create it. Lets the web layer
-    attach a label by typing its name without a separate "create label" step."""
+    attach a label by typing its name without a separate "create label" step.
+    ``commit=False`` keeps a create inside the caller's transaction — the audited
+    attach command uses this so the vocabulary write shares the gate's
+    all-or-nothing boundary."""
     existing = get_label_by_name(conn, name)
     if existing is not None:
         return existing
-    return create_label(conn, name=name, color=color)
+    return create_label(conn, name=name, color=color, commit=commit)
 
 
 def list_labels(conn: sqlite3.Connection) -> list[dict]:

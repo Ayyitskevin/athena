@@ -758,15 +758,24 @@ def _attach_label(
     *,
     actor: dict | None,
     issue_id: int,
-    label_id: int,
+    label_id: int | None = None,
+    label_name: str | None = None,
     enforce_actor_policy: bool,
 ) -> tuple[dict, bool]:
-    """The shared attach write. Returns ``(issue, changed)``."""
+    """The shared attach write. Returns ``(issue, changed)``.
+
+    Exactly one of ``label_id`` / ``label_name``. The by-name form find-or-creates
+    the vocabulary entry INSIDE this transaction, after the write gate — the
+    shared vocabulary must never grow on a refused request."""
     with db.transaction(conn, immediate=True):
         resolved, issue = _resolve_write_actor(
             conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
         )
-        if labels.get_label(conn, label_id) is None:
+        if label_name is not None:
+            label_id = labels.get_or_create_label(conn, name=label_name, commit=False)[
+                "id"
+            ]
+        if label_id is None or labels.get_label(conn, label_id) is None:
             raise IssueCommandError("invalid", "no such label")
         changed = labels.add_label_to_issue(conn, issue_id, label_id, commit=False)
         if changed:
@@ -792,6 +801,31 @@ def attach_label(
         actor=actor,
         issue_id=issue_id,
         label_id=label_id,
+        enforce_actor_policy=True,
+    )
+    return issue
+
+
+def attach_label_by_name(
+    conn: sqlite3.Connection, *, actor: dict | None, issue_id: int, name: str
+) -> dict:
+    """Attach a label by NAME, find-or-creating the vocabulary entry.
+
+    The browser route lets a user type a label name without a separate
+    vocabulary-management step. The find-or-create lives HERE — inside the same
+    transaction as the write gate and the audit event, and AFTER it — because a
+    refused attach (a viewer, a hidden or nonexistent issue) must not durably
+    grow the shared vocabulary. Same gate and idempotency as attach_label.
+    Raises IssueCommandError (404/403) for the issue gate, (422) for an empty
+    name."""
+    name = name.strip()
+    if not name:
+        raise IssueCommandError("invalid", "label name is required")
+    issue, _ = _attach_label(
+        conn,
+        actor=actor,
+        issue_id=issue_id,
+        label_name=name,
         enforce_actor_policy=True,
     )
     return issue

@@ -77,9 +77,12 @@ def build_attention(
         if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
     ]
     refusals = security_events.failure_counts(conn, since=since)
+    # Native rows only, like the refusal counts above: a hostile import bundle
+    # could back-date this verb into the window and inflate the card.
     budget_exhaustions = int(
         conn.execute(
-            "SELECT COUNT(*) AS n FROM activity WHERE verb = ? AND created_at >= ?",
+            "SELECT COUNT(*) AS n FROM activity "
+            "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL",
             (budgets.VERB_BUDGET_EXHAUSTED, since),
         ).fetchone()["n"]
     )

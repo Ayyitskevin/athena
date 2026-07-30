@@ -98,6 +98,30 @@ def test_wrong_token_is_403(tmp_path):
         assert r.status_code == 403
 
 
+def test_non_ascii_token_is_403_not_500(tmp_path):
+    # WHY: secrets.compare_digest raises TypeError on a non-ASCII str, so a
+    # mangled token used to turn the refusal into a 500. A real token is ASCII;
+    # anything else is simply wrong, and wrong means 403.
+    app = create_app(tmp_path / "nonascii.db")
+    with TestClient(app) as client:
+        _login(client)
+        issue_id = _make_issue(client)
+        form = client.post(
+            f"/aegis/issues/{issue_id}/status",
+            data={"status": "done", "csrf_token": "tökén-ÿÿ"},
+        )
+        assert form.status_code == 403
+        header = client.post(
+            f"/aegis/issues/{issue_id}/status",
+            content=b"status=done",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                b"X-CSRF-Token": "tökén-ÿÿ".encode(),
+            },
+        )
+        assert header.status_code == 403
+
+
 def test_anonymous_post_is_401_not_403(tmp_path):
     # WHY: scope. With no session there is nothing to forge, so the CSRF guard is
     # a no-op and the route's OWN auth gate must answer — 401, never 403. A 403

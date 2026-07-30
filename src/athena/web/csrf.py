@@ -39,5 +39,15 @@ def verify_csrf(
     if not expected:
         return
     submitted = x_csrf_token or csrf_token
-    if not submitted or not secrets.compare_digest(submitted, expected):
+    # compare_digest raises TypeError on a non-ASCII str, which would turn a
+    # forged or mangled token into a 500 instead of the refusal it earned. A
+    # real token is ASCII, so anything that isn't is simply wrong.
+    supplied: bytes | None
+    try:
+        supplied = submitted.encode("ascii") if submitted else None
+    except UnicodeEncodeError:
+        supplied = None
+    if supplied is None or not secrets.compare_digest(
+        supplied, expected.encode("ascii")
+    ):
         raise HTTPException(status_code=403, detail="CSRF token missing or invalid")

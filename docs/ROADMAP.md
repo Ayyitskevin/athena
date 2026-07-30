@@ -220,7 +220,9 @@ under exactly the same architecture rules, none of which are amended.
       as imported activity on the issues they name — verified before the payload is
       parsed, matched against real project keys so `UTF-8` cannot land on anyone's
       work, counted rather than stored when they match nothing, and excluded from
-      undo, the lifecycle facts, and every metric because they are foreign history.
+      undo, the lifecycle facts, and the native metrics because they are foreign
+      history (the attention-rollup and security-counter exclusion was added
+      after review — see CHANGELOG).
       Athena never calls the forge: inbound only, no stored third-party token.
 - [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.
 - [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.

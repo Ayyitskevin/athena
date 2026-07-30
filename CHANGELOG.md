@@ -181,6 +181,30 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
+- **Wave H-0: the five stop-ship defects from the adversarial review**
+  (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  - Event-source CRUD now enforces the admin **token scope** through the same
+    `admin_actor` dependency as every parallel admin surface, not just the admin
+    role — an admin's read-scoped token can no longer register a source and walk
+    off with its signing secret.
+  - A non-ASCII signature or CSRF token is a wrong credential, not a 500:
+    `hmac.compare_digest`/`secrets.compare_digest` raise TypeError on non-ASCII
+    str operands, and the crash made `POST /forge/{name}` a one-request oracle
+    for which source names are registered. Unknown sources now also pay for the
+    same HMAC work, so known and unknown refuse identically.
+  - The automation engine's event scan excludes imported rows in SQL — imported
+    `forge_commit` history no longer fires wildcard rules and moves issues.
+  - **The security refusal counters and the attention rollup now filter
+    `imported_at IS NULL` — a guard the forge docs and the 0069 entry below
+    claimed already existed. It did not; it was added after the review.** A
+    hostile import bundle can no longer back-date security verbs into the 24h
+    window to plant fake refusals on `/admin/security` or inflate the attention
+    card.
+  - The browser label-attach route authorizes before it find-or-creates: the
+    shared label vocabulary no longer grows on a refused (viewer-role or
+    hidden-issue) request. Find-or-create moved into the
+    `issue_commands.attach_label_by_name` command, one transaction with the gate
+    and the audit event.
 - Supplied MCP issue-list sprint IDs now accept only JSON integers within
   SQLite's bounds; booleans, numeric strings, and floats fail before REST dispatch.
 - MCP read-tool failures now preserve the same machine-readable HTTP status,
