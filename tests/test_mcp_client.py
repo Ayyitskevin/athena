@@ -203,6 +203,36 @@ MUTATION_CASES = [
         lambda c, k: c.unlink_issues(7, "blocks", 9, idempotency_key=k),
     ),
     (
+        "create_sprint",
+        "POST",
+        "/projects/4/sprints",
+        lambda c, k: c.create_sprint(4, name="Cycle 1", idempotency_key=k),
+    ),
+    (
+        "update_sprint",
+        "PATCH",
+        "/sprints/7",
+        lambda c, k: c.update_sprint(7, name="Cycle One", idempotency_key=k),
+    ),
+    (
+        "start_sprint",
+        "POST",
+        "/sprints/7/start",
+        lambda c, k: c.start_sprint(7, idempotency_key=k),
+    ),
+    (
+        "complete_sprint",
+        "POST",
+        "/sprints/7/complete",
+        lambda c, k: c.complete_sprint(7, idempotency_key=k),
+    ),
+    (
+        "delete_sprint",
+        "DELETE",
+        "/sprints/7",
+        lambda c, k: c.delete_sprint(7, idempotency_key=k),
+    ),
+    (
         "set_issue_sprint",
         "PUT",
         "/issues/7/sprint",
@@ -414,6 +444,14 @@ MCP_MUTATION_CASES = [
         "unlink_issues",
         {"issue_id": 7, "relation": "blocks", "target_id": 9},
     ),
+    ("create_sprint", {"project_id": 4, "name": "Cycle 1"}),
+    ("update_sprint", {"sprint_id": 7, "name": "Cycle One"}),
+    ("start_sprint", {"sprint_id": 7}),
+    ("complete_sprint", {"sprint_id": 7}),
+    (
+        "delete_sprint",
+        {"sprint_id": 7, "confirm_permanent": True},
+    ),
     ("set_issue_sprint", {"issue_id": 7}),
     ("create_label", {"name": "bug"}),
     ("attach_label", {"issue_id": 7, "label_id": 9}),
@@ -451,6 +489,16 @@ MCP_MUTATION_CASES = [
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES
 ]
+MCP_SPRINT_RESOURCE_CASES = [
+    ("list_sprints", "project_id", {}),
+    ("get_sprint", "sprint_id", {}),
+    ("create_sprint", "project_id", {"name": "Cycle 1"}),
+    ("update_sprint", "sprint_id", {"name": "Cycle One"}),
+    ("start_sprint", "sprint_id", {}),
+    ("complete_sprint", "sprint_id", {}),
+    ("delete_sprint", "sprint_id", {"confirm_permanent": True}),
+    ("set_issue_sprint", "sprint_id", {"issue_id": 7}),
+]
 
 
 class _MCPRecordingAthenaClient:
@@ -460,9 +508,9 @@ class _MCPRecordingAthenaClient:
     def __getattr__(self, name):
         def record(*args, **kwargs):
             self.calls.append((name, args, kwargs))
-            if name == "yield_claim":
+            if name in {"yield_claim", "delete_sprint"}:
                 return None
-            return [] if name == "delegate_issue" else {}
+            return [] if name in {"delegate_issue", "list_sprints"} else {}
 
         return record
 
@@ -662,6 +710,89 @@ def test_list_issues_forwards_sprint_only_when_explicit():
 
     client.list_issues(sprint=None)
     assert transport.calls.pop() == ("GET", "/issues", {"params": {}})
+
+
+def test_sprint_lifecycle_client_matches_rest_contract():
+    # WHY: MCP must express REST's omitted-vs-null date semantics without sending
+    # an editable state field or accidental request bodies on transitions.
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.list_sprints(4, state="planned")
+    assert transport.calls.pop() == (
+        "GET",
+        "/projects/4/sprints",
+        {"params": {"state": "planned"}},
+    )
+
+    client.get_sprint(7)
+    assert transport.calls.pop() == ("GET", "/sprints/7", {})
+
+    client.create_sprint(
+        4,
+        name="Cycle 1",
+        goal="ship it",
+        start_date="2030-01-02",
+    )
+    assert transport.calls.pop() == (
+        "POST",
+        "/projects/4/sprints",
+        {
+            "json": {
+                "name": "Cycle 1",
+                "goal": "ship it",
+                "start_date": "2030-01-02",
+            }
+        },
+    )
+
+    client.update_sprint(
+        7,
+        goal="",
+        end_date="2030-01-09",
+        clear_start_date=True,
+    )
+    assert transport.calls.pop() == (
+        "PATCH",
+        "/sprints/7",
+        {
+            "json": {
+                "goal": "",
+                "end_date": "2030-01-09",
+                "start_date": None,
+            }
+        },
+    )
+
+    client.start_sprint(7)
+    assert transport.calls.pop() == ("POST", "/sprints/7/start", {})
+
+    client.complete_sprint(7)
+    assert transport.calls.pop() == ("POST", "/sprints/7/complete", {})
+
+    def delete_without_content(path, **kwargs):
+        transport.calls.append(("DELETE", path, kwargs))
+        return httpx.Response(
+            204,
+            request=httpx.Request("DELETE", f"http://athena.test{path}"),
+        )
+
+    transport.delete = delete_without_content
+    assert client.delete_sprint(7) is None
+    assert transport.calls.pop() == ("DELETE", "/sprints/7", {})
+
+
+def test_update_sprint_rejects_conflicting_date_intent_before_dispatch():
+    # WHY: a retry must not ambiguously ask to set and clear the same date.
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    with pytest.raises(ValueError, match="start_date and clear_start_date"):
+        client.update_sprint(7, start_date="2030-01-02", clear_start_date=True)
+    with pytest.raises(ValueError, match="end_date and clear_end_date"):
+        client.update_sprint(7, end_date="2030-01-09", clear_end_date=True)
+
+    assert transport.calls == []
 
 
 def test_athena_error_preserves_legacy_construction_and_pickle_state():
@@ -1173,6 +1304,206 @@ def test_hierarchy_deps_sprints_labels_through_the_client(tmp_path):
         tc.__exit__(None, None, None)
 
 
+def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
+    # WHY: parity means the real agent path reaches the same audited commands as
+    # REST, including retry coalescing and the complete lifecycle through delete.
+    import asyncio
+    import json
+
+    from athena.mcp.server import build_server
+
+    db_file = tmp_path / "mcp-sprint-lifecycle.db"
+    tc, ath = _client(tmp_path, db_file.name)
+    try:
+        project = tc.post("/projects", json={"name": "Delivery", "key": "DEL"}).json()
+        server = build_server(ath)
+        create_args = {
+            "project_id": project["id"],
+            "name": "Cycle 1",
+            "goal": "ship it",
+            "start_date": "2030-01-02",
+            "end_date": "2030-01-09",
+            "idempotency_key": "create-cycle-1",
+        }
+
+        first = asyncio.run(server.call_tool("create_sprint", create_args))
+        replay = asyncio.run(server.call_tool("create_sprint", create_args))
+        assert replay == first
+        sprint = json.loads(first[0].text)
+        assert sprint["state"] == "planned"
+        assert [row["id"] for row in ath.list_sprints(project["id"])] == [sprint["id"]]
+
+        read = asyncio.run(server.call_tool("get_sprint", {"sprint_id": sprint["id"]}))
+        assert json.loads(read[0].text)["name"] == "Cycle 1"
+
+        updated = asyncio.run(
+            server.call_tool(
+                "update_sprint",
+                {
+                    "sprint_id": sprint["id"],
+                    "name": "Cycle One",
+                    "goal": "",
+                    "clear_start_date": True,
+                    "clear_end_date": True,
+                    "idempotency_key": "edit-cycle-1",
+                },
+            )
+        )
+        updated_sprint = json.loads(updated[0].text)
+        assert updated_sprint["name"] == "Cycle One"
+        assert updated_sprint["goal"] == ""
+        assert updated_sprint["start_date"] is None
+        assert updated_sprint["end_date"] is None
+
+        started = asyncio.run(
+            server.call_tool(
+                "start_sprint",
+                {
+                    "sprint_id": sprint["id"],
+                    "idempotency_key": "start-cycle-1",
+                },
+            )
+        )
+        started_sprint = json.loads(started[0].text)
+        assert started_sprint["state"] == "active"
+        assert started_sprint["start_date"] is not None
+
+        completed = asyncio.run(
+            server.call_tool(
+                "complete_sprint",
+                {
+                    "sprint_id": sprint["id"],
+                    "idempotency_key": "complete-cycle-1",
+                },
+            )
+        )
+        completed_sprint = json.loads(completed[0].text)
+        assert completed_sprint["state"] == "completed"
+        assert completed_sprint["end_date"] is not None
+
+        asyncio.run(
+            server.call_tool(
+                "delete_sprint",
+                {
+                    "sprint_id": sprint["id"],
+                    "confirm_permanent": True,
+                    "idempotency_key": "delete-cycle-1",
+                },
+            )
+        )
+        with pytest.raises(AthenaError) as missing:
+            ath.get_sprint(sprint["id"])
+        assert missing.value.status_code == 404
+
+        conn = db.connect(db_file)
+        try:
+            rows = conn.execute(
+                "SELECT actor_id, verb, target_kind, target_id "
+                "FROM activity WHERE target_kind = 'sprint' ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+        assert [row["verb"] for row in rows] == [
+            "sprint_created",
+            "sprint_edited",
+            "sprint_started",
+            "sprint_completed",
+            "sprint_deleted",
+        ]
+        assert {row["actor_id"] for row in rows} == {1}
+        assert {row["target_id"] for row in rows} == {sprint["id"]}
+    finally:
+        tc.__exit__(None, None, None)
+
+
+def test_mcp_sprint_conflicts_preserve_state_and_structured_errors(tmp_path):
+    # WHY: retryable agents need exact 409 metadata, and rejected lifecycle/delete
+    # writes must leave sprint state and issue membership untouched.
+    import asyncio
+    import json
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    tc, ath = _client(tmp_path, "mcp-sprint-conflicts.db")
+    try:
+        project = tc.post("/projects", json={"name": "Conflicts", "key": "CFL"}).json()
+        server = build_server(ath)
+
+        def create(name, key):
+            result = asyncio.run(
+                server.call_tool(
+                    "create_sprint",
+                    {
+                        "project_id": project["id"],
+                        "name": name,
+                        "idempotency_key": key,
+                    },
+                )
+            )
+            return json.loads(result[0].text)
+
+        active = create("Active", "create-active")
+        waiting = create("Waiting", "create-waiting")
+        asyncio.run(
+            server.call_tool(
+                "start_sprint",
+                {"sprint_id": active["id"], "idempotency_key": "start-active"},
+            )
+        )
+
+        with pytest.raises(ToolError) as start_conflict:
+            asyncio.run(
+                server.call_tool(
+                    "start_sprint",
+                    {
+                        "sprint_id": waiting["id"],
+                        "idempotency_key": "start-waiting",
+                    },
+                )
+            )
+        marker = "ATHENA_ERROR_JSON="
+        start_payload = json.loads(str(start_conflict.value).split(marker, 1)[1])
+        assert start_payload["status_code"] == 409
+        assert start_payload["path"] == f"/sprints/{waiting['id']}/start"
+        assert ath.get_sprint(waiting["id"])["state"] == "planned"
+
+        issue = ath.create_issue(title="Still here", project_id=project["id"])
+        ath.set_issue_sprint(issue["id"], waiting["id"])
+        with pytest.raises(ToolError) as delete_conflict:
+            asyncio.run(
+                server.call_tool(
+                    "delete_sprint",
+                    {
+                        "sprint_id": waiting["id"],
+                        "confirm_permanent": True,
+                        "idempotency_key": "delete-waiting",
+                    },
+                )
+            )
+        delete_payload = json.loads(str(delete_conflict.value).split(marker, 1)[1])
+        assert delete_payload["status_code"] == 409
+        assert delete_payload["path"] == f"/sprints/{waiting['id']}"
+        assert ath.get_sprint(waiting["id"])["id"] == waiting["id"]
+        assert ath.get_issue(str(issue["id"]))["sprint_id"] == waiting["id"]
+
+        ath.set_issue_sprint(issue["id"], None)
+        asyncio.run(
+            server.call_tool(
+                "delete_sprint",
+                {
+                    "sprint_id": waiting["id"],
+                    "confirm_permanent": True,
+                    "idempotency_key": "delete-waiting-empty",
+                },
+            )
+        )
+        assert [row["id"] for row in ath.list_sprints(project["id"])] == [active["id"]]
+    finally:
+        tc.__exit__(None, None, None)
+
+
 def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
     # WHY: the fleet board's actor lanes also need an agent-facing query. Exercise
     # FastMCP -> client -> REST and prove sprint filtering retains True/False/None.
@@ -1545,6 +1876,90 @@ def test_list_issues_mcp_rejects_invalid_sprint_before_dispatch(invalid_sprint):
     assert client.calls == []
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "id_field", "base_arguments"),
+    MCP_SPRINT_RESOURCE_CASES,
+    ids=[case[0] for case in MCP_SPRINT_RESOURCE_CASES],
+)
+@pytest.mark.parametrize("resource_id", [1, issues.MAX_SQLITE_INTEGER])
+def test_mcp_sprint_resource_ids_accept_only_positive_sqlite_boundaries(
+    tool_name, id_field, base_arguments, resource_id
+):
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+    arguments = {**base_arguments, id_field: resource_id}
+
+    asyncio.run(server.call_tool(tool_name, arguments))
+
+    called_name, called_args, _ = client.calls.pop()
+    assert called_name == tool_name
+    position = -1 if tool_name == "set_issue_sprint" else 0
+    assert called_args[position] == resource_id
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "id_field", "base_arguments"),
+    MCP_SPRINT_RESOURCE_CASES,
+    ids=[case[0] for case in MCP_SPRINT_RESOURCE_CASES],
+)
+@pytest.mark.parametrize(
+    "invalid_resource_id",
+    [
+        True,
+        False,
+        "7",
+        7.0,
+        0,
+        -1,
+        issues.MAX_SQLITE_INTEGER + 1,
+    ],
+)
+def test_mcp_sprint_resource_ids_reject_coercion_before_dispatch(
+    tool_name, id_field, base_arguments, invalid_resource_id
+):
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+    arguments = {**base_arguments, id_field: invalid_resource_id}
+
+    with pytest.raises(ToolError):
+        asyncio.run(server.call_tool(tool_name, arguments))
+    assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"sprint_id": 7},
+        {"sprint_id": 7, "confirm_permanent": False},
+        {"sprint_id": 7, "confirm_permanent": 1},
+        {"sprint_id": 7, "confirm_permanent": "true"},
+    ],
+)
+def test_mcp_delete_sprint_requires_strict_explicit_confirmation(arguments):
+    import asyncio
+
+    from mcp.server.fastmcp.exceptions import ToolError
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    with pytest.raises(ToolError):
+        asyncio.run(server.call_tool("delete_sprint", arguments))
+    assert client.calls == []
+
+
 def test_create_automation_rule_mcp_tool_forwards_schedule_contract():
     import asyncio
 
@@ -1650,6 +2065,12 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "link_issues",
             "unlink_issues",
             "list_sprints",
+            "get_sprint",
+            "create_sprint",
+            "update_sprint",
+            "start_sprint",
+            "complete_sprint",
+            "delete_sprint",
             "set_issue_sprint",
             "list_labels",
             "create_label",
@@ -1684,6 +2105,31 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         )
         assert sprint_integer["minimum"] == 0
         assert sprint_integer["maximum"] == issues.MAX_SQLITE_INTEGER
+
+        create_sprint_schema = tools["create_sprint"].inputSchema
+        assert {"project_id", "name"} <= set(create_sprint_schema["required"])
+        update_sprint_schema = tools["update_sprint"].inputSchema
+        assert {"clear_start_date", "clear_end_date"} <= set(
+            update_sprint_schema["properties"]
+        )
+        assert "state" not in update_sprint_schema["properties"]
+
+        for tool_name, field_name in (
+            ("list_sprints", "project_id"),
+            ("get_sprint", "sprint_id"),
+            ("delete_sprint", "sprint_id"),
+        ):
+            identifier = tools[tool_name].inputSchema["properties"][field_name]
+            assert identifier["minimum"] == 1
+            assert identifier["maximum"] == issues.MAX_SQLITE_INTEGER
+
+        delete_sprint_schema = tools["delete_sprint"].inputSchema
+        assert {"sprint_id", "confirm_permanent"} <= set(
+            delete_sprint_schema["required"]
+        )
+        assert delete_sprint_schema["properties"]["confirm_permanent"]["type"] == (
+            "boolean"
+        )
         assert MUTATION_TOOL_NAMES <= names
 
         work_context_tool = tools["get_issue_work_context"]

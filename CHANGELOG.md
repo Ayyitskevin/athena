@@ -12,6 +12,22 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Sprint lifecycle parity for MCP agents.** Agents can now read one sprint and
+  create, edit, start, complete, or delete sprints through the same REST routes,
+  creator-only authorization, audited commands, and durable idempotency boundary
+  as every other client. `update_sprint` keeps omission distinct from clearing a
+  date through explicit `clear_start_date` / `clear_end_date` flags; lifecycle
+  state remains reachable only through `start_sprint` and `complete_sprint`.
+
+  Conflicts retain structured status, route, and detail across MCP. Starting a
+  second active sprint therefore stays a visible 409. Sprint/project selectors
+  reject booleans, numeric strings, floats, zero, and out-of-range integers before
+  REST dispatch. Deleting a sprint is explicitly permanent, requires a strict
+  `confirm_permanent=true` acknowledgement, and is refused until its issues have
+  been moved elsewhere. Sprint descriptions remain last-write-wins because the
+  existing REST surface does not emit ETags; this parity slice does not invent a
+  divergent lock.
+
 - **Forge integration: evidence flows in** (migration 0069). A registered event
   source can deliver signed GitHub webhooks to `POST /forge/{name}`, and an event
   naming an issue key — in a commit message, a branch name, or a PR title — lands

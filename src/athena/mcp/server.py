@@ -109,6 +109,9 @@ IssueFilterId = Annotated[
     int,
     Field(strict=True, ge=0, le=issues.MAX_SQLITE_INTEGER),
 ]
+ProjectId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+SprintId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+PermanentDeleteConfirmation = Annotated[bool, Field(strict=True)]
 FleetMetricId = Annotated[
     int, Field(strict=True, ge=1, le=fleet_metrics.MAX_SQLITE_INTEGER)
 ]
@@ -1227,15 +1230,100 @@ def build_server(client: AthenaClient) -> FastMCP:
     # --- sprints ------------------------------------------------------------
 
     @tool
-    def list_sprints(project_id: int, state: str | None = None) -> list:
+    def list_sprints(project_id: ProjectId, state: str | None = None) -> list:
         """List a project's sprints, optionally filtered by state
         (planned/active/completed)."""
         return client.list_sprints(project_id, state=state)
 
+    @tool
+    def get_sprint(sprint_id: SprintId) -> dict:
+        """Get one sprint's descriptive fields and lifecycle state. Hidden and
+        missing sprints are both reported as not found."""
+        return client.get_sprint(sprint_id)
+
+    @mutation_tool
+    def create_sprint(
+        project_id: ProjectId,
+        name: str,
+        goal: str = "",
+        start_date: str | None = None,
+        end_date: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Create a planned sprint in a project you created. Optional dates are
+        descriptive until the sprint moves through start_sprint and complete_sprint.
+        Returns the created sprint."""
+        return client.create_sprint(
+            project_id,
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def update_sprint(
+        sprint_id: SprintId,
+        name: str | None = None,
+        goal: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        clear_start_date: bool = False,
+        clear_end_date: bool = False,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Update a sprint's name, goal, or dates without changing its state.
+        Omitted fields stay unchanged; use a clear-date flag to remove that date.
+        Supplying a date and its clear flag together is rejected. Sprint edits are
+        last-write-wins because the REST sprint surface has no ETag."""
+        return client.update_sprint(
+            sprint_id,
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
+            clear_start_date=clear_start_date,
+            clear_end_date=clear_end_date,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def start_sprint(
+        sprint_id: SprintId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Move a planned sprint to active. A project may have only one active
+        sprint; an illegal transition is a conflict. Athena supplies today's date
+        when start_date is unset."""
+        return client.start_sprint(sprint_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def complete_sprint(
+        sprint_id: SprintId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Move an active sprint to completed. Athena supplies today's date when
+        end_date is unset. Issues stay associated with the completed sprint."""
+        return client.complete_sprint(sprint_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def delete_sprint(
+        sprint_id: SprintId,
+        confirm_permanent: PermanentDeleteConfirmation,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> None:
+        """Permanently delete an empty sprint. Set confirm_permanent=true after
+        verifying the target; this has no undo and fails with a conflict until every
+        issue has been moved to the backlog or another sprint."""
+        if not confirm_permanent:
+            raise ValueError("confirm_permanent must be true")
+        return client.delete_sprint(sprint_id, idempotency_key=idempotency_key)
+
     @mutation_tool
     def set_issue_sprint(
         issue_id: int,
-        sprint_id: int | None = None,
+        sprint_id: SprintId | None = None,
         if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:

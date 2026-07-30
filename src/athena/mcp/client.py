@@ -652,6 +652,91 @@ class AthenaClient:
             )
         )
 
+    def get_sprint(self, sprint_id: int) -> Any:
+        return self._result(self._client.get(f"/sprints/{sprint_id}"))
+
+    def create_sprint(
+        self,
+        project_id: int,
+        *,
+        name: str,
+        goal: str = "",
+        start_date: str | None = None,
+        end_date: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/projects/{project_id}/sprints",
+            json=self._params(
+                name=name,
+                goal=goal,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+    def update_sprint(
+        self,
+        sprint_id: int,
+        *,
+        name: str | None = None,
+        goal: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        clear_start_date: bool = False,
+        clear_end_date: bool = False,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        if start_date is not None and clear_start_date:
+            raise ValueError("start_date and clear_start_date are mutually exclusive")
+        if end_date is not None and clear_end_date:
+            raise ValueError("end_date and clear_end_date are mutually exclusive")
+        fields = self._params(
+            name=name,
+            goal=goal,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if clear_start_date:
+            fields["start_date"] = None
+        if clear_end_date:
+            fields["end_date"] = None
+        return self._mutate(
+            self._client.patch,
+            f"/sprints/{sprint_id}",
+            json=fields,
+            idempotency_key=idempotency_key,
+        )
+
+    def start_sprint(
+        self, sprint_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/sprints/{sprint_id}/start",
+            idempotency_key=idempotency_key,
+        )
+
+    def complete_sprint(
+        self, sprint_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.post,
+            f"/sprints/{sprint_id}/complete",
+            idempotency_key=idempotency_key,
+        )
+
+    def delete_sprint(
+        self, sprint_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        return self._mutate(
+            self._client.delete,
+            f"/sprints/{sprint_id}",
+            idempotency_key=idempotency_key,
+        )
+
     def set_issue_sprint(
         self,
         issue_id: int,
