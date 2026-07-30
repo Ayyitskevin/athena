@@ -37,14 +37,32 @@ POST /event-sources   {"name": "gh", "kind": "github", "host": "github.com"}
 → 201 {..., "secret": "evtsec_…"}
 ```
 
-The secret is returned **once** and is never readable again — same contract as an
-API token. Point your forge's webhook at:
+The secret is returned **once** and is never readable again — the same
+one-time-display contract as an API token, but not the same storage. An API
+token is persisted only as its SHA-256 hash; an event-source secret is stored
+**plaintext**, necessarily — HMAC verification needs the shared value itself,
+not a hash of it. A database leak that exposes token hashes costlessly also
+exposes live source secrets, so the row deserves the same care as the
+credential it is.
+
+Point your forge's webhook at:
 
 ```
 POST https://your-athena/forge/gh
 ```
 
 with GitHub's standard `X-Hub-Signature-256` and `X-GitHub-Event` headers.
+
+That URL must be reachable **from the forge**, which is the one place this
+feature pulls against the rest of the deployment story. Everything else in
+Athena assumes a trusted local machine or tailnet; a `github.com` webhook
+cannot dial your tailnet. The expected shape is a tunnel or reverse proxy that
+exposes **only** this route to the public internet — a cloud tunnel or
+Tailscale Funnel in front of a proxy that forwards `/forge/` and nothing else —
+leaving every other surface tailnet-only.
+A self-hosted forge on the same network needs no exception. This is also why
+the route is hardened the way the Refusals section describes: it is the one
+endpoint an anonymous stranger is *expected* to reach.
 
 `PUT /event-sources/{id}/enabled` pauses acceptance **without rotating the
 secret**, so silencing a noisy forge does not mean re-registering the webhook on

@@ -27,6 +27,9 @@ The metered writes today are:
 | Issue edit (title/body/status/priority/assignee/project/sprint placement) | `aegis.issue_commands.update_issue` |
 | Page create | `mentor.page_commands.create_page` |
 | Page edit | `mentor.page_commands.edit_page` |
+| Page create from a template | `mentor.page_commands.create_page_from_template` |
+| Daily-note create | `mentor.page_commands.ensure_daily_page` — charged only when the note is actually created; revisiting an existing day's note is a read and spends nothing |
+| Dispatch request | `aegis.icarus_commands.request_dispatch` |
 
 Deliberately **not** metered:
 

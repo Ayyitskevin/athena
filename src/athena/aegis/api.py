@@ -1784,6 +1784,11 @@ def create_label(
         return labels.create_label(conn, name=name, color=payload.color)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        # The pre-check above races a concurrent create: the UNIQUE constraint
+        # (case-insensitive, 0007) is the backstop, and losing that race is a
+        # 409, not a 500.
+        raise HTTPException(status_code=409, detail="label already exists") from exc
 
 
 # --- Labels on an issue: a write, so creator-or-assignee gated -------------
