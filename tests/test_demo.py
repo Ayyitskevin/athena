@@ -45,6 +45,34 @@ def test_seed_demo_builds_a_cross_linked_agent_workspace(tmp_path):
         conn.close()
 
 
+def test_seed_demo_records_the_creation_audit_events(tmp_path):
+    # The demo is the review-facing tour of a "load-bearing, not decorative"
+    # audit log: every seeded container must appear WITH its lifecycle event.
+    # Seeding through the bare data layer once shipped a project with no
+    # created_project event — a tour stop that materialized from nowhere.
+    db_path = tmp_path / "audit.db"
+    seeded = seed_demo(db_path)
+
+    conn = db.connect(db_path)
+    try:
+        events = activity.list_activity(conn, limit=500)
+    finally:
+        conn.close()
+    by_verb: dict[str, list] = {}
+    for event in events:
+        by_verb.setdefault(event["verb"], []).append(event)
+
+    assert len(by_verb["created_project"]) == 1
+    assert by_verb["created_project"][0]["target_id"] == seeded["ids"]["project"]
+    assert len(by_verb["space_created"]) == 1
+    assert by_verb["space_created"][0]["target_id"] == seeded["ids"]["space"]
+    assert len(by_verb["page_created"]) == 2
+    assert {e["target_id"] for e in by_verb["page_created"]} == {
+        seeded["ids"]["guide"],
+        seeded["ids"]["protocol"],
+    }
+
+
 def test_seed_demo_refuses_existing_database_and_attachment_paths(tmp_path):
     db_path = tmp_path / "existing.db"
     db_path.write_bytes(b"do not replace")

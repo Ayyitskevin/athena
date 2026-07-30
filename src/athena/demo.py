@@ -15,10 +15,10 @@ from pathlib import Path
 import sys
 
 from athena import config
-from athena.aegis import issue_commands, projects
+from athena.aegis import issue_commands, project_commands
 from athena.core import db, run_context, token_commands, tokens, user_commands, users
 from athena.mcp.config import claude_mcp_config
-from athena.mentor import page_activity, pages, space_activity, spaces
+from athena.mentor import page_commands, space_commands
 
 DEMO_EMAIL = "operator@athena.local"
 DEMO_PASSWORD = "athena-demo"
@@ -115,17 +115,15 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
             is_agent=True,
         )
 
-        # Project and Mentor lifecycle commands are explicit migration debt in
-        # docs/COMMAND_MIGRATION.md. This setup-only fixture follows their current
-        # data owners and existing activity helper where one exists; all issue writes
-        # below use the authoritative command. Do not copy these legacy paths into a
-        # transport.
-        project = projects.create_project(
+        # Every seeded write goes through its command owner, so the demo database
+        # — the review-facing tour of a load-bearing audit log — shows a complete
+        # trail: each project, space, and page appears WITH its creation event.
+        project = project_commands.create_project(
             conn,
+            actor_id=operator["id"],
             name="Athena Review",
             key="ATH",
             description="Synthetic work for the five-minute reviewer tour.",
-            created_by=operator["id"],
         )
         command_issue = issue_commands.create_issue(
             conn,
@@ -186,21 +184,16 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
         finally:
             run_context.reset_run_id(run_token)
 
-        space = spaces.create_space(
+        space = space_commands.create_space(
             conn,
+            actor_id=operator["id"],
             key="OPS",
             name="Operator Playbook",
             description="How the operator directs, observes, and intervenes.",
-            created_by=operator["id"],
         )
-        space_activity.record_space_created(
+        guide = page_commands.create_page(
             conn,
             actor_id=operator["id"],
-            space_id=space["id"],
-            name=space["name"],
-        )
-        guide = pages.create_page(
-            conn,
             space_id=space["id"],
             title="Fleet operating guide",
             body=(
@@ -209,20 +202,13 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
                 "`%s`.\n\nThe operator remains accountable for every merge."
                 % (command_issue["id"], DEMO_RUN_ID)
             ),
-            created_by=operator["id"],
-        )
-        page_activity.record_page_created(
-            conn,
-            actor_id=operator["id"],
-            page_id=guide["id"],
-            title=guide["title"],
-            body=guide["body"],
         )
 
         review_run_token = run_context.set_run_id("demo-terra-run-001")
         try:
-            protocol = pages.create_page(
+            protocol = page_commands.create_page(
                 conn,
+                actor_id=terra["id"],
                 space_id=space["id"],
                 parent_id=guide["id"],
                 title="Review protocol",
@@ -232,14 +218,6 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
                     "2. Inspect [[issue:%d]].\n"
                     "3. Run the complete local gate." % demo_issue["id"]
                 ),
-                created_by=terra["id"],
-            )
-            page_activity.record_page_created(
-                conn,
-                actor_id=terra["id"],
-                page_id=protocol["id"],
-                title=protocol["title"],
-                body=protocol["body"],
             )
         finally:
             run_context.reset_run_id(review_run_token)

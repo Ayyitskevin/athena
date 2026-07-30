@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor
+from athena.core.identity import admin_actor, enforce_anon_rate_limit
 
 router = APIRouter(tags=["forge"])
 
@@ -144,6 +144,13 @@ async def receive_forge_event(
     delivery that matches no issue is a **success**: authentic, understood, and
     about work this workspace does not track.
     """
+    # This is the one route with no actor to charge, so it charges the anonymous
+    # per-IP limiter ITSELF — before the source lookup, before the body read.
+    # Enumeration probes and 512KB-body HMAC work are not free: a burst against
+    # an unknown or paused source gets a 429, not a database hit. (Off when the
+    # anon limit is unconfigured, like every other anonymous path.)
+    enforce_anon_rate_limit(request)
+
     source = event_sources.get_source_by_name(conn, source_name)
 
     # Bound BEFORE reading: content-length is a claim, but an honest sender sets

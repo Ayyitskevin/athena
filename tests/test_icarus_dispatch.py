@@ -331,6 +331,102 @@ def test_a_replayed_callback_does_not_fork_the_record(tmp_path):
     assert len(_events(db_file, dispatch.VERB_TERMINAL)) == 1
 
 
+def test_record_terminal_never_resettles_a_dispatch(tmp_path):
+    # The predicated UPDATE is the backstop for the callback race: a terminal
+    # write against an already-settled dispatch is a 0-row no-op (False), never
+    # an overwrite — so a late conflicting callback cannot flip the outcome even
+    # if its view of the row was stale.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+    conn = db.connect(db_file)
+    try:
+        assert (
+            dispatch.record_terminal(
+                conn,
+                dispatch_id=record["id"],
+                state="completed",
+                completion_ref="ref-first",
+            )
+            is True
+        )
+        conn.commit()
+        assert (
+            dispatch.record_terminal(
+                conn,
+                dispatch_id=record["id"],
+                state="failed",
+                completion_ref="ref-second",
+            )
+            is False
+        )
+        conn.commit()
+        final = dispatch.get_dispatch(conn, record["id"])
+        assert final["state"] == "completed"
+        assert final["completion_ref"] == "ref-first"
+    finally:
+        conn.close()
+
+
+def test_racing_terminal_callbacks_settle_exactly_once(tmp_path):
+    # Two workers' callbacks can arrive together under a multi-worker deployment.
+    # The first to commit wins; the loser is accepted (202) and ignored — no
+    # flipped outcome, no duplicate terminal event. Regression test for the row
+    # being read BEFORE BEGIN IMMEDIATE with an unconditional terminal UPDATE:
+    # the loser's stale snapshot said "open" and its write flipped the winner's
+    # outcome.
+    import threading
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+
+        barrier = threading.Barrier(2)
+        statuses: list[int] = []
+
+        def settle(outcome):
+            client = TestClient(app)
+            barrier.wait(timeout=5)
+            statuses.append(
+                _callback(
+                    client,
+                    {
+                        "icarus_run_id": "icarus-run-1",
+                        "policy_digest": record["policy_digest"],
+                        "completion_ref": f"ref-{outcome}",
+                        "outcome": outcome,
+                    },
+                ).status_code
+            )
+
+        threads = [
+            threading.Thread(target=settle, args=(outcome,))
+            for outcome in ("completed", "failed")
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(statuses) == [202, 202]
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+        # Whichever won, the record is coherent: the ref belongs to the outcome.
+        assert final["state"] in ("completed", "failed")
+        assert final["completion_ref"] == f"ref-{final['state']}"
+
+    events = _events(db_file, dispatch.VERB_TERMINAL)
+    assert len(events) == 1
+    assert events[0]["detail"].startswith(final["state"])
+
+
 def test_the_same_intent_dispatched_twice_is_one_dispatch(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:

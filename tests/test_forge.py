@@ -21,7 +21,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from athena.core import forge_events
+from athena.core import db, forge_events
 from athena.core.forge_events import ForgeEventError
 from athena.main import create_app
 
@@ -34,6 +34,18 @@ def _app(tmp_path, name="forge.db"):
 
 def _bootstrap(client):
     client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
+
+
+def _seed_operator(db_file):
+    """An admin user WITHOUT spending anon-limit budget: the HTTP bootstrap
+    (POST /users) is itself an anonymous call and would be charged against the
+    very limit the burst tests measure."""
+    conn = db.connect(db_file)
+    conn.execute(
+        "INSERT INTO users (email, name, role) VALUES ('a@e.com', 'A', 'admin')"
+    )
+    conn.commit()
+    conn.close()
 
 
 def _sign(secret: str, body: bytes) -> str:
@@ -291,6 +303,79 @@ def test_a_paused_source_is_refused_without_impugning_its_credential(tmp_path):
             _deliver(c, "gh", "push", _push("ATH-1 x"), source["secret"]).status_code
             == 403
         )
+
+
+# --- the endpoint: the unauthenticated route is rate limited -----------------
+
+
+def test_a_delivery_burst_is_rate_limited(tmp_path):
+    # The forge route is the ONE endpoint with no actor to charge, so it charges
+    # the anonymous per-IP limiter itself — otherwise enumeration probes and
+    # 512KB-body HMAC work are free. Charged BEFORE the body read, so even valid
+    # deliveries 429 once the budget is spent.
+    app = create_app(tmp_path / "burst.db", anon_rate_limit_per_minute=2)
+    with TestClient(app) as c:
+        _seed_operator(tmp_path / "burst.db")
+        source = _source(c)
+        _project_issue(c)
+        for _ in range(2):
+            assert (
+                _deliver(
+                    c, "gh", "push", _push("ATH-1 x"), source["secret"]
+                ).status_code
+                == 202
+            )
+        limited = _deliver(c, "gh", "push", _push("ATH-1 x"), source["secret"])
+        assert limited.status_code == 429
+        assert limited.json() == {"detail": "anonymous rate limit exceeded"}
+        assert 1 <= int(limited.headers["retry-after"]) <= 60
+
+
+def test_a_burst_against_an_unknown_or_paused_source_is_rate_limited(tmp_path):
+    # The limiter is charged BEFORE the source lookup too: hammering an unknown
+    # (or paused) source name 429s instead of doing a database read plus a
+    # stand-in-secret HMAC per attempt.
+    app = create_app(tmp_path / "burst2.db", anon_rate_limit_per_minute=2)
+    with TestClient(app) as c:
+        _seed_operator(tmp_path / "burst2.db")
+        source = _source(c)
+        c.put(
+            f"/event-sources/{source['id']}/enabled",
+            json={"enabled": False},
+            headers=H1,
+        )
+        # Unknown source: 401 (indistinguishable from a bad signature) ...
+        assert (
+            _deliver(c, "nosuch", "push", _push("ATH-1 x"), "whatever").status_code
+            == 401
+        )
+        # ... paused source: 403 — and the THIRD attempt, whichever it names, is
+        # a 429 that never touches the database.
+        assert (
+            _deliver(c, "gh", "push", _push("ATH-1 x"), source["secret"]).status_code
+            == 403
+        )
+        assert (
+            _deliver(c, "gh", "push", _push("ATH-1 x"), source["secret"]).status_code
+            == 429
+        )
+
+
+def test_the_forge_limit_is_off_by_default(tmp_path):
+    # Same default as every other anonymous path: with no anon limit configured,
+    # deliveries are unthrottled so a busy forge is never refused by a limit the
+    # operator never set.
+    with TestClient(_app(tmp_path)) as c:
+        _bootstrap(c)
+        source = _source(c)
+        _project_issue(c)
+        for _ in range(6):
+            assert (
+                _deliver(
+                    c, "gh", "push", _push("ATH-1 x"), source["secret"]
+                ).status_code
+                == 202
+            )
 
 
 def test_registering_a_source_is_admin_only_and_the_secret_is_shown_once(tmp_path):
