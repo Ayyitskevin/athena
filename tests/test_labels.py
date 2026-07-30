@@ -179,6 +179,26 @@ def test_create_duplicate_label_is_409(tmp_path):
         assert r.status_code == 409
 
 
+def test_create_label_duplicate_name_race_is_409_not_500(tmp_path, monkeypatch):
+    # WHY: two concurrent creates of the same name both pass the pre-check, and
+    # the loser hits the UNIQUE constraint. That IntegrityError must surface as
+    # the same 409 the pre-check would have given — the race must not be a 500.
+    db_file = tmp_path / "a2r.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_three_users(db_file)
+        _create_label(client, "bug")
+        # Stand in for the interleaving the pre-check cannot see: the row
+        # exists, but this request's lookup ran before the winner committed.
+        monkeypatch.setattr(labels, "get_label_by_name", lambda conn, name: None)
+        r = client.post(
+            "/labels", json={"name": "bug"}, headers={"X-Athena-Actor": "1"}
+        )
+        assert r.status_code == 409
+        assert r.json()["detail"] == "label already exists"
+        assert [label["name"] for label in client.get("/labels").json()] == ["bug"]
+
+
 def test_create_empty_label_name_is_422(tmp_path):
     db_file = tmp_path / "a3.db"
     app = create_app(db_file)

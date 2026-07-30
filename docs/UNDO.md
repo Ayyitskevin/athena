@@ -94,8 +94,10 @@ per-project and remapped by a move; an assignee is not.
 
 Classified and refused today: comments and attachments (`one_way` — delete them
 explicitly), destroyed rows such as `page_deleted` / `space_deleted` /
-`deleted_project` (`trapdoor`), and `page_edited` (`one_way` — page history
-already keeps the prior version, so restore it explicitly).
+`deleted_project` (`trapdoor`), `page_edited` (`one_way` — page history
+already keeps the prior version, so restore it explicitly), and
+`overrode_blocked_issue_close` (`one_way` — a policy override is a decision on
+the record, not a state to flip).
 
 ## Guarantees
 
@@ -143,7 +145,7 @@ reversal with the event it undid.
 
 ## Limitations
 
-- Seven verbs are reversible (the four archive/label pairs, `changed_status`,
+- Eleven verbs are reversible (the four archive/label pairs, `changed_status`,
   and `assigned`/`unassigned`); everything else is refused, with a reason.
 - There is no bulk undo, and no "undo this whole run" — each event is its own
   decision.

@@ -181,6 +181,26 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
+- **Wave H-2: documentation reconciliation, and one real bug found while
+  verifying it** (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  - `POST /labels` answered 500 on a duplicate-name race: two concurrent creates
+    both passed the pre-check, and the loser surfaced the UNIQUE-constraint
+    `IntegrityError` unhandled. It now maps to the same 409 the pre-check would
+    have given, with a regression test that stands in for the lost race.
+  - The docs named by the review's honesty pass are reconciled with the code:
+    FORGE.md (event-source secrets are stored plaintext for HMAC, unlike hashed
+    API tokens; the github.com webhook shape needs a tunnel or scoped reverse
+    proxy, and says so), RELEASE_READINESS.md (gate re-run at HEAD — 148
+    modules, 69 migrations, 2,633 tests — with the Stage M–P risks added and
+    HOLD re-affirmed), COMMAND_MIGRATION.md (saved filters, watches, read-marks,
+    standalone label create, and the Stage M–P surfaces now have rows; the
+    transport-side authorization debt the "None known" columns hid is recorded),
+    UNDO.md (eleven reversible verbs, not seven), this file's 0.1.0a1 section
+    (status/assignee undo and the approval-kind count no longer contradict the
+    entries beside them), AGENT_BUDGETS.md (dispatch, template, and daily-note
+    charges added to the metered-writes table), and ARCHITECTURE.md (the stale
+    "Phase 3 (current)" marker and the phase-numbering collision with
+    ROADMAP.md are resolved).
 - **Wave H-0: the five stop-ship defects from the adversarial review**
   (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - Event-source CRUD now enforces the admin **token scope** through the same
@@ -424,23 +444,28 @@ like the two below it.
   cheerful no-op: every compensator is idempotent at the domain layer, so "nothing
   was recorded" means the effect is no longer in force. Single use is enforced by a
   partial unique index rather than a read-then-write check, so two concurrent undos
-  cannot both compensate. Reversible today: issue archive/unarchive and
-  label/unlabel, page archive/unarchive and label/unlabel — four pairs whose
+  cannot both compensate. Reversible when this shipped: issue archive/unarchive
+  and label/unlabel, page archive/unarchive and label/unlabel — four pairs whose
   inverse needs no prior state. Everything else is refused *with its class*:
   one-way (a comment people read, a published attachment), trapdoor (a destroyed
   row), or unclassified. Imported history and events the actor cannot see are never
   undoable. Surfaced through `POST /activity/{event_id}/undo`, the
   `reverses_event_id` field on every event read, MCP `undo_action`, and an Undo
-  control on reversible rows of the activity feed. See [docs/UNDO.md](docs/UNDO.md)
-  — including why `changed_status` and `assigned` are *not* reversible: their
-  inverse needs the prior value, and `detail` is human-readable prose rather than
-  structured before/after. This is undo by compensation for a bounded set of
-  actions, not general undo.
+  control on reversible rows of the activity feed. See [docs/UNDO.md](docs/UNDO.md).
+  **This entry described the first slice and its tail is corrected here:** it
+  originally closed by explaining why `changed_status` and `assigned` were *not*
+  reversible. Both became reversible later in this same cycle — status from the
+  structured prior state 0055 had recorded all along, assignee from the new 0068
+  facts — and are documented under Added above. The reversible set at this
+  milestone is eleven verbs, not four pairs. This is undo by compensation for a
+  bounded set of actions, not general undo.
 - Human-in-the-loop **approval gates** — VISION's Intervene step promised the
   operator can "approve/reject risky actions"; the only gate before this was the
   per-project blocked-close policy, which can refuse but cannot *ask*. An admin can
   now require operator approval before a chosen actor takes a chosen action kind
-  (`issue.close` today). The gated write is refused with `202` and a recorded ask
+  (`issue.close` when this shipped; `dispatch.request` joined the vocabulary when
+  dispatch stopped borrowing the close kind — see Fixed below, so the kinds at
+  this milestone are two, each naming one intent). The gated write is refused with `202` and a recorded ask
   naming who wanted to do what to which target, carrying the requesting run's id;
   the operator approves, and the **agent retries** the same write.
   Deliberately **gate + retry, not deferred execution**: Athena never stores a
@@ -461,7 +486,7 @@ like the two below it.
   step is audited (`approval_requested`, `approval_approved`, `approval_rejected`,
   `approval_consumed`, `approval_policy_set`, `approval_policy_cleared`). See
   [docs/APPROVALS.md](docs/APPROVALS.md) for the guarantees and the limitations —
-  one action kind, no expiry, no bulk decide, no un-reject.
+  two action kinds, no expiry, no bulk decide, no un-reject.
 - Durable per-agent **action budgets** — the bounded half of "attributable,
   reversible, and bounded". An admin caps how many metered writes an agent may
   make per fixed window (`hour` or `day`); the charge is folded into the metered

@@ -4,24 +4,37 @@ This page records the evidence behind the `0.1.0a1` milestone. It is a checklist
 not a declaration that Athena is production-ready. The supported deployment
 remains one Python 3.12 process/worker on a trusted local machine or tailnet;
 direct public-internet, hostile multi-tenant, multi-process, and HA use remain
-outside the security claim.
+outside the security claim — **with one named exception since Stage P**: the
+forge delivery route (`POST /forge/{source_name}`) is built to be reached by a
+public forge through a tunnel or reverse proxy scoped to that route alone (see
+[FORGE.md](FORGE.md)). Everything else stays tailnet-only.
 
 ## Decision
 
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
 alpha the project actually claims to be.**
 
-Every required repository gate passes locally and on hosted GitHub Actions at the
-exact PR head. The remaining blockers below are **not waived by green tests** —
-they are supply-chain and repository-settings items, and accepting them is a
-human release owner's decision, not something a test can make.
+Re-affirmed 2026-07-30 after the Stage M–P expansion, the adversarial review of
+the merged tree (grade 7/10 — see OPUS_REMEDIATION_GUIDE_ATHENA.md), and the
+H-0/H-1/H-2 remediation waves that followed it. Every required repository gate
+passes locally at the named commit. The remaining blockers below are **not
+waived by green tests** — they are supply-chain, deployment-shape, and
+repository-settings items, and accepting them is a human release owner's
+decision, not something a test can make.
 
-## Evidence (2026-07-26)
+## Evidence (2026-07-30, refreshed)
 
-Commit: `091528f4d7438cc359c288b7324dace88960f528` (`origin/main` at Stage L start;
-this branch adds only the packaging fix and this document).
-Environment: Linux, CPython 3.12, exact `constraints/ci-py312.txt` graph.
-Local evidence time: `2026-07-26T19:42:51Z`.
+This run supersedes the Stage L evidence (2026-07-26, quoted below for the
+record) — the tree has since gained Stages M–P (query grammar, live embeds,
+knowledge graph, forge integration), the adversarial-review remediation waves
+H-0/H-1, and wave H-2's `POST /labels` duplicate-race fix.
+
+Commit: `2ed40b29485758acb5b0e48c4db0d000aacc966b` (`kimi/wave-h2-docs-reconciliation`;
+the branch adds the H-2 documentation reconciliation and the `POST /labels`
+409-on-race fix in the working tree).
+Environment: Linux, CPython 3.12.13, exact `constraints/ci-py312.txt` graph in a
+fresh venv (`/tmp/athena-gate-venv`).
+Local evidence time: `2026-07-30T15:47Z`.
 
 ### Required gate
 
@@ -35,7 +48,7 @@ Local evidence time: `2026-07-26T19:42:51Z`.
 .venv/bin/python scripts/check_import_contracts.py
 .venv/bin/python scripts/smoke_app.py
 .venv/bin/python scripts/field_exercise.py
-scripts/coverage.sh /tmp/athena-final-coverage
+ATHENA_PYTHON=.venv/bin/python scripts/coverage.sh /tmp/athena-h2-coverage
 # Then the sdist-derived wheel recipe in CONTRIBUTING.md.
 ```
 
@@ -44,13 +57,13 @@ scripts/coverage.sh /tmp/athena-final-coverage
 | Dependency metadata | `pip check`: no broken requirements | PASS |
 | Dependency freeze | exact constrained freeze diff empty | PASS |
 | Ruff lint | `ruff check .` passed | PASS |
-| Ruff formatting | 350 files already formatted | PASS |
-| Whole-runtime typing | mypy: no issues in 135 source files | PASS |
-| Import contracts | 135 runtime modules, no forbidden dependencies | PASS |
-| Required suite | 2,300 passed, 0 skipped (`-ra` reports none) — 2,299 at the base commit plus the sdist-completeness guard added below | PASS |
-| Coverage (enforced) | line 15,489/16,682 = 92.84858% (floor 92.60); branch 4,018/4,856 = 82.74300% (floor 82.30); combined 19,507/21,538 = 90.57016% (floor 90.30); 2 excluded lines | PASS |
+| Ruff formatting | 368 files already formatted | PASS |
+| Whole-runtime typing | mypy: no issues in 148 source files | PASS |
+| Import contracts | 148 runtime modules, no forbidden dependencies | PASS |
+| Required suite | 2,633 passed, 0 skipped (`-ra` reports none) — the Stage L suite plus Stages M–P, the H-0/H-1 regressions, and the `POST /labels` duplicate-race regression added in this wave | PASS |
+| Coverage (enforced) | line 16,730/18,022 = 92.83098% (floor 92.60); branch 4,401/5,306 = 82.94384% (floor 82.30); combined 21,131/23,328 = 90.58213% (floor 90.30); 2 excluded lines | PASS |
 | Process smoke | fresh database, no-data metrics/active-work contracts, packaged assets, bounded stop | PASS |
-| Field exercise | 18 steps over real loopback HTTP against a real reference executor, from the checkout **and** from the extracted sdist | PASS |
+| Field exercise | 22 steps over real loopback HTTP against a real reference executor, from the checkout **and** from the extracted sdist | PASS |
 | Test warnings | 1 warning, accounted for below | ACCOUNTED |
 
 ### Distribution
@@ -58,18 +71,32 @@ scripts/coverage.sh /tmp/athena-final-coverage
 | Check | Observed evidence | Status |
 |---|---|---|
 | Artifact counts | exactly one sdist and one sdist-derived wheel | PASS |
-| Wheel runtime manifest | verified from the checkout **and** from the extracted sdist: 68 migrations, 4 static assets, 46 templates | PASS |
-| Import contracts from sdist | 135 modules, no forbidden dependencies | PASS |
-| sdist helper completeness | `scripts/` **and** `examples/` present; the field exercise runs from the extracted tree | PASS (after the fix below) |
+| Wheel runtime manifest | verified from the checkout **and** from the extracted sdist: 69 migrations, 4 static assets, 49 templates | PASS |
+| Import contracts from sdist | 148 modules, no forbidden dependencies | PASS |
+| sdist helper completeness | `scripts/` **and** `examples/` present; the field exercise runs from the extracted tree | PASS |
 | Installed-wheel external boot | wheel installed with no dependency breakage; `athena.__file__` resolved inside `site-packages`; process smoke passed from `/tmp`; constrained editable install restored with an exact freeze | PASS |
 
-Artifact SHA-256 (post-fix build):
+Artifact SHA-256 (this run):
 
-- sdist: `957924c149a6ba5624938c0e0e2ebe6886dde1394cdc40b0ff6e1fd1e3f94580`
-- sdist-derived wheel: `f289b5c30e5f39076ec5e70fc4f8c62ba38bb9c9696b2acc739f244ab2a223e6`
+- sdist: `636fd30c3984f058ceddc6cea73ebee2b9d50330728a0d92e5dc7efee8e2b947`
+- sdist-derived wheel: `39277d80031f8395162b6ec00b19e4ce8114d28782023fd913ca2f5efb0dc877`
 
 Artifact hashes are inputs to a build, not a supply-chain guarantee: nothing here
 is signed or attested (see blockers).
+
+One environment note, for honesty rather than alarm: the long-lived `.venv312`
+development venv has **drifted** from the constrained graph (it carries extra
+`mcp-types` and `opentelemetry-api` installs, and `uv pip freeze` normalizes
+distribution names differently from `pip freeze`). The gate above was therefore
+run in a fresh venv built exactly as CI builds it, where the freeze diff is
+empty. Recreate stale development venvs rather than trusting them for evidence.
+
+## Evidence (2026-07-26, Stage L — superseded)
+
+Commit: `091528f4d7438cc359c288b7324dace88960f528` (`origin/main` at Stage L start;
+this branch adds only the packaging fix and this document).
+Environment: Linux, CPython 3.12, exact `constraints/ci-py312.txt` graph.
+Local evidence time: `2026-07-26T19:42:51Z`.
 
 ### What this gate caught
 
@@ -81,38 +108,51 @@ source distribution. Fixed on this branch, and pinned by a test that asserts
 `MANIFEST.in` ships whatever directory the exercise spawns from. The exercise now
 passes from an extracted sdist, which is the evidence recorded above.
 
+The 2026-07-30 re-run caught no new defect — it exists because four stages of
+code landed after the first run, not because the gate found something. The
+defects found *between* the runs were found by the adversarial review and its
+remediation waves (H-0/H-1, and H-2's `POST /labels` duplicate-race 500), each
+with its regression test, not by re-running this gate.
+
 ### Accounted-for test warning
 
-One warning, from a pinned third-party interaction, not from Athena:
+One warning, from a pinned third-party interaction, not from Athena. Observed in
+the 2026-07-30 run as:
 
 ```
+tests/test_agent_budgets.py::test_concurrent_writes_cannot_both_spend_the_last_unit
 pydantic 2.13.4 / _generate_schema.py: UnsupportedFieldAttributeWarning
-  The 'alias' attribute with value 'authorization' was provided to the
+  The 'alias' attribute with value 'X-Athena-Actor' was provided to the
   `Field()` function, which has no effect in the context it was used.
 ```
 
-FastAPI 0.139.0 declares `authorization: str | None = Header(default=None)` on
-Athena's actor-resolution dependencies; pydantic warns because the alias reaches
-its schema builder attached to a union member, where pydantic itself would ignore
-it. **FastAPI, not pydantic, applies that alias**, and the behavior is verified
-rather than assumed: bearer credentials resolve their agent and an invalid bearer
-is refused with 401, across the whole suite. The warning is recorded here instead
-of being silenced with a `filterwarnings` entry, because suppressing it would hide
-the same class of warning if it ever appeared on a field Athena does own.
+FastAPI 0.139.0 declares `authorization: str | None = Header(default=None)` and
+`x_athena_actor: str | None = Header(default=None, alias="X-Athena-Actor")` on
+Athena's actor-resolution dependencies (`core/identity.py`); pydantic warns
+because the alias reaches its schema builder attached to a union member, where
+pydantic itself would ignore it. (Which of the two Header aliases the warning
+names has varied between runs — at Stage L it was `authorization`; the mechanism
+is the same.) **FastAPI, not pydantic, applies that alias**, and the behavior
+is verified rather than assumed: bearer credentials resolve their agent, the
+actor header resolves only when explicitly trusted, and an invalid bearer is
+refused with 401, across the whole suite. The warning is recorded here instead
+of being silenced with a `filterwarnings` entry, because suppressing it would
+hide the same class of warning if it ever appeared on a field Athena does own.
 
 ## Operational and security evidence
 
 | Area | Evidence | Status |
 |---|---|---|
 | Configuration | Strict booleans, finite/ranged numerics, known log levels, all-or-none OIDC; malformed configuration aborts startup | PASS |
-| Schema/readiness | 68 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; `/readyz` fails closed without leaking detail | PASS |
+| Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; `/readyz` fails closed without leaking detail | PASS |
 | Restore | Candidate `quick_check`, private stages, file/directory sync, atomic replacement, sidecar-cleanup rollback, retained recovery on double failure | PASS |
 | Attachments | Private atomic publication, metadata+audit transaction, no-follow descriptor download, observable attempt-all cleanup, deterministic reconciliation | PASS |
 | Exports | Private unique JSON stage, file/directory sync, atomic replace, bounded portability snapshot | PASS |
 | Cache policy | Cookie/session/authenticated/download/mutation responses use private/no-store policy while preserving `Vary` | PASS |
 | Lifecycle | Both background tasks are cancelled and awaited; non-cancellation failures surface | PASS |
 | Egress | SSRF guard (scheme, address class, DNS pin, no redirects) on every outbound POST; private-address egress is opt-in per exact hostname via `ATHENA_EGRESS_PRIVATE_HOSTS`, empty by default | PASS |
-| Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
+| Forge inbound | Signature verified before the payload is parsed on a route that declares no body model; bad/missing signature and unknown source collapse to one 401 (unknown sources pay the same HMAC work); the anonymous per-IP limiter is charged before any source lookup or body read; a closed three-event vocabulary; landed events are imported history, excluded from undo, lifecycle facts, handoffs, assignee facts, fleet metrics, the attention rollup, security counters, and the automation event scan | PASS |
+| Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt — including transport-side authorization on the mentor page/comment, issue-comment, and event-source commands — is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
 | Dependency/security scan | No reproducible scanner is pinned in the repository contract | NOT RUN |
@@ -134,6 +174,32 @@ resolved by a green test run.
 - **Deployment shape.** Public-internet exposure, hostile multi-tenancy, multiple
   workers/processes, leader election, and HA recovery are unsupported. Rate limits
   are in-process.
+- **The project now has its first unauthenticated public endpoint** (Stage P).
+  `POST /forge/{source_name}` is designed to be reached by a stranger — that is
+  the feature — so HMAC verification is the *entire* gate, and the assumptions
+  around it are new: the anonymous per-IP limiter that brakes unsigned bursts is
+  **off by default** (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`), there is deliberately
+  no signature replay window (a valid redelivery lands again), and event-source
+  secrets are stored **plaintext** because HMAC needs the shared value — a
+  database leak that would expose only token hashes elsewhere exposes live source
+  secrets here. The adversarial review already broke two of this surface's
+  documented guarantees by execution (an enumeration oracle; automation firing on
+  imported history); both are fixed in wave H-0 with regression tests, but the
+  route has not yet survived a second hostile pass.
+- **Authorization still lives in some transports.** The mentor page and
+  page-comment commands, the issue-comment commands, and the event-source
+  commands take a bare actor id and trust the route's guards; the command owns
+  the write and its audit, not the gate (enumerated in
+  [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md)). Every shipped transport applies
+  the checks — the debt is that a *future* caller of those commands inherits no
+  enforcement, and the migration rules say the gate belongs inside.
+- **Stages M–P landed after the original gate run.** The query grammar, live
+  embeds, the knowledge graph, and the forge integration were built after the
+  2026-07-26 evidence below was recorded, and the 7/10 adversarial review is the
+  only hostile pass they have had. The review's verified defects are fixed
+  (waves H-0/H-1, each with its regression test) and the documentation drift it
+  named is reconciled (wave H-2, including this page), but "fixed once, reviewed
+  once" is not "hardened".
 - **Attachment recovery** still requires an operator-created matched
   database-plus-directory snapshot. Reconciliation detects but does not repair
   missing, tampered, or orphaned blobs.

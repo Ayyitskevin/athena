@@ -134,6 +134,11 @@ check without importing application code.
 
 ## Roadmap (dogfood-first)
 
+These phases are the **original build plan** (Phase 0–4), kept as the record of
+how the system was bootstrapped. The **current** plan and its phase numbering
+live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
+"Phase N" in this section as history, not as ROADMAP.md's Phase N.
+
 - **Phase 0 — Project setup** *(done)*: repo, skeleton, dev environment,
   first commit, GitHub remote.
 - **Phase 1 — Core + Aegis** *(done)*: auth, users, agent tokens, DB +
@@ -142,11 +147,11 @@ check without importing application code.
 - **Phase 2 — Mentor** *(done)*: spaces, page tree, versions (with restore),
   and the cross-links/backlinks that justify one workspace — tracked in Aegis
   along the way.
-- **Phase 3 — Migration tooling** *(current)*: the generic machinery is built —
-  selective export bundles, read-only dry-run validation, replay manifests,
-  manifest-gated import, plus Jira/Confluence source mappers. Still open: the
-  markdown-vault (wikilinks) → Mentor and hosted-tracker → Aegis mappers,
-  then dry-run, verify, cut over.
+- **Phase 3 — Migration tooling** *(mostly done)*: the generic machinery is
+  built — selective export bundles, read-only dry-run validation, replay
+  manifests, manifest-gated import, plus Jira/Confluence source mappers.
+  Still open: the markdown-vault (wikilinks) → Mentor and hosted-tracker →
+  Aegis mappers, then dry-run, verify, cut over.
 - **Phase 4 — Fleet wiring & polish** *(largely done, landed alongside 2-3)*:
   MCP server, outbound webhooks, event and bounded UTC schedule automation rules,
   durable per-slot/per-target schedule receipts with synthetic activity lineage,
