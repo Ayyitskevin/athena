@@ -163,6 +163,13 @@ the newest one and for what tagging still requires.
   merge). Saved filters validate their query at write time, so one that could
   never run cannot be stored.
 
+### Fixed
+
+- Supplied MCP issue-list sprint IDs now accept only JSON integers within
+  SQLite's bounds; booleans, numeric strings, and floats fail before REST dispatch.
+- MCP read-tool failures now preserve the same machine-readable HTTP status,
+  error code, retry delay, and current ETag metadata as mutation-tool failures.
+
 ### Changed
 
 - **The default-status→category mapping now has exactly one definition.**
