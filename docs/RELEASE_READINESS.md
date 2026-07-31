@@ -37,12 +37,35 @@ rehearses migration on an in-memory copy before writing the real file, and
 requires the first administrator to set a bounded password before the normal
 launcher can succeed.
 
-The installed-wheel smoke now proves two real process lifecycles over one
-parent-held listener: credentialed bootstrap, clean stop, removal of bootstrap
-and actor-header trust, normal restart against the same database, browser login,
-packaged assets, authenticated web projection, and bounded shutdown. Exact local
-gate results and hosted CI at the final PR head are still pending in this
-candidate and therefore do **not** supersede the named 2026-07-30 evidence below.
+Implementation commit:
+`1596270e408692760f01828fbd089bcb8fe1b78c`
+(`codex/deployment-preflight-hardening`).
+Environment: Linux, CPython 3.12.3, exact
+`constraints/ci-py312.txt` graph in fresh venv
+`/tmp/athena-deployment-gate.K9CbwR/venv`.
+Local evidence time: `2026-07-31T08:26Z`.
+
+The exact required gate passed: dependency check and freeze diff, Ruff check and
+format check (374 files), mypy (149 source files), all three architecture
+checkers, and 2,833 tests. Coverage was 92.76827% line
+(17,446/18,806), 83.03030% branch (4,658/5,610), and 90.53080%
+combined (22,104/24,416), above every configured floor. The one previously
+documented FastAPI/Pydantic alias warning remains.
+
+The sdist-derived wheel was verified from both the checkout and extracted source:
+69 migrations, 4 static assets, 49 templates, the required console script, and
+149 import-contract modules. After installation outside the checkout, it passed
+the real two-lifecycle bootstrap/restart smoke and the 22-step HTTP field
+exercise. Artifact SHA-256:
+
+- sdist: `d622cfe47df1e6ef231dd2c2b33b37e0eec0130978f23f3efcec6ceab6f61d07`
+- wheel: `a946bb1733b635ac44d17806e38b3545550b690fa5dcc2e05b1f25a9058793d5`
+
+Independent architecture and adversarial reviews both returned `PASS` with no
+blocking finding. The adversarial authority matrix found no parser acceptance
+among 69,156 libc legacy-IPv4 forms and no mismatch across 18,294 accepted DNS
+names checked against Node's WHATWG URL parser. Hosted CI at the exact final PR
+head remains pending, so this local evidence does not authorize merge or release.
 The public-release decision remains `HOLD`: Athena cannot observe whether a
 proxy, tunnel, NAT rule, container publication, or Tailscale Funnel exposes an
 otherwise allowed listener.
@@ -169,7 +192,7 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Area | Evidence | Status |
 |---|---|---|
 | Configuration | Strict booleans, finite/ranged numerics, known log levels, all-or-none OIDC; malformed configuration aborts startup | PASS |
-| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, and installed two-process bootstrap/restart smoke | PENDING FINAL CANDIDATE GATE |
+| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, installed two-process bootstrap/restart smoke, and independent architecture/adversarial review | LOCAL PASS; HOSTED CI PENDING |
 | Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; deployment doctor/launcher additionally require exact logical-schema equality; bootstrap dry-runs migration before the real write; `/readyz` fails closed without leaking detail | PASS |
 | Restore | Candidate `quick_check`, private stages, file/directory sync, atomic replacement, sidecar-cleanup rollback, retained recovery on double failure | PASS |
 | Attachments | Private atomic publication, metadata+audit transaction, no-follow descriptor download, observable attempt-all cleanup, deterministic reconciliation | PASS |
