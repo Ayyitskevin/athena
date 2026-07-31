@@ -7,12 +7,14 @@ the data-access layer in core/users.py does the SQL.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from athena import config
 from athena.core import agent_commands, approvals, budgets, user_commands, users
 from athena.core.deps import get_conn
 from athena.core.identity import (
@@ -26,6 +28,7 @@ from athena.mcp.config import claude_mcp_config
 router = APIRouter(prefix="/users", tags=["core"])
 
 Role = Literal["admin", "member", "viewer"]
+BOOTSTRAP_TOKEN_HEADER = "X-Athena-Bootstrap-Token"
 
 _USER_COMMAND_STATUS = {
     "unauthorized": 401,
@@ -43,6 +46,25 @@ def _user_command_http(exc: user_commands.UserCommandError) -> HTTPException:
         status_code=_USER_COMMAND_STATUS[exc.kind],
         detail=exc.detail,
     )
+
+
+def _bootstrap_token_matches(presented: str | None) -> bool:
+    """Authenticate the one fresh-database administrator grant.
+
+    The configured value is validated as bounded ASCII at process startup. Treat a
+    malformed request header as an ordinary failed credential rather than letting
+    ``compare_digest`` raise on non-ASCII input.
+    """
+    expected = config.BOOTSTRAP_TOKEN
+    if not expected or presented is None:
+        return False
+    try:
+        presented_bytes = presented.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    if not 32 <= len(presented_bytes) <= 255:
+        return False
+    return secrets.compare_digest(expected.encode("ascii"), presented_bytes)
 
 
 class UserCreate(BaseModel):
@@ -152,16 +174,41 @@ class UserMeOut(UserOut):
 @router.post("", response_model=UserOut, status_code=201)
 def create(
     payload: UserCreate,
+    request: Request,
+    bootstrap_token: str | None = Header(default=None, alias=BOOTSTRAP_TOKEN_HEADER),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    # Bootstrap exception: the very first user is created without authentication,
-    # because on a fresh install there is nobody to authenticate as yet. The first
-    # user is always admin so a deploy cannot accidentally lock itself out. After
+    # Bootstrap exception: there is no existing actor on a fresh database, so the
+    # operator presents a separate one-time credential from process configuration.
+    # Empty configuration disables the grant. The first user is always admin; after
     # bootstrap, only admins may add users or assign roles.
+    if actor is None and request.headers.getlist("Idempotency-Key"):
+        # The idempotency layer has no established principal to bind a bootstrap
+        # receipt to. Reject the key for every unauthenticated user-create request
+        # before reading bootstrap state, rather than silently ignoring its promise
+        # or revealing whether the database is empty. Use the canonical anonymous
+        # refusal so an invalid/revoked actor remains indistinguishable too.
+        raise HTTPException(
+            status_code=401,
+            detail="authentication required",
+        )
     existing = users.count_users(conn)
     is_bootstrap = existing == 0
-    if not is_bootstrap:
+    if is_bootstrap:
+        raw_bootstrap_tokens = request.headers.getlist(BOOTSTRAP_TOKEN_HEADER)
+        presented_bootstrap_token = (
+            bootstrap_token
+            if len(raw_bootstrap_tokens) == 1
+            and raw_bootstrap_tokens[0] == bootstrap_token
+            else None
+        )
+        if not _bootstrap_token_matches(presented_bootstrap_token):
+            # Same refusal as every anonymous post-bootstrap attempt: do not reveal
+            # whether the database is empty or a bootstrap credential is configured.
+            # Duplicate or proxy-coalesced credential headers fail the same way.
+            raise HTTPException(status_code=401, detail="authentication required")
+    else:
         if actor is None:
             raise HTTPException(status_code=401, detail="authentication required")
         require_admin(actor)

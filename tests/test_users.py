@@ -16,7 +16,7 @@ _AUTH = {"X-Athena-Actor": "1"}
 def test_create_then_fetch_and_list_user(tmp_path):
     app = create_app(tmp_path / "users.db")
     with TestClient(app) as client:
-        # First user: bootstrap, no auth required.
+        # First user: the suite fixture supplies the bootstrap transport grant.
         created = client.post(
             "/users", json={"email": "kevin@example.com", "name": "Kevin"}
         )

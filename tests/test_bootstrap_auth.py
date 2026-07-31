@@ -5,9 +5,10 @@ The contract these encode:
 - The X-Athena-Actor header is NOT trusted by default. An unconfigured instance
   exposed to the network must reject a spoofed identity header — only a real
   bearer token (or an explicitly enabled header on a trusted box) authenticates.
-- First-run bootstrap still works: the very first user can be created without
-  authentication (nobody could be authenticated yet), and the header can be
-  explicitly enabled to mint that first user's first token.
+- First-run bootstrap requires a separate high-entropy credential from process
+  configuration. Empty configuration, a missing header, and a wrong header all
+  refuse with the same 401 as a post-bootstrap anonymous request.
+- The actor header can be explicitly enabled to mint the first user's first token.
 - After bootstrap, user management (create/list/show) requires authentication,
   so an exposed instance can't be enumerated or have accounts minted anonymously.
 
@@ -23,13 +24,26 @@ import pytest
 
 from athena import config
 from athena.core import oidc_flow
-from athena.core import activity, db, user_commands
+from athena.core import activity, db, user_commands, users, users_api
 from athena.main import create_app
+
+BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
+BOOTSTRAP_HEADERS = {users_api.BOOTSTRAP_TOKEN_HEADER: BOOTSTRAP_TOKEN}
+
+
+@pytest.fixture(autouse=True)
+def bootstrap_enabled_for_unrelated_tests(monkeypatch):
+    """Override conftest's injection: this module tests the real credential gate."""
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", BOOTSTRAP_TOKEN)
 
 
 def _bootstrap_user(client, email="boot@e.com", name="Boot") -> int:
-    """Create the first user — allowed without auth on a fresh install."""
-    r = client.post("/users", json={"email": email, "name": name})
+    """Create the first user with the configured one-time credential."""
+    r = client.post(
+        "/users",
+        json={"email": email, "name": name},
+        headers=BOOTSTRAP_HEADERS,
+    )
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
@@ -68,17 +82,251 @@ def test_explicit_enable_allows_actor_header(tmp_path, monkeypatch):
         assert ok.json()["created_by"] == uid
 
 
-# --- first-run bootstrap still possible ---------------------------------------
+# --- first-run bootstrap is credentialed --------------------------------------
+
+
+def test_bootstrap_is_disabled_when_the_token_is_unconfigured(tmp_path, monkeypatch):
+    # WHY (load-bearing): the default empty value must close the administrator
+    # grant. Starting an empty database on a reachable interface cannot make the
+    # first network caller its owner.
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", "")
+    app = create_app(tmp_path / "disabled.db")
+    with TestClient(app) as client:
+        response = client.post(
+            "/users",
+            json={"email": "attacker@e.com", "name": "Attacker"},
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "authentication required"}
+
+    conn = db.connect(tmp_path / "disabled.db")
+    try:
+        assert users.count_users(conn) == 0
+        assert activity.list_activity(conn, limit=10) == []
+    finally:
+        conn.close()
+
+
+def test_bootstrap_missing_and_wrong_tokens_share_the_normal_401(tmp_path):
+    # WHY: a failed bootstrap credential must not disclose whether a token is
+    # configured or whether the database is still empty.
+    app = create_app(tmp_path / "wrong.db")
+    body = {"email": "attacker@e.com", "name": "Attacker"}
+    with TestClient(app) as client:
+        missing = client.post("/users", json=body)
+        wrong = client.post(
+            "/users",
+            json=body,
+            headers={
+                users_api.BOOTSTRAP_TOKEN_HEADER: "wrong-token-00000000000000000000"
+            },
+        )
+        correct = client.post("/users", json=body, headers=BOOTSTRAP_HEADERS)
+
+    assert missing.status_code == wrong.status_code == 401
+    assert missing.json() == wrong.json() == {"detail": "authentication required"}
+    assert correct.status_code == 201
+    assert correct.json()["role"] == users.ADMIN_ROLE
+
+
+def test_bootstrap_duplicate_headers_fail_closed_in_either_order(tmp_path):
+    # WHY: intermediaries disagree about whether duplicate headers are preserved,
+    # combined, or first/last-value-wins. Accepting either interpretation could
+    # turn one request into different credentials at different hops.
+    app = create_app(tmp_path / "duplicate-header.db")
+    body = {"email": "attacker@e.com", "name": "Attacker"}
+    wrong = "wrong-token-00000000000000000000"
+    with TestClient(app) as client:
+        correct_first = client.post(
+            "/users",
+            json=body,
+            headers=[
+                (users_api.BOOTSTRAP_TOKEN_HEADER, BOOTSTRAP_TOKEN),
+                (users_api.BOOTSTRAP_TOKEN_HEADER, wrong),
+            ],
+        )
+        wrong_first = client.post(
+            "/users",
+            json=body,
+            headers=[
+                (users_api.BOOTSTRAP_TOKEN_HEADER, wrong),
+                (users_api.BOOTSTRAP_TOKEN_HEADER, BOOTSTRAP_TOKEN),
+            ],
+        )
+
+    for response in (correct_first, wrong_first):
+        assert response.status_code == 401
+        assert response.json() == {"detail": "authentication required"}
+    conn = db.connect(tmp_path / "duplicate-header.db")
+    try:
+        assert users.count_users(conn) == 0
+    finally:
+        conn.close()
+
+
+def test_bootstrap_idempotency_rejection_does_not_reveal_state_or_token(tmp_path):
+    # WHY: the retry middleware cannot bind a receipt to a not-yet-created actor.
+    # Reject the key explicitly, but make the response independent of database
+    # state and whether the bootstrap credential is missing, wrong, or correct.
+    app = create_app(tmp_path / "bootstrap-idempotency.db")
+    body = {"email": "admin@e.com", "name": "Admin"}
+    keyed = {"Idempotency-Key": "bootstrap-attempt"}
+    wrong = {
+        **keyed,
+        users_api.BOOTSTRAP_TOKEN_HEADER: "wrong-token-00000000000000000000",
+    }
+    correct = {**keyed, **BOOTSTRAP_HEADERS}
+    with TestClient(app) as client:
+        empty_responses = [
+            client.post("/users", json=body, headers=keyed),
+            client.post("/users", json=body, headers=wrong),
+            client.post("/users", json=body, headers=correct),
+        ]
+        assert _bootstrap_user(client, "admin@e.com", "Admin") == 1
+        populated_responses = [
+            client.post(
+                "/users",
+                json={"email": "blocked@e.com", "name": "Blocked"},
+                headers=headers,
+            )
+            for headers in (keyed, wrong, correct)
+        ]
+
+    expected = {"detail": "authentication required"}
+    for response in [*empty_responses, *populated_responses]:
+        assert response.status_code == 401
+        assert response.json() == expected
+    conn = db.connect(tmp_path / "bootstrap-idempotency.db")
+    try:
+        assert users.count_users(conn) == 1
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM idempotency_keys "
+                "WHERE idempotency_key = 'bootstrap-attempt'"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        conn.close()
+
+
+def test_bootstrap_body_validation_is_credential_independent(tmp_path):
+    # WHY: malformed input must not reach the administrator grant, and its schema
+    # refusal must not become a bootstrap-token or database-state oracle.
+    app = create_app(tmp_path / "malformed-body.db")
+    invalid_body = {"email": "missing-name@example.com"}
+    with TestClient(app) as client:
+        responses = [
+            client.post("/users", json=invalid_body),
+            client.post(
+                "/users",
+                json=invalid_body,
+                headers={
+                    users_api.BOOTSTRAP_TOKEN_HEADER: (
+                        "wrong-token-00000000000000000000"
+                    )
+                },
+            ),
+            client.post("/users", json=invalid_body, headers=BOOTSTRAP_HEADERS),
+        ]
+
+    assert {response.status_code for response in responses} == {422}
+    assert responses[0].json() == responses[1].json() == responses[2].json()
+    conn = db.connect(tmp_path / "malformed-body.db")
+    try:
+        assert users.count_users(conn) == 0
+    finally:
+        conn.close()
+
+
+def test_bootstrap_credential_guesses_use_the_anonymous_rate_limit(tmp_path):
+    # WHY: adding a special bootstrap credential must not create an unbounded
+    # password-guessing path. It remains an anonymous request until it succeeds.
+    app = create_app(
+        tmp_path / "bootstrap-rate-limit.db",
+        anon_rate_limit_per_minute=1,
+    )
+    body = {"email": "admin@e.com", "name": "Admin"}
+    with TestClient(app) as client:
+        wrong = client.post(
+            "/users",
+            json=body,
+            headers={
+                users_api.BOOTSTRAP_TOKEN_HEADER: ("wrong-token-00000000000000000000")
+            },
+        )
+        bounded = client.post("/users", json=body, headers=BOOTSTRAP_HEADERS)
+
+    assert wrong.status_code == 401
+    assert bounded.status_code == 429
+    assert bounded.json() == {"detail": "anonymous rate limit exceeded"}
+    conn = db.connect(tmp_path / "bootstrap-rate-limit.db")
+    try:
+        assert users.count_users(conn) == 0
+    finally:
+        conn.close()
+
+
+def test_bootstrap_matcher_treats_malformed_headers_as_failed_credentials():
+    # WHY: compare_digest accepts only ASCII strings. A pathological header must
+    # become a normal failed credential, never a 500.
+    assert users_api._bootstrap_token_matches(None) is False
+    assert users_api._bootstrap_token_matches("short") is False
+    assert users_api._bootstrap_token_matches("é" * 32) is False
+    assert users_api._bootstrap_token_matches("x" * 256) is False
+
+
+def test_openapi_declares_the_bootstrap_header_without_making_it_globally_required(
+    tmp_path,
+):
+    # WHY: client authors need the bootstrap credential to be discoverable, while
+    # authenticated post-bootstrap user creation must not be forced to send it.
+    operation = create_app(tmp_path / "openapi.db").openapi()["paths"]["/users"]["post"]
+    matching = [
+        parameter
+        for parameter in operation["parameters"]
+        if parameter["name"] == users_api.BOOTSTRAP_TOKEN_HEADER
+    ]
+    assert matching == [
+        {
+            "name": users_api.BOOTSTRAP_TOKEN_HEADER,
+            "in": "header",
+            "required": False,
+            "schema": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
+                "title": "X-Athena-Bootstrap-Token",
+            },
+        }
+    ]
+
+
+def test_bootstrap_token_grants_nothing_after_the_first_user(tmp_path):
+    # WHY: the environment token is a one-time bootstrap credential, not a durable
+    # administrator credential. Forgetting to restart must not let it add users.
+    app = create_app(tmp_path / "one-time.db")
+    with TestClient(app) as client:
+        _bootstrap_user(client)
+        response = client.post(
+            "/users",
+            json={"email": "second@e.com", "name": "Second"},
+            headers=BOOTSTRAP_HEADERS,
+        )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "authentication required"}
 
 
 def test_first_user_bootstrap_works_with_header_off(tmp_path, monkeypatch):
-    # WHY: bootstrap can't depend on the header — on a fresh, locked-down install
-    # there is nobody to authenticate as, so the FIRST user must be creatable
-    # without auth regardless of the header setting.
+    # WHY: bootstrap uses its own credential, not the spoofable actor-header
+    # fallback. A fresh locked-down instance can create its first administrator
+    # while actor-header trust remains off.
     monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
     app = create_app(tmp_path / "first.db")
     with TestClient(app) as client:
-        r = client.post("/users", json={"email": "founder@e.com", "name": "Founder"})
+        r = client.post(
+            "/users",
+            json={"email": "founder@e.com", "name": "Founder"},
+            headers=BOOTSTRAP_HEADERS,
+        )
         assert r.status_code == 201
         assert r.json()["id"] == 1
 
@@ -86,9 +334,9 @@ def test_first_user_bootstrap_works_with_header_off(tmp_path, monkeypatch):
 def test_concurrent_first_user_bootstrap_creates_exactly_one_admin(
     tmp_path, monkeypatch
 ):
-    # WHY (load-bearing): the public first-user exception is a privilege grant. Two
-    # requests may both read an empty database before either writes, so eligibility
-    # and role selection must be rechecked while holding SQLite's write reservation.
+    # WHY (load-bearing): the credentialed first-user exception is still a privilege
+    # grant. Two valid requests may both read an empty database before either writes,
+    # so eligibility and role selection must be rechecked under the write reservation.
     monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
     db_file = tmp_path / "bootstrap-race.db"
     app = create_app(db_file)
@@ -107,7 +355,11 @@ def test_concurrent_first_user_bootstrap_creates_exactly_one_admin(
     with TestClient(app) as client:
 
         def create(email):
-            return client.post("/users", json={"email": email, "name": email})
+            return client.post(
+                "/users",
+                json={"email": email, "name": email},
+                headers=BOOTSTRAP_HEADERS,
+            )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [
@@ -183,7 +435,9 @@ def test_concurrent_oidc_provisioning_cannot_consume_admin_bootstrap(
 
     with TestClient(app) as client:
         response = client.post(
-            "/users", json={"email": "local-admin@e.com", "name": "Local Admin"}
+            "/users",
+            json={"email": "local-admin@e.com", "name": "Local Admin"},
+            headers=BOOTSTRAP_HEADERS,
         )
 
     assert response.status_code == 201, response.text

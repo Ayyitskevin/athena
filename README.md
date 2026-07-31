@@ -200,12 +200,19 @@ python3.12 -m venv .venv
 .venv/bin/uvicorn athena.main:app --reload
 ```
 
+An empty instance intentionally cannot create its first user with the default
+configuration. Before the first start, follow the credentialed, loopback-only
+[First User Bootstrap](docs/OPERATIONS.md#first-user-bootstrap) sequence, then
+restart without its one-time token. For a disposable seeded review instance,
+`athena-demo --db /tmp/athena-review.db` remains the shorter path.
+
 Before submitting a change, run the complete local gate documented in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The app migrates SQLite on startup. Runtime health endpoints are `/healthz`
-and `/readyz`. The first user bootstraps as admin; browser admins manage users
-at `/admin/users` and scoped API tokens at `/settings/tokens`.
+and `/readyz`. A holder of the configured one-time bootstrap credential creates
+the first user as admin; browser admins then manage users at `/admin/users` and
+scoped API tokens at `/settings/tokens`.
 
 ## Project guides
 

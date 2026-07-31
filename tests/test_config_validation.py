@@ -89,6 +89,30 @@ def test_invalid_log_level_is_rejected():
     assert "ATHENA_LOG_LEVEL must be one of" in result.stderr
 
 
+def test_valid_bootstrap_token_is_accepted():
+    result = _import_config({"ATHENA_BOOTSTRAP_TOKEN": "x" * 32})
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "x" * 31,
+        "x" * 256,
+        "has whitespace despite being much longer than thirty-two",
+        "é" * 32,
+    ],
+)
+def test_malformed_bootstrap_token_is_rejected_without_echoing_it(value):
+    result = _import_config({"ATHENA_BOOTSTRAP_TOKEN": value})
+    assert result.returncode != 0
+    assert (
+        "ATHENA_BOOTSTRAP_TOKEN must be 32-255 visible ASCII characters"
+        in result.stderr
+    )
+    assert value not in result.stderr
+
+
 def test_partial_oidc_configuration_is_rejected_without_echoing_values():
     issuer = "https://private-idp.example.invalid"
     result = _import_config({"ATHENA_OIDC_ISSUER": issuer})

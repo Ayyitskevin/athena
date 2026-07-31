@@ -42,6 +42,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 SECRET = "field-exercise-shared-secret"
+BOOTSTRAP_TOKEN = "field-exercise-bootstrap-token-0001"
 STARTUP_TIMEOUT_SECONDS = 20
 DISPATCH_SETTLE_TIMEOUT_SECONDS = 15
 AGENT_RUN_ID = "field-exercise-run-1"
@@ -203,6 +204,7 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                     "ATHENA_DB": str(root / "athena.db"),
                     "ATHENA_ATTACH_DIR": str(root / "attachments"),
                     "ATHENA_AUTOMATION": "0",
+                    "ATHENA_BOOTSTRAP_TOKEN": BOOTSTRAP_TOKEN,
                     "ATHENA_WEBHOOK_DELIVERY": "0",
                     "ATHENA_LOG_LEVEL": "WARNING",
                     "ATHENA_TRUST_ACTOR_HEADER": "1",
@@ -231,6 +233,7 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
             _, admin, _ = _request(
                 "POST",
                 f"{athena}/users",
+                headers={"X-Athena-Bootstrap-Token": BOOTSTRAP_TOKEN},
                 body={"email": "op@example.com", "name": "Operator", "password": "pw"},
                 expect=(201,),
             )

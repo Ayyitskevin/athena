@@ -12,7 +12,18 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
-- **First-admin bootstrap is atomic.** Concurrent unauthenticated `POST /users`
+- **First-admin bootstrap now requires an explicit one-time credential.** An empty
+  `ATHENA_BOOTSTRAP_TOKEN` disables HTTP bootstrap instead of granting
+  administrator authority to the first network caller. A configured 32–255
+  character visible-ASCII token is accepted only for the first user through
+  `X-Athena-Bootstrap-Token`; missing, malformed, wrong, unconfigured, and
+  post-bootstrap attempts collapse to the normal anonymous `401`. Duplicate
+  credential headers fail closed, and unsupported bootstrap idempotency is
+  rejected without inspecting database state. The token never becomes a durable
+  administrator credential, and the existing immediate transaction still decides
+  concurrent valid attempts.
+
+- **First-admin bootstrap is atomic.** Concurrent credentialed `POST /users`
   requests can no longer both turn themselves into administrators after observing
   the same empty database. Bootstrap eligibility, forced-admin role selection,
   insertion, and its self-attributed audit event now share one immediate

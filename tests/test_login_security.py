@@ -13,7 +13,7 @@ from athena.main import create_app
 
 
 def _seed(client):
-    # First user is the admin; created unauthenticated (bootstrap).
+    # First user is the admin; the suite fixture supplies the bootstrap grant.
     client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
 
 

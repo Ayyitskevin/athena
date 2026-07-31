@@ -1035,7 +1035,7 @@ def test_cookie_session_secret_forms_reject_keys_before_mutating(tmp_path):
         conn.close()
 
 
-def test_anonymous_bootstrap_cannot_silently_ignore_key(tmp_path):
+def test_first_user_bootstrap_cannot_silently_ignore_key(tmp_path):
     db_path = tmp_path / "anonymous-key.db"
     with TestClient(create_app(db_path)) as client:
         response = client.post(
@@ -1044,8 +1044,8 @@ def test_anonymous_bootstrap_cannot_silently_ignore_key(tmp_path):
             headers={"Idempotency-Key": "bootstrap"},
         )
 
-    assert response.status_code == 400
-    assert "authenticated API credential" in response.json()["detail"]
+    assert response.status_code == 401
+    assert response.json() == {"detail": "authentication required"}
     conn = db.connect(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0

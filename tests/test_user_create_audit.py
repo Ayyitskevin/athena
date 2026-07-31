@@ -5,7 +5,7 @@ issues, and act. Creating one was a bare INSERT with NO activity event, so a fre
 account — including a fresh ADMIN — could appear with zero trace. These tests pin that
 every user-facing create records a 'created_user' event in the SAME transaction as the
 insert: attributed to the acting admin when an admin adds a user, and SELF-attributed
-on the unauthenticated bootstrap of the first user and on an SSO first-login. The
+on the credentialed bootstrap of the first user and on an SSO first-login. The
 internal 'Automation' system actor is deliberately NOT audited (it is plumbing, not a
 person joining), and the password hash never reaches the detail.
 """
@@ -34,7 +34,8 @@ def _events(db_file, *verbs):
 def test_bootstrap_first_user_is_self_attributed(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
-        # The very first user is created with NO authentication (nobody exists yet).
+        # The suite fixture supplies the bootstrap transport grant; this test owns
+        # attribution and atomicity, while test_bootstrap_auth owns authentication.
         r = c.post(
             "/users", json={"email": "boss@e.com", "name": "Boss", "password": "pw"}
         )

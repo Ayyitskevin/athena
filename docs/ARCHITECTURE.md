@@ -195,7 +195,9 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   optional `If-Match`; authorization and validation precede an atomic comparison
   and write, preventing two read-modify-write loops from committing the same tag.
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first
-  user is bootstrapped as admin, and the last admin cannot be demoted.
+  user is bootstrapped as admin only by presenting a process-configured one-time
+  credential; empty configuration disables that grant. The last admin cannot be
+  demoted.
 - Per-agent API tokens are scoped (`read`, `issue:write`, `docs:write`, `admin`).
   Command-backed durable mutations record *who* did them; the explicit remaining
   command-migration debt is tracked in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md).
