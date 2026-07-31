@@ -263,8 +263,12 @@ done
 The final directory contains exactly seven regular files: the sdist, wheel,
 63-subject input SBOM, base and MCP wheel-bound runtime SBOMs, candidate
 manifest, and `SHA256SUMS`. The runtime SBOMs cover the exact third-party
-name/version closures observed in this Linux/CPython 3.12 run; they do not claim
-that `pip-audit` scanned Athena's code. Runtime downloads remain
+name/version closures observed in this Linux/CPython 3.12 run. Each SBOM retains
+the producer's exact Python patch and platform as provenance; standalone
+verification accepts another canonical CPython patch allowed by the wheel on
+the same platform, with both candidate environments required to match that
+verifier exactly. The SBOMs do not claim that `pip-audit` scanned Athena's code.
+Runtime downloads remain
 version-constrained rather than hash-locked. The bundle is an unsigned,
 unattested candidate—not a tag, publication, or release—and its temporary
 directories remain outside the checkout for inspection.
