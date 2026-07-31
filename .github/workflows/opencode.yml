@@ -6,36 +6,236 @@ on:
   pull_request_review_comment:
     types: [created]
 
-concurrency:
-  group: opencode-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   opencode:
     if: |
       github.actor == github.repository_owner &&
-      (contains(github.event.comment.body, ' /oc') ||
-       startsWith(github.event.comment.body, '/oc') ||
-       contains(github.event.comment.body, ' /opencode') ||
-       startsWith(github.event.comment.body, '/opencode'))
-    runs-on: ubuntu-latest
+      github.triggering_actor == github.repository_owner &&
+      (contains(github.event.comment.body, '/oc') ||
+       contains(github.event.comment.body, '/opencode'))
+    concurrency:
+      group: opencode-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       id-token: write
       contents: read
-      pull-requests: read
-      issues: read
     steps:
+      - name: Authorize exact OpenCode command
+        id: command
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -I <<'PY'
+          import os
+          import re
+
+          pattern = r"(?<!\S)/(?:oc|opencode)(?=\s|$)"
+          authorized = re.search(pattern, os.environ["COMMENT_BODY"]) is not None
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"run={'true' if authorized else 'false'}\n")
+          PY
+
       - name: Checkout repository
+        if: steps.command.outputs.run == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          # A PR event ref may contain attacker-controlled verifier code.
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Run opencode
-        uses: anomalyco/opencode/github@77fc88c8ade8e5a620ebbe1197f3a572d29ae91a # github-v1.2.19
+      - name: Quarantine untrusted OpenCode project configuration
+        if: steps.command.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git sparse-checkout init --no-cone
+          git sparse-checkout set --no-cone \
+            '/*' \
+            '!**/.opencode' \
+            '!**/.opencode/' \
+            '!**/opencode.json' \
+            '!**/opencode.jsonc'
+          if [[ -e /etc/opencode || -L /etc/opencode ]]; then
+            echo "managed /etc/opencode configuration is not allowed on this runner" >&2
+            exit 1
+          fi
+
+      # Upgrade and trust-boundary runbook: docs/OPENCODE_WORKFLOW.md
+      - name: Install verified OpenCode 1.18.10 and ripgrep 15.1.0
+        if: steps.command.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          download_root="$(mktemp -d "$RUNNER_TEMP/athena-opencode-download.XXXXXX")"
+          opencode_archive="$download_root/opencode-linux-x64.tar.gz"
+          ripgrep_archive="$download_root/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz"
+          curl \
+            --disable \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 2 \
+            --retry-all-errors \
+            --retry-delay 1 \
+            --retry-max-time 180 \
+            --connect-timeout 10 \
+            --max-time 120 \
+            --max-filesize 59327159 \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --tlsv1.2 \
+            --output "$opencode_archive" \
+            https://github.com/anomalyco/opencode/releases/download/v1.18.10/opencode-linux-x64.tar.gz
+          python3 -I "$GITHUB_WORKSPACE/.github/scripts/install_verified_opencode.py" \
+            "$opencode_archive" \
+            "$RUNNER_TEMP/athena-opencode-1.18.10" \
+            --expected-archive-bytes 59327159 \
+            --expected-archive-sha256 6b1113da704253fb4da12b41e4236acecb9f2b62949c945f6eeacaa15111b976 \
+            --expected-binary-bytes 179206272 \
+            --expected-binary-sha256 2735f786be499db50c823d961fb8627dfb74f920e2320686b67e6c5c81c66f16
+          curl \
+            --disable \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 2 \
+            --retry-all-errors \
+            --retry-delay 1 \
+            --retry-max-time 180 \
+            --connect-timeout 10 \
+            --max-time 120 \
+            --max-filesize 2263077 \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --tlsv1.2 \
+            --output "$ripgrep_archive" \
+            https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-x86_64-unknown-linux-musl.tar.gz
+          python3 -I "$GITHUB_WORKSPACE/.github/scripts/install_verified_opencode.py" \
+            "$ripgrep_archive" \
+            "$RUNNER_TEMP/athena-ripgrep-15.1.0" \
+            --expected-archive-bytes 2263077 \
+            --expected-archive-sha256 1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599 \
+            --expected-binary-bytes 5445512 \
+            --expected-binary-sha256 ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2 \
+            --archive-member ripgrep-15.1.0-x86_64-unknown-linux-musl/rg \
+            --binary-name rg \
+            --expected-member-count 16 \
+            --label ripgrep
+
+      - name: Run verified OpenCode 1.18.10
+        if: steps.command.outputs.run == 'true'
         env:
+          HOME: ${{ runner.temp }}/athena-opencode-home
+          XDG_CONFIG_HOME: ${{ runner.temp }}/athena-opencode-home/config
+          XDG_DATA_HOME: ${{ runner.temp }}/athena-opencode-home/data
+          XDG_STATE_HOME: ${{ runner.temp }}/athena-opencode-home/state
+          XDG_CACHE_HOME: ${{ runner.temp }}/athena-opencode-home/cache
+          TMPDIR: ${{ runner.temp }}/athena-opencode-tmp
+          OTEL_EXPORTER_OTLP_ENDPOINT: ""
+          OTEL_EXPORTER_OTLP_HEADERS: ""
+          OTEL_RESOURCE_ATTRIBUTES: ""
+          OIDC_BASE_URL: https://api.opencode.ai
+          OPENCODE_AUTH_CONTENT: "{}"
+          OPENCODE_CONFIG: ${{ runner.temp }}/athena-opencode-home/config/opencode/opencode.json
+          OPENCODE_CONFIG_DIR: ${{ runner.temp }}/athena-opencode-home/config/opencode
+          OPENCODE_CONFIG_CONTENT: '{"formatter": false, "lsp": false}'
+          OPENCODE_DB: ${{ runner.temp }}/athena-opencode-home/data/opencode/opencode.db
+          OPENCODE_MODELS_PATH: ${{ runner.temp }}/athena-opencode-home/config/opencode/embedded-models-only.json
+          OPENCODE_PURE: "1"
+          OPENCODE_DISABLE_PROJECT_CONFIG: "1"
+          OPENCODE_DISABLE_DEFAULT_PLUGINS: "1"
+          OPENCODE_DISABLE_MODELS_FETCH: "1"
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          OPENCODE_DISABLE_SHARE: "1"
+          OPENCODE_DISABLE_LSP_DOWNLOAD: "1"
+          OPENCODE_DISABLE_EXTERNAL_SKILLS: "1"
+          OPENCODE_DISABLE_CLAUDE_CODE: "1"
+          GIT_LFS_SKIP_SMUDGE: "1"
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-        with:
-          model: opencode/claude-sonnet-4-6
-          share: false
+          MODEL: opencode/claude-sonnet-4-6
+          SHARE: "false"
+          USE_GITHUB_TOKEN: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          unset OPENCODE_TEST_HOME OPENCODE_TEST_MANAGED_CONFIG_DIR
+          binary="$RUNNER_TEMP/athena-opencode-1.18.10/opencode"
+          rg_binary="$RUNNER_TEMP/athena-ripgrep-15.1.0/rg"
+          config_dir="$XDG_CONFIG_HOME/opencode"
+          runtime_cache_dir="$XDG_CACHE_HOME/opencode"
+          install -d -m 0700 \
+            "$HOME" \
+            "$XDG_CONFIG_HOME" \
+            "$XDG_DATA_HOME" \
+            "$XDG_STATE_HOME" \
+            "$XDG_CACHE_HOME" \
+            "$TMPDIR" \
+            "$config_dir" \
+            "$runtime_cache_dir" \
+            "$runtime_cache_dir/bin" \
+            "$runtime_cache_dir/packages"
+          install -m 0400 "$GITHUB_WORKSPACE/AGENTS.md" "$config_dir/AGENTS.md"
+          install -m 0400 \
+            "$GITHUB_WORKSPACE/.github/scripts/redact_opencode_output.py" \
+            "$config_dir/redact_opencode_output.py"
+          printf '*\n' > "$config_dir/.gitignore"
+          printf '{"formatter":false,"lsp":false}\n' > "$config_dir/opencode.json"
+          chmod 0400 \
+            "$config_dir/.gitignore" \
+            "$config_dir/AGENTS.md" \
+            "$config_dir/opencode.json" \
+            "$config_dir/redact_opencode_output.py"
+          chmod 0500 "$config_dir"
+          chmod 0500 \
+            "$runtime_cache_dir/bin" \
+            "$runtime_cache_dir/packages" \
+            "$runtime_cache_dir"
+
+          observed_bytes="$(stat --format='%s' -- "$binary")"
+          if [[ "$observed_bytes" != "179206272" ]]; then
+            echo "OpenCode binary is $observed_bytes bytes, expected 179206272" >&2
+            exit 1
+          fi
+          observed_sha256="$(sha256sum --binary -- "$binary")"
+          observed_sha256="${observed_sha256%% *}"
+          if [[ "$observed_sha256" != "2735f786be499db50c823d961fb8627dfb74f920e2320686b67e6c5c81c66f16" ]]; then
+            echo "OpenCode SHA-256 is $observed_sha256, expected the pinned digest" >&2
+            exit 1
+          fi
+          version="$("$binary" --version)"
+          if [[ "$version" != "1.18.10" ]]; then
+            echo "OpenCode version is $version, expected 1.18.10" >&2
+            exit 1
+          fi
+          observed_rg_bytes="$(stat --format='%s' -- "$rg_binary")"
+          if [[ "$observed_rg_bytes" != "5445512" ]]; then
+            echo "ripgrep binary is $observed_rg_bytes bytes, expected 5445512" >&2
+            exit 1
+          fi
+          observed_rg_sha256="$(sha256sum --binary -- "$rg_binary")"
+          observed_rg_sha256="${observed_rg_sha256%% *}"
+          if [[ "$observed_rg_sha256" != "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2" ]]; then
+            echo "ripgrep SHA-256 is $observed_rg_sha256, expected the pinned digest" >&2
+            exit 1
+          fi
+          rg_version="$("$rg_binary" --version)"
+          if [[ "${rg_version%%$'\n'*}" != "ripgrep 15.1.0" ]]; then
+            echo "ripgrep version is unexpected, expected 15.1.0" >&2
+            exit 1
+          fi
+          export PATH="$RUNNER_TEMP/athena-ripgrep-15.1.0:$PATH"
+          if [[ "$(command -v rg)" != "$rg_binary" ]]; then
+            echo "ripgrep does not resolve to the pinned executable" >&2
+            exit 1
+          fi
+          "$binary" github run 2>&1 |
+            python3 -I -u "$config_dir/redact_opencode_output.py"
