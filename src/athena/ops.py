@@ -11,6 +11,8 @@ import sqlite3
 import stat
 import sys
 import tempfile
+import time
+from datetime import datetime, timezone
 
 from athena.core import attachments, db, deployment
 from athena.core.backup import (
@@ -18,6 +20,12 @@ from athena.core.backup import (
     prune_backup_directory,
     restore_database,
     validate_retention_plan,
+)
+from athena.core.recovery import (
+    create_recovery_bundle,
+    materialize_recovery_bundle,
+    validate_current_database,
+    verify_recovery_bundle,
 )
 from athena.core.portability import (
     ATTACHMENT_POLICIES,
@@ -37,40 +45,6 @@ def _sqlite_uri(path: Path, *, mode: str) -> str:
     return f"{path.absolute().as_uri()}?mode={mode}"
 
 
-def _check_integrity(conn: sqlite3.Connection) -> None:
-    result = conn.execute("PRAGMA integrity_check").fetchone()
-    if result is None or result[0] != "ok":
-        reason = "no result" if result is None else result[0]
-        raise ValueError(f"database integrity check failed: {reason}")
-    if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise ValueError("database foreign key check failed")
-
-
-def _application_schema(conn: sqlite3.Connection) -> tuple[tuple[object, ...], ...]:
-    """Return the migration-owned logical schema, excluding its validated ledger."""
-    return tuple(
-        tuple(row)
-        for row in conn.execute(
-            "SELECT type, name, tbl_name, sql FROM sqlite_schema "
-            "WHERE name NOT LIKE 'sqlite_%' AND name != 'schema_migrations' "
-            "ORDER BY type, name"
-        ).fetchall()
-    )
-
-
-def _check_application_schema(conn: sqlite3.Connection) -> None:
-    expected = sqlite3.connect(":memory:")
-    expected.row_factory = sqlite3.Row
-    try:
-        expected.execute("PRAGMA foreign_keys = ON")
-        db.migrate(expected)
-        expected_schema = _application_schema(expected)
-    finally:
-        expected.close()
-    if _application_schema(conn) != expected_schema:
-        raise ValueError("database schema does not match the packaged Athena schema")
-
-
 def _dry_run_migration(db_path: Path) -> None:
     """Prove a migration and its final schema on a private copy first."""
     candidate = sqlite3.connect(":memory:")
@@ -85,9 +59,7 @@ def _dry_run_migration(db_path: Path) -> None:
                 source.close()
         candidate.execute("PRAGMA foreign_keys = ON")
         db.migrate(candidate)
-        _check_integrity(candidate)
-        db.migration_status(candidate)
-        _check_application_schema(candidate)
+        validate_current_database(candidate)
     finally:
         candidate.close()
 
@@ -102,9 +74,7 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
         conn = db.connect(db_path)
         try:
             applied_now = db.migrate(conn)
-            _check_integrity(conn)
-            status = db.migration_status(conn)
-            _check_application_schema(conn)
+            status = validate_current_database(conn)
         finally:
             conn.close()
     else:
@@ -115,9 +85,7 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
-            _check_integrity(conn)
-            status = db.migration_status(conn)
-            _check_application_schema(conn)
+            status = validate_current_database(conn)
         finally:
             conn.close()
         applied_now = []
@@ -276,6 +244,54 @@ def _port_argument(value: str) -> int:
     if not 1 <= port <= 65535:
         raise argparse.ArgumentTypeError("port must be between 1 and 65535")
     return port
+
+
+def _nonnegative_int_argument(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be at least 0")
+    return result
+
+
+def _recovery_point_age_seconds(capture_started_at: datetime) -> float:
+    age = (datetime.now(timezone.utc) - capture_started_at).total_seconds()
+    if age < 0:
+        raise ValueError("recovery capture timestamp is in the future")
+    return age
+
+
+def _recovery_error_text(
+    exc: BaseException,
+    *,
+    recovery_destination: Path | None = None,
+) -> str:
+    detail = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
+    published_path = getattr(exc, "recovery_published_path", None)
+    if published_path is not None:
+        return (
+            f"{detail}; recovery artifact committed at {published_path}; "
+            "preserve and verify it"
+        )
+    stage_path = getattr(exc, "recovery_stage_path", None)
+    if stage_path is not None and "private stage retained at" not in detail:
+        detail = (
+            f"{detail}; private stage retained at {stage_path}; "
+            "inspect it and remove it explicitly"
+        )
+    if (
+        isinstance(exc, KeyboardInterrupt)
+        and recovery_destination is not None
+        and os.path.lexists(recovery_destination)
+    ):
+        detail = (
+            f"{detail}; recovery destination exists at {recovery_destination}, but "
+            "publication ownership and durability are unknown; preserve and verify "
+            "it before retrying"
+        )
+    return detail
 
 
 def _listener_address(fd: int) -> tuple[str, int]:
@@ -450,12 +466,157 @@ def serve_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _validate_doctor_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.recovery_bundle:
+        if any(
+            (
+                args.attach_dir is not None,
+                args.migrate,
+                args.deployment,
+                args.host is not None,
+                args.port is not None,
+            )
+        ):
+            parser.error(
+                "--recovery-bundle cannot be combined with live database, "
+                "attachment, migration, deployment, host, or port options"
+            )
+        if args.max_data_recovery_seconds is not None and args.drill_dir is None:
+            parser.error("--max-data-recovery-seconds requires --drill-dir")
+        return
+
+    if any(
+        (
+            args.drill_dir is not None,
+            args.max_recovery_point_age_seconds is not None,
+            args.max_data_recovery_seconds is not None,
+        )
+    ):
+        parser.error("recovery bundle options require --recovery-bundle")
+    if not args.deployment and (args.host is not None or args.port is not None):
+        parser.error("--host and --port require --deployment")
+    if args.deployment and args.migrate:
+        parser.error("--deployment cannot be combined with --migrate")
+    if args.deployment and args.attach_dir is None:
+        parser.error("--deployment requires --attach-dir")
+
+
+def _recovery_doctor_checks(args: argparse.Namespace) -> list[str]:
+    recovery_started = time.monotonic()
+    drill = None
+    if args.drill_dir is None:
+        bundle = verify_recovery_bundle(args.db_path)
+    else:
+        drill = materialize_recovery_bundle(args.db_path, args.drill_dir)
+        bundle = drill.source_bundle
+
+    recovery_age = _recovery_point_age_seconds(bundle.capture_started_at)
+    if (
+        args.max_recovery_point_age_seconds is not None
+        and recovery_age > args.max_recovery_point_age_seconds
+    ):
+        retained = f"; drill retained at {drill.path}" if drill else ""
+        raise ValueError(
+            "recovery bundle is valid but stale: "
+            f"age {recovery_age:.3f}s exceeds "
+            f"{args.max_recovery_point_age_seconds}s{retained}"
+        )
+
+    checks = [
+        "recovery bundle: ok "
+        f"({bundle.attachment_count} attachments, "
+        f"{bundle.attachment_bytes} bytes; age {recovery_age:.3f}s; "
+        "recorded Athena version "
+        f"{json.dumps(bundle.athena_version, ensure_ascii=True)}; {bundle.path})"
+    ]
+    if drill is None:
+        return checks
+
+    recovery_elapsed = time.monotonic() - recovery_started
+    if (
+        args.max_data_recovery_seconds is not None
+        and recovery_elapsed > args.max_data_recovery_seconds
+    ):
+        raise ValueError(
+            "data-recovery drill completed but exceeded its limit: "
+            f"{recovery_elapsed:.3f}s > "
+            f"{args.max_data_recovery_seconds}s; retained at {drill.path}"
+        )
+    checks.append(
+        f"data-recovery drill: ok ({recovery_elapsed:.3f}s; retained at {drill.path})"
+    )
+    return checks
+
+
+def _deployment_doctor_checks(args: argparse.Namespace) -> list[str]:
+    from athena import config
+
+    assert args.attach_dir is not None
+    bind_host, bind_port = deployment.validate_bind(
+        args.host or "127.0.0.1",
+        args.port or 8000,
+        config.NETWORK_MODE,
+    )
+    authorities = deployment.validate_static_configuration(
+        db_path=args.db_path,
+        attach_dir=args.attach_dir,
+        network_mode=config.NETWORK_MODE,
+        bind_host=bind_host,
+        bind_port=bind_port,
+        allowed_authorities=config.ALLOWED_AUTHORITIES,
+        bootstrap=False,
+        bootstrap_token=config.BOOTSTRAP_TOKEN,
+        trust_actor_header=config.TRUST_ACTOR_HEADER,
+        cookie_secure=config.COOKIE_SECURE,
+        oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
+        oidc_redirect_url=(config.OIDC_REDIRECT_URL if config.oidc_enabled() else None),
+        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+        token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
+        anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
+        login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+    )
+    if args.db_path != config.DB_PATH:
+        raise ValueError("deployment db_path must exactly match ATHENA_DB")
+    if args.attach_dir != config.ATTACH_DIR:
+        raise ValueError("deployment --attach-dir must exactly match ATHENA_ATTACH_DIR")
+    checks = _deployment_checks(
+        args.db_path,
+        args.attach_dir,
+        bootstrap=False,
+        enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
+        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+    )
+    checks.append(
+        f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
+        f"{len(authorities)} Host authorities)"
+    )
+    return checks
+
+
+def _doctor_checks(args: argparse.Namespace) -> list[str]:
+    if args.recovery_bundle:
+        return _recovery_doctor_checks(args)
+    if args.deployment:
+        return _deployment_doctor_checks(args)
+    checks = [_check_database(args.db_path, migrate=args.migrate)]
+    if args.attach_dir is not None:
+        checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
+    return checks
+
+
 def doctor_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="athena-doctor",
         description="Check Athena deployment prerequisites.",
     )
-    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "db_path",
+        type=Path,
+        help="Athena SQLite database path, or recovery bundle directory",
+    )
     parser.add_argument(
         "--attach-dir",
         type=Path,
@@ -480,67 +641,40 @@ def doctor_main(argv: list[str] | None = None) -> int:
         type=_port_argument,
         help="deployment TCP port (defaults to 8000)",
     )
+    parser.add_argument(
+        "--recovery-bundle",
+        action="store_true",
+        help="strictly verify the positional recovery bundle without modifying it",
+    )
+    parser.add_argument(
+        "--drill-dir",
+        type=Path,
+        help="materialize a verified bundle into this absent private scratch path",
+    )
+    parser.add_argument(
+        "--max-recovery-point-age-seconds",
+        type=_nonnegative_int_argument,
+        metavar="N",
+        help="fail when bundle capture start is more than N seconds old",
+    )
+    parser.add_argument(
+        "--max-data-recovery-seconds",
+        type=_nonnegative_int_argument,
+        metavar="N",
+        help="fail when verification plus scratch materialization exceeds N seconds",
+    )
     args = parser.parse_args(argv)
-    if not args.deployment and (args.host is not None or args.port is not None):
-        parser.error("--host and --port require --deployment")
-    if args.deployment and args.migrate:
-        parser.error("--deployment cannot be combined with --migrate")
-    if args.deployment and args.attach_dir is None:
-        parser.error("--deployment requires --attach-dir")
+    _validate_doctor_arguments(parser, args)
 
     try:
-        if args.deployment:
-            from athena import config
-
-            assert args.attach_dir is not None
-            bind_host, bind_port = deployment.validate_bind(
-                args.host or "127.0.0.1",
-                args.port or 8000,
-                config.NETWORK_MODE,
-            )
-            authorities = deployment.validate_static_configuration(
-                db_path=args.db_path,
-                attach_dir=args.attach_dir,
-                network_mode=config.NETWORK_MODE,
-                bind_host=bind_host,
-                bind_port=bind_port,
-                allowed_authorities=config.ALLOWED_AUTHORITIES,
-                bootstrap=False,
-                bootstrap_token=config.BOOTSTRAP_TOKEN,
-                trust_actor_header=config.TRUST_ACTOR_HEADER,
-                cookie_secure=config.COOKIE_SECURE,
-                oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
-                oidc_redirect_url=(
-                    config.OIDC_REDIRECT_URL if config.oidc_enabled() else None
-                ),
-                max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
-                token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
-                anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
-                login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
-            )
-            if args.db_path != config.DB_PATH:
-                raise ValueError("deployment db_path must exactly match ATHENA_DB")
-            if args.attach_dir != config.ATTACH_DIR:
-                raise ValueError(
-                    "deployment --attach-dir must exactly match ATHENA_ATTACH_DIR"
-                )
-            checks = _deployment_checks(
-                args.db_path,
-                args.attach_dir,
-                bootstrap=False,
-                enabled_oidc_issuer=(
-                    config.OIDC_ISSUER if config.oidc_enabled() else None
-                ),
-                max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
-            )
-            checks.append(
-                f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
-                f"{len(authorities)} Host authorities)"
-            )
-        else:
-            checks = [_check_database(args.db_path, migrate=args.migrate)]
-            if args.attach_dir is not None:
-                checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
+        checks = _doctor_checks(args)
+    except KeyboardInterrupt as exc:
+        detail = _recovery_error_text(
+            exc,
+            recovery_destination=args.drill_dir if args.recovery_bundle else None,
+        )
+        print(f"athena-doctor: {detail}", file=sys.stderr)
+        return 130
     except (
         FileNotFoundError,
         NotADirectoryError,
@@ -548,13 +682,28 @@ def doctor_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-doctor: {exc}", file=sys.stderr)
+        print(f"athena-doctor: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
     for check in checks:
         print(check)
     print("athena-doctor: ok")
     return 0
+
+
+def _validate_backup_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.recovery_bundle:
+        if args.attach_dir is None:
+            parser.error("--recovery-bundle requires --attach-dir")
+        if args.overwrite or args.keep is not None or args.retention_glob is not None:
+            parser.error(
+                "--recovery-bundle cannot be combined with overwrite or retention"
+            )
+    elif args.attach_dir is not None:
+        parser.error("--attach-dir requires --recovery-bundle")
 
 
 def backup_main(argv: list[str] | None = None) -> int:
@@ -582,32 +731,60 @@ def backup_main(argv: list[str] | None = None) -> int:
         "--retention-glob",
         help=("file-name glob used with --keep; defaults to <source-db-stem>-*.db"),
     )
+    parser.add_argument(
+        "--recovery-bundle",
+        action="store_true",
+        help="create a snapshot-bound database and attachment recovery bundle",
+    )
+    parser.add_argument(
+        "--attach-dir",
+        type=Path,
+        help="live attachment directory required by --recovery-bundle",
+    )
     args = parser.parse_args(argv)
+    _validate_backup_arguments(parser, args)
     if args.keep is None and args.retention_glob is not None:
         print("athena-backup: --retention-glob requires --keep", file=sys.stderr)
         return 1
     retention_glob = args.retention_glob or f"{args.db_path.stem}-*.db"
 
     try:
-        if args.keep is not None:
-            validate_retention_plan(
+        if args.recovery_bundle:
+            assert args.attach_dir is not None
+            recovery_bundle = create_recovery_bundle(
+                args.db_path,
+                args.attach_dir,
                 args.backup_path,
-                retention_glob,
-                keep=args.keep,
             )
-        backup = backup_database(
-            args.db_path,
-            args.backup_path,
-            overwrite=args.overwrite,
+            backup = None
+            pruned: list[Path] = []
+        else:
+            if args.keep is not None:
+                validate_retention_plan(
+                    args.backup_path,
+                    retention_glob,
+                    keep=args.keep,
+                )
+            backup = backup_database(
+                args.db_path,
+                args.backup_path,
+                overwrite=args.overwrite,
+            )
+            pruned = []
+            if args.keep is not None:
+                pruned = prune_backup_directory(
+                    backup.parent,
+                    retention_glob,
+                    keep=args.keep,
+                    protected=(backup,),
+                )
+    except KeyboardInterrupt as exc:
+        detail = _recovery_error_text(
+            exc,
+            recovery_destination=(args.backup_path if args.recovery_bundle else None),
         )
-        pruned = []
-        if args.keep is not None:
-            pruned = prune_backup_directory(
-                backup.parent,
-                retention_glob,
-                keep=args.keep,
-                protected=(backup,),
-            )
+        print(f"athena-backup: {detail}", file=sys.stderr)
+        return 130
     except (
         FileNotFoundError,
         FileExistsError,
@@ -616,11 +793,20 @@ def backup_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-backup: {exc}", file=sys.stderr)
+        print(f"athena-backup: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
-    print(f"Backed up {args.db_path} to {backup}")
-    if args.keep is not None:
+    if args.recovery_bundle:
+        print(
+            "Created recovery bundle "
+            f"at {recovery_bundle.path} "
+            f"({recovery_bundle.attachment_count} attachments, "
+            f"{recovery_bundle.attachment_bytes} bytes)"
+        )
+    else:
+        assert backup is not None
+        print(f"Backed up {args.db_path} to {backup}")
+    if not args.recovery_bundle and args.keep is not None:
         print(
             "Pruned "
             f"{len(pruned)} old backup(s) matching {retention_glob!r}; "
