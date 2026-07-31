@@ -51,6 +51,15 @@ _ACTIVE_WORK_PRIVATE_HEADERS = {
     "Vary": "Cookie",
 }
 
+_USER_COMMAND_WEB_STATUS = {
+    "unauthorized": 401,
+    "forbidden": 403,
+    "bad_request": 400,
+    "not_found": 404,
+    "conflict": 409,
+    "invalid": 400,
+}
+
 
 def _signin_required(verb: str) -> HTMLResponse:
     return HTMLResponse(
@@ -196,11 +205,11 @@ def update_own_password(
             context=_password_context(
                 error=(
                     "Current password is incorrect."
-                    if exc.status_code == 400
+                    if exc.kind == "bad_request"
                     else "Password could not be changed."
                 )
             ),
-            status_code=400 if exc.status_code == 400 else exc.status_code,
+            status_code=_USER_COMMAND_WEB_STATUS[exc.kind],
         )
     return RedirectResponse("/settings/password?updated=1", status_code=303)
 
@@ -948,7 +957,7 @@ def update_user_password(
             conn, actor=actor, target_user_id=user_id, password=password
         )
     except user_commands.UserCommandError as exc:
-        if exc.status_code == 404:
+        if exc.kind == "not_found":
             return HTMLResponse(
                 '<div class="error">No such user.</div>', status_code=404
             )
@@ -956,7 +965,7 @@ def update_user_password(
             request=request,
             name="admin/users.html",
             context=_admin_context(conn, error=str(exc)),
-            status_code=400 if exc.status_code == 422 else exc.status_code,
+            status_code=_USER_COMMAND_WEB_STATUS[exc.kind],
         )
     return RedirectResponse("/admin/users", status_code=303)
 
@@ -983,13 +992,13 @@ def update_user_role(
             conn, actor_id=actor["id"], target_user_id=user_id, role=role
         )
     except user_commands.UserCommandError as exc:
-        if exc.status_code == 404:
+        if exc.kind == "not_found":
             return HTMLResponse(
                 '<div class="error">No such user.</div>', status_code=404
             )
         # last-admin (409) keeps its fixed message; an invalid role re-renders at 400
         # with the validator's own text — matching the pre-command handler.
-        if exc.status_code == 409:
+        if exc.kind == "conflict":
             message, status = "Cannot remove the last admin.", 409
         else:
             message, status = str(exc), 400

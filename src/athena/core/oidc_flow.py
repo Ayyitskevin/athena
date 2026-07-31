@@ -241,7 +241,9 @@ def provision_or_link(
         absent email is refused (so SSO can't seize an account by claiming its
         address);
       * if allowed_domains is set, the email's domain must be in it;
-      * a NEW account is provisioned when no local account has that email;
+      * a NEW account is provisioned when no local account has that email, but only
+        after a local administrator has completed bootstrap — SSO cannot consume
+        the one unauthenticated administrator grant;
       * an EXISTING local account is auto-linked ONLY when allowed_domains is
         configured — i.e. the operator has declared the domains this IdP verifies, so a
         verified-email match is trustworthy. Without a domain allow-list Athena can't
@@ -265,6 +267,15 @@ def provision_or_link(
 
     user = users.get_user_by_email(conn, email)
     if user is None:
+        # Fresh-account provisioning must never become the first durable principal.
+        # Otherwise the default member role consumes the route's "empty database"
+        # bootstrap exception and leaves an instance with no administrator or normal
+        # recovery path. Once observed, admin existence is monotonic under supported
+        # commands: last-admin demotion/offboarding is transactionally refused.
+        if users.count_admins(conn) == 0:
+            raise OidcError(
+                "local administrator bootstrap is required before SSO provisioning"
+            )
         # Fresh SSO account — no pre-existing account to seize, so no takeover risk.
         # Self-attributed (actor_id=None): the person signing in provisions their own
         # account, and the command records the atomic 'created_user' event.

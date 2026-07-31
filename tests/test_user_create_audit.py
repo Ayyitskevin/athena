@@ -134,6 +134,12 @@ def test_web_admin_create_is_audited(tmp_path):
 def test_sso_first_login_provision_is_self_attributed(tmp_path):
     conn = db.connect(tmp_path / "sso.db")
     db.migrate(conn)
+    user_commands.bootstrap_user(
+        conn,
+        email="bootstrap-admin@local.test",
+        name="Bootstrap Admin",
+        password="test-password",
+    )
     claims = {
         "sub": "s1",
         "email": "new@acme.com",
@@ -145,7 +151,9 @@ def test_sso_first_login_provision_is_self_attributed(tmp_path):
     )
 
     ev = [
-        e for e in activity.list_activity(conn, limit=50) if e["verb"] == "created_user"
+        e
+        for e in activity.list_activity(conn, limit=50)
+        if e["verb"] == "created_user" and e["target_id"] == user["id"]
     ]
     assert len(ev) == 1
     # The person signing in provisions their OWN account — actor and target are the user.

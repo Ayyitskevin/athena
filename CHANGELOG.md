@@ -10,6 +10,19 @@ the newest one and for what tagging still requires.
 
 ## [Unreleased]
 
+### Fixed
+
+- **First-admin bootstrap is atomic.** Concurrent unauthenticated `POST /users`
+  requests can no longer both turn themselves into administrators after observing
+  the same empty database. Bootstrap eligibility, forced-admin role selection,
+  insertion, and its self-attributed audit event now share one immediate
+  transaction; exactly one request succeeds and every loser is rejected without a
+  user row or activity event. User command refusals now also use the project's
+  transport-neutral error-kind dialect, with REST and browser adapters retaining
+  their own status semantics. Fresh-account OIDC provisioning is refused until
+  local administrator bootstrap completes, preventing a default-role SSO member
+  from consuming the only bootstrap opening.
+
 ### Added
 
 - **Sprint lifecycle parity for MCP agents.** Agents can now read one sprint and

@@ -27,6 +27,23 @@ router = APIRouter(prefix="/users", tags=["core"])
 
 Role = Literal["admin", "member", "viewer"]
 
+_USER_COMMAND_STATUS = {
+    "unauthorized": 401,
+    "forbidden": 403,
+    "bad_request": 400,
+    "not_found": 404,
+    "conflict": 409,
+    "invalid": 422,
+}
+
+
+def _user_command_http(exc: user_commands.UserCommandError) -> HTTPException:
+    """Translate the command's transport-neutral refusal into REST semantics."""
+    return HTTPException(
+        status_code=_USER_COMMAND_STATUS[exc.kind],
+        detail=exc.detail,
+    )
+
 
 class UserCreate(BaseModel):
     email: str
@@ -143,28 +160,36 @@ def create(
     # user is always admin so a deploy cannot accidentally lock itself out. After
     # bootstrap, only admins may add users or assign roles.
     existing = users.count_users(conn)
-    if existing == 0:
-        role = users.BOOTSTRAP_ROLE
-        # No authenticated actor exists yet — the bootstrap user is self-attributed.
-        actor_id = None
-    else:
+    is_bootstrap = existing == 0
+    if not is_bootstrap:
         if actor is None:
             raise HTTPException(status_code=401, detail="authentication required")
         require_admin(actor)
-        role = payload.role or users.DEFAULT_ROLE
-        actor_id = actor["id"]
     # The command owns the insert AND the atomic 'created_user' audit event, so a new
-    # actor entering the system is never a silent write.
+    # actor entering the system is never a silent write. Bootstrap eligibility is
+    # rechecked after BEGIN IMMEDIATE: two anonymous callers can both observe zero
+    # here, but only one can still be the first user under the write lock.
     try:
+        if is_bootstrap:
+            return user_commands.bootstrap_user(
+                conn,
+                email=payload.email,
+                name=payload.name,
+                password=payload.password,
+                is_agent=payload.is_agent,
+            )
+        assert actor is not None, "post-bootstrap create requires an actor"
         return user_commands.create_user(
             conn,
-            actor_id=actor_id,
+            actor_id=actor["id"],
             email=payload.email,
             name=payload.name,
             password=payload.password,
-            role=role,
+            role=payload.role or users.DEFAULT_ROLE,
             is_agent=payload.is_agent,
         )
+    except user_commands.UserCommandError as exc:
+        raise _user_command_http(exc) from exc
     except sqlite3.IntegrityError:
         # email collides with an existing user — reject at the boundary.
         raise HTTPException(status_code=400, detail="email already in use")
@@ -277,7 +302,7 @@ def update_role(
             conn, actor_id=actor["id"], target_user_id=user_id, role=payload.role
         )
     except user_commands.UserCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _user_command_http(exc) from exc
 
 
 @router.put("/{user_id}/agent", response_model=UserOut)
@@ -297,7 +322,7 @@ def update_agent(
             is_agent=payload.is_agent,
         )
     except user_commands.UserCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _user_command_http(exc) from exc
 
 
 @router.put("/{user_id}/password", response_model=UserOut)
@@ -321,7 +346,7 @@ def reset_password(
             conn, actor=actor, target_user_id=user_id, password=payload.password
         )
     except user_commands.UserCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise _user_command_http(exc) from exc
 
 
 @router.get("/{user_id}/budget", response_model=BudgetOut | None)

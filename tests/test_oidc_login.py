@@ -51,6 +51,19 @@ def _begin_login(client):
     return state, query
 
 
+def _bootstrap_admin(client):
+    response = client.post(
+        "/users",
+        json={
+            "email": "bootstrap-admin@local.test",
+            "name": "Bootstrap Admin",
+            "password": "test-password",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 # --- the routes 404 when SSO is off -----------------------------------------
 
 
@@ -97,6 +110,7 @@ def test_login_sso_redirects_with_pkce_and_binds_state(tmp_path, monkeypatch):
 def test_callback_provisions_user_and_mints_session(tmp_path, monkeypatch):
     db_file = tmp_path / "ok.db"
     with TestClient(create_app(db_file)) as client:
+        _bootstrap_admin(client)
         _enable_oidc(monkeypatch)
         _stub_idp(
             monkeypatch,
@@ -149,6 +163,7 @@ def test_callback_rejects_state_cookie_mismatch(tmp_path, monkeypatch):
 
 def test_callback_rejects_unknown_or_consumed_state(tmp_path, monkeypatch):
     with TestClient(create_app(tmp_path / "consumed.db")) as client:
+        _bootstrap_admin(client)
         _enable_oidc(monkeypatch)
         _stub_idp(
             monkeypatch,
@@ -168,6 +183,42 @@ def test_callback_rejects_unknown_or_consumed_state(tmp_path, monkeypatch):
             f"/auth/callback?code=abc&state={state}", follow_redirects=False
         )
         assert replay.status_code == 400
+
+
+def test_callback_refuses_fresh_provisioning_before_admin_bootstrap(
+    tmp_path, monkeypatch
+):
+    db_file = tmp_path / "pre-bootstrap.db"
+    with TestClient(create_app(db_file)) as client:
+        _enable_oidc(monkeypatch)
+        _stub_idp(
+            monkeypatch,
+            claims={
+                "sub": "pre-bootstrap",
+                "email": "first-sso@acme.com",
+                "email_verified": True,
+            },
+        )
+        state, _ = _begin_login(client)
+        denied = client.get(
+            f"/auth/callback?code=abc&state={state}", follow_redirects=False
+        )
+        assert denied.status_code == 400
+        assert "SSO sign-in failed." in denied.text
+        assert "bootstrap" not in denied.text.lower()
+        assert not denied.cookies.get("athena_session")
+
+    conn = db.connect(db_file)
+    try:
+        assert users.count_users(conn) == 0
+        assert (
+            oidc.find_user_by_identity(
+                conn, issuer=config.OIDC_ISSUER, subject="pre-bootstrap"
+            )
+            is None
+        )
+    finally:
+        conn.close()
 
 
 def test_callback_surfaces_idp_error(tmp_path, monkeypatch):

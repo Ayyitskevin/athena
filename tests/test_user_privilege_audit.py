@@ -218,7 +218,7 @@ def test_command_rejects_last_admin_atomically(tmp_path):
         user_commands.set_user_role(conn, actor_id=1, target_user_id=1, role="member")
         raise AssertionError("expected UserCommandError")
     except user_commands.UserCommandError as exc:
-        assert exc.status_code == 409
+        assert exc.kind == "conflict"
     # Neither the role nor an event changed — the rejection left no trace.
     assert users.get_user(conn, 1)["role"] == "admin"
     assert [

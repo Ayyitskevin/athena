@@ -10,7 +10,15 @@ recorded against) the user whose account it is, with the self-service authz pres
 
 from fastapi.testclient import TestClient
 
-from athena.core import activity, db, oidc, oidc_commands, sessions, users
+from athena.core import (
+    activity,
+    db,
+    oidc,
+    oidc_commands,
+    sessions,
+    user_commands,
+    users,
+)
 from athena.main import create_app
 
 ISS = "https://idp.example.com"
@@ -33,6 +41,12 @@ def test_first_login_link_is_audited_and_self_attributed(tmp_path):
     from athena.core import oidc_flow
 
     conn = _conn(tmp_path)
+    user_commands.bootstrap_user(
+        conn,
+        email="bootstrap-admin@local.test",
+        name="Bootstrap Admin",
+        password="test-password",
+    )
     claims = {
         "sub": "s1",
         "email": "new@acme.com",

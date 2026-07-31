@@ -154,6 +154,12 @@ four settings is rejected at startup with the missing variable names. Supplying
 all four enables SSO. Local email+password login remains available — SSO is an
 additional authentication path.
 
+Complete the local [first-user bootstrap](#first-user-bootstrap) before the
+first SSO login. Athena refuses fresh-account SSO provisioning until an
+administrator exists, so a default-role member cannot consume the one
+unauthenticated bootstrap grant and leave the instance with no administrator.
+Already-linked identities continue to resolve normally.
+
 | Variable | Use |
 |----------|-----|
 | `ATHENA_OIDC_ISSUER` | The IdP's issuer URL; its `/.well-known/openid-configuration` is discovered from it. |
