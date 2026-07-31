@@ -1383,6 +1383,34 @@ def _property_map(component: dict[str, Any]) -> dict[str, str]:
     return result
 
 
+def _validate_cpython_version(
+    value: Any,
+    *,
+    requires_python: str,
+    label: str,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} is invalid")
+    try:
+        version = Version(value)
+    except InvalidVersion as exc:
+        raise ValueError(f"{label} is invalid") from exc
+    if (
+        str(version) != value
+        or len(version.release) != 3
+        or version.epoch != 0
+        or version.pre is not None
+        or version.post is not None
+        or version.dev is not None
+        or version.local is not None
+    ):
+        raise ValueError(f"{label} is invalid")
+    supported_python = Requirement(f"python{requires_python}").specifier
+    if version not in supported_python:
+        raise ValueError(f"{label} is incompatible with wheel")
+    return value
+
+
 def verify_runtime_sbom(path: Path, closure: RuntimeClosure) -> int:
     """Semantically verify a final wheel-rooted CycloneDX document."""
     document = _load_json(path, label="runtime SBOM")
@@ -1434,12 +1462,14 @@ def verify_runtime_sbom(path: Path, closure: RuntimeClosure) -> int:
         != "athena-code,bootstrap,build,dev,scanner,native-system"
     ):
         raise ValueError("runtime SBOM root exclusions are invalid")
-    expected_python = (
-        f"CPython {sys.version_info.major}.{sys.version_info.minor}."
-        f"{sys.version_info.micro}"
-    )
-    if properties.get("athena:python") != expected_python:
+    python_identity = properties.get("athena:python", "")
+    if not python_identity.startswith("CPython "):
         raise ValueError("runtime SBOM root Python identity is invalid")
+    _validate_cpython_version(
+        python_identity.removeprefix("CPython "),
+        requires_python=closure.wheel.requires_python,
+        label="runtime SBOM root Python identity",
+    )
     if properties.get("athena:platform") != f"{sys.platform}-{os.uname().machine}":
         raise ValueError("runtime SBOM root platform identity is invalid")
 
@@ -1545,12 +1575,35 @@ def _validate_identity(value: str, *, label: str, optional: bool = False) -> str
     return value
 
 
+def _validate_manifest_environment(
+    value: Any,
+    *,
+    wheel: WheelSubject,
+) -> tuple[str, str]:
+    expected_keys = {"python", "implementation", "platform"}
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise ValueError("candidate manifest environment is invalid")
+    if value.get("implementation") != "cpython":
+        raise ValueError("candidate manifest implementation is not CPython")
+    python_version = _validate_cpython_version(
+        value.get("python"),
+        requires_python=wheel.requires_python,
+        label="candidate manifest Python identity",
+    )
+    platform_identity = value.get("platform")
+    if platform_identity != f"{sys.platform}-{os.uname().machine}":
+        raise ValueError("candidate manifest platform identity is invalid")
+    return f"CPython {python_version}", str(platform_identity)
+
+
 def _verify_bundle_sbom_identity(
     path: Path,
     *,
     profile: str,
     wheel: WheelSubject,
     source_revision: str,
+    python_identity: str,
+    platform_identity: str,
 ) -> None:
     """Verify self-contained SBOM identity without reconstructing an environment."""
     document = _load_json(path, label=f"{profile} runtime SBOM")
@@ -1580,6 +1633,13 @@ def _verify_bundle_sbom_identity(
     if properties.get("athena:source-revision") != source_revision:
         raise ValueError(
             f"{profile} runtime SBOM source revision differs from the manifest"
+        )
+    if (
+        properties.get("athena:python") != python_identity
+        or properties.get("athena:platform") != platform_identity
+    ):
+        raise ValueError(
+            f"{profile} runtime SBOM producer differs from the manifest environment"
         )
     if (
         properties.get("athena:advisory-scope")
@@ -1718,7 +1778,10 @@ def create_bundle(
     ):
         closure = verify_runtime(
             inputs["wheel"],
-            _site_packages_from_python(candidate_python),
+            _site_packages_from_python(
+                candidate_python,
+                requires_python=wheel_subject.requires_python,
+            ),
             profile,
             constraints,
             bootstrap,
@@ -1969,6 +2032,10 @@ def verify_bundle(
         ):
             raise ValueError(f"candidate manifest {key} identity mismatch")
     wheel_subject = inspect_wheel(wheels[0], require_external=True)
+    python_identity, platform_identity = _validate_manifest_environment(
+        manifest.get("environment"),
+        wheel=wheel_subject,
+    )
     manifest_sdist_digest = artifacts["sdist"]["sha256"]
     if not isinstance(manifest_sdist_digest, str):
         raise ValueError("candidate manifest sdist digest is invalid")
@@ -1990,7 +2057,10 @@ def verify_bundle(
     ):
         closure = verify_runtime(
             runtime_wheel,
-            _site_packages_from_python(candidate_python),
+            _site_packages_from_python(
+                candidate_python,
+                requires_python=wheel_subject.requires_python,
+            ),
             profile,
             constraints,
             bootstrap,
@@ -2001,12 +2071,16 @@ def verify_bundle(
         profile="base",
         wheel=wheel_subject,
         source_revision=manifest_checkout_commit,
+        python_identity=python_identity,
+        platform_identity=platform_identity,
     )
     _verify_bundle_sbom_identity(
         output / "athena-runtime-mcp-python312.cdx.json",
         profile="mcp",
         wheel=wheel_subject,
         source_revision=manifest_checkout_commit,
+        python_identity=python_identity,
+        platform_identity=platform_identity,
     )
     subject = manifest.get("subject")
     if (
@@ -2020,21 +2094,61 @@ def verify_bundle(
     return len(entries)
 
 
-def _site_packages_from_python(python: Path) -> Path:
+def _site_packages_from_python(
+    python: Path,
+    *,
+    requires_python: str,
+) -> Path:
     _require_external(python, label="candidate interpreter")
+    if sys.implementation.name != "cpython":
+        raise ValueError("wheel evidence verifier is not CPython")
+    verifier_version = _validate_cpython_version(
+        sys.version.split()[0],
+        requires_python=requires_python,
+        label="wheel evidence verifier Python identity",
+    )
     result = subprocess.run(
         [
             str(python.absolute()),
             "-I",
             "-c",
-            "import sysconfig; print(sysconfig.get_path('purelib'))",
+            (
+                "import json, os, sys, sysconfig; "
+                "print(json.dumps({"
+                "'implementation': sys.implementation.name, "
+                "'platform': f'{sys.platform}-{os.uname().machine}', "
+                "'python': sys.version.split()[0], "
+                "'site_packages': sysconfig.get_path('purelib')"
+                "}))"
+            ),
         ],
         check=True,
         capture_output=True,
         text=True,
         cwd="/tmp",
     )
-    path = Path(result.stdout.strip())
+    try:
+        identity = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("candidate interpreter returned invalid identity") from exc
+    expected_keys = {"implementation", "platform", "python", "site_packages"}
+    if not isinstance(identity, dict) or set(identity) != expected_keys:
+        raise ValueError("candidate interpreter returned invalid identity")
+    if identity.get("implementation") != "cpython":
+        raise ValueError("candidate interpreter is not CPython")
+    candidate_version = _validate_cpython_version(
+        identity.get("python"),
+        requires_python=requires_python,
+        label="candidate interpreter Python identity",
+    )
+    if candidate_version != verifier_version:
+        raise ValueError("candidate interpreter version differs from verifier")
+    if identity.get("platform") != f"{sys.platform}-{os.uname().machine}":
+        raise ValueError("candidate interpreter platform differs from verifier")
+    site_packages = identity.get("site_packages")
+    if not isinstance(site_packages, str):
+        raise ValueError("candidate interpreter returned invalid identity")
+    path = Path(site_packages)
     if not path.is_absolute():
         raise ValueError("candidate interpreter returned a relative site-packages path")
     return path
@@ -2131,7 +2245,10 @@ def main(argv: list[str] | None = None) -> int:
             count = audit_profile(
                 auditor_python=args.auditor_python,
                 wheel=args.wheel,
-                site_packages=_site_packages_from_python(args.candidate_python),
+                site_packages=_site_packages_from_python(
+                    args.candidate_python,
+                    requires_python=inspect_wheel(args.wheel).requires_python,
+                ),
                 profile=args.profile,
                 constraints=args.constraints,
                 bootstrap=args.bootstrap,
@@ -2147,7 +2264,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify-profile":
             closure = verify_runtime(
                 args.wheel,
-                _site_packages_from_python(args.candidate_python),
+                _site_packages_from_python(
+                    args.candidate_python,
+                    requires_python=inspect_wheel(args.wheel).requires_python,
+                ),
                 args.profile,
                 args.constraints,
                 args.bootstrap,
