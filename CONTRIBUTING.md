@@ -17,6 +17,7 @@ verified in CI. From a clean checkout, run the required gate:
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -I -m pip install \
+  --only-binary :all: \
   --require-hashes -r constraints/bootstrap-py312.txt
 .venv/bin/python -I -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
@@ -45,24 +46,45 @@ table to the checker, via `tests/test_imported_at_guards.py`).
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`.
 
-### Supply-chain evidence
+### Release-candidate supply-chain evidence
 
-Run the advisory gate in a fresh, separate Python 3.12 environment. Keep its
-CycloneDX output outside the checkout:
+CI performs this gate only after the required test job passes. It uses a
+separate hash-verified evidence/build environment, builds one sdist and one
+wheel derived from that sdist, and installs the wheel into fresh base and MCP
+runtime environments. Set `ATHENA_CANDIDATE_REPOSITORY` to the exact
+`owner/repository` whose checkout you are testing, then run the same gate from
+the repository root with Bash:
 
 ```bash
 set -euo pipefail
-audit_env=$(mktemp -d /tmp/athena-audit-venv.XXXXXX)
-evidence_root=$(mktemp -d /tmp/athena-supply-chain.XXXXXX)
-python3.12 -m venv "$audit_env"
-"$audit_env/bin/python" -I -m pip install \
-  --require-hashes -r constraints/bootstrap-py312.txt
-"$audit_env/bin/python" -I -m pip install \
-  --require-hashes -r constraints/security-tools-py312.txt
-"$audit_env/bin/python" -I -m pip check
-"$audit_env/bin/python" -I scripts/check_supply_chain.py verify-environment
+: "${ATHENA_CANDIDATE_REPOSITORY:?set the exact owner/repository identity}"
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "candidate evidence requires a clean working tree" >&2
+  exit 1
+fi
+repo_root="$(pwd -P)"
+evidence_env="$(mktemp -d "${TMPDIR:-/tmp}/athena-evidence-venv.XXXXXX")"
+evidence_root="$(mktemp -d "${TMPDIR:-/tmp}/athena-evidence.XXXXXX")"
+dist_root="$(mktemp -d "${TMPDIR:-/tmp}/athena-dist.XXXXXX")"
+runtime_root="$(mktemp -d "${TMPDIR:-/tmp}/athena-runtime.XXXXXX")"
+evidence_python="$evidence_env/bin/python"
+input_sbom="$evidence_root/athena-ci-python.cdx.json"
+base_raw="$evidence_root/athena-runtime-base-pip-audit.cdx.json"
+base_sbom="$evidence_root/athena-runtime-base-python312.cdx.json"
+mcp_raw="$evidence_root/athena-runtime-mcp-pip-audit.cdx.json"
+mcp_sbom="$evidence_root/athena-runtime-mcp-python312.cdx.json"
+candidate_bundle="$evidence_root/athena-candidate"
 
-"$audit_env/bin/python" -I -m pip_audit \
+python3.12 -I -m venv "$evidence_env"
+"$evidence_python" -I -m pip install \
+  --only-binary :all: \
+  --require-hashes -r constraints/bootstrap-py312.txt
+"$evidence_python" -I -m pip install \
+  --only-binary :all: \
+  --require-hashes -r constraints/security-tools-py312.txt
+"$evidence_python" -I -m pip check
+"$evidence_python" -I scripts/check_supply_chain.py verify-environment
+"$evidence_python" -I -m pip_audit \
   --strict \
   --no-deps \
   --disable-pip \
@@ -71,51 +93,44 @@ python3.12 -m venv "$audit_env"
   --vulnerability-service pypi \
   --require-hashes \
   --requirement constraints/security-tools-py312.txt
+"$evidence_python" -I scripts/check_supply_chain.py run \
+  --auditor-python "$evidence_python" \
+  --output "$input_sbom"
+"$evidence_python" -I scripts/check_supply_chain.py verify \
+  --sbom "$input_sbom"
 
-"$audit_env/bin/python" -I scripts/check_supply_chain.py run \
-  --auditor-python "$audit_env/bin/python" \
-  --output "$evidence_root/athena-ci-python.cdx.json"
-"$audit_env/bin/python" -I scripts/check_supply_chain.py verify \
-  --sbom "$evidence_root/athena-ci-python.cdx.json"
-```
-
-The scanner environment and its installer exactly match their hash-verified
-locks; isolated Python mode prevents checkout modules from shadowing either
-tool. Neither audit has an ignore list or soft-pass path. The application audit
-covers the exact CI, bootstrap, and build-backend input pins. CycloneDX
-timestamps, UUIDs, and generated `bom-ref` values vary, so verification compares
-the complete normalized component/version set and requires no reported
-vulnerability entries instead of comparing file hashes.
-
-### Packaging and outside-checkout smoke
-
-CI's final gate validates distribution artifacts instead of importing Athena
-from the checkout. Run this Bash recipe from the repository root after the gate
-above:
-
-```bash
-set -euo pipefail
-repo_root="$(pwd -P)"
-dist_root="$(mktemp -d "${TMPDIR:-/tmp}/athena-dist.XXXXXX")"
-
-.venv/bin/python -m build --sdist --outdir "$dist_root/artifacts" .
-
+"$evidence_python" -I -m build \
+  --no-isolation \
+  --sdist \
+  --outdir "$dist_root/built" \
+  "$repo_root"
 shopt -s nullglob
-sdists=("$dist_root"/artifacts/*.tar.gz)
-if (( ${#sdists[@]} != 1 )); then
+built_sdists=("$dist_root"/built/*.tar.gz)
+if (( ${#built_sdists[@]} != 1 )); then
   echo "expected exactly one source distribution" >&2
   exit 1
 fi
+mkdir -p "$dist_root/snapshot"
+sdist="$dist_root/snapshot/${built_sdists[0]##*/}"
+install -m 0444 -- "${built_sdists[0]}" "$sdist"
+sdist_sha256="$(sha256sum "$sdist")"
+sdist_sha256="${sdist_sha256%% *}"
+"$evidence_python" -I scripts/check_wheel_evidence.py \
+  inspect-sdist \
+  --sdist "$sdist" \
+  --expected-sha256 "$sdist_sha256"
 mkdir -p "$dist_root/source"
-.venv/bin/python -c \
+"$evidence_python" -I -c \
   'import pathlib, sys, tarfile; tarfile.open(sys.argv[1]).extractall(pathlib.Path(sys.argv[2]), filter="data")' \
-  "${sdists[0]}" "$dist_root/source"
+  "$sdist" "$dist_root/source"
 source_trees=("$dist_root"/source/athena-*)
 if (( ${#source_trees[@]} != 1 )); then
   echo "expected exactly one extracted source tree" >&2
   exit 1
 fi
-.venv/bin/python -m build --wheel \
+"$evidence_python" -I -m build \
+  --no-isolation \
+  --wheel \
   --outdir "$dist_root/artifacts" \
   "${source_trees[0]}"
 wheels=("$dist_root"/artifacts/*.whl)
@@ -123,37 +138,136 @@ if (( ${#wheels[@]} != 1 )); then
   echo "expected exactly one wheel built from the source distribution" >&2
   exit 1
 fi
-if [[ ! -f "${source_trees[0]}/scripts/verify_wheel.py" ]] \
-  || [[ ! -f "${source_trees[0]}/scripts/smoke_app.py" ]] \
-  || [[ ! -f "${source_trees[0]}/scripts/check_import_contracts.py" ]]; then
-  echo "source distribution is missing its verification helpers" >&2
-  exit 1
-fi
+wheel="${wheels[0]}"
 
-.venv/bin/python scripts/verify_wheel.py "${wheels[0]}"
-.venv/bin/python \
+"$evidence_python" -I scripts/verify_wheel.py "$wheel"
+"$evidence_python" -I \
   "${source_trees[0]}/scripts/verify_wheel.py" \
-  "${wheels[0]}"
-.venv/bin/python \
+  "$wheel"
+"$evidence_python" -I \
   "${source_trees[0]}/scripts/check_import_contracts.py"
-sha256sum "${sdists[0]}" "${wheels[0]}"
+"$evidence_python" -I scripts/check_wheel_evidence.py \
+  inspect-wheel --wheel "$wheel"
+"$evidence_python" -I scripts/check_wheel_evidence.py \
+  inspect-sdist \
+  --sdist "$sdist" \
+  --wheel "$wheel" \
+  --tool-lock constraints/security-tools-py312.txt \
+  --expected-sha256 "$sdist_sha256"
 
-.venv/bin/python -I -m pip uninstall --yes athena
-.venv/bin/python -I -m pip install --no-deps "${wheels[0]}"
-.venv/bin/python -I -m pip check
+python3.12 -I -m venv "$runtime_root/base"
+python3.12 -I -m venv "$runtime_root/mcp"
+base_python="$runtime_root/base/bin/python"
+mcp_python="$runtime_root/mcp/bin/python"
+for candidate_python in "$base_python" "$mcp_python"; do
+  "$candidate_python" -I -m pip install \
+    --only-binary :all: \
+    --require-hashes -r constraints/bootstrap-py312.txt
+done
+"$base_python" -I -m pip install \
+  --only-binary :all: \
+  --constraint constraints/ci-py312.txt \
+  "$wheel"
+"$mcp_python" -I -m pip install \
+  --only-binary :all: \
+  --constraint constraints/ci-py312.txt \
+  "${wheel}[mcp]"
+"$base_python" -I -m pip check
+"$mcp_python" -I -m pip check
 (
   cd /tmp
-  "$repo_root/.venv/bin/python" -c \
+  "$base_python" -I -c \
     'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
-  "$repo_root/.venv/bin/python" \
-    "${source_trees[0]}/scripts/smoke_app.py"
+  "$base_python" -I "${source_trees[0]}/scripts/smoke_app.py"
 )
+
+source_revision="$(git rev-parse --verify HEAD)"
+source_tree="$(git rev-parse --verify 'HEAD^{tree}')"
+"$evidence_python" -I scripts/check_wheel_evidence.py audit-profile \
+  --auditor-python "$evidence_python" \
+  --candidate-python "$base_python" \
+  --wheel "$wheel" \
+  --profile base \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --raw-output "$base_raw" \
+  --sbom-output "$base_sbom" \
+  --source-revision "$source_revision"
+"$evidence_python" -I scripts/check_wheel_evidence.py verify-profile \
+  --candidate-python "$base_python" \
+  --wheel "$wheel" \
+  --profile base \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --sbom "$base_sbom"
+"$evidence_python" -I scripts/check_wheel_evidence.py audit-profile \
+  --auditor-python "$evidence_python" \
+  --candidate-python "$mcp_python" \
+  --wheel "$wheel" \
+  --profile mcp \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --raw-output "$mcp_raw" \
+  --sbom-output "$mcp_sbom" \
+  --source-revision "$source_revision"
+"$evidence_python" -I scripts/check_wheel_evidence.py verify-profile \
+  --candidate-python "$mcp_python" \
+  --wheel "$wheel" \
+  --profile mcp \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --sbom "$mcp_sbom"
+
+"$evidence_python" -I scripts/check_wheel_evidence.py create-bundle \
+  --output "$candidate_bundle" \
+  --sdist "$sdist" \
+  --sdist-sha256 "$sdist_sha256" \
+  --wheel "$wheel" \
+  --input-sbom "$input_sbom" \
+  --base-sbom "$base_sbom" \
+  --mcp-sbom "$mcp_sbom" \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --tool-lock constraints/security-tools-py312.txt \
+  --base-python "$base_python" \
+  --mcp-python "$mcp_python" \
+  --repository "$ATHENA_CANDIDATE_REPOSITORY" \
+  --event local \
+  --run-id "$(date -u +%Y%m%d%H%M%S)" \
+  --run-attempt 1 \
+  --checkout-commit "$source_revision" \
+  --checkout-tree "$source_tree"
+candidate_wheels=("$candidate_bundle"/*.whl)
+if (( ${#candidate_wheels[@]} != 1 )); then
+  echo "candidate bundle does not contain exactly one wheel" >&2
+  exit 1
+fi
+for candidate_python in "$base_python" "$mcp_python"; do
+  "$candidate_python" -I -m pip install \
+    --no-index \
+    --no-deps \
+    --force-reinstall \
+    "${candidate_wheels[0]}"
+done
+"$base_python" -I -m pip check
+"$mcp_python" -I -m pip check
+"$evidence_python" -I scripts/check_wheel_evidence.py verify-bundle \
+  --bundle "$candidate_bundle" \
+  --constraints constraints/ci-py312.txt \
+  --bootstrap constraints/bootstrap-py312.txt \
+  --tool-lock constraints/security-tools-py312.txt \
+  --base-python "$base_python" \
+  --mcp-python "$mcp_python"
 ```
 
-This intentionally replaces the editable Athena install in `.venv` with the
-built wheel. Re-run the constrained editable install before continuing normal
-development. The temporary distribution directory remains outside the checkout
-as inspectable evidence.
+The final directory contains exactly seven regular files: the sdist, wheel,
+63-subject input SBOM, base and MCP wheel-bound runtime SBOMs, candidate
+manifest, and `SHA256SUMS`. The runtime SBOMs cover the exact third-party
+name/version closures observed in this Linux/CPython 3.12 run; they do not claim
+that `pip-audit` scanned Athena's code. Runtime downloads remain
+version-constrained rather than hash-locked. The bundle is an unsigned,
+unattested candidate—not a tag, publication, or release—and its temporary
+directories remain outside the checkout for inspection.
 
 To inspect a populated local instance without inventing data in the web layer:
 
