@@ -155,8 +155,11 @@ coverage and enforces the floors in `pyproject.toml`. The current baseline, fina
 evidence, explicit non-runs, and release blockers live in
 [`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). CI then builds an sdist
 and its wheel in isolation, verifies the packaged runtime files from both the
-checkout and extracted sdist, installs the wheel, and runs the process smoke
-outside the checkout. The exact local packaging recipe is in
+checkout and extracted sdist, verifies the exact `athena-serve` console-script
+mapping, installs the wheel, and runs the process smoke outside the checkout.
+That smoke bootstraps through the installed launcher, stops it, removes the
+one-time credential, restarts normally, authenticates with the durable password,
+and stops cleanly. The exact local packaging recipe is in
 [CONTRIBUTING.md](CONTRIBUTING.md); the constrained dependency graph is
 [`constraints/ci-py312.txt`](constraints/ci-py312.txt).
 
@@ -187,9 +190,13 @@ visibility-aware reads, scoped tokens, SSRF-hardened webhooks (with an explicit
 opt-in allowlist for receivers on your own machine or tailnet —
 `ATHENA_EGRESS_PRIVATE_HOSTS`), portability tools,
 and operational health checks. Exposing any self-hosted app publicly still
-requires deliberate TLS, secret, proxy, backup, and monitoring configuration;
-see [SECURITY.md](SECURITY.md) and
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+falls outside the supported deployment contract. `athena-serve` permits only an
+exact loopback or declared Tailscale bind, validates exact Host authorities,
+requires the exact packaged logical schema, refuses unsafe bootstrap/recovery
+state before Athena/Uvicorn accepts traffic, and disables proxy header trust. It
+cannot detect a proxy, tunnel, NAT rule, container publication, Tailscale ACL,
+or Funnel configuration; see
+[SECURITY.md](SECURITY.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Development
 
@@ -197,7 +204,7 @@ see [SECURITY.md](SECURITY.md) and
 python3.12 -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/uvicorn athena.main:app --reload
+.venv/bin/athena-demo --db /tmp/athena-development.db
 ```
 
 An empty instance intentionally cannot create its first user with the default
@@ -206,13 +213,23 @@ configuration. Before the first start, follow the credentialed, loopback-only
 restart without its one-time token. For a disposable seeded review instance,
 `athena-demo --db /tmp/athena-review.db` remains the shorter path.
 
+Long-running local/tailnet instances use `athena-serve`. Raw
+`uvicorn athena.main:app` is an unsupported development escape hatch: without an
+explicit Host allowlist it rejects every request, and even with one it bypasses
+deployment preflight.
+
 Before submitting a change, run the complete local gate documented in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The app migrates SQLite on startup. Runtime health endpoints are `/healthz`
-and `/readyz`. A holder of the configured one-time bootstrap credential creates
-the first user as admin; browser admins then manage users at `/admin/users` and
-scoped API tokens at `/settings/tokens`.
+The supported normal launcher requires SQLite to be current before it asks
+Uvicorn to accept requests; it does not silently apply a release migration. Stop
+the service, take a matched database-and-attachment recovery pair, and use the
+intentional offline `athena-doctor --migrate` procedure in
+[OPERATIONS.md](docs/OPERATIONS.md#deploy-preflight) before an upgrade. Bootstrap
+and direct development factories retain transactional migration startup. Runtime
+health endpoints are `/healthz` and `/readyz`. A holder of the configured
+one-time bootstrap credential creates the first user as admin; browser admins
+then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 
 ## Project guides
 

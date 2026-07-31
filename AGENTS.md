@@ -139,8 +139,10 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
    `python scripts/check_write_ownership.py`,
    `python scripts/check_imported_at_guards.py`, and `pytest -q`
    are **green** — no skipped or mocked-away tests passed off as passing.
-2. You **ran it**: the app boots and the feature works against the real DB
-   (`uvicorn athena.main:app`, hit the route). "Should work" is not "works."
+2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
+   boots against a real DB, and the feature works over real HTTP. The retained
+   `scripts/smoke_app.py` lifecycle is the minimum release-path proof; hit the
+   changed route too. "Should work" is not "works."
 3. **No stray data stores** — grep your diff for in-memory lists/dicts standing
    in for the database. There should be none (see the cardinal rule).
 4. Tests encode *why* the behavior matters, not just that a route returns 200.
@@ -162,13 +164,14 @@ cheap; a hidden assumption shipped to `main` is expensive.
 
 ```
 src/athena/
-  core/      db + migrations + (later) auth/users/tokens/search/cross-link
+  core/      db + migrations + auth/users/tokens/search/cross-link/deployment
   aegis/     work module (issues.py = SQL, issue_commands.py = audited writes,
              api.py = HTTP)
   mentor/    spaces, pages, versions — knowledge module
   web/       templates + HTMX — thin client over the API
   config.py  env-driven settings (ATHENA_DB, ...)
-  main.py    app factory: create_app(), /healthz, migrate-on-startup, wiring
+  main.py    app factory: create_app(), deployment boundary, health, wiring
+  ops.py     athena-serve and the retained operator CLIs
 tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
@@ -177,4 +180,7 @@ Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`,
 `python scripts/check_write_ownership.py`,
 `python scripts/check_imported_at_guards.py`, and `pytest -q -n 4` (plain
 `pytest -q` remains valid).
-Run the app: `uvicorn athena.main:app --reload`.
+Run the app: configure the absolute storage paths and bootstrap/start through
+`athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
+unsupported development escape hatch and intentionally has no authority unless
+one is configured explicitly.

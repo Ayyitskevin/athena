@@ -65,8 +65,8 @@ one database. That is the whole value of running notes and tasks in one workspac
 src/athena/
   core/      auth, users, agent tokens, db + migrations, search (FTS5),
              attachments, activity log, cooperative run check-ins, notifications,
-             webhooks, backups, portability (export/import), OIDC, the issue<->doc
-             cross-link resolver
+             webhooks, backups, portability (export/import), OIDC, deployment
+             policy, the issue<->doc cross-link resolver
   aegis/     issues, projects, statuses, boards, sprints, labels, comments,
              saved filters, automation rules, and application commands that own
              audited write transactions shared by REST + web
@@ -77,7 +77,8 @@ src/athena/
   config.py  env-driven settings (ATHENA_DB, ...)
   main.py    app factory: create_app(), middleware, lifespan, router wiring,
              /healthz liveness, /readyz readiness
-  ops.py     operator CLIs (athena-backup, athena-doctor, athena-export, ...)
+  ops.py     supported launcher and operator CLIs (athena-serve, athena-backup,
+             athena-doctor, athena-export, ...)
   templates/ Jinja templates packaged and mounted by main.py
   static/    packaged CSS + HTMX + small JS helpers — no build step
 tests/       pytest
@@ -90,6 +91,38 @@ the same files from the same owner. The repository CI workflow is configured to
 build the installable wheel through an extracted source distribution and run the
 retained verification helpers, so both formats must preserve those runtime owners.
 
+## Deployment boundary and limits
+
+`athena-serve` is the supported long-running entrypoint. It owns the part of the
+deployment contract that can be checked before accepting traffic: absolute
+database and attachment paths, direct numeric loopback or declared Tailscale
+binds, one worker, no reload or proxy-header trust, exact request authorities,
+positive network-facing limits in tailnet mode, attachment and SQLite integrity,
+an exact migration-owned logical schema, and an active administrator with a
+durable recovery credential. Bootstrap is a separate loopback-only mode for an
+empty database; the one-time bootstrap token must be removed before normal
+startup. Before migrating the real bootstrap file, the launcher backs it up into
+memory and proves the complete migration, integrity, ledger, and final schema
+there, so a recognizable but incompatible database fails before a forward-only
+write.
+
+The application adds an outer ASGI boundary as defense in depth. Every HTTP or
+WebSocket request must arrive on an accepted socket address and carry exactly one
+well-formed `Host` authority from the preflighted allowlist. That check happens
+before request-body buffering, session work, rate limiting, routing, or database
+access. After the signed-inbound peer limiter, the request-body cap remains
+outside browser-session resolution, so an oversized request cannot use a fake
+cookie to trigger SQLite work. Forwarded host and address headers are
+deliberately ignored.
+
+These checks are a fail-closed **declaration of the supported process**, not an
+Internet-exposure detector. A reverse proxy, tunnel, NAT rule, container port
+publication, or Tailscale Funnel can make an allowed loopback listener reachable
+from elsewhere without leaving state inside Athena. Direct public-internet,
+multi-process/worker, hostile multi-tenant, proxy-terminated, and HA shapes
+therefore remain outside the security claim even when the runtime boundary
+accepts a request.
+
 ## Runtime health and schema integrity
 
 `GET /healthz` is a cheap liveness signal. It does not open SQLite, so a process
@@ -101,9 +134,16 @@ The migration runner requires a strictly numbered, contiguous packaged inventory
 and a contiguous applied-ledger prefix; binds each applied migration to its
 immutable, content-derived SHA-256 checksum; and rejects missing, duplicate,
 unknown, future, unpackaged, out-of-order, or checksum-mismatched ledger state.
-Startup applies pending migrations transactionally and then re-runs that
-validator. Readiness checks the validated ledger but does not replace
-`athena-doctor`'s full SQLite and attachment integrity checks.
+Bootstrap rehearses pending migrations on a private in-memory copy, applies
+them transactionally to the recognized real file, and then requires exact
+logical-schema equality with a fresh packaged database. Direct
+development-factory startup still applies pending migrations transactionally
+without that supported-launcher preflight. Supported normal
+`athena-serve` startup instead requires the ledger to be current before
+Athena/Uvicorn accepts traffic; release upgrades use the deliberate offline
+`athena-doctor --migrate` flow with a matched recovery pair. Readiness checks the
+validated ledger but does not replace `athena-doctor`'s full SQLite and attachment
+integrity and exact-schema checks.
 
 There is no separate `api/` package: each module owns its REST surface
 (`aegis/api.py`, `mentor/api.py`, `core/*_api.py`), so the code that serves
@@ -173,9 +213,10 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   `X-CSRF-Token` header). The login form, which has no session yet to bind a
   token to, rejects cross-site POSTs by Origin check instead (login-CSRF
   defense). Changing a password revokes the user's other sessions.
-- Cookies carry the `Secure` flag only when `ATHENA_COOKIE_SECURE=1`; the app
-  warns at startup when it's off so an HTTPS deploy doesn't ship insecure by
-  accident. With it on, responses also send HSTS.
+- Cookies carry the `Secure` flag only when `ATHENA_COOKIE_SECURE=1`; with it on,
+  responses also send HSTS. The current `athena-serve` contract is direct HTTP
+  and refuses that setting so browser recovery cannot be configured into a
+  login loop. Retained raw-factory HTTPS experiments remain unsupported.
 - Every response gets hardening headers (CSP `default-src 'self'`,
   `X-Frame-Options: DENY`, `nosniff`, ...), and request bodies are capped
   (`ATHENA_MAX_REQUEST_BODY_BYTES`).
@@ -203,15 +244,16 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   command-migration debt is tracked in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md).
   Scopes narrow bearer tokens but never expand a user's role. Bearer traffic is
   rate-limited per token
-  (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); anonymous reads and signed-inbound
-  attempts can be throttled per client IP
-  (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default).
+  (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); optional-identity REST reads and
+  signed-inbound attempts can be throttled per client IP
+  (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off locally and required in tailnet
+  mode). That shared limiter is not a global browser-request ceiling.
 - Optional OIDC single sign-on activates only when all four `ATHENA_OIDC_*`
   connection settings are present; first-login auto-provisioning can be locked
   to an email-domain allow-list. Local email+password login is unaffected.
-- The `X-Athena-Actor` fallback is disabled by default and should be enabled only
-  on trusted local/tailnet deployments, usually just long enough for headless
-  token bootstrap.
+- The legacy `X-Athena-Actor` application-factory fallback is disabled by
+  default. `athena-serve` refuses to start when it is enabled; supported
+  deployments use password/OIDC browser login or a scoped bearer token.
 - When/if hosted: dedicated system user + systemd sandboxing, tailnet-only by
   default. Public exposure would be a deliberate, separate decision. See
   [`OPERATIONS.md`](OPERATIONS.md) for the deployment checklist.

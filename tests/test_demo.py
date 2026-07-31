@@ -3,7 +3,9 @@
 from pathlib import Path
 
 import pytest
+import uvicorn
 
+from athena import config
 from athena.core import activity, db
 from athena.demo import DEMO_RUN_ID, DemoSetupError, main, seed_demo
 
@@ -102,6 +104,32 @@ def test_demo_cli_seed_only_is_clear_and_idempotently_safe(tmp_path, capsys):
     output = capsys.readouterr()
     assert "database already exists" in output.err
     assert db_path.read_bytes() == before
+
+
+def test_demo_server_keeps_loopback_host_and_disables_proxy_header_trust(
+    tmp_path, monkeypatch
+):
+    captured = {}
+
+    def fake_run(app, **kwargs):
+        captured["app"] = app
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+
+    assert main(["--db", str(tmp_path / "served.db"), "--port", "8765"]) == 0
+
+    assert captured["app"] is not None
+    assert captured["kwargs"] == {
+        "host": "127.0.0.1",
+        "port": 8765,
+        "workers": 1,
+        "reload": False,
+        "lifespan": "on",
+        "proxy_headers": False,
+        "server_header": False,
+    }
+    assert config.TRUST_ACTOR_HEADER is False
 
 
 def test_seed_demo_mints_a_scoped_agent_token_for_mcp(tmp_path):

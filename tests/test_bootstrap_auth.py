@@ -24,7 +24,15 @@ import pytest
 
 from athena import config
 from athena.core import oidc_flow
-from athena.core import activity, db, user_commands, users, users_api
+from athena.core import (
+    activity,
+    db,
+    deployment,
+    passwords,
+    user_commands,
+    users,
+    users_api,
+)
 from athena.main import create_app
 
 BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
@@ -103,6 +111,169 @@ def test_bootstrap_is_disabled_when_the_token_is_unconfigured(tmp_path, monkeypa
     try:
         assert users.count_users(conn) == 0
         assert activity.list_activity(conn, limit=10) == []
+    finally:
+        conn.close()
+
+
+def test_supported_launcher_bootstrap_requires_a_persistent_admin_password(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", True)
+    app = create_app(tmp_path / "password-required.db")
+    with TestClient(app) as client:
+        refused = client.post(
+            "/users",
+            json={"email": "admin@e.com", "name": "Admin"},
+            headers=BOOTSTRAP_HEADERS,
+        )
+        whitespace_refused = client.post(
+            "/users",
+            json={
+                "email": "admin@e.com",
+                "name": "Admin",
+                "password": " \t ",
+            },
+            headers=BOOTSTRAP_HEADERS,
+        )
+        accepted = client.post(
+            "/users",
+            json={
+                "email": "admin@e.com",
+                "name": "Admin",
+                "password": "persistent-password",
+            },
+            headers=BOOTSTRAP_HEADERS,
+        )
+
+    assert refused.status_code == 422
+    assert refused.json() == {
+        "detail": "athena-serve bootstrap requires an administrator password"
+    }
+    assert whitespace_refused.status_code == 422
+    assert whitespace_refused.json() == refused.json()
+    assert accepted.status_code == 201
+    assert accepted.json()["role"] == "admin"
+
+
+def test_supported_body_floor_carries_maximally_escaped_bootstrap_password_to_login(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", True)
+    password = "&" * passwords.MAX_PASSWORD_BYTES
+    app = create_app(
+        tmp_path / "encoded-password.db",
+        max_request_body_bytes=deployment.MIN_SUPPORTED_REQUEST_BODY_BYTES,
+    )
+    with TestClient(app) as client:
+        created = client.post(
+            "/users",
+            json={
+                "email": "admin@example.com",
+                "name": "Admin",
+                "password": password,
+            },
+            headers=BOOTSTRAP_HEADERS,
+        )
+        logged_in = client.post(
+            "/login",
+            data={"email": "admin@example.com", "password": password},
+            follow_redirects=False,
+        )
+
+    assert created.status_code == 201, created.text
+    assert logged_in.status_code == 303, logged_in.text
+
+
+def test_bootstrap_rejects_a_password_outside_the_supported_envelope(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", True)
+    app = create_app(tmp_path / "oversized-password.db")
+    with TestClient(app) as client:
+        response = client.post(
+            "/users",
+            json={
+                "email": "admin@example.com",
+                "name": "Admin",
+                "password": "x" * (passwords.MAX_PASSWORD_BYTES + 1),
+            },
+            headers=BOOTSTRAP_HEADERS,
+        )
+
+    assert response.status_code == 422
+    assert "x" * (passwords.MAX_PASSWORD_BYTES + 1) not in response.text
+    assert response.json() == {
+        "detail": f"password must be at most {passwords.MAX_PASSWORD_BYTES} UTF-8 bytes"
+    }
+    conn = db.connect(tmp_path / "oversized-password.db")
+    try:
+        assert users.count_users(conn) == 0
+    finally:
+        conn.close()
+
+
+def test_bootstrap_rejects_a_password_the_browser_input_cannot_reproduce(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", True)
+    db_path = tmp_path / "line-break-password.db"
+    secret = "line\nbreak-secret"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        response = client.post(
+            "/users",
+            json={
+                "email": "admin@example.com",
+                "name": "Admin",
+                "password": secret,
+            },
+            headers=BOOTSTRAP_HEADERS,
+        )
+
+    assert response.status_code == 422
+    assert secret not in response.text
+    assert response.json() == {
+        "detail": "password must not contain carriage returns or line feeds"
+    }
+    conn = db.connect(db_path)
+    try:
+        assert users.count_users(conn) == 0
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    (
+        {"email": "", "name": "Admin", "password": "persistent-password"},
+        {"email": " \t ", "name": "Admin", "password": "persistent-password"},
+        {"email": "admin", "name": "Admin", "password": "persistent-password"},
+        {
+            "email": " admin@example.com ",
+            "name": "Admin",
+            "password": "persistent-password",
+        },
+        {"email": "admin@example.com", "name": "", "password": "persistent-password"},
+        {
+            "email": "admin@example.com",
+            "name": " \t ",
+            "password": "persistent-password",
+        },
+    ),
+)
+def test_bootstrap_rejects_an_identity_the_login_contract_cannot_address(
+    tmp_path, monkeypatch, body
+):
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", True)
+    db_path = tmp_path / "blank-identity.db"
+    app = create_app(db_path)
+    with TestClient(app) as client:
+        response = client.post("/users", json=body, headers=BOOTSTRAP_HEADERS)
+
+    assert response.status_code == 422
+    conn = db.connect(db_path)
+    try:
+        assert users.count_users(conn) == 0
     finally:
         conn.close()
 

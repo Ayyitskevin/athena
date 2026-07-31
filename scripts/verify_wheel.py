@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import configparser
 from pathlib import Path, PurePosixPath
 import sys
 from zipfile import BadZipFile, ZipFile
@@ -11,6 +12,12 @@ from zipfile import BadZipFile, ZipFile
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "athena"
 RUNTIME_DIRS = ("core/migrations", "static", "templates")
+REQUIRED_CONSOLE_SCRIPTS = {"athena-serve": "athena.ops:serve_main"}
+
+
+class _CaseSensitiveConfigParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
 
 
 def source_runtime_files(package_root: Path = PACKAGE_ROOT) -> set[str]:
@@ -73,6 +80,46 @@ def verify_runtime_manifest(
     }
 
 
+def verify_console_scripts(
+    wheel_path: Path,
+    *,
+    required: dict[str, str] = REQUIRED_CONSOLE_SCRIPTS,
+) -> None:
+    """Require one unambiguous wheel console-script mapping for each safe entrypoint."""
+    with ZipFile(wheel_path) as archive:
+        candidates = [
+            name
+            for name in archive.namelist()
+            if len(PurePosixPath(name).parts) == 2
+            and PurePosixPath(name).parts[0].endswith(".dist-info")
+            and PurePosixPath(name).name == "entry_points.txt"
+        ]
+        if len(candidates) != 1:
+            raise RuntimeError(
+                "wheel must contain exactly one .dist-info/entry_points.txt"
+            )
+        try:
+            payload = archive.read(candidates[0]).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError("wheel entry_points.txt is not valid UTF-8") from exc
+
+    parser = _CaseSensitiveConfigParser(interpolation=None, strict=True)
+    try:
+        parser.read_string(payload)
+    except configparser.Error as exc:
+        raise RuntimeError(f"wheel entry_points.txt is invalid: {exc}") from exc
+    if not parser.has_section("console_scripts"):
+        raise RuntimeError("wheel entry_points.txt has no [console_scripts] section")
+    scripts = dict(parser.items("console_scripts"))
+    for name, expected in required.items():
+        actual = scripts.get(name)
+        if actual != expected:
+            rendered = "missing" if actual is None else repr(actual)
+            raise RuntimeError(
+                f"wheel console script {name!r} must target {expected!r}; got {rendered}"
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="verify Athena wheel templates, static assets, and migrations"
@@ -82,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         counts = verify_runtime_manifest(args.wheel)
+        verify_console_scripts(args.wheel)
     except (BadZipFile, OSError, RuntimeError) as exc:
         print(f"Athena wheel runtime manifest failed: {exc}", file=sys.stderr)
         return 1
@@ -90,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         "Athena wheel runtime manifest passed: "
         f"{counts['core/migrations']} migrations, "
         f"{counts['static']} static assets, "
-        f"{counts['templates']} templates"
+        f"{counts['templates']} templates, "
+        "and required console scripts"
     )
     return 0
 

@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from athena import ops
-from athena.core import attachments, backup, db
+from athena import config, ops
+from athena.core import attachments, backup, db, users
 
 
 def _seed_database(path, *, email="admin@example.com", issue="Saved issue"):
@@ -425,6 +425,85 @@ def test_doctor_cli_can_migrate_fresh_database(tmp_path, capsys):
     assert "database: ok" in out.out
     assert "applied " in out.out
     assert _migration_count(source) > 0
+
+
+def test_doctor_deployment_mode_checks_exact_config_and_admin_recovery(
+    tmp_path, monkeypatch, capsys
+):
+    source = tmp_path / "athena.db"
+    attach_dir = tmp_path / "attachments"
+    attach_dir.mkdir()
+    conn = db.connect(source)
+    db.migrate(conn)
+    users.create_user(
+        conn,
+        email="admin@example.com",
+        name="Admin",
+        password="password",
+        role="admin",
+    )
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", source)
+    monkeypatch.setattr(config, "ATTACH_DIR", attach_dir)
+    monkeypatch.setattr(config, "NETWORK_MODE", "local")
+    monkeypatch.setattr(config, "ALLOWED_AUTHORITIES", ())
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", "")
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+    assert (
+        ops.doctor_main(
+            [
+                str(source),
+                "--attach-dir",
+                str(attach_dir),
+                "--deployment",
+            ]
+        )
+        == 0
+    )
+
+    out = capsys.readouterr()
+    assert "administrator recovery: ok (1 active)" in out.out
+    assert "network: ok (local; 127.0.0.1:8000; 2 Host authorities)" in out.out
+
+
+def test_doctor_deployment_mode_refuses_a_different_configured_database(
+    tmp_path, monkeypatch, capsys
+):
+    inspected = tmp_path / "inspected.db"
+    configured = tmp_path / "configured.db"
+    attach_dir = tmp_path / "attachments"
+    attach_dir.mkdir()
+    conn = db.connect(inspected)
+    db.migrate(conn)
+    users.create_user(
+        conn,
+        email="admin@example.com",
+        name="Admin",
+        password="password",
+        role="admin",
+    )
+    conn.close()
+    monkeypatch.setattr(config, "DB_PATH", configured)
+    monkeypatch.setattr(config, "ATTACH_DIR", attach_dir)
+    monkeypatch.setattr(config, "NETWORK_MODE", "local")
+    monkeypatch.setattr(config, "ALLOWED_AUTHORITIES", ())
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", "")
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+    assert (
+        ops.doctor_main(
+            [
+                str(inspected),
+                "--attach-dir",
+                str(attach_dir),
+                "--deployment",
+            ]
+        )
+        == 1
+    )
+
+    assert "must exactly match ATHENA_DB" in capsys.readouterr().err
 
 
 def test_doctor_cli_rejects_attachment_path_that_is_not_directory(tmp_path, capsys):

@@ -45,6 +45,7 @@ from athena.core import (
     attachments_api,
     budgets,
     db,
+    deployment,
     identity,
     security_events,
     events_api,
@@ -135,6 +136,76 @@ def _is_signed_inbound(method: str, path: str) -> bool:
         or path.startswith("/callbacks/icarus/")
         or path.startswith("/forge/")
     )
+
+
+class DeploymentBoundaryMiddleware:
+    """Refuse requests outside Athena's declared socket and Host boundary.
+
+    The accepted socket address comes from the ASGI server scope; the Host value
+    comes from the request and is therefore validated independently. This is a
+    defense against accidental direct-interface exposure and DNS rebinding. It
+    cannot detect a proxy or tunnel that reaches Athena over an allowed socket.
+    """
+
+    def __init__(
+        self,
+        app,
+        *,
+        network_mode: str,
+        allowed_authorities: tuple[deployment.Authority, ...],
+        expected_server: tuple[str, int] | None,
+    ):
+        self.app = app
+        self.network_mode = network_mode
+        self.allowed_authorities = allowed_authorities
+        self.expected_server = expected_server
+        self.allowed_ports = frozenset(
+            authority.port for authority in allowed_authorities
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+
+        server = scope.get("server")
+        server_allowed = (
+            isinstance(server, (list, tuple))
+            and len(server) >= 2
+            and isinstance(server[0], str)
+            and isinstance(server[1], int)
+            and not isinstance(server[1], bool)
+            and (
+                deployment.server_address_matches(
+                    server[0],
+                    server[1],
+                    self.expected_server,
+                )
+                if self.expected_server is not None
+                else (
+                    deployment.address_allowed(server[0], self.network_mode)
+                    and server[1] in self.allowed_ports
+                )
+            )
+        )
+        authority_allowed = deployment.request_authority_allowed(
+            scope.get("headers", ()),
+            scheme=scope.get("scheme", "http"),
+            allowed=self.allowed_authorities,
+        )
+        if server_allowed and authority_allowed:
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await _send_json_response(
+            send,
+            {"detail": "request rejected by deployment boundary"},
+            status_code=421 if server_allowed else 503,
+            extra_headers={"Cache-Control": "private, no-store"},
+        )
 
 
 class SignedInboundRateLimitMiddleware:
@@ -1063,6 +1134,9 @@ def _attach_security_headers(response: Response, *, is_https: bool = False) -> R
 def create_app(
     db_path: str | Path | None = None,
     *,
+    network_mode: str | None = None,
+    allowed_authorities: tuple[str, ...] | None = None,
+    expected_server: tuple[str, int] | None = None,
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
@@ -1074,6 +1148,15 @@ def create_app(
 ) -> FastAPI:
     _configure_logging()
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
+    resolved_network_mode = (
+        config.NETWORK_MODE if network_mode is None else network_mode
+    )
+    resolved_authorities = deployment.normalize_runtime_authorities(
+        config.ALLOWED_AUTHORITIES
+        if allowed_authorities is None
+        else allowed_authorities,
+        network_mode=resolved_network_mode,
+    )
     body_limit = (
         config.MAX_REQUEST_BODY_BYTES
         if max_request_body_bytes is None
@@ -1335,15 +1418,16 @@ def create_app(
 
     app.add_exception_handler(undo.UndoRefused, _undo_refused)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
-    # Throttles anonymous reads and signed-inbound attempts by direct client IP.
+    # Throttles optional-identity REST reads and signed-inbound attempts by
+    # direct client IP. It is not a global browser-request ceiling.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
     # Throttles POST /login by client IP, before the password hash; see web/auth.py.
     app.state.login_rate_limiter = rate_limits.FixedWindowRateLimiter(login_limit)
     # Middleware is registered inside-out. Among the general request stack,
-    # idempotency wraps the routes, run context wraps idempotency, and the
-    # request-body cap is outermost so keyed requests are bounded before the
-    # fingerprint layer buffers them. The signed-inbound limiter is registered
-    # last below and sits outside this entire stack.
+    # idempotency wraps the routes and run context wraps idempotency. The body
+    # cap is added after session middleware below, so oversized requests are
+    # bounded before cookie-controlled SQLite work. The deployment boundary is
+    # registered last and sits outside this entire stack.
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,
@@ -1353,7 +1437,6 @@ def create_app(
         max_response_bytes=idempotency_response_limit,
     )
     app.add_middleware(RunContextMiddleware)
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
@@ -1399,6 +1482,8 @@ def create_app(
                 conn.close()
         return await call_next(request)
 
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
+
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
         response = await call_next(request)
@@ -1407,11 +1492,21 @@ def create_app(
             response, is_https=request.url.scheme == "https"
         )
 
-    # Registered last, therefore outermost: a saturated signed-inbound peer is
-    # refused before the body cap buffers bytes or browser/session middleware runs.
+    # A saturated signed-inbound peer is refused before the body cap buffers bytes
+    # or browser/session middleware runs.
     app.add_middleware(
         SignedInboundRateLimitMiddleware,
         limiter=app.state.anon_rate_limiter,
+    )
+    # Registered last, therefore outermost: unsupported accepted-socket addresses
+    # and Host authorities are refused before body, session, limiter, route, or DB
+    # work. Empty authorities intentionally make raw unconfigured ASGI startup
+    # answer no HTTP requests; athena-serve installs the validated allowlist.
+    app.add_middleware(
+        DeploymentBoundaryMiddleware,
+        network_mode=resolved_network_mode,
+        allowed_authorities=resolved_authorities,
+        expected_server=expected_server,
     )
 
     # Mount web foundation (static + Jinja templates + page router).
@@ -1501,5 +1596,7 @@ def create_app(
     return app
 
 
-# The instance the server runs:  uvicorn athena.main:app
+# Direct Uvicorn startup through this module-global instance is an unsupported
+# development escape hatch. athena-serve constructs a fresh app pinned to the
+# exact listener it preflighted and hands that object to Uvicorn directly.
 app = create_app()
