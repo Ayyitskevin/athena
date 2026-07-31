@@ -14,15 +14,55 @@ public forge through a tunnel or reverse proxy scoped to that route alone (see
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
 alpha the project actually claims to be.**
 
-Re-affirmed 2026-07-30 after the Stage M–P expansion, the adversarial review of
-the merged tree (grade 7/10 — see OPUS_REMEDIATION_GUIDE_ATHENA.md), and the
-H-0/H-1/H-2 remediation waves that followed it. Every required repository gate
-passes locally at the named commit. The remaining blockers below are **not
-waived by green tests** — they are supply-chain, deployment-shape, and
+Re-affirmed 2026-07-31 after the Stage M–P expansion, the adversarial review of
+the merged tree (grade 7/10 — see OPUS_REMEDIATION_GUIDE_ATHENA.md), the
+H-0/H-1/H-2 remediation waves, and the release-candidate evidence hardening
+described below. The 2026-07-30 full-product gate passes locally at its named
+commit; the candidate evidence section explicitly distinguishes its local draft
+rehearsal from pending hosted verification. The remaining blockers below are
+**not waived by green tests** — they are supply-chain, deployment-shape, and
 repository-settings items, and accepting them is a human release owner's
 decision, not something a test can make.
 
-## Evidence (2026-07-30, refreshed)
+## Candidate evidence gate (2026-07-31, draft)
+
+The release-evidence draft makes the required test job a prerequisite for one
+candidate job. That job creates a 32-distribution hash-verified evidence/build
+environment, audits the toolchain itself, retains the existing 63-subject
+CI/build/bootstrap input SBOM, and builds exactly one sdist plus one wheel from
+that sdist with `build --no-isolation`. The job snapshots the sdist once before
+extraction and carries its SHA-256 through bundle promotion. Bounded raw and
+semantic archive inspection rejects unsafe, duplicate, noncanonical, oversized,
+or excessively compressed members—including hidden tar control metadata—and
+requires one correctly named sdist root. Its `PKG-INFO`, pinned setuptools build
+configuration, and complete installable `src/athena` payload must agree with the
+wheel.
+
+Fresh Linux/CPython 3.12 base and `[mcp]` environments then install that exact
+wheel under `constraints/ci-py312.txt`. Athena verifies byte-identical installed
+wheel metadata, pip's `direct_url.json` wheel path and SHA-256, the recursively
+evaluated installed dependency closure (including propagated dependency extras),
+the constrained versions, and the absence of unrelated installed packages. In
+the local clean-room rehearsal, the base profile contained 29 third-party
+runtime distributions and the MCP profile contained 41. `pip-audit` reported no
+known advisories for either exact set.
+
+Athena creates one CycloneDX 1.4 document per runtime profile with the
+application root bound to the wheel SHA-256 and dependency edges bound to the
+verified closure. The final allowlisted candidate directory contains exactly
+seven regular files: the sdist, wheel, input SBOM, two runtime SBOMs, candidate
+manifest, and `SHA256SUMS`. Final verification rechecks the input SBOM, both
+installed environments, both runtime SBOMs, the wheel's complete `RECORD`, and
+every manifest/checksum identity. CI then force-reinstalls the copied bundle
+wheel into both environments and runs the standalone verifier against those
+environments before the directory is uploaded.
+
+This is branch-local evidence until hosted CI succeeds for the final draft-PR
+head. It is not a release attestation: runtime downloads remain version-pinned
+rather than artifact-hash-locked, the candidate assertions are unsigned, and no
+tag, publication, provenance attestation, or first-party code scan exists.
+
+## Evidence (2026-07-30, full-product gate)
 
 This run supersedes the Stage L evidence (2026-07-26, quoted below for the
 record) — the tree has since gained Stages M–P (query grammar, live embeds,
@@ -155,35 +195,40 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt — including transport-side authorization on the mentor page/comment, issue-comment, and event-source commands — is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
-| Dependency/security scan | Hash-locked `pip-audit` 2.10.1 scans the 61-package CI graph, pinned pip, and pinned setuptools backend; the isolated scanner lock is also audited; no ignores or soft pass | PASS |
+| Dependency/security scan | The 32-distribution hash-locked evidence/build toolchain audits itself; `pip-audit` scans the exact 63 CI/build/bootstrap inputs and the verified 29-package base / 41-package MCP third-party runtime closures; no ignores or soft pass | PASS (local draft) |
 | GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were disabled when last inspected; settings changes are out of scope for a code change | NOT CONFIGURED |
-| SBOM / signing / provenance | The advisory gate emits and semantically verifies an exact 63-component CycloneDX input SBOM; no released-wheel SBOM, signature, or provenance attestation exists | PARTIAL |
+| SBOM / signing / provenance | The gate retains the exact 63-component input SBOM plus base/MCP CycloneDX graphs rooted at the candidate wheel SHA-256; the candidate remains unsigned, unattested, unpublished, and does not represent a first-party code scan | PARTIAL |
 
 ### Python supply-chain evidence (2026-07-31)
 
-A fresh Linux/Python 3.12 environment installed pip 26.1.2 and the
-`pip-audit` 2.10.1 toolchain exclusively from the repository's hash-locked
-requirement files. `pip check` passed, the scanner's own complete 29-package
-lock reported no known vulnerabilities, and the application-input scan
-reported zero known vulnerabilities across exactly 63 subjects: 61 CI
-dependency pins, pip, and the setuptools build backend.
+A fresh Linux/Python 3.12 environment installed pip 26.1.2, `pip-audit` 2.10.1,
+`build` 1.5.0, setuptools 83.0.0, and their transitive tool dependencies
+exclusively from the repository's 32-distribution hash-locked requirement file.
+`pip check` passed, the toolchain self-audit reported no known vulnerabilities,
+and the application-input scan reported zero known vulnerabilities across
+exactly 63 subjects: 61 CI dependency pins, pip, and the setuptools build
+backend.
 
-`scripts/check_supply_chain.py` then independently verified the generated
-CycloneDX 1.4 document structure against that complete normalized name/version
-set and required no reported vulnerability entries. The SBOM stays a
-point-in-time record: its UUID, timestamp, and generated `bom-ref` values are
-intentionally not treated as reproducible bytes, and a later run may correctly
-fail when PyPI publishes new advisory data.
+`scripts/check_supply_chain.py` independently verified that input CycloneDX 1.4
+document against the complete normalized name/version set.
+`scripts/check_wheel_evidence.py` then verified the exact sdist-derived wheel,
+its installed base and MCP closures, and the corresponding 29- and
+41-component third-party advisory results before creating the two
+wheel-SHA-rooted runtime SBOMs and seven-file candidate bundle. The documents
+remain point-in-time records: UUIDs and timestamps vary, and a later run may
+correctly fail when PyPI publishes new advisory data.
 
 ## Remaining blockers and residual risk
 
 These are the reasons the decision above is `HOLD` for public production. None is
 resolved by a green test run.
 
-- **Supply chain.** The repository now has a fail-closed advisory gate and an
-  exact input SBOM, but the application constraint graph is version-pinned
-  rather than hash-locked. No released-wheel SBOM, artifact signature,
-  provenance attestation, or published release exists. The pinned
+- **Supply chain.** The repository now has a fail-closed advisory gate, an exact
+  input SBOM, and candidate-wheel-bound base/MCP dependency evidence, but the
+  application constraint graph and runtime downloads are version-pinned rather
+  than artifact-hash-locked. The SBOMs and checksums are unsigned assertions;
+  no signature, provenance attestation, published release, or first-party code
+  scan exists. The pinned
   `anomalyco/opencode` composite action resolves the latest OpenCode release at
   runtime, invokes `actions/cache@v4` by a mutable tag, and pipes an unpinned
   remote installer into Bash — the repository reference is immutable, its

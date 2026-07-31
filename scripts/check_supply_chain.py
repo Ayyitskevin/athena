@@ -9,12 +9,13 @@ import json
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
 import tomllib
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
@@ -91,13 +92,22 @@ def _parse_pin(value: str, *, source: str) -> Dependency:
     return Dependency(name=requirement.name, version=version, source=source)
 
 
-def read_pins(path: Path, *, require_hashes: bool = False) -> list[Dependency]:
+def read_pins(
+    path: Path,
+    *,
+    require_hashes: bool = False,
+    require_only_binary: bool = False,
+) -> list[Dependency]:
     """Read exact requirement pins, rejecting ambiguous requirement syntax."""
     dependencies: list[Dependency] = []
     seen: set[str] = set()
+    saw_only_binary = False
     for logical_line in _logical_lines(path):
         if logical_line.startswith("--"):
             if logical_line == "--only-binary :all:":
+                if saw_only_binary:
+                    raise ValueError(f"{path}: duplicate --only-binary directive")
+                saw_only_binary = True
                 continue
             raise ValueError(f"{path}: unsupported global option {logical_line!r}")
 
@@ -118,6 +128,8 @@ def read_pins(path: Path, *, require_hashes: bool = False) -> list[Dependency]:
         dependencies.append(dependency)
     if not dependencies:
         raise ValueError(f"{path}: no dependency pins found")
+    if require_only_binary and not saw_only_binary:
+        raise ValueError(f"{path}: missing required --only-binary :all: directive")
     return dependencies
 
 
@@ -125,7 +137,11 @@ def expected_dependencies(root: Path = REPO_ROOT) -> dict[str, Dependency]:
     """Assemble the exact CI, build, and bootstrap dependency subjects."""
     dependencies = [
         *read_pins(root / CI_CONSTRAINTS),
-        *read_pins(root / BOOTSTRAP_CONSTRAINTS, require_hashes=True),
+        *read_pins(
+            root / BOOTSTRAP_CONSTRAINTS,
+            require_hashes=True,
+            require_only_binary=True,
+        ),
     ]
 
     pyproject_path = root / PYPROJECT
@@ -155,10 +171,17 @@ def expected_dependencies(root: Path = REPO_ROOT) -> dict[str, Dependency]:
     return expected
 
 
-def security_tool_dependencies(root: Path = REPO_ROOT) -> dict[str, Dependency]:
-    """Validate direct scanner pins against the complete hash-locked tool graph."""
+def evidence_tool_dependencies(root: Path = REPO_ROOT) -> dict[str, Dependency]:
+    """Validate direct evidence-tool pins against their locks and source pins."""
     direct = read_pins(root / SECURITY_TOOLS_INPUT)
-    locked = read_pins(root / SECURITY_TOOLS_LOCK, require_hashes=True)
+    direct_by_name = {
+        normalize_name(dependency.name): dependency for dependency in direct
+    }
+    locked = read_pins(
+        root / SECURITY_TOOLS_LOCK,
+        require_hashes=True,
+        require_only_binary=True,
+    )
     locked_by_name = {
         normalize_name(dependency.name): dependency for dependency in locked
     }
@@ -174,12 +197,50 @@ def security_tool_dependencies(root: Path = REPO_ROOT) -> dict[str, Dependency]:
                 f"{SECURITY_TOOLS_LOCK}: {dependency.name} is "
                 f"{locked_dependency.version}, expected {dependency.version}"
             )
+
+    ci_by_name = {
+        normalize_name(dependency.name): dependency
+        for dependency in read_pins(root / CI_CONSTRAINTS)
+    }
+    build_frontend = ci_by_name.get("build")
+    if build_frontend is None:
+        raise ValueError(f"{CI_CONSTRAINTS}: missing build frontend pin")
+    authoritative = {"build": build_frontend}
+
+    pyproject_path = root / PYPROJECT
+    document = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    build_requires = document.get("build-system", {}).get("requires")
+    if not isinstance(build_requires, list) or not build_requires:
+        raise ValueError(f"{pyproject_path}: build-system.requires must be nonempty")
+    for value in build_requires:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{pyproject_path}: build requirement must be a string, got {value!r}"
+            )
+        dependency = _parse_pin(
+            value,
+            source=f"{pyproject_path}:build-system.requires",
+        )
+        authoritative[normalize_name(dependency.name)] = dependency
+
+    for normalized, dependency in authoritative.items():
+        direct_dependency = direct_by_name.get(normalized)
+        if direct_dependency is None:
+            raise ValueError(
+                f"{SECURITY_TOOLS_INPUT}: missing direct build tool {dependency.name!r}"
+            )
+        if direct_dependency.version != dependency.version:
+            raise ValueError(
+                f"{SECURITY_TOOLS_INPUT}: {dependency.name} is "
+                f"{direct_dependency.version}, expected authoritative "
+                f"{dependency.version}"
+            )
     return locked_by_name
 
 
 def verify_audit_environment(root: Path = REPO_ROOT) -> int:
-    """Require the running interpreter to contain exactly the scanner lock."""
-    expected = security_tool_dependencies(root)
+    """Require the running interpreter to contain exactly the evidence-tool lock."""
+    expected = evidence_tool_dependencies(root)
     actual: dict[str, str] = {}
     for distribution in distributions():
         name = distribution.metadata.get("Name")
@@ -324,6 +385,40 @@ def verify_sbom(sbom_path: Path, *, root: Path = REPO_ROOT) -> int:
     return len(expected)
 
 
+def _prepare_external_output(
+    path: Path,
+    *,
+    root: Path,
+    protected: tuple[Path, ...] = (),
+) -> Path:
+    """Return a safe output leaf without following or unlinking a symlink."""
+    name = path.name
+    if name in {"", ".", ".."}:
+        raise ValueError("supply-chain evidence output has an invalid filename")
+    parent = path.absolute().parent.resolve()
+    if parent.is_relative_to(root.resolve()):
+        raise ValueError("supply-chain evidence output must stay outside the checkout")
+    parent.mkdir(parents=True, exist_ok=True)
+    output = parent / name
+    try:
+        mode = output.lstat().st_mode
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISREG(mode):
+            raise ValueError(
+                "supply-chain evidence output must be a regular, non-symlink file"
+            )
+        if any(output == item.resolve(strict=False) for item in protected):
+            raise ValueError("supply-chain evidence output aliases a protected input")
+        output.unlink()
+    return output
+
+
+def _temporary_output(output: Path) -> Path:
+    return output.with_name(f".{output.name}.candidate-{uuid4().hex}")
+
+
 def _write_audit_input(path: Path, dependencies: dict[str, Dependency]) -> None:
     lines = [
         f"{dependencies[name].name}=={dependencies[name].version}"
@@ -346,16 +441,14 @@ def run_audit(
         strict=False
     ).is_relative_to(resolved_root):
         raise ValueError("audit interpreter must stay outside the checkout")
-    resolved_output = output.resolve()
-    if resolved_output.is_relative_to(resolved_root):
-        raise ValueError("supply-chain evidence output must stay outside the checkout")
     if timeout_seconds <= 0:
         raise ValueError("audit timeout must be positive")
-    output = resolved_output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.unlink(missing_ok=True)
-    candidate = output.with_name(f".{output.name}.candidate")
-    candidate.unlink(missing_ok=True)
+    output = _prepare_external_output(
+        output,
+        root=resolved_root,
+        protected=(auditor_python,),
+    )
+    candidate = _temporary_output(output)
 
     dependencies = expected_dependencies(root)
     temporary_path: Path | None = None

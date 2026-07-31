@@ -121,37 +121,42 @@ def test_build_requirement_must_be_an_exact_pin(tmp_path):
         check_supply_chain.expected_dependencies(repo)
 
 
-def test_current_security_tool_lock_is_exact_and_matches_direct_inputs():
-    dependencies = check_supply_chain.security_tool_dependencies(ROOT)
+def test_current_evidence_tool_lock_is_exact_and_matches_direct_inputs():
+    dependencies = check_supply_chain.evidence_tool_dependencies(ROOT)
 
-    assert len(dependencies) == 29
+    assert len(dependencies) == 32
+    assert dependencies["build"].version == "1.5.0"
     assert dependencies["packaging"].version == "26.2"
     assert dependencies["pip"].version == "26.1.2"
     assert dependencies["pip-audit"].version == "2.10.1"
+    assert dependencies["setuptools"].version == "83.0.0"
 
 
-def test_security_tool_direct_pin_must_match_lock(tmp_path):
+def test_evidence_tool_direct_pin_must_match_lock(tmp_path):
     constraints = tmp_path / "constraints"
     constraints.mkdir()
     (constraints / "security-tools.in").write_text(
         "pip-audit==2.10.1\n", encoding="utf-8"
     )
     (constraints / "security-tools-py312.txt").write_text(
-        f"pip-audit==2.10.0 \\\n  --hash=sha256:{'0' * 64}\n",
+        (f"--only-binary :all:\npip-audit==2.10.0 \\\n  --hash=sha256:{'0' * 64}\n"),
         encoding="utf-8",
     )
 
     with pytest.raises(ValueError, match="expected 2.10.1"):
-        check_supply_chain.security_tool_dependencies(tmp_path)
+        check_supply_chain.evidence_tool_dependencies(tmp_path)
 
 
 def test_audit_environment_must_exactly_match_tool_lock(tmp_path, monkeypatch):
-    constraints = tmp_path / "constraints"
-    constraints.mkdir()
-    (constraints / "security-tools.in").write_text("auditor==1\n", encoding="utf-8")
-    (constraints / "security-tools-py312.txt").write_text(
-        f"auditor==1 \\\n  --hash=sha256:{'0' * 64}\n",
-        encoding="utf-8",
+    expected = check_supply_chain.Dependency(
+        name="auditor",
+        version="1",
+        source="test",
+    )
+    monkeypatch.setattr(
+        check_supply_chain,
+        "evidence_tool_dependencies",
+        lambda _root: {"auditor": expected},
     )
     monkeypatch.setattr(
         check_supply_chain,
@@ -171,6 +176,40 @@ def test_audit_environment_must_exactly_match_tool_lock(tmp_path, monkeypatch):
     )
     with pytest.raises(ValueError, match="unexpected: surprise"):
         check_supply_chain.verify_audit_environment(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("ci_build", "backend", "message"),
+    [
+        ("build==1.4.0\n", 'requires = ["setuptools==83.0.0"]', "build is 1.5.0"),
+        ("build==1.5.0\n", 'requires = ["setuptools==82.0.0"]', "setuptools is 83.0.0"),
+    ],
+)
+def test_evidence_build_tools_must_match_authoritative_sources(
+    tmp_path, ci_build, backend, message
+):
+    constraints = tmp_path / "constraints"
+    constraints.mkdir()
+    (constraints / "ci-py312.txt").write_text(ci_build, encoding="utf-8")
+    (constraints / "security-tools.in").write_text(
+        "build==1.5.0\nsetuptools==83.0.0\n",
+        encoding="utf-8",
+    )
+    (constraints / "security-tools-py312.txt").write_text(
+        (
+            "--only-binary :all:\n"
+            f"build==1.5.0 \\\n  --hash=sha256:{'0' * 64}\n"
+            f"setuptools==83.0.0 \\\n  --hash=sha256:{'1' * 64}\n"
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        f'[build-system]\n{backend}\nbuild-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=message):
+        check_supply_chain.evidence_tool_dependencies(tmp_path)
 
 
 def test_semantic_sbom_verification_accepts_order_and_name_spelling(tmp_path):
@@ -388,3 +427,65 @@ def test_run_audit_refuses_checkout_output_or_interpreter(tmp_path):
             tmp_path / "sbom.json",
             root=repo,
         )
+
+
+def test_hash_lock_requires_binary_only_policy(tmp_path):
+    lock = tmp_path / "lock.txt"
+    lock.write_text(
+        f"subject==1 \\\n  --hash=sha256:{'0' * 64}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing required --only-binary"):
+        check_supply_chain.read_pins(
+            lock,
+            require_hashes=True,
+            require_only_binary=True,
+        )
+
+
+def test_run_audit_rejects_output_symlink_without_touching_target(
+    tmp_path, monkeypatch
+):
+    repo = _fake_repo(tmp_path / "repo")
+    target = tmp_path / "victim.txt"
+    target.write_text("preserve me", encoding="utf-8")
+    output = tmp_path / "evidence.json"
+    output.symlink_to(target)
+    monkeypatch.setattr(
+        check_supply_chain.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("scanner must not run"),
+    )
+
+    with pytest.raises(ValueError, match="regular, non-symlink"):
+        check_supply_chain.run_audit(
+            Path("/audit/python"),
+            output,
+            root=repo,
+        )
+
+    assert target.read_text(encoding="utf-8") == "preserve me"
+    assert output.is_symlink()
+
+
+def test_run_audit_rejects_output_alias_without_deleting_interpreter(
+    tmp_path, monkeypatch
+):
+    repo = _fake_repo(tmp_path / "repo")
+    auditor = tmp_path / "auditor-python"
+    auditor.write_bytes(b"preserve executable")
+    monkeypatch.setattr(
+        check_supply_chain.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("scanner must not run"),
+    )
+
+    with pytest.raises(ValueError, match="aliases a protected input"):
+        check_supply_chain.run_audit(
+            auditor,
+            auditor,
+            root=repo,
+        )
+
+    assert auditor.read_bytes() == b"preserve executable"
