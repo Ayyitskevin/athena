@@ -317,8 +317,9 @@ with the intended attachment snapshot first.
 
 ## Backup and Restore
 
-`athena-backup` snapshots only the SQLite database. It does **not** include any
-blob under `ATHENA_ATTACH_DIR`. A database-only snapshot can be taken online:
+By default, `athena-backup` snapshots only the SQLite database. It does **not**
+include any blob under `ATHENA_ATTACH_DIR`. A database-only snapshot can be taken
+online:
 
 ```bash
 athena-backup /var/lib/athena/athena.db /backups/athena-$(date -u +%F).db
@@ -341,26 +342,109 @@ With `--keep`, the default retention glob is `<source-db-stem>-*.db`
 file-name pattern. Retention never walks directories; it only deletes older
 matching sibling files after the new backup succeeds.
 
-### Create a complete recovery pair
+### Create and verify a matched recovery bundle
 
-A complete recovery point is one SQLite snapshot plus the matching attachment
-directory snapshot. To prevent uploads or deletes between the two, drain traffic,
-gracefully stop Athena, and wait for its process and background runners to exit.
-Then capture both under one identifier. For example, with GNU `tar`:
+A native recovery bundle binds one SQLite snapshot to exactly the attachment rows
+visible in that snapshot. The service may remain online while it is captured:
 
 ```bash
 SNAPSHOT_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 SNAPSHOT_DIR="/backups/athena-${SNAPSHOT_ID}"
-mkdir -m 0700 -- "$SNAPSHOT_DIR"
-athena-backup /var/lib/athena/athena.db "$SNAPSHOT_DIR/athena.db"
-tar --create --file "$SNAPSHOT_DIR/attachments.tar" \
-  --directory /var/lib/athena attachments
+athena-backup /var/lib/athena/athena.db "$SNAPSHOT_DIR" \
+  --recovery-bundle \
+  --attach-dir /var/lib/athena/attachments
+athena-doctor "$SNAPSHOT_DIR" --recovery-bundle
 ```
 
-An equivalent filesystem snapshot is fine if it preserves the directory tree,
-random stored names, and file bytes. Keep the pair together, record its identifier,
-and store a copy away from the service host. Restart Athena only after the pair is
-complete.
+The database snapshot is the membership authority. A post-snapshot upload and an
+uncommitted published blob are correctly omitted; unrelated live orphan files are
+also omitted. If a snapshot-visible blob is deleted, replaced, or changed before it
+can be copied, the command fails without publishing the destination. Retry after
+the concurrent operation completes. If capture repeatedly loses that race, drain
+traffic and gracefully stop Athena before retrying.
+
+The bundle has one exact, private layout: `manifest.json`, `athena.db`, and an
+`attachments/` directory. Creation refuses an existing destination and never
+combines bundle mode with overwrite or retention. It stages beside the destination,
+checks the complete candidate, publishes it without clobbering a path that appeared
+concurrently, and syncs the parent directory. If the command says publication
+succeeded but parent-directory durability is uncertain, preserve the named bundle
+and verify it; do not assume either success or absence. The SQLite staging file stays
+descriptor-pinned while the online backup writes through `/proc/self/fd`; replacing
+its temporary directory entry cannot redirect those writes to another file.
+
+Athena does not recursively delete a failed staging tree: pathname deletion has no
+inode precondition and could remove a concurrently substituted directory. Before
+publication, an error therefore reports the exact private `.tmp` stage retained at
+mode `0700`. A parent-path race detected immediately after publication is retracted
+through the already-open parent descriptor and retains the same private stage. Inspect
+that stage, preserve it while diagnosing the failure, and remove it explicitly only
+after confirming its identity. Athena does not undo an external move of the parent
+itself. On a prepublication failure, Athena does not move its candidate to the
+requested name; that name may still exist if another actor won the no-clobber race,
+so do not attribute it to Athena without inspection and verification. A reported
+postpublication rollback failure also requires manual inspection. An operator
+interrupt follows the same retention rule before the operation's final success
+boundary: the CLI exits `130` and prints the retained stage path instead of hiding it
+behind a traceback. If the destination exists across a caller-frame interrupt, the
+CLI reports its ownership and durability as unknown rather than claiming success.
+
+Bundle capture and scratch materialization currently require Linux with mounted
+`procfs` and `renameat2(2)` no-replace support. Those primitives keep opened source
+and destination directories descriptor-pinned across the operation. The commands
+fail closed when that platform contract is unavailable. POSIX does not provide one
+operation that atomically couples an ancestor-containment decision to a rename. Keep
+the source root, destination parent, and their ancestors trusted and stable; do not
+rename them while either command runs. Athena checks containment immediately before
+and after publication and again after syncing the parent, and retracts a race it
+observes. That is consistency and race detection, not a security boundary against a
+malicious process with the same filesystem privileges: such a process can move a
+completed artifact after the final check. POSIX also has no inode-conditioned rename,
+so the same trust and stability precondition applies while Athena retracts a detected
+publication; a reported rollback failure requires inspection of the destination
+parent and its relevant directory entries rather than assumptions about either name.
+
+`athena-doctor --recovery-bundle` is source-read-only. It rejects weak permissions,
+unexpected files, malformed or inconsistent manifest data, SQLite corruption,
+foreign-key or migration/schema drift, and missing, extra, non-regular, or changed
+attachment blobs. It does not create SQLite sidecars or a writable probe in the
+bundle. To enforce a local freshness policy, measure conservatively from capture
+start:
+
+```bash
+athena-doctor "$SNAPSHOT_DIR" --recovery-bundle \
+  --max-recovery-point-age-seconds 900
+```
+
+One successful capture does not prove that a recurring 15-minute schedule exists.
+Copy the complete directory to storage on another host or failure boundary, preserve
+its modes, and run the same verifier there. The internal hashes prove consistency,
+not authenticity or encryption: anyone able to rewrite both content and manifest can
+forge them. Apply storage encryption and access control outside Athena, and retain
+the matching Athena wheel/version with the bundle. The manifest's nonempty
+`athena_version` value is provenance metadata, not a compatibility or authenticity
+decision; the verifier reports it but relies on the exact packaged migration/schema
+contract and content hashes for the checks it can actually prove.
+
+Exercise data materialization into a new, absent scratch directory without touching
+live paths:
+
+```bash
+DRILL_DIR="/var/tmp/athena-recovery-drill-${SNAPSHOT_ID}"
+athena-doctor "$SNAPSHOT_DIR" --recovery-bundle \
+  --drill-dir "$DRILL_DIR" \
+  --max-data-recovery-seconds 120
+```
+
+The duration covers bundle verification and local database/attachment
+materialization only. It is a data-recovery measurement, not RTO: it excludes host
+and configuration recovery, service startup, readiness, network/DNS, and traffic
+restoration. The scratch database must be byte-for-byte identical to the verified
+bundle database; validating only its schema or attachment rows is insufficient. A
+completed drill that exceeds the threshold is retained for inspection but exits
+nonzero. Inspect and remove drill trees and any explicitly reported failed stages
+under the operator's normal retention process; neither doctor nor backup deletes
+them.
 
 ### Restore a matched pair
 
@@ -369,26 +453,33 @@ wait for the process to exit. Before changing either target, create a separate
 pre-restore recovery pair of the current database and attachment directory. Keep
 that pair until the restored instance has passed operator acceptance.
 
-Select the exact matched snapshot directory first. Set `BACKUP_DIR` in the
-operator shell to that directory; each snippet below refuses to run if it is unset.
-Extract the candidate attachment archive into a new private sibling directory;
-do not merge it into the live directory:
+Select the exact matched recovery bundle first. Set `BACKUP_DIR` in the operator
+shell to that directory, then materialize it once into a new writable scratch drill.
+`BACKUP_DIR` may be read-only recovery media. Never pass its `athena.db` directly to
+`athena-restore`: that legacy command opens its candidate through SQLite's normal
+read-write path and may create transient sidecars. The byte-exact drill is the only
+restore candidate used below, so verification and restoration leave the source
+bundle untouched.
+
+Copy the drill's verified attachment directory into a new private sibling directory
+on the live attachment filesystem; do not merge it into the live directory:
 
 ```bash
 : "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
 RESTORE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+RESTORE_DRILL="/var/tmp/athena-restore-candidate-${RESTORE_ID}"
+athena-doctor "$BACKUP_DIR" --recovery-bundle --drill-dir "$RESTORE_DRILL"
 RESTORE_STAGE="/var/lib/athena/attachments.restore-${RESTORE_ID}"
 mkdir -m 0700 -- "$RESTORE_STAGE"
-tar --extract --file "$BACKUP_DIR/attachments.tar" \
-  --directory "$RESTORE_STAGE" --strip-components=1
+cp --archive --no-dereference -- "$RESTORE_DRILL/attachments/." "$RESTORE_STAGE/"
 ```
 
 Restore the matching database while Athena remains stopped. An existing target
 requires `--force`:
 
 ```bash
-: "${BACKUP_DIR:?set BACKUP_DIR to the selected matched snapshot directory}"
-athena-restore "$BACKUP_DIR/athena.db" /var/lib/athena/athena.db --force
+: "${RESTORE_DRILL:?materialize and set RESTORE_DRILL first}"
+athena-restore "$RESTORE_DRILL/athena.db" /var/lib/athena/athena.db --force
 ```
 
 `athena-restore` first copies the candidate into a private sibling stage, runs
@@ -419,9 +510,9 @@ mv -- "$RESTORE_STAGE" "$CURRENT_ATTACH_DIR"
 athena-doctor /var/lib/athena/athena.db --attach-dir "$CURRENT_ATTACH_DIR"
 ```
 
-Keep `PREVIOUS_ATTACH_DIR` and the pre-restore database snapshot until acceptance.
-After the final doctor passes, start the single Athena process, wait for startup,
-and then check readiness before restoring traffic:
+Keep `PREVIOUS_ATTACH_DIR`, `RESTORE_DRILL`, and the pre-restore database snapshot
+until acceptance. After the final doctor passes, start the single Athena process,
+wait for startup, and then check readiness before restoring traffic:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/readyz
@@ -1202,8 +1293,8 @@ Before leaving laptop-only development:
   the exact configured database, attachment directory, and subsequent listener
   before returning local/tailnet traffic to a restored, moved, or upgraded
   instance.
-- Store a matched SQLite snapshot and attachment-directory snapshot away from the
-  service host; `athena-backup` alone does not include attachment blobs.
+- Store a verified recovery bundle away from the service host; the default
+  database-only `athena-backup` invocation does not include attachment blobs.
 - Verify Tailscale ACL and Funnel state externally; Athena cannot observe them.
 - Do not publish loopback through a proxy/tunnel or treat this checklist as
   approval for direct public-internet exposure.
