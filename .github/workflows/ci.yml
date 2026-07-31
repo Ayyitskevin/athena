@@ -25,12 +25,14 @@ jobs:
           python-version: "3.12"
       - name: Create isolated test environment
         run: python -m venv .venv
+      - name: Install hash-verified package installer
+        run: .venv/bin/python -I -m pip install --require-hashes -r constraints/bootstrap-py312.txt
       - name: Install test extras (including MCP)
-        run: .venv/bin/python -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
+        run: .venv/bin/python -I -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
       - name: Verify pinned dependency set
         run: |
-          .venv/bin/python -m pip check
-          .venv/bin/python -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
+          .venv/bin/python -I -m pip check
+          .venv/bin/python -I -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
       - name: Lint
         run: .venv/bin/python -m ruff check .
       - name: Check formatting
@@ -94,9 +96,9 @@ jobs:
           .venv/bin/python \
             "${source_trees[0]}/scripts/check_import_contracts.py"
           echo "ATHENA_SDIST_SOURCE=${source_trees[0]}" >> "$GITHUB_ENV"
-          .venv/bin/python -m pip uninstall --yes athena
-          .venv/bin/python -m pip install --no-deps "${wheels[0]}"
-          .venv/bin/python -m pip check
+          .venv/bin/python -I -m pip uninstall --yes athena
+          .venv/bin/python -I -m pip install --no-deps "${wheels[0]}"
+          .venv/bin/python -I -m pip check
       - name: Boot the sdist-derived wheel outside the checkout
         working-directory: /tmp
         run: |

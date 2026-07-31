@@ -1,0 +1,81 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Create isolated audit environment
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -I -m venv "$RUNNER_TEMP/athena-audit-venv"
+          echo "AUDIT_PYTHON=$RUNNER_TEMP/athena-audit-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Install hash-verified audit toolchain
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$AUDIT_PYTHON" -I -m pip install \
+            --require-hashes \
+            -r "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt"
+          "$AUDIT_PYTHON" -I -m pip install \
+            --require-hashes \
+            -r "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt"
+          "$AUDIT_PYTHON" -I -m pip check
+          "$AUDIT_PYTHON" -I -m pip --version
+          "$AUDIT_PYTHON" -I -m pip_audit --version
+          "$AUDIT_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" \
+            verify-environment
+      - name: Audit the audit toolchain
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$AUDIT_PYTHON" -I -m pip_audit \
+            --strict \
+            --no-deps \
+            --disable-pip \
+            --progress-spinner off \
+            --timeout 30 \
+            --vulnerability-service pypi \
+            --require-hashes \
+            --requirement "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt"
+      - name: Audit pinned application inputs and build CycloneDX evidence
+        working-directory: ${{ runner.temp }}
+        run: |
+          evidence_root="$RUNNER_TEMP/athena-supply-chain"
+          "$AUDIT_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" run \
+            --auditor-python "$AUDIT_PYTHON" \
+            --output "$evidence_root/athena-ci-python.cdx.json"
+          "$AUDIT_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" verify \
+            --sbom "$evidence_root/athena-ci-python.cdx.json"
+      - name: Upload CycloneDX evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: sbom-python-3.12
+          path: ${{ runner.temp }}/athena-supply-chain/athena-ci-python.cdx.json
+          if-no-files-found: error
+          retention-days: 14

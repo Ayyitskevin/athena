@@ -16,10 +16,12 @@ verified in CI. From a clean checkout, run the required gate:
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/python -m pip install \
+.venv/bin/python -I -m pip install \
+  --require-hashes -r constraints/bootstrap-py312.txt
+.venv/bin/python -I -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/python -m pip check
-.venv/bin/python -m pip freeze --exclude-editable \
+.venv/bin/python -I -m pip check
+.venv/bin/python -I -m pip freeze --exclude-editable \
   | diff -u constraints/ci-py312.txt -
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
@@ -42,6 +44,48 @@ table to the checker, via `tests/test_imported_at_guards.py`).
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`.
+
+### Supply-chain evidence
+
+Run the advisory gate in a fresh, separate Python 3.12 environment. Keep its
+CycloneDX output outside the checkout:
+
+```bash
+set -euo pipefail
+audit_env=$(mktemp -d /tmp/athena-audit-venv.XXXXXX)
+evidence_root=$(mktemp -d /tmp/athena-supply-chain.XXXXXX)
+python3.12 -m venv "$audit_env"
+"$audit_env/bin/python" -I -m pip install \
+  --require-hashes -r constraints/bootstrap-py312.txt
+"$audit_env/bin/python" -I -m pip install \
+  --require-hashes -r constraints/security-tools-py312.txt
+"$audit_env/bin/python" -I -m pip check
+"$audit_env/bin/python" -I scripts/check_supply_chain.py verify-environment
+
+"$audit_env/bin/python" -I -m pip_audit \
+  --strict \
+  --no-deps \
+  --disable-pip \
+  --progress-spinner off \
+  --timeout 30 \
+  --vulnerability-service pypi \
+  --require-hashes \
+  --requirement constraints/security-tools-py312.txt
+
+"$audit_env/bin/python" -I scripts/check_supply_chain.py run \
+  --auditor-python "$audit_env/bin/python" \
+  --output "$evidence_root/athena-ci-python.cdx.json"
+"$audit_env/bin/python" -I scripts/check_supply_chain.py verify \
+  --sbom "$evidence_root/athena-ci-python.cdx.json"
+```
+
+The scanner environment and its installer exactly match their hash-verified
+locks; isolated Python mode prevents checkout modules from shadowing either
+tool. Neither audit has an ignore list or soft-pass path. The application audit
+covers the exact CI, bootstrap, and build-backend input pins. CycloneDX
+timestamps, UUIDs, and generated `bom-ref` values vary, so verification compares
+the complete normalized component/version set and requires no reported
+vulnerability entries instead of comparing file hashes.
 
 ### Packaging and outside-checkout smoke
 
@@ -94,9 +138,9 @@ fi
   "${source_trees[0]}/scripts/check_import_contracts.py"
 sha256sum "${sdists[0]}" "${wheels[0]}"
 
-.venv/bin/python -m pip uninstall --yes athena
-.venv/bin/python -m pip install --no-deps "${wheels[0]}"
-.venv/bin/python -m pip check
+.venv/bin/python -I -m pip uninstall --yes athena
+.venv/bin/python -I -m pip install --no-deps "${wheels[0]}"
+.venv/bin/python -I -m pip check
 (
   cd /tmp
   "$repo_root/.venv/bin/python" -c \
