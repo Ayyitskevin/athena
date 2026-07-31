@@ -46,7 +46,7 @@ jobs:
       - name: Run required tests with full-source branch coverage
         run: scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
       - name: Upload coverage evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-python-3.12
           path: ${{ runner.temp }}/athena-coverage

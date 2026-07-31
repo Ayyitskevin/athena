@@ -69,13 +69,18 @@ names checked against Node's WHATWG URL parser. Exact-head Actions run
 then passed every required step on evidence commit
 `ef1b91e82bf2b21bb2d9b47636dee4b2f32ff869` in 17m14s, including coverage
 evidence upload, the sdist-derived wheel build/install, and the external wheel
-boot. GitHub emitted one non-failing maintenance annotation because the pinned
-`actions/upload-artifact` revision still declares a Node 20 runtime and was
-forced onto Node 24; that pin needs a separately reviewed update, but no gate was
-skipped. Neither local nor hosted evidence authorizes merge or release. The
-public-release decision remains `HOLD`: Athena cannot observe whether a proxy,
-tunnel, NAT rule, container publication, or Tailscale Funnel exposes an otherwise
-allowed listener.
+boot. That historical run emitted one non-failing maintenance annotation because
+the then-pinned `actions/upload-artifact` v4.6.2 revision declared a Node 20
+runtime and GitHub forced it onto Node 24. This candidate replaces it with the
+official, signature-verified v6.0.0 commit
+`b7c566a772e6b6bfb58ed0dc250532a479d7789f`, whose immutable `action.yml`
+declares `node24`; the existing artifact name, path, missing-file policy, hidden
+file inclusion, retention, and workflow permissions are unchanged. Exact
+PR-head CI remains the behavioral proof for both the uploaded archive and the
+absence of that annotation. Neither local nor hosted evidence authorizes merge
+or release. The public-release decision remains `HOLD`: Athena cannot observe
+whether a proxy, tunnel, NAT rule, container publication, or Tailscale Funnel
+exposes an otherwise allowed listener.
 
 ## Evidence (2026-07-30, refreshed)
 
