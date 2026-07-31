@@ -64,11 +64,18 @@ exercise. Artifact SHA-256:
 Independent architecture and adversarial reviews both returned `PASS` with no
 blocking finding. The adversarial authority matrix found no parser acceptance
 among 69,156 libc legacy-IPv4 forms and no mismatch across 18,294 accepted DNS
-names checked against Node's WHATWG URL parser. Hosted CI at the exact final PR
-head remains pending, so this local evidence does not authorize merge or release.
-The public-release decision remains `HOLD`: Athena cannot observe whether a
-proxy, tunnel, NAT rule, container publication, or Tailscale Funnel exposes an
-otherwise allowed listener.
+names checked against Node's WHATWG URL parser. Exact-head Actions run
+[`30616489205`](https://github.com/Ayyitskevin/athena/actions/runs/30616489205)
+then passed every required step on evidence commit
+`ef1b91e82bf2b21bb2d9b47636dee4b2f32ff869` in 17m14s, including coverage
+evidence upload, the sdist-derived wheel build/install, and the external wheel
+boot. GitHub emitted one non-failing maintenance annotation because the pinned
+`actions/upload-artifact` revision still declares a Node 20 runtime and was
+forced onto Node 24; that pin needs a separately reviewed update, but no gate was
+skipped. Neither local nor hosted evidence authorizes merge or release. The
+public-release decision remains `HOLD`: Athena cannot observe whether a proxy,
+tunnel, NAT rule, container publication, or Tailscale Funnel exposes an otherwise
+allowed listener.
 
 ## Evidence (2026-07-30, refreshed)
 
@@ -192,7 +199,7 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Area | Evidence | Status |
 |---|---|---|
 | Configuration | Strict booleans, finite/ranged numerics, known log levels, all-or-none OIDC; malformed configuration aborts startup | PASS |
-| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, installed two-process bootstrap/restart smoke, and independent architecture/adversarial review | LOCAL PASS; HOSTED CI PENDING |
+| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, installed two-process bootstrap/restart smoke, independent architecture/adversarial review, and exact-head Actions `30616489205` | PASS |
 | Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; deployment doctor/launcher additionally require exact logical-schema equality; bootstrap dry-runs migration before the real write; `/readyz` fails closed without leaking detail | PASS |
 | Restore | Candidate `quick_check`, private stages, file/directory sync, atomic replacement, sidecar-cleanup rollback, retained recovery on double failure | PASS |
 | Attachments | Private atomic publication, metadata+audit transaction, no-follow descriptor download, observable attempt-all cleanup, deterministic reconciliation | PASS |
