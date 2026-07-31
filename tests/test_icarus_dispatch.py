@@ -21,13 +21,16 @@ keeping those two things apart.
 import hashlib
 import hmac
 import json
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
 
+import athena.main as athena_main
 from athena import config
 from athena.aegis import icarus_commands
-from athena.core import db, dispatch, webhooks
+from athena.core import access, activity, db, dispatch, webhooks
+from athena.core.deps import get_conn
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
 
@@ -113,6 +116,24 @@ def _dispatch_via_command(db_file, *, actor_id=1, issue_id, poster, **overrides)
     )
     conn.close()
     return delivered
+
+
+def _pending_dispatch(db_file, *, actor_id=1, issue_id, **overrides):
+    conn = db.connect(db_file)
+    actor = dict(
+        conn.execute("SELECT * FROM users WHERE id = ?", (actor_id,)).fetchone()
+    )
+    record = icarus_commands.request_dispatch(
+        conn,
+        actor=actor,
+        work_item_id=issue_id,
+        repo="git@example.com:acme/app.git",
+        base_commit="abc123",
+        capability="repo.edit",
+        **overrides,
+    )
+    conn.close()
+    return record
 
 
 def _events(db_file, verb):
@@ -219,6 +240,10 @@ def test_a_callback_attaches_evidence_and_a_terminal_outcome(tmp_path):
             {
                 "icarus_run_id": "icarus-run-1",
                 "policy_digest": record["policy_digest"],
+                # Terminal callbacks are cumulative: repeating the canonical
+                # evidence makes progress-before-terminal and terminal-before-
+                # progress converge even when the network reorders them.
+                "evidence_ref": "https://ci.example.com/logs/9",
                 "completion_ref": "https://example.com/pr/12",
                 "outcome": "completed",
             },
@@ -276,6 +301,204 @@ def test_a_callback_without_a_valid_signature_is_refused_before_any_lookup(tmp_p
         )
 
 
+def test_callback_authentication_precedes_json_parsing_and_database(tmp_path):
+    # HMAC is the callback's entire identity boundary. Malformed JSON must not
+    # reveal that it is malformed until the raw bytes authenticate, and neither
+    # refusal may spend a SQLite connection.
+    app, _ = _app(tmp_path)
+
+    def database_must_not_open():
+        raise AssertionError("callback perimeter should have refused first")
+
+    app.dependency_overrides[get_conn] = database_must_not_open
+    malformed = b'{"not":'
+    wrong_headers = {
+        "Content-Type": "application/json",
+        "X-Athena-Signature": "sha256=" + "0" * 64,
+    }
+    good_headers = {
+        "Content-Type": "application/json",
+        "X-Athena-Signature": webhooks.sign(SECRET, malformed),
+    }
+    with TestClient(app) as c:
+        unsigned = c.post(
+            "/callbacks/icarus",
+            content=malformed,
+            headers={"Content-Type": "application/json"},
+        )
+        wrong = c.post("/callbacks/icarus", content=malformed, headers=wrong_headers)
+        authenticated = c.post(
+            "/callbacks/icarus", content=malformed, headers=good_headers
+        )
+        invalid_utf8 = b"\xff"
+        authenticated_invalid_utf8 = c.post(
+            "/callbacks/icarus",
+            content=invalid_utf8,
+            headers={
+                "Content-Type": "application/json",
+                "X-Athena-Signature": webhooks.sign(SECRET, invalid_utf8),
+            },
+        )
+        non_ascii = c.post(
+            "/callbacks/icarus",
+            content=b"{}",
+            headers=[
+                (b"content-type", b"application/json"),
+                (b"x-athena-signature", b"sha256=\xff"),
+            ],
+        )
+
+        assert unsigned.status_code == wrong.status_code == 401
+        assert unsigned.json() == wrong.json() == {"detail": "invalid signature"}
+        assert authenticated.status_code == 422
+        assert authenticated.json() == {"detail": "invalid callback payload"}
+        assert authenticated_invalid_utf8.status_code == 422
+        assert authenticated_invalid_utf8.json() == {
+            "detail": "invalid callback payload"
+        }
+        assert non_ascii.status_code == 401
+
+        # Raw parsing would otherwise make FastAPI lose the body contract.
+        operation = c.get("/openapi.json").json()["paths"]["/callbacks/icarus"]["post"]
+        assert operation["requestBody"]["required"] is True
+        schema = operation["requestBody"]["content"]["application/json"]["schema"]
+        assert set(schema["required"]) == {"icarus_run_id", "policy_digest"}
+        signature = next(
+            parameter
+            for parameter in operation["parameters"]
+            if parameter["name"] == "x-athena-signature"
+        )
+        assert signature["required"] is True
+        assert operation["responses"]["202"]["content"]["application/json"][
+            "schema"
+        ] == {"$ref": "#/components/schemas/CallbackOut"}
+        error_schema = operation["responses"]["422"]["content"]["application/json"][
+            "schema"
+        ]
+        assert error_schema == {"$ref": "#/components/schemas/CallbackErrorOut"}
+        assert (
+            c.get("/openapi.json").json()["components"]["schemas"]["CallbackErrorOut"][
+                "properties"
+            ]["detail"]["type"]
+            == "string"
+        )
+
+
+def test_bad_callback_headers_cannot_trigger_pre_hmac_sqlite(tmp_path, monkeypatch):
+    # Browser sessions and durable REST idempotency do not apply to a machine
+    # callback. Attacker-supplied versions of both headers must be ignored until
+    # the raw-body HMAC has authenticated, rather than opening SQLite first.
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        with monkeypatch.context() as patch:
+
+            def database_must_not_open(*args, **kwargs):
+                raise AssertionError("unsigned callback reached SQLite")
+
+            patch.setattr(athena_main.db, "connect", database_must_not_open)
+            refused = c.post(
+                "/callbacks/icarus",
+                content=b'{"not":',
+                headers={
+                    "Content-Type": "application/json",
+                    "Cookie": f"{config.SESSION_COOKIE}=attacker-controlled",
+                    "Idempotency-Key": "attacker-controlled",
+                    "X-Athena-Signature": "sha256=" + "0" * 64,
+                },
+            )
+        assert refused.status_code == 401
+        assert refused.json() == {"detail": "invalid signature"}
+
+
+def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
+    # Invalid signatures have no actor to charge. The direct peer-IP budget is
+    # consumed before body work or a DB dependency, so a bad-signature flood is
+    # bounded just like the forge inbound path.
+    app = create_app(tmp_path / "callback-burst.db", anon_rate_limit_per_minute=2)
+
+    def database_must_not_open():
+        raise AssertionError("invalid callbacks must not open SQLite")
+
+    app.dependency_overrides[get_conn] = database_must_not_open
+    headers = {
+        "Content-Type": "application/json",
+        "X-Athena-Signature": "sha256=" + "0" * 64,
+    }
+    with TestClient(app) as c:
+        assert (
+            c.post("/callbacks/icarus", content=b"{", headers=headers).status_code
+            == 401
+        )
+        assert (
+            c.post("/callbacks/icarus", content=b"{", headers=headers).status_code
+            == 401
+        )
+        limited = c.post("/callbacks/icarus", content=b"{", headers=headers)
+
+    assert limited.status_code == 429
+    assert limited.json() == {"detail": "anonymous rate limit exceeded"}
+    assert 1 <= int(limited.headers["retry-after"]) <= 60
+    assert limited.headers["x-ratelimit-limit"] == "2"
+    assert limited.headers["x-ratelimit-remaining"] == "0"
+
+
+@pytest.mark.parametrize(
+    ("path", "root_path"),
+    [
+        ("/callbacks/icarus", ""),
+        ("/callbacks/icarus/", ""),
+        ("/athena/callbacks/icarus", "/athena"),
+        ("/athena/forge/gh", "/athena"),
+    ],
+)
+def test_exhausted_signed_inbound_limit_refuses_before_reading_the_body(
+    tmp_path, path, root_path
+):
+    # The limiter is outer ASGI middleware, not a route check. Once the peer has
+    # spent its unit, Athena must produce 429 without invoking receive(), even if
+    # the request carries cookie/idempotency headers that normally engage global
+    # middleware.
+    import asyncio
+
+    app = create_app(tmp_path / "callback-outer-limit.db", anon_rate_limit_per_minute=1)
+    assert app.state.anon_rate_limiter.check("testclient").allowed is True
+    messages = []
+
+    async def receive():  # pragma: no cover - invocation is the failure
+        raise AssertionError("exhausted signed-inbound peer body was read")
+
+    async def send(message):
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "method": "POST",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [
+            (b"content-length", b"1048576"),
+            (b"cookie", f"{config.SESSION_COOKIE}=attacker".encode()),
+            (b"idempotency-key", b"attacker"),
+        ],
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+        "scheme": "http",
+        "root_path": root_path,
+    }
+    with TestClient(app):
+        asyncio.run(app(scope, receive, send))
+
+    started = next(
+        message for message in messages if message["type"] == "http.response.start"
+    )
+    assert started["status"] == 429
+    headers = dict(started["headers"])
+    assert headers[b"retry-after"]
+    assert headers[b"cache-control"] == b"private, no-store"
+
+
 def test_a_policy_digest_mismatch_is_recorded_not_discarded(tmp_path):
     # The digest exists to NOTICE a divergence. Dropping the callback would destroy
     # exactly the evidence it was computed to produce.
@@ -302,6 +525,344 @@ def test_a_policy_digest_mismatch_is_recorded_not_discarded(tmp_path):
         assert final["evidence_ref"] == "https://ci.example.com/logs/9"
         assert final["state"] == "completed"
     assert len(_events(db_file, dispatch.VERB_DIGEST_MISMATCH)) == 1
+
+
+def test_non_ascii_policy_digest_is_flagged_without_crashing(tmp_path):
+    # compare_digest rejects non-ASCII str operands. A signed executor report with
+    # one is still evidence of policy divergence: accept the report, mark false,
+    # and write a safe audit label instead of leaking malformed text into SQLite.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        answered = _callback(
+            c,
+            {
+                "icarus_run_id": "icarus-run-1",
+                "policy_digest": "ÿ",
+                "evidence_ref": "example://evidence/canonical",
+                "completion_ref": "example://result/complete",
+                "outcome": "completed",
+            },
+        )
+        assert answered.status_code == 202
+        assert answered.json()["policy_digest_matches"] is False
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+        assert final["state"] == "completed"
+        assert final["evidence_ref"] == "example://evidence/canonical"
+
+        # JSON permits an escaped lone surrogate, but SQLite cannot encode it.
+        # The authenticated malformed field is a 422, never another 500.
+        surrogate = _callback(
+            c,
+            {"icarus_run_id": "unknown", "policy_digest": "\ud800"},
+        )
+        assert surrogate.status_code == 422
+
+    mismatch = _events(db_file, dispatch.VERB_DIGEST_MISMATCH)
+    assert len(mismatch) == 1
+    assert "reported <malformed>" in mismatch[0]["detail"]
+
+
+def test_evidence_is_immutable_and_callback_replays_are_audited_once(tmp_path):
+    # Callback v1 carries no sequence. Athena can prove equality, not recency, so
+    # the first evidence pointer is canonical: exact retry is a no-op, a different
+    # open-state pointer conflicts, and terminal state absorbs anything late.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        progress = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": record["policy_digest"],
+            "evidence_ref": "example://evidence/canonical",
+        }
+        assert _callback(c, progress).status_code == 202
+        assert _callback(c, progress).status_code == 202
+
+        conflict = _callback(
+            c,
+            {
+                **progress,
+                "policy_digest": "wrong-on-conflict",
+                "evidence_ref": "example://evidence/other",
+            },
+        )
+        assert conflict.status_code == 409
+        assert conflict.json() == {
+            "detail": "evidence_ref is immutable for this dispatch"
+        }
+
+        terminal = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": record["policy_digest"],
+            "evidence_ref": "example://evidence/canonical",
+            "completion_ref": "example://result/complete",
+            "outcome": "completed",
+        }
+        assert _callback(c, terminal).status_code == 202
+        # Different evidence and another mismatch after terminal are both absorbed.
+        late = _callback(
+            c,
+            {
+                **terminal,
+                "policy_digest": "another-mismatch",
+                "evidence_ref": "example://evidence/late",
+                "outcome": "failed",
+            },
+        )
+        assert late.status_code == 202
+        assert late.json()["policy_digest_matches"] is False
+
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+        assert final["state"] == "completed"
+        assert final["evidence_ref"] == "example://evidence/canonical"
+        assert final["completion_ref"] == "example://result/complete"
+
+    assert len(_events(db_file, dispatch.VERB_EVIDENCE)) == 1
+    assert len(_events(db_file, dispatch.VERB_TERMINAL)) == 1
+    assert len(_events(db_file, dispatch.VERB_DIGEST_MISMATCH)) == 1
+
+
+def test_racing_evidence_callbacks_choose_one_canonical_pointer(tmp_path):
+    # BEGIN IMMEDIATE serializes the decision: two different first reports cannot
+    # both observe NULL and overwrite each other. One lands; the other sees the
+    # canonical pointer and conflicts without a second audit event.
+    import threading
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        barrier = threading.Barrier(2)
+        statuses: list[int] = []
+
+        def report(ref):
+            client = TestClient(app)
+            barrier.wait(timeout=5)
+            statuses.append(
+                _callback(
+                    client,
+                    {
+                        "icarus_run_id": "icarus-run-1",
+                        "policy_digest": record["policy_digest"],
+                        "evidence_ref": ref,
+                    },
+                ).status_code
+            )
+
+        refs = ("example://evidence/one", "example://evidence/two")
+        threads = [threading.Thread(target=report, args=(ref,)) for ref in refs]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert sorted(statuses) == [202, 409]
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+        assert final["evidence_ref"] in refs
+
+    evidence = _events(db_file, dispatch.VERB_EVIDENCE)
+    assert len(evidence) == 1
+    assert evidence[0]["detail"] == final["evidence_ref"]
+
+
+def test_cumulative_terminal_is_safe_when_it_arrives_before_progress(tmp_path):
+    # A well-behaved terminal callback repeats the canonical evidence pointer.
+    # Whichever callback arrives first, the durable row and audit trail converge.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        payload = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": record["policy_digest"],
+            "evidence_ref": "example://evidence/canonical",
+        }
+        terminal = _callback(
+            c,
+            {
+                **payload,
+                "completion_ref": "example://result/complete",
+                "outcome": "completed",
+            },
+        )
+        assert terminal.status_code == 202
+        assert _callback(c, payload).status_code == 202
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+
+    assert final["state"] == "completed"
+    assert final["evidence_ref"] == "example://evidence/canonical"
+    assert len(_events(db_file, dispatch.VERB_EVIDENCE)) == 1
+    assert len(_events(db_file, dispatch.VERB_TERMINAL)) == 1
+
+
+def test_legacy_terminal_then_progress_fills_only_missing_evidence(tmp_path):
+    # evidence_ref remains optional in callback v1. A legacy terminal report may
+    # arrive before its progress twin, so terminal state may fill a NULL pointer
+    # once while still refusing every overwrite.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        terminal = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": record["policy_digest"],
+            "completion_ref": "example://result/complete",
+            "outcome": "completed",
+        }
+        assert _callback(c, terminal).status_code == 202
+        assert (
+            _callback(
+                c,
+                {
+                    "icarus_run_id": "icarus-run-1",
+                    "policy_digest": record["policy_digest"],
+                    "evidence_ref": "example://evidence/delayed",
+                },
+            ).status_code
+            == 202
+        )
+        # A second, different late pointer cannot replace the first.
+        assert (
+            _callback(
+                c,
+                {
+                    "icarus_run_id": "icarus-run-1",
+                    "policy_digest": record["policy_digest"],
+                    "evidence_ref": "example://evidence/other",
+                },
+            ).status_code
+            == 202
+        )
+        final = c.get(f"/dispatches/{record['id']}", headers=H1).json()
+
+    assert final["state"] == "completed"
+    assert final["evidence_ref"] == "example://evidence/delayed"
+    assert len(_events(db_file, dispatch.VERB_EVIDENCE)) == 1
+    assert len(_events(db_file, dispatch.VERB_TERMINAL)) == 1
+
+
+def test_first_late_policy_mismatch_is_still_audited_once(tmp_path):
+    # Terminal state absorbs outcome/evidence mutation, not security evidence. A
+    # first mismatch reported afterward must remain visible, and its replay must
+    # not spam the trail.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+        terminal = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": record["policy_digest"],
+            "completion_ref": "example://result/complete",
+            "outcome": "completed",
+        }
+        assert _callback(c, terminal).status_code == 202
+        mismatch = {
+            "icarus_run_id": "icarus-run-1",
+            "policy_digest": "late-mismatch",
+        }
+        first = _callback(c, mismatch)
+        replay = _callback(c, mismatch)
+        assert first.status_code == replay.status_code == 202
+        assert first.json()["policy_digest_matches"] is False
+
+    assert len(_events(db_file, dispatch.VERB_DIGEST_MISMATCH)) == 1
+
+
+def test_evidence_and_audit_roll_back_together(tmp_path, monkeypatch):
+    # The command owns both writes. If audit insertion fails, no evidence pointer
+    # may survive without the event that explains where it came from.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file, issue_id=issue["id"], poster=_accepting_poster()
+        )
+
+    original_record = activity.record
+
+    def fail_evidence_event(conn, **kwargs):
+        if kwargs["verb"] == dispatch.VERB_EVIDENCE:
+            raise RuntimeError("audit unavailable")
+        return original_record(conn, **kwargs)
+
+    monkeypatch.setattr(activity, "record", fail_evidence_event)
+    conn = db.connect(db_file)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        icarus_commands.apply_callback(
+            conn,
+            icarus_run_id="icarus-run-1",
+            policy_digest=record["policy_digest"],
+            evidence_ref="example://evidence/canonical",
+        )
+    conn.close()
+
+    conn = db.connect(db_file)
+    final = dispatch.get_dispatch(conn, record["id"])
+    conn.close()
+    assert final is not None
+    assert final["evidence_ref"] is None
+    assert len(_events(db_file, dispatch.VERB_EVIDENCE)) == 0
+
+
+@pytest.mark.parametrize(
+    ("overrides", "detail"),
+    [
+        ({"icarus_run_id": 7}, "icarus_run_id must be a string"),
+        ({"icarus_run_id": ""}, "icarus_run_id must be 1-500 characters"),
+        ({"icarus_run_id": "x" * 501}, "icarus_run_id must be 1-500 characters"),
+        (
+            {"icarus_run_id": "bad\nrun"},
+            "icarus_run_id must not contain control characters",
+        ),
+        ({"policy_digest": "\ud800"}, "policy_digest must be valid Unicode text"),
+        ({"evidence_ref": 7}, "evidence_ref must be a string"),
+        (
+            {"completion_ref": "example://result"},
+            "completion_ref requires a terminal outcome",
+        ),
+        ({"outcome": "running"}, "outcome must be one of: completed, failed"),
+    ],
+)
+def test_callback_command_validates_every_database_bound_field(
+    tmp_path, overrides, detail
+):
+    # The command is a real boundary, not a route helper: a future adapter calling
+    # it directly cannot bind malformed text to SQLite or bypass the wire model.
+    app, db_file = _app(tmp_path)
+    with TestClient(app):
+        pass
+    payload = {
+        "icarus_run_id": "unknown",
+        "policy_digest": "digest",
+        **overrides,
+    }
+    conn = db.connect(db_file)
+    with pytest.raises(icarus_commands.IcarusCommandError) as refused:
+        icarus_commands.apply_callback(conn, **payload)
+    conn.close()
+    assert refused.value.kind == "invalid"
+    assert refused.value.detail == detail
 
 
 def test_a_replayed_callback_does_not_fork_the_record(tmp_path):
@@ -533,6 +1094,102 @@ def test_the_rest_route_dispatches_and_lists(tmp_path, monkeypatch):
         assert [row["id"] for row in listed] == [created.json()["id"]]
         assert c.get("/dispatches?state=accepted", headers=H1).json()
         assert c.get("/dispatches?state=failed", headers=H1).json() == []
+
+
+def test_dispatch_visibility_and_record_share_one_write_transaction(
+    tmp_path, monkeypatch
+):
+    """WHY: membership revocation must not land after authorization but before
+    the dispatch and its audit fact are recorded."""
+
+    app, db_file = _app(tmp_path, "dispatch-visibility-race.db")
+    with TestClient(app) as c:
+        _bootstrap(c)
+        member = c.post(
+            "/users",
+            json={
+                "email": "member@e.com",
+                "name": "Member",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H1,
+        ).json()
+        project = c.post(
+            "/projects",
+            json={"name": "Private", "key": "RACE"},
+            headers=H1,
+        ).json()
+        issue = c.post(
+            "/issues",
+            json={"title": "Authorized once", "project_id": project["id"]},
+            headers=H1,
+        ).json()
+        assert (
+            c.put(
+                f"/projects/{project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        assert (
+            c.post(
+                f"/projects/{project['id']}/members",
+                json={"user_id": member["id"]},
+                headers=H1,
+            ).status_code
+            == 201
+        )
+
+    command_conn = db.connect(db_file)
+    actor = dict(
+        command_conn.execute(
+            "SELECT * FROM users WHERE id = ?", (member["id"],)
+        ).fetchone()
+    )
+    original_can_see = access.can_see_issue
+    revocation_blocked = False
+
+    def check_while_revocation_races(conn, checked_actor, issue_id):
+        nonlocal revocation_blocked
+        visible = original_can_see(conn, checked_actor, issue_id)
+        assert visible
+
+        revoker = db.connect(db_file)
+        revoker.execute("PRAGMA busy_timeout = 0")
+        try:
+            access.remove_project_member(revoker, project["id"], member["id"])
+        except sqlite3.OperationalError as exc:
+            assert "locked" in str(exc).lower()
+            revoker.rollback()
+            revocation_blocked = True
+        finally:
+            revoker.close()
+        return visible
+
+    monkeypatch.setattr(access, "can_see_issue", check_while_revocation_races)
+    record = icarus_commands.request_dispatch(
+        command_conn,
+        actor=actor,
+        work_item_id=issue["id"],
+        repo="git@example.com:acme/app.git",
+        base_commit="abc123",
+        capability="repo.edit",
+    )
+    command_conn.close()
+
+    assert revocation_blocked
+    assert record["work_item_id"] == issue["id"]
+
+    # Once the command commits, the policy change can be retried and governs the
+    # next command. The first decision remains an auditable serialization,
+    # not a stale authorization applied after revocation.
+    monkeypatch.setattr(access, "can_see_issue", original_can_see)
+    revoker = db.connect(db_file)
+    assert access.remove_project_member(revoker, project["id"], member["id"])
+    assert not access.can_see_issue(revoker, actor, issue["id"])
+    revoker.close()
 
 
 def test_dispatch_reads_cannot_bypass_private_issue_visibility(tmp_path, monkeypatch):
@@ -927,6 +1584,109 @@ def test_redelivering_an_answered_dispatch_is_a_no_op(tmp_path):
     conn.close()
 
 
+def test_concurrent_delivery_acceptances_are_first_writer_wins(tmp_path):
+    # The outbound idempotency key requires the executor to single-flight repeated
+    # POSTs. Athena still defends its own side if a broken executor answers two
+    # concurrent attempts with different run ids: one state and one audit fact win.
+    import threading
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+    record = _pending_dispatch(db_file, issue_id=issue["id"])
+    barrier = threading.Barrier(2)
+    results = []
+    errors = []
+
+    def deliver(run_id):
+        conn = db.connect(db_file)
+
+        def poster(url, body, headers):
+            barrier.wait(timeout=5)
+            return True, json.dumps({"icarus_run_id": run_id})
+
+        try:
+            results.append(
+                icarus_commands.deliver_dispatch(
+                    conn,
+                    dispatch_id=record["id"],
+                    poster=poster,
+                )
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+        finally:
+            conn.close()
+
+    threads = [
+        threading.Thread(target=deliver, args=("run-A",)),
+        threading.Thread(target=deliver, args=("run-B",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(results) == 2
+    conn = db.connect(db_file)
+    final = dispatch.get_dispatch(conn, record["id"])
+    conn.close()
+    assert final is not None
+    assert final["state"] == dispatch.ACCEPTED
+    assert final["icarus_run_id"] in {"run-A", "run-B"}
+    accepted = _events(db_file, dispatch.VERB_ACCEPTED)
+    assert len(accepted) == 1
+    assert accepted[0]["detail"] == f"executor run {final['icarus_run_id']}"
+
+
+@pytest.mark.parametrize(
+    ("poster", "failed_verb"),
+    [
+        (_accepting_poster(), dispatch.VERB_ACCEPTED),
+        (
+            lambda url, body, headers: (False, "executor unavailable"),
+            dispatch.VERB_UNDELIVERABLE,
+        ),
+    ],
+)
+def test_delivery_state_and_audit_roll_back_together(
+    tmp_path, monkeypatch, poster, failed_verb
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+    record = _pending_dispatch(db_file, issue_id=issue["id"])
+    original_record = activity.record
+
+    def fail_delivery_event(conn, **kwargs):
+        if kwargs["verb"] == failed_verb:
+            raise RuntimeError("audit unavailable")
+        return original_record(conn, **kwargs)
+
+    monkeypatch.setattr(activity, "record", fail_delivery_event)
+    conn = db.connect(db_file)
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        icarus_commands.deliver_dispatch(
+            conn,
+            dispatch_id=record["id"],
+            poster=poster,
+        )
+    conn.close()
+
+    conn = db.connect(db_file)
+    final = dispatch.get_dispatch(conn, record["id"])
+    conn.close()
+    assert final is not None
+    assert final["state"] == dispatch.PENDING_DELIVERY
+    assert final["icarus_run_id"] is None
+    assert final["last_error"] is None
+    assert len(_events(db_file, failed_verb)) == 0
+
+
 def test_an_executor_that_answers_with_junk_is_still_correlated(tmp_path):
     # A well-behaved executor returns its run id. One that does not still gets
     # correlated by the idempotency key both sides already share — better than
@@ -942,6 +1702,77 @@ def test_an_executor_that_answers_with_junk_is_still_correlated(tmp_path):
     record = _dispatch_via_command(db_file, issue_id=issue["id"], poster=vague_poster)
     assert record["state"] == dispatch.ACCEPTED
     assert record["icarus_run_id"] == record["idempotency_key"]
+
+
+def test_executor_run_id_round_trips_without_transformation(tmp_path):
+    # The run id is the executor's opaque correlation key. Trimming it on
+    # acceptance would store a value the executor was never told and make its
+    # natural echo return 404.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+        record = _dispatch_via_command(
+            db_file,
+            issue_id=issue["id"],
+            poster=_accepting_poster(run_id=" run with spaces "),
+        )
+        assert record["icarus_run_id"] == " run with spaces "
+        callback = _callback(
+            c,
+            {
+                "icarus_run_id": " run with spaces ",
+                "policy_digest": record["policy_digest"],
+            },
+        )
+        assert callback.status_code == 202
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [None, 7, "", "   ", "bad\nrun", "x" * 501, "\ud800"],
+)
+def test_invalid_executor_run_id_marks_delivery_undeliverable(tmp_path, run_id):
+    # Acceptance and callback vocabularies are one contract. Never store a key
+    # the callback boundary must reject; retain the dispatch as a visible
+    # delivery failure instead.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        issue = _issue(c)
+    record = _dispatch_via_command(
+        db_file,
+        issue_id=issue["id"],
+        poster=_accepting_poster(run_id=run_id),
+    )
+    assert record["state"] == dispatch.UNDELIVERABLE
+    assert record["icarus_run_id"] is None
+    assert record["last_error"] == "executor returned an invalid icarus_run_id"
+    assert len(_events(db_file, dispatch.VERB_ACCEPTED)) == 0
+    assert len(_events(db_file, dispatch.VERB_UNDELIVERABLE)) == 1
+
+
+def test_duplicate_executor_run_id_marks_only_the_second_delivery_undeliverable(
+    tmp_path,
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        first_issue = _issue(c, "first")
+        second_issue = _issue(c, "second")
+    first = _dispatch_via_command(
+        db_file,
+        issue_id=first_issue["id"],
+        poster=_accepting_poster(run_id="shared-run"),
+    )
+    second = _dispatch_via_command(
+        db_file,
+        issue_id=second_issue["id"],
+        poster=_accepting_poster(run_id="shared-run"),
+    )
+    assert first["state"] == dispatch.ACCEPTED
+    assert second["state"] == dispatch.UNDELIVERABLE
+    assert second["last_error"] == "executor returned a duplicate icarus_run_id"
 
 
 def test_dispatch_needs_the_write_role_and_the_issue_scope(tmp_path):
@@ -1090,7 +1921,7 @@ def test_dispatch_input_and_reads_are_bounded(tmp_path):
 
     conn = db.connect(db_file)
     actor = dict(conn.execute("SELECT * FROM users WHERE id = 1").fetchone())
-    with pytest.raises(dispatch.DispatchError) as anonymous:
+    with pytest.raises(icarus_commands.IcarusCommandError) as anonymous:
         icarus_commands.request_dispatch(
             conn,
             actor=None,
@@ -1100,7 +1931,7 @@ def test_dispatch_input_and_reads_are_bounded(tmp_path):
             capability="repo.edit",
         )
     assert anonymous.value.kind == "unauthorized"
-    with pytest.raises(dispatch.DispatchError) as missing:
+    with pytest.raises(icarus_commands.IcarusCommandError) as missing:
         icarus_commands.request_dispatch(
             conn,
             actor=actor,
@@ -1110,7 +1941,7 @@ def test_dispatch_input_and_reads_are_bounded(tmp_path):
             capability="repo.edit",
         )
     assert missing.value.kind == "not_found"
-    with pytest.raises(dispatch.DispatchError) as unknown:
+    with pytest.raises(icarus_commands.IcarusCommandError) as unknown:
         icarus_commands.deliver_dispatch(conn, dispatch_id=999999)
     assert unknown.value.kind == "not_found"
     with pytest.raises(ValueError):

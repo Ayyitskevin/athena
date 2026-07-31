@@ -87,6 +87,19 @@ def test_signature_is_hmac_sha256_over_the_body():
     assert webhooks.sign("a", body) == webhooks.sign("a", body)
 
 
+def test_signature_verification_treats_malformed_headers_as_mismatches():
+    # ASGI may decode arbitrary header bytes to non-ASCII text. Verification is a
+    # total function over that untrusted value: only the exact signature passes;
+    # malformed type, length, or encoding never raises.
+    body = b'{"a":1}'
+    signature = webhooks.sign("topsecret", body)
+    assert webhooks.verify("topsecret", body, signature) is True
+    assert webhooks.verify("topsecret", body, "sha256=" + "0" * 64) is False
+    assert webhooks.verify("topsecret", body, "short") is False
+    assert webhooks.verify("topsecret", body, "sha256=ÿ") is False
+    assert webhooks.verify("topsecret", body, None) is False
+
+
 # --- CRUD API (admin only) --------------------------------------------------
 
 

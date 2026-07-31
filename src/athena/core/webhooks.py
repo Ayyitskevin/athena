@@ -186,6 +186,27 @@ def sign(secret: str, body: bytes) -> str:
     return f"sha256={digest}"
 
 
+def verify(secret: str, body: bytes, provided: object) -> bool:
+    """Verify one signature without letting malformed header text escape.
+
+    ASGI decodes header bytes to text before the application sees them. A raw
+    non-ASCII value therefore reaches Python as a ``str`` that
+    :func:`hmac.compare_digest` refuses to compare with another ``str``. Normalize
+    both sides to fixed-length ASCII bytes so every malformed value is simply a
+    failed authentication, never a 500.
+    """
+    expected = sign(secret, body).encode("ascii")
+    if not isinstance(provided, str):
+        candidate = b"\0" * len(expected)
+    else:
+        try:
+            encoded = provided.encode("ascii")
+        except UnicodeEncodeError:
+            encoded = b""
+        candidate = encoded if len(encoded) == len(expected) else b"\0" * len(expected)
+    return hmac.compare_digest(candidate, expected)
+
+
 # --- data access ------------------------------------------------------------
 
 

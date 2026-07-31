@@ -204,6 +204,33 @@ the newest one and for what tagging still requires.
   become a pagination oracle. The same rule reaches MCP through its REST client.
   Dispatch reads now also enforce `read` or `issue:write` bearer scope, and oversized
   dispatch/work-item identifiers fail validation instead of overflowing SQLite.
+
+- **Icarus callbacks now have a real authentication and replay perimeter.**
+  Anonymous callback attempts charge the direct-peer-IP limiter before body work;
+  HMAC verifies raw bytes before JSON parsing or SQLite; malformed/non-ASCII
+  signature text is a 401 instead of a 500; and authenticated malformed Unicode
+  cannot escape into SQLite. Mounted deployments classify the route after removing
+  ASGI `root_path`, so a path prefix cannot bypass the limiter, idempotency
+  exemption, or cookie/SQLite guard. A non-ASCII policy digest is recorded as a
+  safely labelled mismatch rather than crashing. Outbound dispatch creation now
+  checks mutable issue visibility after reserving SQLite's writer slot, closing the
+  membership-revocation race between authorization and the dispatch/audit record.
+
+  The first evidence pointer is now canonical and immutable. Exact callback
+  replays produce no duplicate activity, a different pointer conflicts while the
+  dispatch is open, and terminal state absorbs outcome changes and evidence
+  overwrites. A legacy terminal report that omitted evidence can still have its
+  null evidence slot filled once by delayed progress. Evidence, terminal state,
+  digest warnings, and their events are owned by one atomic callback command. The
+  reference executor sends cumulative terminal callbacks so network reordering
+  converges without a schema migration, retries the finite pre-acceptance 404
+  race, and single-flights repeated in-process delivery keys. Delivery acceptance
+  and failure state now commit atomically with their audit event and use
+  first-writer-wins predicates under concurrency; executor run ids round-trip
+  exactly, while malformed or cross-dispatch duplicates become visible
+  `undeliverable` outcomes. The remaining need for a sequenced multi-evidence
+  callback protocol is documented explicitly.
+
 - **Wave H-2: documentation reconciliation, and one real bug found while
   verifying it** (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - `POST /labels` answered 500 on a duplicate-name race: two concurrent creates

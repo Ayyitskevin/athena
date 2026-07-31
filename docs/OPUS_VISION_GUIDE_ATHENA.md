@@ -311,7 +311,7 @@ Recommended sequence (each is one reviewable slice with its own PR):
 | 0065 | `worker_registry` | **shipped** as `agent_workers(id, agent_id, worker_key, node_label, capabilities, first_seen_at, last_seen_at, last_token_id, kill_requested_at, kill_requested_by, kill_acknowledged_at, stopped_at)`, UNIQUE(agent_id, worker_key). Three kill columns, not one flag | §12 workers |
 | 0066 | `project_visibility_membership_commands` | no schema change; a *code* migration porting F-3 to commands (may need an index) | close F-3 debt |
 | — | `sprint_status_audit` | **shipped as code-only commands; no schema migration was needed** | F-4 closed |
-| 0068 | `icarus_dispatch` | `icarus_dispatches(id, issue_id, run_id, parent_run_id, icarus_run_id, repo, base_commit, capability, policy_digest, approval_state, idempotency_key, evidence_ref, completion_ref, state)` | §14 integration |
+| 0067 | `icarus_dispatch` | `icarus_dispatches(id, work_item_id, run_id, parent_run_id, icarus_run_id, repo, base_commit, capability, policy_digest, approval_state, idempotency_key, evidence_ref, completion_ref, state)` | §14 integration |
 
 Migration rules to honor for every one: add a matching authorization-revision
 trigger to `idempotency_authorization_state` when the new table participates in an
@@ -574,21 +574,23 @@ typed adapter contract and each keeps its own store.
 
 ### Adapter contract (the dispatch envelope)
 
-The record Athena persists (`icarus_dispatches`, migration 0068) and transmits
-carries exactly these fields — the required adapter contract:
+The outbound envelope derived from Athena's persisted record
+(`icarus_dispatches`, migration 0067) carries exactly these fields:
 
 | Field | Source | Meaning |
 |---|---|---|
+| `schema` | Athena | fixed adapter version: `athena.icarus_dispatch.v1` |
+| `dispatch_id` | Athena | Athena's dispatch record id |
 | `work_item_id` | Athena issue id | the Aegis work item being executed |
 | `run_id` | Athena run | the control-plane run this dispatch belongs to |
 | `parent_run_id` | Athena run | the run that spawned this dispatch (lineage) |
 | `fork_run_ids` | Athena runs | child/fork runs derived from this dispatch |
 | `icarus_run_id` | Icarus | the execution-side run id (opaque to Athena) |
-| `repo` / `project` | Athena work item + policy | repository/project identity to act on |
+| `repo` | Athena work item + policy | repository identity to act on |
 | `base_commit` | dispatch | the commit the execution starts from |
 | `capability` | policy | the requested capability (e.g. `repo.edit`, `ci.run`) |
 | `policy_digest` | Athena policy | tamper-evident hash of the scopes/budget/approval state in force at dispatch |
-| `approval_state` | Athena approvals | `not_required` / `pending` / `approved` / `rejected` |
+| `approval_state` | Athena approvals | `not_required` / `approved` |
 | `idempotency_key` | Athena | so a re-dispatch is single-flight, reusing durable idempotency |
 | `evidence_ref` | Icarus (async) | pointer to produced evidence (logs, diff, artifact) |
 | `completion_ref` | Icarus (async) | pointer to the terminal result (PR URL, commit, failure) |
@@ -603,15 +605,17 @@ Athena                                   Icarus
   │     - mints icarus:<run> reserved run    │
   │     - writes icarus_dispatches row       │
   │     - POST /dispatch (envelope) ────────▶│  3. accepts, starts execution
-  │  ◀───── 202 {icarus_run_id} ────────────│     (its own store, its own runs)
+  │  ◀───── 2xx {icarus_run_id} ────────────│     (its own store, its own runs)
   │  4. record dispatch_accepted event       │
   │                                          │  5. progress → webhook/callback
-  │  ◀── POST /callbacks/icarus (signed) ────│     {icarus_run_id, evidence_ref}
-  │  6. verify signature + idempotency key    │
+  │  ◀── POST /callbacks/icarus (signed) ────│     {icarus_run_id, policy_digest,
+  │                                          │      evidence_ref}
+  │  6. verify signature + unique Icarus run  │
   │     map icarus_run_id→dispatch            │
   │     record evidence as run-stamped        │
   │     activity (control-plane truth)        │
-  │  ◀── POST /callbacks/icarus completion ──│  7. terminal: completion_ref
+  │  ◀── POST /callbacks/icarus completion ──│  7. terminal: evidence_ref +
+  │                                          │     completion_ref + outcome
   │  8. record job terminal state; if the     │
   │     capability was one-way, no auto-undo  │
 ```
@@ -624,9 +628,12 @@ Athena                                   Icarus
   outbound call; the outbound HTTP is a post-commit side effect (like webhook
   delivery) whose result is recorded as a follow-up event — never inside the tx.
 - **Callbacks are authenticated and idempotent:** Icarus posts back with an HMAC
-  signature (reuse `webhooks.sign`) and the dispatch `idempotency_key`; the handler
-  verifies both, maps `icarus_run_id → dispatch`, and records evidence as
-  control-plane activity. A replayed callback is a no-op.
+  signature (reuse `webhooks.sign`); the current v1 handler maps the unique
+  `icarus_run_id → dispatch` and records one immutable evidence pointer as
+  control-plane activity. A replayed callback is a no-op. The envelope's
+  `idempotency_key` is not yet echoed by callback v1; carrying it together with a
+  durable event id/sequence is the required next protocol before evidence can
+  evolve safely.
 - **No shared DB:** Athena never reads Icarus's database and vice-versa. Evidence
   is *referenced* (`evidence_ref`/`completion_ref` are opaque URLs/ids), not copied
   transactionally. The two systems reconcile through the async contract only.
@@ -882,7 +889,7 @@ before any new surface (correctness/security first); 5–10 build the loop.
    endpoints + MCP tools; cockpit node view; add `worker_stale`/`kill_requested`
    attention reasons. Tests: heartbeat/staleness, cooperative kill signal, authz.
 10. **Icarus dispatch (Stage H, first slice).** `core/dispatch.py` +
-    `0068_icarus_dispatch.sql` + `icarus:` reserved namespace; dispatch command
+    `0067_icarus_dispatch.sql` + `icarus:` reserved namespace; dispatch command
     (authz+budget+approval+envelope+event in one tx, outbound call post-commit) and
     a signed, idempotent callback endpoint recording evidence as run-stamped
     activity. Tests: dispatch envelope shape (all §14 fields), signed-callback

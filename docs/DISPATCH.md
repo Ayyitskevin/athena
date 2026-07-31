@@ -29,6 +29,16 @@ opaque strings the executor chose. Copying artifacts across the boundary would m
 one system's storage the other's problem, which is precisely what "no shared
 database" rules out.
 
+Callback v1 has **one immutable, canonical `evidence_ref` per dispatch**. The
+first non-null value wins, an exact retry is a no-op, and a different value while
+the dispatch is open is a 409 conflict. Athena cannot call one different pointer
+"newer" because v1 carries no sender sequence. Once a dispatch is terminal,
+outcome changes and evidence overwrites are absorbed. A legacy terminal callback
+that omitted evidence may still have its one null evidence slot filled by delayed
+progress; after that, it is immutable. A terminal callback should repeat the
+canonical evidence pointer when one exists: then progress-before-terminal and
+terminal-before-progress converge to the same row and the same two audit events.
+
 ## The envelope
 
 Exactly these fields cross the boundary — there is no free-form payload, because an
@@ -66,7 +76,7 @@ Athena                                        Executor
   │ ◀──── 5. POST /callbacks/icarus (signed) ── │    progress: evidence_ref
   │ 6. verify HMAC, map run, check digest,      │
   │    record evidence as run-stamped activity  │
-  │ ◀──── 7. POST /callbacks/icarus (signed) ── │    terminal: outcome
+  │ ◀──── 7. POST /callbacks/icarus (signed) ── │    terminal: evidence_ref + outcome
   │ 8. state=completed|failed                   │
 ```
 
@@ -89,11 +99,15 @@ later failure leaves it unspent.
 
 **Inbound has no Athena credential at all.** The executor is not an Athena user and
 holds no token; it authenticates with an HMAC over the exact request body using the
-shared secret, compared in constant time. The signature is checked **before** any
-lookup, so the callback cannot be used to probe which dispatches exist. And the
-route is deliberately narrow: it can attach evidence and report an outcome on a
-dispatch Athena already created. It cannot create work, change an issue, or name an
-actor.
+shared secret, compared in constant time. Each attempt first charges the shared
+anonymous direct-peer-IP limiter (when configured), then verifies the signature
+over the raw bounded body **before JSON parsing, a SQLite connection, or any
+dispatch lookup**. Unsigned malformed JSON is therefore the same 401 as any other
+bad signature, and a signature containing non-ASCII bytes is a failed credential,
+not a process error. The route cannot be used to probe which dispatches exist.
+It is deliberately narrow: it can attach evidence and report an outcome on a
+dispatch Athena already created. It cannot create work, change an issue, or name
+an actor.
 
 ## The policy digest is tamper-evident, not tamper-proof
 
@@ -102,10 +116,15 @@ actor, its token scopes, the work item, repo, base commit, capability, approval
 state, and budget window/limit. Scope order does not affect it — a digest that
 depended on ordering would produce false mismatches.
 
-When a callback returns a **different** digest, Athena records the evidence **and**
-a `dispatch_policy_digest_mismatch` event. It does not discard the callback:
-destroying the evidence would defeat exactly the thing the digest was computed to
-produce. A digest exists to let you notice.
+When a dispatch first receives a callback with a **different** digest, Athena
+records **one** `dispatch_policy_digest_mismatch` event for that dispatch run,
+even if the callback arrives after a terminal report. It does not discard an
+otherwise admissible evidence pointer: destroying the evidence would defeat
+exactly the thing the digest was computed to produce. Replaying the same report
+does not spam the trail. An authenticated report whose evidence pointer conflicts
+still commits its first mismatch warning before returning 409. A syntactically
+valid non-ASCII digest is a safely labelled mismatch, not a 500. A digest exists
+to let you notice.
 
 ## Reserved run namespace
 
@@ -154,6 +173,7 @@ Athena forwarding capability names it has never heard of and cannot reason about
 | `ATHENA_ICARUS_SECRET` | *(unset)* | Shared HMAC secret, both directions |
 | `ATHENA_ICARUS_TIMEOUT_SECONDS` | 10 | Per-request outbound timeout |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames Athena may POST to even though they resolve private/loopback (see below) |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Shared direct-peer-IP limit for anonymous paths, including every callback attempt |
 
 Both the URL and the secret must be set. A URL without a secret would mean sending
 unsigned work to an unauthenticated endpoint.
@@ -183,8 +203,11 @@ honest counterparty to this contract: one stdlib-only file (a test pins that it
 imports nothing from Athena — the two systems share a secret and a wire format,
 never code) that verifies the envelope signature before parsing a byte, answers
 acceptance with its own run id, echoes the policy digest verbatim, signs its
-callbacks the same way, and retries them — because the callback endpoint is
-idempotent and a one-shot report would be lost to any transient failure.
+callbacks the same way, repeats its canonical evidence on the terminal callback,
+retries transient failures (including the pre-acceptance 404 race), and launches
+work once per repeated in-process `idempotency_key`. A production executor must
+persist that single-flight key in its own store; a one-shot or memory-only
+implementation would lose reports or repeat work across failures.
 
 ```
 ATHENA_URL=http://127.0.0.1:8000 EXECUTOR_SECRET=change-me \
@@ -201,6 +224,14 @@ exactly the contract: Athena records what it is told and verifies nothing.
   nothing retries it automatically, and there is no background dispatcher. Adding
   one is a real feature, not a config flag.
 - **No cancellation.** Athena can record that it asked; it has no way to un-ask.
+- **No evolving evidence sequence.** Callback v1 can safely represent one
+  canonical evidence pointer. Supporting several successive pointers requires a
+  signed, durable callback sequence; a callback id alone can deduplicate but
+  cannot decide which of two reordered reports is newer.
+- **No callback receipt key yet.** The envelope carries the dispatch
+  `idempotency_key`, but callback v1 correlates through the unique
+  `icarus_run_id` and does not echo that key. A future sequenced callback contract
+  should carry both the dispatch key and an event id/sequence.
 - **Athena never verifies that work happened.** Every terminal state is the
   executor's claim, arriving over a channel authenticated by a shared secret. If
   that secret leaks, the claims are only as good as the secret.
@@ -208,5 +239,6 @@ exactly the contract: Athena records what it is told and verifies nothing.
   reach across this boundary, and nothing here will try to reverse an external
   effect.
 - **The executor is unspecified here.** This documents Athena's half of the
-  contract. Anything about how the far side behaves is its own system's business,
-  and nothing in this repository verifies it.
+  production contract. The test-pinned reference verifies the wire example, but
+  no code in this repository verifies a production executor's behavior or that
+  its claimed work happened.
