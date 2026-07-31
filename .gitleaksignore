@@ -1,0 +1,2 @@
+# Synthetic empty idempotency key in historical regression coverage; not a credential.
+a3fb55127f2a73c3f45f4758576b4685e61024b7:tests/test_mcp_client.py:generic-api-key:634
