@@ -29,6 +29,7 @@ Athena reads configuration from environment variables at process start.
 |----------|---------|-----|
 | `ATHENA_DB` | `athena.db` | SQLite database path. Use an absolute path for a long-running service. |
 | `ATHENA_LOG_LEVEL` | `INFO` | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
+| `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
 | `ATHENA_TRUST_ACTOR_HEADER` | `false` | Accept `X-Athena-Actor` as identity fallback. Use only on a trusted local/tailnet box, normally only for headless bootstrap. |
 | `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies. Set to `1` when Athena is served over HTTPS. Leave off for plain local HTTP. |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
@@ -157,7 +158,7 @@ additional authentication path.
 Complete the local [first-user bootstrap](#first-user-bootstrap) before the
 first SSO login. Athena refuses fresh-account SSO provisioning until an
 administrator exists, so a default-role member cannot consume the one
-unauthenticated bootstrap grant and leave the instance with no administrator.
+credentialed bootstrap grant and leave the instance with no administrator.
 Already-linked identities continue to resolve normally.
 
 | Variable | Use |
@@ -370,19 +371,51 @@ local/tailnet recovery procedure; it is not a claim of public deployment readine
 
 ## First User Bootstrap
 
-The first user in an empty database can be created without authentication. Athena
-always makes that first user an `admin` so the instance cannot start with no
-administrator.
+The first user in an empty database is a one-time administrator grant. It requires
+the process-configured `ATHENA_BOOTSTRAP_TOKEN`; the default empty value disables
+HTTP bootstrap, so starting an empty instance on a reachable interface does not
+hand ownership to the first caller.
+
+Generate a fresh value from 32 random bytes. Keep it in process configuration or a
+secret manager, never in a checked-in file, command transcript, URL, or request
+body:
+
+```bash
+athena_bootstrap_token="$(python -c \
+  'import secrets; print(secrets.token_urlsafe(32))')"
+export ATHENA_BOOTSTRAP_TOKEN="$athena_bootstrap_token"
+```
+
+Start Athena on loopback with that environment, then present the same value only
+in the dedicated header. Do not attach an `Idempotency-Key`: before an actor
+exists there is no durable principal to own such a receipt, so Athena rejects it
+with the same state-independent `401 authentication required` instead of silently
+ignoring the retry contract.
 
 ```bash
 curl -fsS -X POST http://127.0.0.1:8000/users \
+  -H "X-Athena-Bootstrap-Token: $ATHENA_BOOTSTRAP_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"email":"admin@example.com","name":"Admin","password":"change-me"}'
 ```
 
-After the first user exists, creating users requires an admin actor. Browser
-admins can create users, change roles, and set or reset browser passwords at
-`/admin/users`.
+Athena always makes that first user an `admin`. Missing, malformed, wrong, and
+unconfigured bootstrap credentials return the same `401 authentication required`
+as an anonymous request after bootstrap; the response does not reveal whether the
+database is empty or a token is configured. The bootstrap token grants nothing
+after the first user exists.
+
+Stop the bootstrap process, clear both shell variables, and restart Athena
+without `ATHENA_BOOTSTRAP_TOKEN` immediately after success:
+
+```bash
+unset athena_bootstrap_token ATHENA_BOOTSTRAP_TOKEN
+```
+
+Do this before enabling a reverse proxy or shared ingress; a proxy that connects
+over loopback does not turn its remote clients into trusted local callers. After
+the first user exists, creating users requires an admin actor. Browser admins can
+create users, change roles, and set or reset browser passwords at `/admin/users`.
 
 ## Roles
 
@@ -990,6 +1023,8 @@ Before leaving laptop-only development:
   user and keep it outside every statically served directory.
 - Keep the bind address private: `127.0.0.1` behind a reverse proxy, or a tailnet
   address for tailnet-only use.
+- Complete first-user bootstrap on loopback before enabling shared ingress, then
+  remove `ATHENA_BOOTSTRAP_TOKEN` and restart.
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
 - Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads are

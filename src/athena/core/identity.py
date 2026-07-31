@@ -16,9 +16,10 @@ ways, in order of trust:
 With the header trust off and no valid bearer token, the request is 401.
 
 `optional_actor` is the same resolution without the 401: it returns the actor or
-None. Endpoints that must stay reachable during first-run bootstrap (e.g.
-creating the very first user, when nobody can possibly be authenticated yet)
-depend on it and decide for themselves when absence is allowed.
+None. Endpoints that must stay reachable during first-run bootstrap depend on it
+and decide for themselves when absence is allowed. Creating the first user has a
+separate one-time bootstrap credential; absence of an Athena actor alone never
+grants administrator authority.
 """
 
 from __future__ import annotations

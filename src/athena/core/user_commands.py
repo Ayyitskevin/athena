@@ -7,11 +7,11 @@ could promote a user to admin with no trace. These commands own that write: the 
 change and its audit event run in one db.transaction, and REST and the browser are
 thin callers that translate the single UserCommandError.
 
-Same shape as aegis/issue_commands.py and core/agent_commands.py. The
-unauthenticated bootstrap eligibility check and password-reset authorization live
-inside this command boundary. The admin-only gate for ordinary user creation and
-privilege edits remains at the transport boundary; the command owns the
-last-admin safety, normalization, write, and audit emission.
+Same shape as aegis/issue_commands.py and core/agent_commands.py. The bootstrap
+eligibility check and password-reset authorization live inside this command
+boundary. The one-time bootstrap credential and the admin-only gate for ordinary
+user creation remain at the transport boundary; the command owns the last-admin
+safety, normalization, write, and audit emission.
 """
 
 from __future__ import annotations
@@ -127,9 +127,10 @@ def create_user(
     ``actor_id`` attributes the creation: pass the acting admin's id when an admin adds
     a user, or None for a SELF-provisioning path such as an SSO first-login — None
     records the event against the new user itself, since there is no other actor to
-    name. Unauthenticated administrator bootstrap must use ``bootstrap_user`` so its
-    eligibility and forced role cannot be bypassed. The password hash is never in the
-    detail (it records email, role, and the agent flag only). Raises
+    name. First-administrator bootstrap must use ``bootstrap_user`` so its eligibility
+    and forced role cannot be bypassed; the HTTP adapter authenticates that request
+    with its separate one-time credential. The password hash is never in the detail
+    (it records email, role, and the agent flag only). Raises
     sqlite3.IntegrityError for a duplicate email and ValueError for an invalid role,
     unchanged from the bare call, so the transports keep translating them exactly as
     they do today."""
@@ -153,12 +154,13 @@ def bootstrap_user(
     password: str | None = None,
     is_agent: bool = False,
 ) -> dict:
-    """Create the one unauthenticated bootstrap administrator atomically.
+    """Create the one bootstrap administrator atomically.
 
-    The public adapter calls this on a fresh connection after observing an empty
-    database. Eligibility is then checked after ``BEGIN IMMEDIATE`` acquires
-    SQLite's write lock. Two bootstrap callers may both reach this command, but
-    only the first can create an administrator. Fresh-account SSO provisioning is
+    The HTTP adapter authenticates the request with its process-configured one-time
+    token, then calls this on a fresh connection after observing an empty database.
+    Eligibility is checked again after ``BEGIN IMMEDIATE`` acquires SQLite's write
+    lock. Two authenticated bootstrap callers may both reach this command, but only
+    the first can create an administrator. Fresh-account SSO provisioning is
     separately refused until this administrator exists.
     """
     if conn.in_transaction:

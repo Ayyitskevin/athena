@@ -257,7 +257,7 @@ def test_switching_accounts_invalidates_the_first_account_session(tmp_path):
     # machine carried for account A cannot keep resolving once B has signed in.
     app = create_app(tmp_path / "switch.db")
     # Seed both users straight into the DB: /users is bootstrap-gated (only the
-    # first user can be created anonymously), and this test needs two login-capable
+    # first credentialed bootstrap may create without an actor), and this test needs
     # accounts without that ceremony.
     with TestClient(app):
         pass

@@ -12,10 +12,39 @@ the test (e.g. `monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)`).
 effect immediately.
 """
 
+import httpx
+from fastapi.testclient import TestClient
 import pytest
 
 from athena import config
-from athena.core import db, passwords
+from athena.core import db, passwords, users_api
+
+_TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
+
+
+@pytest.fixture(autouse=True)
+def bootstrap_enabled_for_unrelated_tests(monkeypatch):
+    """Keep legacy feature tests focused on their own contract.
+
+    Production HTTP bootstrap now requires a one-time credential. Hundreds of
+    tests create an administrator only as setup for an unrelated behavior, so
+    the test client adds a fixed synthetic credential to ``POST /users`` when a
+    test did not provide one. This still exercises the production matcher and
+    cross-layer middleware. ``test_bootstrap_auth`` overrides this fixture so it
+    can exercise missing, wrong, malformed, and duplicate headers directly.
+    """
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", _TEST_BOOTSTRAP_TOKEN)
+    original_request = TestClient.request
+
+    def request_with_bootstrap(self, method, url, **kwargs):
+        if method.upper() == "POST" and httpx.URL(url).path == "/users":
+            headers = httpx.Headers(kwargs.get("headers"))
+            if users_api.BOOTSTRAP_TOKEN_HEADER not in headers:
+                headers[users_api.BOOTSTRAP_TOKEN_HEADER] = _TEST_BOOTSTRAP_TOKEN
+                kwargs["headers"] = headers
+        return original_request(self, method, url, **kwargs)
+
+    monkeypatch.setattr(TestClient, "request", request_with_bootstrap)
 
 
 @pytest.fixture(autouse=True)

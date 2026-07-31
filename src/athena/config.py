@@ -66,6 +66,27 @@ if LOG_LEVEL not in _LOG_LEVELS:
 # long enough to mint the first bearer token, then turn it back off.
 TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 
+# One-time credential for creating the first administrator through POST /users.
+# Empty disables HTTP bootstrap entirely: an unconfigured instance must not grant
+# administrator authority to whichever network caller arrives first. Generate a
+# fresh value with ``python -c 'import secrets; print(secrets.token_urlsafe(32))'``,
+# present it only for bootstrap, then remove it and restart Athena.
+BOOTSTRAP_TOKEN = os.environ.get("ATHENA_BOOTSTRAP_TOKEN", "")
+if BOOTSTRAP_TOKEN:
+    try:
+        bootstrap_token_bytes = BOOTSTRAP_TOKEN.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError(
+            "ATHENA_BOOTSTRAP_TOKEN must be 32-255 visible ASCII characters"
+        ) from exc
+    if not 32 <= len(bootstrap_token_bytes) <= 255 or any(
+        byte < 0x21 or byte > 0x7E for byte in bootstrap_token_bytes
+    ):
+        raise ValueError(
+            "ATHENA_BOOTSTRAP_TOKEN must be 32-255 visible ASCII characters"
+        )
+    del bootstrap_token_bytes
+
 # Maximum accepted request body size. This keeps accidental huge posts from
 # tying up the app process. Set to 0 to disable here when a trusted reverse proxy
 # enforces the limit instead.

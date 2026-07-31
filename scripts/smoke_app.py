@@ -24,6 +24,7 @@ from urllib.request import (
 
 EXPECTED_HEALTH = {"status": "ok"}
 EXPECTED_READY = {"status": "ok", "database": "ok"}
+BOOTSTRAP_TOKEN = "process-smoke-bootstrap-token-000001"
 STARTUP_TIMEOUT_SECONDS = 15
 _LOOPBACK_OPENER = build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar()))
 
@@ -36,11 +37,15 @@ def _read_json(url: str, *, headers: dict[str, str] | None = None) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def _post_json(url: str, payload: dict) -> dict:
+def _post_json(
+    url: str, payload: dict, *, headers: dict[str, str] | None = None
+) -> dict:
+    request_headers = dict(headers or {})
+    request_headers["Content-Type"] = "application/json"
     request = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=request_headers,
         method="POST",
     )
     with _LOOPBACK_OPENER.open(request, timeout=1) as response:  # noqa: S310
@@ -99,6 +104,7 @@ def main() -> int:
             {
                 "ATHENA_ATTACH_DIR": str(root / "attachments"),
                 "ATHENA_AUTOMATION": "0",
+                "ATHENA_BOOTSTRAP_TOKEN": BOOTSTRAP_TOKEN,
                 "ATHENA_DB": str(db_path),
                 "ATHENA_LOG_LEVEL": "WARNING",
                 "ATHENA_TRUST_ACTOR_HEADER": "1",
@@ -161,6 +167,7 @@ def main() -> int:
                                 "name": "Smoke admin",
                                 "password": "smoke-password",
                             },
+                            headers={"X-Athena-Bootstrap-Token": BOOTSTRAP_TOKEN},
                         )
                         if admin.get("id") != 1 or admin.get("role") != "admin":
                             raise RuntimeError(f"unexpected bootstrap admin: {admin!r}")

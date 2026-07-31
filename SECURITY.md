@@ -26,6 +26,16 @@ Before a long-running deployment, follow
 limits, attachment ownership and integrity, a single webhook/automation runner,
 matched database-plus-attachment backups, and `athena-doctor`.
 
+On a fresh database, HTTP creation of the first administrator is disabled until
+the operator configures a generated `ATHENA_BOOTSTRAP_TOKEN` and presents it in
+the dedicated request header. Complete that step over loopback before enabling
+shared ingress, then remove the token and restart. A reverse proxy's loopback
+connection is not evidence that its originating client is local. Duplicate
+bootstrap headers fail closed. `Idempotency-Key` is deliberately unsupported
+before an actor exists, because no durable principal can own the receipt; Athena
+rejects it on otherwise valid requests with the normal anonymous `401` without
+consulting bootstrap state.
+
 ## Reporting a vulnerability
 
 GitHub private vulnerability reporting is disabled for this repository (verified

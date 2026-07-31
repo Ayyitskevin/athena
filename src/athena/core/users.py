@@ -213,7 +213,7 @@ def list_users(conn: sqlite3.Connection) -> list[dict]:
 
 
 def count_users(conn: sqlite3.Connection) -> int:
-    """How many users exist. Used by the bootstrap rule: the first user can be
-    created without authentication (nobody could be authenticated yet); after
-    that, creating users requires an authenticated actor."""
+    """How many users exist. Used by the bootstrap rule: the process-configured
+    one-time credential may create exactly the first user; after that, creating
+    users requires an authenticated actor."""
     return conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]

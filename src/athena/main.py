@@ -398,13 +398,6 @@ class IdempotencyMiddleware:
         finally:
             conn.close()
 
-    def _has_users(self) -> bool:
-        conn = db.connect(self.db_path)
-        try:
-            return conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
-        finally:
-            conn.close()
-
     @staticmethod
     async def _read_body(receive):
         messages: list[dict] = []
@@ -605,34 +598,10 @@ class IdempotencyMiddleware:
             await self.app(scope, receive, send)
             return
         if identity is None:
-            # First-user bootstrap uniquely permits an anonymous/invalid caller;
-            # refuse its key so that path cannot mutate while silently bypassing
-            # retry protection. Ordinary protected routes keep their established
-            # 401 by reaching the normal dependency.
-            if method == "POST" and path == "/users":
-                try:
-                    has_users = await asyncio.to_thread(self._has_users)
-                except sqlite3.Error:
-                    _logger.exception("could not inspect user bootstrap state")
-                    await _send_json_response(
-                        send,
-                        {"detail": "idempotency service unavailable"},
-                        status_code=503,
-                        extra_headers={"Retry-After": "1"},
-                    )
-                    return
-                if not has_users:
-                    await _send_json_response(
-                        send,
-                        {
-                            "detail": (
-                                "Idempotency-Key requires an authenticated API "
-                                "credential for user creation"
-                            )
-                        },
-                        status_code=400,
-                    )
-                    return
+            # The route itself rejects a key on credentialed first-user bootstrap
+            # before inspecting database state. Let it also charge the anonymous
+            # limiter and produce that state-independent response. Ordinary
+            # protected routes likewise reach their canonical identity gate.
             await self.app(scope, receive, send)
             return
 
