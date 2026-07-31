@@ -173,6 +173,44 @@ def test_no_password_or_hash_ever_reaches_the_trail(tmp_path):
     assert stored not in blob
 
 
+def test_browser_user_creation_rejects_identity_and_password_envelope_overflow(
+    tmp_path,
+):
+    app, db_file = _app(tmp_path, "bounded-user.db")
+    with TestClient(app) as client:
+        _admin(client)
+        _login(client, "admin@e.com", "adminpw")
+        long_email = "+" * (users.MAX_EMAIL_CHARS + 1)
+        identity_response = client.post(
+            "/admin/users",
+            data={
+                "email": long_email,
+                "name": "Long",
+                "password": "password",
+                "role": "admin",
+            },
+            follow_redirects=False,
+        )
+        password_response = client.post(
+            "/admin/users",
+            data={
+                "email": "bounded@e.com",
+                "name": "Bounded",
+                "password": "x" * 1025,
+                "role": "admin",
+            },
+            follow_redirects=False,
+        )
+
+    assert identity_response.status_code == 400
+    assert password_response.status_code == 400
+    conn = db.connect(db_file)
+    try:
+        assert users.count_users(conn) == 1
+    finally:
+        conn.close()
+
+
 def test_reset_rolls_back_the_hash_and_sessions_when_audit_fails(tmp_path):
     import athena.core.activity as activity
 

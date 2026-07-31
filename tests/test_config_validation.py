@@ -23,6 +23,23 @@ def _import_config(
     )
 
 
+def _invoke_ops(
+    expression: str,
+    overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("ATHENA_")
+    }
+    env.update(overrides or {})
+    return subprocess.run(
+        [sys.executable, "-c", f"from athena import ops; {expression}"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def test_default_configuration_imports_cleanly():
     result = _import_config()
     assert result.returncode == 0, result.stderr
@@ -87,6 +104,51 @@ def test_invalid_log_level_is_rejected():
     result = _import_config({"ATHENA_LOG_LEVEL": "verbose"})
     assert result.returncode != 0
     assert "ATHENA_LOG_LEVEL must be one of" in result.stderr
+
+
+@pytest.mark.parametrize("mode", ["local", "TAILNET"])
+def test_supported_network_modes_are_accepted(mode):
+    result = _import_config({"ATHENA_NETWORK_MODE": mode})
+    assert result.returncode == 0, result.stderr
+
+
+def test_unsupported_network_mode_is_rejected():
+    result = _import_config({"ATHENA_NETWORK_MODE": "public"})
+    assert result.returncode != 0
+    assert "ATHENA_NETWORK_MODE must be one of" in result.stderr
+
+
+def test_invalid_service_configuration_does_not_brick_offline_recovery_commands():
+    result = _invoke_ops(
+        "ops.backup_main(['--help'])",
+        {"ATHENA_NETWORK_MODE": "typo"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Back up an Athena SQLite database." in result.stdout
+
+
+def test_supported_launcher_reports_invalid_service_configuration_cleanly():
+    result = _invoke_ops(
+        "raise SystemExit(ops.serve_main([]))",
+        {"ATHENA_NETWORK_MODE": "typo"},
+    )
+    assert result.returncode == 1
+    assert "athena-serve: ATHENA_NETWORK_MODE must be one of" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ",localhost:8000",
+        "localhost:8000,",
+        "localhost:8000,,127.0.0.1:8000",
+    ],
+)
+def test_empty_allowed_authority_entries_are_rejected(value):
+    result = _import_config({"ATHENA_ALLOWED_AUTHORITIES": value})
+    assert result.returncode != 0
+    assert "ATHENA_ALLOWED_AUTHORITIES" in result.stderr
 
 
 def test_valid_bootstrap_token_is_accepted():

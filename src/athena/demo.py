@@ -16,7 +16,15 @@ import sys
 
 from athena import config
 from athena.aegis import issue_commands, project_commands
-from athena.core import db, run_context, token_commands, tokens, user_commands, users
+from athena.core import (
+    db,
+    deployment,
+    run_context,
+    token_commands,
+    tokens,
+    user_commands,
+    users,
+)
 from athena.mcp.config import claude_mcp_config
 from athena.mentor import page_commands, space_commands
 
@@ -333,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     config.WEBHOOK_DELIVERY_ENABLED = False
     config.AUTOMATION_ENABLED = False
     config.ATTACH_DIR = Path(seeded["attach_dir"])
+    config.TRUST_ACTOR_HEADER = False
 
     import uvicorn
     from athena.main import create_app
@@ -342,7 +351,21 @@ def main(argv: list[str] | None = None) -> int:
     print(
         "Press Ctrl+C to stop; delete the database and attachment directory afterward."
     )
-    uvicorn.run(create_app(Path(seeded["db_path"])), host="127.0.0.1", port=args.port)
+    uvicorn.run(
+        create_app(
+            Path(seeded["db_path"]),
+            network_mode=deployment.LOCAL_MODE,
+            allowed_authorities=deployment.local_authorities("127.0.0.1", args.port),
+            expected_server=("127.0.0.1", args.port),
+        ),
+        host="127.0.0.1",
+        port=args.port,
+        workers=1,
+        reload=False,
+        lifespan="on",
+        proxy_headers=False,
+        server_header=False,
+    )
     return 0
 
 

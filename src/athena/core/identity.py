@@ -131,9 +131,9 @@ def optional_actor(
     except HTTPException as exc:
         if exc.status_code != 401:
             raise
-        # No valid credential: this is an anonymous request. Throttle it by client IP so
-        # a credential-free caller can't hammer these public reads — the per-token limiter
-        # only guards authenticated paths, leaving anonymous reads otherwise unbounded.
+        # No valid credential: this is an anonymous request. Throttle this
+        # optional-identity REST dependency by client IP. This is deliberately
+        # narrower than a global browser-request ceiling.
         # An INVALID BEARER was already charged inside current_actor (it bounds the
         # revoked-token recording there), so charging again here would count one
         # request twice; only charge the truly credential-less case.
@@ -201,9 +201,9 @@ def enforce_anon_rate_limit(request: Request) -> None:
     """Charge the anonymous per-IP limiter, raising 429 when the caller is over
     budget. No-op when no limiter is configured (the limit defaults off).
 
-    Used for credential-free reads (optional_actor) and invalid-bearer floods
-    (current_actor). Signed machine-inbound routes are charged earlier by the
-    outer ASGI perimeter, before body or session work."""
+    Used for optional-identity REST reads (optional_actor) and invalid-bearer
+    floods (current_actor). Signed machine-inbound routes are charged earlier by
+    the outer ASGI perimeter, before body or session work."""
     limiter: rate_limits.FixedWindowRateLimiter | None = getattr(
         request.app.state, "anon_rate_limiter", None
     )

@@ -14,27 +14,39 @@ lines.
 
 ## Deployment boundary
 
-The supported shape is Python 3.12, one Athena process and uvicorn worker, one
-SQLite database and attachment directory on local storage, and clients on a
-trusted local machine or tailnet. Remote browser access should normally pass
-through an HTTPS reverse proxy. Public internet exposure, hostile multi-tenancy,
+The supported shape is Python 3.12, one `athena-serve` process and uvicorn worker,
+one SQLite database and attachment directory on local storage, and direct clients
+on a trusted local machine or explicitly configured tailnet. The launcher has no
+public mode: it accepts only exact loopback/Tailscale numeric binds, validates an
+exact Host-authority allowlist before body/session/database work, disables proxy
+headers, and preflights durable recovery state before Athena/Uvicorn accepts
+traffic.
+Public internet exposure, reverse proxies/tunnels, hostile multi-tenancy,
 multi-process/HA deployment, and enterprise isolation are not current security
 claims.
 
+The socket guard does not detect reachability. A proxy, tunnel, NAT rule,
+container publication, or Tailscale Funnel can publish an allowed loopback
+listener; a Tailscale-range address does not prove ACL policy. Operators must
+verify those external controls independently.
+
 Before a long-running deployment, follow
-[`docs/OPERATIONS.md`](docs/OPERATIONS.md), including secure cookies, request
-limits, attachment ownership and integrity, a single webhook/automation runner,
-matched database-plus-attachment backups, and `athena-doctor`.
+[`docs/OPERATIONS.md`](docs/OPERATIONS.md), including cookie transport posture,
+request limits, attachment ownership and integrity, a single webhook/automation runner,
+matched database-plus-attachment backups, and `athena-doctor`. The current
+supported launcher is direct HTTP and refuses HTTPS-only cookies; Athena does not
+yet claim a supported TLS or proxy-termination shape.
 
 On a fresh database, HTTP creation of the first administrator is disabled until
-the operator configures a generated `ATHENA_BOOTSTRAP_TOKEN` and presents it in
-the dedicated request header. Complete that step over loopback before enabling
-shared ingress, then remove the token and restart. A reverse proxy's loopback
-connection is not evidence that its originating client is local. Duplicate
-bootstrap headers fail closed. `Idempotency-Key` is deliberately unsupported
-before an actor exists, because no durable principal can own the receipt; Athena
-rejects it on otherwise valid requests with the normal anonymous `401` without
-consulting bootstrap state.
+the operator configures a generated `ATHENA_BOOTSTRAP_TOKEN`, starts
+`athena-serve --bootstrap` on loopback, and presents it in the dedicated request
+header. The supported bootstrap also requires the first administrator to set a
+password, preventing a credentialless account from stranding the normal restart.
+Stop, remove the token, and restart normally immediately after creation.
+Duplicate bootstrap headers fail closed. `Idempotency-Key` is deliberately
+unsupported before an actor exists, because no durable principal can own the
+receipt; Athena rejects it on otherwise valid requests with the normal anonymous
+`401` without consulting bootstrap state.
 
 ## Reporting a vulnerability
 

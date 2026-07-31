@@ -9,6 +9,7 @@ docs) point at a user via a foreign key, so a user must exist before it can act.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from athena.core import passwords
@@ -19,6 +20,23 @@ VIEWER_ROLE = "viewer"
 ROLES = (ADMIN_ROLE, MEMBER_ROLE, VIEWER_ROLE)
 DEFAULT_ROLE = MEMBER_ROLE
 BOOTSTRAP_ROLE = ADMIN_ROLE
+MAX_EMAIL_CHARS = 320
+MAX_NAME_CHARS = 512
+_BROWSER_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"
+)
+
+
+def is_browser_login_email(value: object) -> bool:
+    """Whether an identifier survives the shipped HTML email input unchanged."""
+    return (
+        isinstance(value, str)
+        and len(value) <= MAX_EMAIL_CHARS
+        and value.isascii()
+        and _BROWSER_EMAIL_RE.fullmatch(value) is not None
+    )
 
 
 def normalize_role(role: str | None) -> str:
@@ -87,6 +105,7 @@ def set_password(
     """Set or replace a user's login password and return the updated row.
     ``commit=False`` lets ``user_commands`` fold the hash write, the session
     revocation it forces, and the audit event into one transaction."""
+    passwords.validate_new_password(password)
     cur = conn.execute(
         "UPDATE users SET password_hash = ? WHERE id = ?",
         (passwords.hash_password(password), user_id),
@@ -120,7 +139,7 @@ def verify_credentials(
     if passwords.needs_rehash(row["password_hash"]):
         conn.execute(
             "UPDATE users SET password_hash = ? WHERE id = ?",
-            (passwords.hash_password(password), row["id"]),
+            (passwords.rehash_verified_legacy_password(password), row["id"]),
         )
         conn.commit()
     return _row_to_user(row)

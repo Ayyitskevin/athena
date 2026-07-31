@@ -40,6 +40,39 @@ def _hash(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def is_valid_hash(stored: object) -> bool:
+    """Whether a stored value could match this release's SHA-256 token lookup."""
+    if not isinstance(stored, str) or len(stored) != hashlib.sha256().digest_size * 2:
+        return False
+    try:
+        digest = bytes.fromhex(stored)
+    except ValueError:
+        return False
+    return stored == digest.hex()
+
+
+def has_live_scope_credential(
+    conn: sqlite3.Connection, *, user_id: int, scope: str
+) -> bool:
+    """Whether a live token row has a usable verifier and the requested scope."""
+    rows = conn.execute(
+        "SELECT token_hash, scopes FROM api_tokens "
+        "WHERE user_id = ? AND revoked_at IS NULL",
+        (user_id,),
+    ).fetchall()
+    for row in rows:
+        raw_scopes = row["scopes"]
+        if raw_scopes is not None and not isinstance(raw_scopes, str):
+            continue
+        try:
+            stored_scopes = parse_scopes(raw_scopes)
+        except ValueError:
+            continue
+        if scope in stored_scopes and is_valid_hash(row["token_hash"]):
+            return True
+    return False
+
+
 def normalize_scopes(scopes: Iterable[str] | None) -> tuple[str, ...]:
     """Validate and canonicalize token scopes for storage and policy checks.
 

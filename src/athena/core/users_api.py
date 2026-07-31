@@ -12,7 +12,7 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from athena import config
 from athena.core import agent_commands, approvals, budgets, user_commands, users
@@ -68,8 +68,8 @@ def _bootstrap_token_matches(presented: str | None) -> bool:
 
 
 class UserCreate(BaseModel):
-    email: str
-    name: str
+    email: str = Field(min_length=1, max_length=users.MAX_EMAIL_CHARS)
+    name: str = Field(min_length=1, max_length=users.MAX_NAME_CHARS)
     # Optional: set it to enable browser login. Omit for agent/API-only users.
     password: str | None = None
     # Bootstrap ignores this and always creates the first user as admin.
@@ -208,6 +208,13 @@ def create(
             # whether the database is empty or a bootstrap credential is configured.
             # Duplicate or proxy-coalesced credential headers fail the same way.
             raise HTTPException(status_code=401, detail="authentication required")
+        if config.BOOTSTRAP_PASSWORD_REQUIRED and (
+            not payload.password or not payload.password.strip()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="athena-serve bootstrap requires an administrator password",
+            )
     else:
         if actor is None:
             raise HTTPException(status_code=401, detail="authentication required")

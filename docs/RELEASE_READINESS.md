@@ -3,11 +3,11 @@
 This page records the evidence behind the `0.1.0a1` milestone. It is a checklist,
 not a declaration that Athena is production-ready. The supported deployment
 remains one Python 3.12 process/worker on a trusted local machine or tailnet;
-direct public-internet, hostile multi-tenant, multi-process, and HA use remain
-outside the security claim — **with one named exception since Stage P**: the
-forge delivery route (`POST /forge/{source_name}`) is built to be reached by a
-public forge through a tunnel or reverse proxy scoped to that route alone (see
-[FORGE.md](FORGE.md)). Everything else stays tailnet-only.
+direct public-internet, proxy-terminated, hostile multi-tenant, multi-process,
+and HA use remain outside the security claim. The forge delivery route
+(`POST /forge/{source_name}`) is hardened for untrusted signed input, but Athena
+does not yet ship a supported public edge that makes it reachable from a
+public forge; see [FORGE.md](FORGE.md).
 
 ## Decision
 
@@ -21,6 +21,31 @@ passes locally at the named commit. The remaining blockers below are **not
 waived by green tests** — they are supply-chain, deployment-shape, and
 repository-settings items, and accepting them is a human release owner's
 decision, not something a test can make.
+
+### 2026-07-31 deployment-hardening candidate
+
+The unmerged `codex/deployment-preflight-hardening` candidate narrows the
+supported runtime to an executable contract rather than a runbook convention:
+`athena-serve` permits only direct numeric loopback or explicit Tailscale binds,
+preflights exact `Host` authorities and durable administrator recovery, refuses
+legacy actor-header trust and bootstrap credentials during normal startup, fixes
+Uvicorn to one worker with proxy-header trust disabled, and installs the same
+socket/authority boundary outside all application work. It rejects oversized
+requests before cookie-controlled SQLite work and requires the live logical
+schema to equal the packaged migration result. Bootstrap is loopback-only,
+rehearses migration on an in-memory copy before writing the real file, and
+requires the first administrator to set a bounded password before the normal
+launcher can succeed.
+
+The installed-wheel smoke now proves two real process lifecycles over one
+parent-held listener: credentialed bootstrap, clean stop, removal of bootstrap
+and actor-header trust, normal restart against the same database, browser login,
+packaged assets, authenticated web projection, and bounded shutdown. Exact local
+gate results and hosted CI at the final PR head are still pending in this
+candidate and therefore do **not** supersede the named 2026-07-30 evidence below.
+The public-release decision remains `HOLD`: Athena cannot observe whether a
+proxy, tunnel, NAT rule, container publication, or Tailscale Funnel exposes an
+otherwise allowed listener.
 
 ## Evidence (2026-07-30, refreshed)
 
@@ -144,7 +169,8 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Area | Evidence | Status |
 |---|---|---|
 | Configuration | Strict booleans, finite/ranged numerics, known log levels, all-or-none OIDC; malformed configuration aborts startup | PASS |
-| Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; `/readyz` fails closed without leaking detail | PASS |
+| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, and installed two-process bootstrap/restart smoke | PENDING FINAL CANDIDATE GATE |
+| Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; deployment doctor/launcher additionally require exact logical-schema equality; bootstrap dry-runs migration before the real write; `/readyz` fails closed without leaking detail | PASS |
 | Restore | Candidate `quick_check`, private stages, file/directory sync, atomic replacement, sidecar-cleanup rollback, retained recovery on double failure | PASS |
 | Attachments | Private atomic publication, metadata+audit transaction, no-follow descriptor download, observable attempt-all cleanup, deterministic reconciliation | PASS |
 | Exports | Private unique JSON stage, file/directory sync, atomic replace, bounded portability snapshot | PASS |
@@ -171,21 +197,23 @@ resolved by a green test run.
   reference is immutable, its transitive execution is not reproducible.
 - **Repository security automation is off.** Private vulnerability reporting,
   Dependabot, secret scanning, and push protection were disabled when inspected.
-- **Deployment shape.** Public-internet exposure, hostile multi-tenancy, multiple
-  workers/processes, leader election, and HA recovery are unsupported. Rate limits
-  are in-process.
-- **The project now has its first unauthenticated public endpoint** (Stage P).
-  `POST /forge/{source_name}` is designed to be reached by a stranger — that is
-  the feature — so HMAC verification is the *entire* gate, and the assumptions
-  around it are new: the anonymous per-IP limiter that brakes unsigned bursts is
-  **off by default** (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`), there is deliberately
-  no signature replay window (a valid redelivery lands again), and event-source
+- **Deployment shape.** The supported launcher now fails closed to direct
+  loopback or explicit tailnet listeners, but it cannot infer external
+  publication. Public-internet exposure, proxy termination, hostile
+  multi-tenancy, multiple workers/processes, leader election, and HA recovery
+  remain unsupported. Rate limits are in-process.
+- **The project has an unauthenticated signed-inbound route** (Stage P).
+  `POST /forge/{source_name}` is engineered to receive stranger-controlled bytes,
+  but the repository does not yet provide a supported public edge for it. If a
+  release owner creates an external exception, HMAC verification becomes the
+  route's gate and the assumptions are substantial: there is deliberately no
+  signature replay window (a valid redelivery lands again), and event-source
   secrets are stored **plaintext** because HMAC needs the shared value — a
   database leak that would expose only token hashes elsewhere exposes live source
-  secrets here. The adversarial review already broke two of this surface's
-  documented guarantees by execution (an enumeration oracle; automation firing on
-  imported history); both are fixed in wave H-0 with regression tests, but the
-  route has not yet survived a second hostile pass.
+  secrets here. The adversarial review already broke two documented guarantees
+  by execution (an enumeration oracle; automation firing on imported history);
+  both are fixed in wave H-0 with regression tests, but public operation has not
+  had a supported deployment review.
 - **Authorization still lives in some transports.** The mentor page and
   page-comment commands, the issue-comment commands, and the event-source
   commands take a bare actor id and trust the route's guards; the command owns

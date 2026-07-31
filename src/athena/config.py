@@ -11,6 +11,7 @@ from pathlib import Path
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
+_NETWORK_MODES = frozenset({"local", "tailnet"})
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -50,6 +51,32 @@ def _float_env(name: str, default: float, *, minimum: float, inclusive: bool) ->
 # The SQLite file Athena stores everything in. Override with the ATHENA_DB env var.
 DB_PATH = Path(os.environ.get("ATHENA_DB", "athena.db"))
 
+# Athena supports a direct loopback listener and an explicitly declared Tailscale
+# listener. It intentionally has no public mode: proxies, tunnels, NAT, container
+# publication, and Tailscale Funnel are external state Athena cannot infer.
+NETWORK_MODE = os.environ.get("ATHENA_NETWORK_MODE", "local").strip().lower()
+if NETWORK_MODE not in _NETWORK_MODES:
+    raise ValueError(
+        "ATHENA_NETWORK_MODE must be one of: " + ", ".join(sorted(_NETWORK_MODES))
+    )
+
+# Exact request Host authorities, including ports. The supported launcher derives
+# a strict loopback allowlist when this is empty in local mode; tailnet mode requires
+# explicit values. Raw ASGI startup with no launcher and no allowlist consequently
+# has no request authority and fails closed at the outer deployment boundary.
+_allowed_authorities_raw = os.environ.get("ATHENA_ALLOWED_AUTHORITIES", "")
+if _allowed_authorities_raw:
+    _allowed_authority_parts = _allowed_authorities_raw.split(",")
+    if any(not part.strip() for part in _allowed_authority_parts):
+        raise ValueError(
+            "ATHENA_ALLOWED_AUTHORITIES must contain nonempty comma-separated values"
+        )
+    ALLOWED_AUTHORITIES = tuple(part.strip() for part in _allowed_authority_parts)
+    del _allowed_authority_parts
+else:
+    ALLOWED_AUTHORITIES = ()
+del _allowed_authorities_raw
+
 # Athena loggers fail closed on typos instead of silently falling back to INFO.
 LOG_LEVEL = os.environ.get("ATHENA_LOG_LEVEL", "INFO").strip().upper()
 if LOG_LEVEL not in _LOG_LEVELS:
@@ -58,12 +85,10 @@ if LOG_LEVEL not in _LOG_LEVELS:
     )
 
 
-# Whether to trust the X-Athena-Actor header as a fallback identity when no
-# bearer token is presented. The header only CLAIMS an id, so it is safe only on
-# a trusted local/tailnet box. It defaults OFF: an unconfigured deploy that gets
-# exposed to the network must NOT accept a spoofable identity header. Turn it ON
-# (ATHENA_TRUST_ACTOR_HEADER=1) deliberately on a trusted box — typically just
-# long enough to mint the first bearer token, then turn it back off.
+# Legacy application-factory fallback identity when no bearer token is presented.
+# The header only CLAIMS an id, so it defaults off and the supported athena-serve
+# entrypoint refuses to start when it is enabled. Retained direct-factory users
+# must opt in explicitly and remain outside the supported deployment contract.
 TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 
 # One-time credential for creating the first administrator through POST /users.
@@ -86,6 +111,12 @@ if BOOTSTRAP_TOKEN:
             "ATHENA_BOOTSTRAP_TOKEN must be 32-255 visible ASCII characters"
         )
     del bootstrap_token_bytes
+
+# The supported launcher sets this process-local invariant while running
+# ``athena-serve --bootstrap``. It is intentionally not an environment escape
+# hatch: a supported first administrator must have a credential that still works
+# after the one-time bootstrap token is removed.
+BOOTSTRAP_PASSWORD_REQUIRED = False
 
 # Maximum accepted request body size. This keeps accidental huge posts from
 # tying up the app process. Set to 0 to disable here when a trusted reverse proxy
@@ -179,12 +210,11 @@ def icarus_configured() -> bool:
 # forever and still never grow the registry past this ceiling.
 WORKER_MAX_PER_AGENT = _int_env("ATHENA_WORKER_MAX_PER_AGENT", 50, minimum=1)
 
-# Per-client-IP limit on ANONYMOUS traffic: optional_actor reads reached with no
-# valid credential, invalid-bearer attempts, and signed machine-inbound deliveries
-# that have no Athena actor. The per-token limiter never runs for these. Defaults
-# to 0 (OFF) for local/tailnet use; turn it on (e.g. 120) wherever anonymous reads
-# or inbound callbacks face an untrusted network. Keyed by the direct peer IP,
-# NOT X-Forwarded-For — account for a shared reverse proxy separately.
+# Per-client-IP limit used by optional-identity REST reads and signed machine-
+# inbound deliveries. It is not a global browser-request ceiling. The per-token
+# limiter never runs for these paths. Defaults to 0 (OFF) for local use; tailnet
+# deployment requires a positive value. Keyed by the direct peer IP, NOT
+# X-Forwarded-For — account for a shared reverse proxy separately.
 ANON_RATE_LIMIT_PER_MINUTE = _int_env("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", 0, minimum=0)
 
 # Per-client-IP limit on POST /login attempts. Password login is credential-free at the

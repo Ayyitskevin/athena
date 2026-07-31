@@ -10,6 +10,36 @@ the newest one and for what tagging still requires.
 
 ## [Unreleased]
 
+### Security
+
+- **Supported deployments now start through a fail-closed launcher.**
+  `athena-serve` preflights absolute storage paths, SQLite and attachment
+  integrity, an active administrator's durable recovery credential, direct
+  numeric loopback or explicit Tailscale binds, exact `Host` authorities, and
+  positive tailnet-facing limits before Athena/Uvicorn accepts traffic. It
+  refuses wildcard, LAN, public, link-local, and hostname binds; legacy actor-header trust;
+  bootstrap credentials during normal startup; HTTPS-only cookies on its
+  direct-HTTP server; proxy-header trust; reload; and additional workers.
+  Bootstrap is a separate loopback-only mode whose first administrator must set
+  a nonblank, bounded password. The launcher also rejects a body cap too small
+  to carry the supported bootstrap/login envelope and validates observable OIDC
+  recovery URL/callback coherence. Valid legacy password hashes retain the prior
+  1 MiB request envelope until a verified login records whether the credential
+  is bounded; incompatible bootstrap migrations are rehearsed and rejected on
+  an in-memory copy before the real file is written.
+
+- **The application enforces the declared deployment boundary before doing
+  request work.** An outer ASGI guard requires an allowed accepted-socket address
+  and listener port plus exactly one allowlisted `Host` authority for every HTTP
+  or WebSocket request, ignoring forwarded host/address claims and failing before
+  body, session, limiter, route, or database work. The installed-wheel smoke now
+  proves bootstrap, stop, credential removal, normal restart, browser login,
+  packaged assets, and bounded shutdown over the same parent-held listener.
+  The body cap also sits outside browser-session resolution, so an oversized
+  request with an attacker-controlled cookie cannot force a SQLite lookup.
+  Public and proxy-terminated exposure remain explicitly unsupported because
+  Athena cannot infer external publication.
+
 ### Fixed
 
 - **First-admin bootstrap now requires an explicit one-time credential.** An empty

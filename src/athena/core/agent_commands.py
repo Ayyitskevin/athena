@@ -127,6 +127,8 @@ def onboard_agent(
                 role=users.DEFAULT_ROLE,
                 is_agent=True,
             )
+        except user_commands.UserCommandError as exc:
+            raise AgentCommandError(exc.detail, status_code=422) from exc
         except sqlite3.IntegrityError as exc:
             raise AgentCommandError("email already in use", status_code=409) from exc
         # Minted inline rather than via token_commands.mint_token: that command

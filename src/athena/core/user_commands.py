@@ -78,6 +78,30 @@ def _create_detail(user: dict) -> str:
     return f"{user['email']} ({user['role']}{agent})"
 
 
+def _validate_password(password: str | None) -> None:
+    if password is None:
+        return
+    try:
+        passwords.validate_new_password(password)
+    except ValueError as exc:
+        raise UserCommandError("invalid", str(exc)) from exc
+
+
+def _validate_identity_fields(email: str, name: str) -> None:
+    if not users.is_browser_login_email(email):
+        raise UserCommandError(
+            "invalid",
+            "email must be a browser-compatible ASCII address",
+        )
+    if not name.strip():
+        raise UserCommandError("invalid", "name is required")
+    if len(name) > users.MAX_NAME_CHARS:
+        raise UserCommandError(
+            "invalid",
+            f"name must be at most {users.MAX_NAME_CHARS} characters",
+        )
+
+
 def _create_user_in_transaction(
     conn: sqlite3.Connection,
     *,
@@ -89,6 +113,8 @@ def _create_user_in_transaction(
     is_agent: bool,
 ) -> dict:
     """Insert and audit one user while the caller owns the write transaction."""
+    _validate_identity_fields(email, name)
+    _validate_password(password)
     user = users.create_user(
         conn,
         email=email,
@@ -254,6 +280,7 @@ def change_own_password(
         raise UserCommandError("invalid", "current password is required")
     if not new_password:
         raise UserCommandError("invalid", "new password is required")
+    _validate_password(new_password)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, actor["id"])
         if target is None:
@@ -306,6 +333,7 @@ def reset_user_password(
     password = password.strip()
     if not password:
         raise UserCommandError("invalid", "password is required")
+    _validate_password(password)
     with db.transaction(conn, immediate=True):
         if users.get_user(conn, target_user_id) is None:
             raise UserCommandError("not_found", "no such user")

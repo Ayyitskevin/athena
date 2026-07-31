@@ -480,6 +480,7 @@ def test_exhausted_signed_inbound_limit_refuses_before_reading_the_body(
         "headers": [
             (b"content-length", b"1048576"),
             (b"cookie", f"{config.SESSION_COOKIE}=attacker".encode()),
+            (b"host", b"testserver"),
             (b"idempotency-key", b"attacker"),
         ],
         "client": ("testclient", 50000),

@@ -198,9 +198,12 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                     str(listener.fileno()),
                     "--log-level",
                     "warning",
+                    "--no-proxy-headers",
+                    "--no-server-header",
                 ],
                 env={
                     **os.environ,
+                    "ATHENA_ALLOWED_AUTHORITIES": f"127.0.0.1:{athena_port}",
                     "ATHENA_DB": str(root / "athena.db"),
                     "ATHENA_ATTACH_DIR": str(root / "attachments"),
                     "ATHENA_AUTOMATION": "0",

@@ -17,7 +17,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from athena.core import db, passwords, users
+from athena.core import db, deployment, passwords, users
 from athena.main import create_app
 
 
@@ -42,10 +42,46 @@ def test_production_iteration_policy_is_at_least_owasp_600k():
 def test_hash_format_round_trips_and_rejects_garbage():
     stored = passwords.hash_password("s3cret")
     assert stored.startswith("pbkdf2_sha256$")
+    assert stored.endswith("$bounded")
+    assert passwords.is_bounded_hash(stored)
     assert passwords.verify_password("s3cret", stored)
     assert not passwords.verify_password("wrong", stored)
     assert not passwords.verify_password("s3cret", None)
     assert not passwords.verify_password("s3cret", "not$a$hash")
+
+
+def test_new_password_rejects_characters_the_browser_input_strips():
+    for raw in ("line\nbreak", "line\rbreak", "line\r\nbreak"):
+        try:
+            passwords.hash_password(raw)
+        except ValueError as exc:
+            assert "carriage returns or line feeds" in str(exc)
+        else:
+            raise AssertionError("browser-unreproducible password was accepted")
+
+
+def test_legacy_hash_is_marked_after_the_next_verified_login():
+    legacy = passwords._encode_password("short password", marker=None)
+    assert len(legacy.split("$")) == 4
+    assert passwords.is_valid_hash(legacy)
+    assert not passwords.is_bounded_hash(legacy)
+    assert passwords.needs_rehash(legacy)
+    assert passwords.verify_password("short password", legacy)
+
+    upgraded = passwords.rehash_verified_legacy_password("short password")
+    assert upgraded.endswith("$bounded")
+    assert passwords.is_bounded_hash(upgraded)
+    assert not passwords.needs_rehash(upgraded)
+
+
+def test_verified_legacy_password_above_the_new_bound_is_marked_unbounded():
+    raw = "x" * (passwords.MAX_PASSWORD_BYTES + 1)
+    upgraded = passwords.rehash_verified_legacy_password(raw)
+    assert upgraded.endswith("$unbounded")
+    assert passwords.is_valid_hash(upgraded)
+    assert not passwords.is_bounded_hash(upgraded)
+    assert not passwords.needs_rehash(upgraded)
+    assert passwords.verify_password(raw, upgraded)
 
 
 # --- needs_rehash ----------------------------------------------------------
@@ -167,3 +203,48 @@ def test_web_login_still_works_and_upgrades(tmp_path, monkeypatch):
         ]
     )
     conn.close()
+
+
+def test_legacy_long_password_can_login_and_rehash_without_a_new_write(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "legacy-long.db"
+    conn = _conn(tmp_path, "legacy-long.db")
+    legacy_password = "x" * (passwords.MAX_PASSWORD_BYTES + 1)
+    monkeypatch.setattr(passwords, "_ITERATIONS", 1_000)
+    legacy = users.create_user(
+        conn,
+        email="legacy@example.com",
+        name="Legacy",
+        role="admin",
+    )
+    conn.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (passwords._encode_password(legacy_password, marker=None), legacy["id"]),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(passwords, "_ITERATIONS", 2_000)
+    app = create_app(
+        db_path,
+        max_request_body_bytes=deployment.MIN_SUPPORTED_REQUEST_BODY_BYTES,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/login",
+            data={"email": "legacy@example.com", "password": legacy_password},
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303, response.text
+    conn = db.connect(db_path)
+    try:
+        stored = conn.execute(
+            "SELECT password_hash FROM users WHERE id = 1"
+        ).fetchone()["password_hash"]
+        assert "$2000$" in stored
+        assert stored.endswith("$unbounded")
+        assert not passwords.needs_rehash(stored)
+    finally:
+        conn.close()

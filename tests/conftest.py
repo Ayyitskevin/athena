@@ -23,6 +23,17 @@ _TEST_BOOTSTRAP_TOKEN = "test-bootstrap-token-0000000000000001"
 
 
 @pytest.fixture(autouse=True)
+def synthetic_testclient_network_boundary(monkeypatch):
+    """Permit only TestClient's synthetic socket and exact HTTP(S) authorities."""
+    monkeypatch.setattr(config, "NETWORK_MODE", "_test")
+    monkeypatch.setattr(
+        config,
+        "ALLOWED_AUTHORITIES",
+        ("testserver:80", "testserver:443"),
+    )
+
+
+@pytest.fixture(autouse=True)
 def bootstrap_enabled_for_unrelated_tests(monkeypatch):
     """Keep legacy feature tests focused on their own contract.
 
@@ -34,6 +45,7 @@ def bootstrap_enabled_for_unrelated_tests(monkeypatch):
     can exercise missing, wrong, malformed, and duplicate headers directly.
     """
     monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", _TEST_BOOTSTRAP_TOKEN)
+    monkeypatch.setattr(config, "BOOTSTRAP_PASSWORD_REQUIRED", False)
     original_request = TestClient.request
 
     def request_with_bootstrap(self, method, url, **kwargs):

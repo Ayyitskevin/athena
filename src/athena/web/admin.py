@@ -904,6 +904,13 @@ def create_user(
             role=role,
             is_agent=is_agent is not None,
         )
+    except user_commands.UserCommandError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/users.html",
+            context=_admin_context(conn, error=exc.detail),
+            status_code=_USER_COMMAND_WEB_STATUS[exc.kind],
+        )
     except sqlite3.IntegrityError:
         return templates.TemplateResponse(
             request=request,

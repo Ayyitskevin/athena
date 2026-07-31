@@ -10,11 +10,18 @@ Athena currently supports Python 3.12 only: package metadata requires
 `>=3.12,<3.13`, and CI runs on Python 3.12. Do not deploy it under Python 3.11,
 3.13, or an untested alternate interpreter.
 
-The supported deployment is one Athena application process with one uvicorn
-worker, one SQLite database on local storage, and one attachment directory on the
-same host. Access is expected from that trusted machine or a tailnet, optionally
-through an HTTPS reverse proxy. Athena does not currently claim public-internet,
-hostile multi-tenant, multi-process, or high-availability safety.
+The supported deployment starts through `athena-serve`: one Athena application
+process with one uvicorn worker, one SQLite database on local storage, and one
+attachment directory on the same host. Its only network modes are direct
+loopback (`local`, the default) and an explicitly declared Tailscale address
+(`tailnet`). There is no public mode.
+
+A reverse proxy, tunnel, NAT rule, container port publication, or Tailscale
+Funnel can expose even a loopback listener, and Athena cannot infer that external
+state. Those publication shapes are not supported by this contract. The runtime
+socket and Host guards remain useful defense in depth, but are not public
+reachability detection. Athena does not currently claim public-internet, hostile
+multi-tenant, multi-process, or high-availability safety.
 
 Exactly one process may own the webhook-delivery and automation runners. There is
 no leader election between processes, and request/login/token rate limiters are
@@ -28,21 +35,23 @@ Athena reads configuration from environment variables at process start.
 | Variable | Default | Use |
 |----------|---------|-----|
 | `ATHENA_DB` | `athena.db` | SQLite database path. Use an absolute path for a long-running service. |
+| `ATHENA_NETWORK_MODE` | `local` | Supported listener policy: `local` permits only loopback; `tailnet` additionally permits exact numeric addresses in Tailscale's `100.64.0.0/10` and `fd7a:115c:a1e0::/48` ranges. There is no `public` value. |
+| `ATHENA_ALLOWED_AUTHORITIES` | *(derived for local; required for tailnet)* | Comma-separated exact HTTP `Host` authorities, each with the listener's port, such as `athena.tailnet.example:8000` or `[::1]:8000`. A numeric authority must equal the numeric bind; a DNS authority is an operator assertion. No wildcard, suffix, userinfo, path, browser-numeric final label, internationalized/punycode label, or port range is accepted. |
 | `ATHENA_LOG_LEVEL` | `INFO` | Level for Athena's own logs (`athena.*`). At `INFO` startup logs the migrations it applied and which background loops started, and the loops log any swallowed error. Set `WARNING` for a quieter server or `DEBUG` when diagnosing. |
 | `ATHENA_BOOTSTRAP_TOKEN` | *(empty; bootstrap disabled)* | One-time credential for the first `POST /users`. Generate 32 random bytes as URL-safe text, present it in `X-Athena-Bootstrap-Token`, then remove it and restart. Values must be 32–255 visible ASCII characters. |
-| `ATHENA_TRUST_ACTOR_HEADER` | `false` | Accept `X-Athena-Actor` as identity fallback. Use only on a trusted local/tailnet box, normally only for headless bootstrap. |
-| `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies. Set to `1` when Athena is served over HTTPS. Leave off for plain local HTTP. |
+| `ATHENA_TRUST_ACTOR_HEADER` | `false` | Legacy application-factory identity fallback. The supported `athena-serve` launcher refuses to start when this is enabled; use password/OIDC login or a bearer token. |
+| `ATHENA_COOKIE_SECURE` | `false` | Adds the HTTPS-only `Secure` flag to browser cookies for retained raw-factory HTTPS experiments. The current direct-HTTP `athena-serve` contract refuses `true`; no supported TLS/proxy mode exists yet. |
 | `ATHENA_SESSION_TTL_DAYS` | `14` | Browser session lifetime. |
-| `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. Set to `0` only if a trusted reverse proxy enforces the limit. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
+| `ATHENA_MAX_REQUEST_BODY_BYTES` | `1048576` | Request body cap. A nonzero supported-launcher value must be at least `16384`, which carries the bounded bootstrap/login credential envelope; `0` disables the cap and is allowed only in local mode. Tailnet mode requires a positive value. Also caps attachment uploads (the whole request must fit), so raise it for larger files. |
 | `ATHENA_IDEMPOTENCY_TTL_SECONDS` | `86400` | Retention for completed API idempotency receipts. Expired completed receipts are removed lazily. |
 | `ATHENA_IDEMPOTENCY_LEASE_SECONDS` | `60` | Freshness window for an executing idempotency owner. Expiry never grants automatic takeover. |
 | `ATHENA_IDEMPOTENCY_WAIT_SECONDS` | `5` | How long an identical concurrent retry waits for the owner to publish a result before receiving `409 idempotency_in_progress`. |
 | `ATHENA_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | Largest successful response Athena will retain for safe replay. An overflow is fail-closed and becomes indeterminate. |
-| `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
+| `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
 | `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
-| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous traffic: credential-free reads and each signed-inbound attempt (forge and Icarus callbacks). Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever these paths face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
-| `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the direct peer IP; behind a shared-IP proxy, raise it or enforce at the proxy. Set `0` to disable. |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
+| `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
 | `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
 | `ATHENA_WEBHOOK_INTERVAL` | `5` | Seconds between webhook delivery passes. |
@@ -59,23 +68,62 @@ and, for floats, be finite. `ATHENA_LOG_LEVEL` must be exactly one of
 `CRITICAL`, `ERROR`, `WARNING`, `INFO`, or `DEBUG` after case normalization. A
 typo or out-of-range value aborts startup instead of silently selecting a default.
 
-A typical local run:
+Password hashes written by this release carry a marker proving whether the
+verified plaintext was within the new 1024-byte password bound. New password
+writes also reject carriage returns and line feeds, which the shipped HTML
+password input strips and therefore cannot reproduce. A valid legacy
+four-part hash has no such evidence, so password-only recovery retains the
+historical `1048576`-byte request envelope (or an unlimited local envelope).
+After a successful login, Athena rewrites a legacy hash with a `bounded` or
+`unbounded` marker. Before lowering the body cap on an upgraded instance, log in
+once with each recovery password: a bounded credential can then use the 16384-byte
+floor; an unbounded credential needs rotation, the historical cap, or a separate
+live admin token/OIDC recovery path.
+
+A normal local run, after completing first-user bootstrap:
 
 ```bash
 ATHENA_DB=/var/lib/athena/athena.db \
-uvicorn athena.main:app --host 127.0.0.1 --port 8000
+ATHENA_ATTACH_DIR=/var/lib/athena/attachments \
+athena-serve --host 127.0.0.1 --port 8000
 ```
 
-A typical HTTPS reverse-proxy run:
+A direct tailnet run must bind an exact Tailscale address, declare the exact
+browser-facing Host authority, and keep every request limit enabled:
 
 ```bash
 ATHENA_DB=/var/lib/athena/athena.db \
-ATHENA_COOKIE_SECURE=1 \
-uvicorn athena.main:app --host 127.0.0.1 --port 8000
+ATHENA_ATTACH_DIR=/var/lib/athena/attachments \
+ATHENA_NETWORK_MODE=tailnet \
+ATHENA_ALLOWED_AUTHORITIES=athena.your-tailnet.ts.net:8000 \
+ATHENA_ANON_RATE_LIMIT_PER_MINUTE=120 \
+athena-serve --host 100.64.0.10 --port 8000
 ```
 
-Do not set `ATHENA_COOKIE_SECURE=1` when serving plain HTTP directly; the browser
-will refuse to send the login cookie back over HTTP.
+The numeric address range is only a declared socket policy; it does not prove
+that Tailscale ACLs are correct or that Funnel is disabled. Verify both outside
+Athena. `athena-serve` fixes one worker, disables reload and proxy-header trust,
+removes the Server banner, and applies a bounded concurrency ceiling. It rejects
+wildcard, ordinary LAN, public, link-local, and hostname bind targets.
+
+Raw `uvicorn athena.main:app` is an unsupported development escape hatch. With
+no explicit `ATHENA_ALLOWED_AUTHORITIES`, its outer request boundary rejects
+every HTTP request. It also bypasses the database, attachment, administrator,
+worker, and bootstrap preflight even when an allowlist is supplied. Do not use it
+as a service command.
+
+For socket-activating supervisors and lifecycle tests, `athena-serve --fd N`
+accepts one already-listening IPv4/IPv6 stream descriptor and cannot be combined
+with `--host` or `--port`. The launcher duplicates the descriptor only to verify
+its address, type, and listening state, then constructs a fresh application
+pinned to that exact `(IP, port)`. The operating-system listener is necessarily
+already open and may queue connections, but Athena/Uvicorn does not accept or
+process their requests until every preflight check succeeds.
+
+`athena-serve` refuses `ATHENA_COOKIE_SECURE=1`: it currently speaks direct HTTP,
+and the browser would refuse to send a Secure login cookie back. A supported
+direct-TLS or proxy/origin contract has not yet been defined. The setting remains
+available to explicitly unsupported raw-factory HTTPS experiments.
 
 ## Health Checks
 
@@ -92,10 +140,14 @@ curl -fsS http://127.0.0.1:8000/healthz
 curl -fsS http://127.0.0.1:8000/readyz
 ```
 
-Migrations run automatically during app startup. A failing `/readyz` means the
-app cannot safely use the configured `ATHENA_DB` path or its migration ledger does
-not match this build. `/readyz` does not run SQLite's full integrity check and does
-not inspect attachment blobs; use `athena-doctor` for those checks.
+The supported normal `athena-serve` preflight requires a current migration
+ledger before Athena/Uvicorn accepts traffic. It does not silently upgrade a
+long-running database; apply release migrations in the explicit offline flow
+below. Bootstrap and raw development-factory startup still apply pending
+migrations transactionally. A failing `/readyz` means the app cannot safely use
+the configured `ATHENA_DB` path or its migration ledger does not match this
+build. `/readyz` does not run SQLite's full integrity check and does not inspect
+attachment blobs; use `athena-doctor` for those checks.
 
 ## Background Loops (Webhooks and Automation)
 
@@ -169,17 +221,33 @@ Already-linked identities continue to resolve normally.
 | `ATHENA_OIDC_REDIRECT_URL` | This app's callback URL. Must exactly match what the IdP has registered. |
 | `ATHENA_OIDC_ALLOWED_DOMAINS` | Optional comma-separated email-domain allow-list for first-login auto-provisioning (e.g. `acme.com,acme.io`). Empty = any domain the IdP asserts. Set it to lock SSO to your organization. |
 
+The supported direct-HTTP launcher applies a stricter recovery check than the
+general application factory: the issuer must be a visible-ASCII HTTPS URL
+without credentials, query, or fragment, and `ATHENA_OIDC_REDIRECT_URL` must be
+exactly `http://<allowed-authority>/auth/callback` for this listener. This proves
+that the configured callback returns to Athena's declared boundary; it cannot
+prove IdP discovery reachability, client registration, DNS, or possession of the
+external account.
+
 ## Deploy Preflight
 
-Run `athena-doctor` before switching a service to a restored or migrated database:
+Run deployment mode before switching a service to a restored or migrated
+database. The positional paths must exactly match the process environment:
 
 ```bash
+ATHENA_DB=/var/lib/athena/athena.db \
+ATHENA_ATTACH_DIR=/var/lib/athena/attachments \
 athena-doctor /var/lib/athena/athena.db \
-  --attach-dir /var/lib/athena/attachments
+  --attach-dir /var/lib/athena/attachments \
+  --deployment \
+  --host 127.0.0.1 \
+  --port 8000
 ```
 
-The command runs SQLite's full `PRAGMA integrity_check` and requires the applied
-migration ledger to match the exact packaged inventory and checksums. With
+The command runs SQLite's full `PRAGMA integrity_check` and foreign-key check,
+requires the applied migration ledger to match the exact packaged inventory and
+checksums, and requires the live logical schema to exactly match a freshly
+migrated database from that inventory. With
 `--attach-dir`, it also checks that the directory exists, is writable, and
 reconciles its direct entries against the selected database. It fails on missing,
 tampered, size-mismatched, unreadable, or non-regular blobs; orphan files; and an
@@ -187,18 +255,34 @@ unsafe storage root. Symlinks, FIFOs, devices, sockets, and directories are not
 followed or hashed. Findings are reported as category counts, not blob names or
 content.
 
+`--deployment` additionally requires absolute matching paths, the configured
+network/Host policy, no bootstrap token, actor-header trust off, at least one
+active administrator, and at least one active administrator with a structurally
+valid password hash, live admin-scoped token, or identity linked to the
+preflighted OIDC issuer. It proves that a credential path is configured, not
+that the operator still possesses the password/token or that the IdP is
+reachable. Its `--host` and `--port` must exactly mirror the subsequent
+`athena-serve` listener. For tailnet, pass that exact Tailscale numeric address
+and port. The doctor has no `--fd` mode; for socket activation, inspect the
+descriptor and pass its numeric address and port here.
+
 `athena-doctor` detects but does not repair attachment divergence. Omitting
 `--attach-dir` omits all attachment checks. It does not apply migrations unless
 `--migrate` is passed.
 
-For first install or an intentional offline upgrade:
+For an intentional offline upgrade, gracefully stop Athena first, take a matched
+database and attachment-directory recovery pair, and retain the older build.
+Then apply the forward-only migrations:
 
 ```bash
 athena-doctor /var/lib/athena/athena.db --migrate \
   --attach-dir /var/lib/athena/attachments
 ```
 
-Follow the preflight with the service-level `/readyz` check after startup.
+Run `athena-doctor --deployment --host <exact-ip> --port <exact-port>` after the
+migration, start `athena-serve` with the same listener values, and follow it with
+the service-level `/readyz` check. For a first install, use the dedicated
+[First User Bootstrap](#first-user-bootstrap) flow instead.
 
 ## Attachment Storage Integrity
 
@@ -376,28 +460,122 @@ the process-configured `ATHENA_BOOTSTRAP_TOKEN`; the default empty value disable
 HTTP bootstrap, so starting an empty instance on a reachable interface does not
 hand ownership to the first caller.
 
-Generate a fresh value from 32 random bytes. Keep it in process configuration or a
-secret manager, never in a checked-in file, command transcript, URL, or request
-body:
+Use one dedicated Bash terminal for the entire bootstrap lifecycle below. It
+generates a fresh 32-byte token, prompts twice for the real administrator
+password without echoing it, refuses a mismatch before any database write,
+starts the launcher in the background, creates the account without placing the
+password in a command argument, proves browser login, and then stops the
+bootstrap process. Keep shell tracing disabled and store the password in your
+password manager before continuing.
 
 ```bash
-athena_bootstrap_token="$(python -c \
-  'import secrets; print(secrets.token_urlsafe(32))')"
-export ATHENA_BOOTSTRAP_TOKEN="$athena_bootstrap_token"
+(
+  set -euo pipefail
+
+  install -d -m 700 /var/lib/athena/attachments
+  export ATHENA_DB=/var/lib/athena/athena.db
+  export ATHENA_ATTACH_DIR=/var/lib/athena/attachments
+  athena_bootstrap_token="$(
+    python -c 'import secrets; print(secrets.token_urlsafe(32))'
+  )"
+  export ATHENA_BOOTSTRAP_TOKEN="$athena_bootstrap_token"
+  read -r -s -p 'New Athena administrator password: ' athena_admin_password
+  printf '\n'
+  read -r -s -p 'Confirm Athena administrator password: ' \
+    athena_admin_password_confirm
+  printf '\n'
+  if [[ "$athena_admin_password" != "$athena_admin_password_confirm" ]]; then
+    printf 'administrator passwords do not match\n' >&2
+    unset ATHENA_BOOTSTRAP_TOKEN athena_bootstrap_token \
+      athena_admin_password athena_admin_password_confirm
+    exit 1
+  fi
+  unset athena_admin_password_confirm
+
+  athena_bootstrap_pid=''
+  athena_cookie_jar="$(mktemp)"
+  cleanup() {
+    if [[ -n "$athena_bootstrap_pid" ]] &&
+       kill -0 "$athena_bootstrap_pid" 2>/dev/null; then
+      kill -INT "$athena_bootstrap_pid" 2>/dev/null || true
+      wait "$athena_bootstrap_pid" || true
+    fi
+    rm -f -- "$athena_cookie_jar"
+    unset ATHENA_BOOTSTRAP_TOKEN athena_bootstrap_token athena_admin_password \
+      athena_admin_password_confirm
+  }
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM
+
+  athena-serve --bootstrap --host 127.0.0.1 --port 8000 &
+  athena_bootstrap_pid=$!
+  for ((attempt = 0; attempt < 100; attempt++)); do
+    if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$athena_bootstrap_pid" 2>/dev/null; then
+      wait "$athena_bootstrap_pid" || true
+      printf 'athena-serve exited before bootstrap\n' >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+  curl -fsS http://127.0.0.1:8000/healthz >/dev/null
+
+  ATHENA_ADMIN_PASSWORD="$athena_admin_password" \
+    python -c 'import json, os; print(json.dumps({
+      "email": "admin@example.com",
+      "name": "Admin",
+      "password": os.environ["ATHENA_ADMIN_PASSWORD"],
+    }))' |
+    curl -fsS -X POST http://127.0.0.1:8000/users \
+      -H "X-Athena-Bootstrap-Token: $ATHENA_BOOTSTRAP_TOKEN" \
+      -H 'Content-Type: application/json' \
+      --data-binary @- >/dev/null
+
+  athena_login_status="$(
+    ATHENA_ADMIN_PASSWORD="$athena_admin_password" \
+      python -c 'import os, sys, urllib.parse; sys.stdout.write(urllib.parse.urlencode({
+        "email": "admin@example.com",
+        "password": os.environ["ATHENA_ADMIN_PASSWORD"],
+      }))' |
+      curl -sS -o /dev/null -c "$athena_cookie_jar" \
+        -w '%{http_code}' -X POST http://127.0.0.1:8000/login \
+        -H 'Origin: http://127.0.0.1:8000' \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data-binary @-
+  )"
+  test "$athena_login_status" = 303
+  curl -fsS -b "$athena_cookie_jar" \
+    http://127.0.0.1:8000/admin/users >/dev/null
+
+  kill -INT "$athena_bootstrap_pid"
+  wait "$athena_bootstrap_pid"
+  athena_bootstrap_pid=''
+  rm -f -- "$athena_cookie_jar"
+  athena_cookie_jar=''
+  trap - EXIT INT TERM
+  unset ATHENA_BOOTSTRAP_TOKEN athena_bootstrap_token athena_admin_password
+)
 ```
 
-Start Athena on loopback with that environment, then present the same value only
-in the dedicated header. Do not attach an `Idempotency-Key`: before an actor
-exists there is no durable principal to own such a receipt, so Athena rejects it
-with the same state-independent `401 authentication required` instead of silently
-ignoring the retry contract.
+`--bootstrap` is refused outside local mode. Static policy, a read-only
+recognition check, and a complete in-memory migration/schema rehearsal run
+before any database write: the database must be missing, structurally empty, an
+exact canonical empty migration ledger left by an interrupted first migration,
+or a recognized Athena database with a valid migration prefix, exact resulting
+packaged schema, and zero users. A populated, incompatible hybrid, or unrelated
+SQLite file is left untouched. Athena then migrates the real file, runs full
+SQLite and foreign-key integrity checks, reconciles attachment storage, and
+rechecks the zero-user posture before Athena/Uvicorn accepts requests. The first
+administrator must include a nonblank password no larger than 1024 UTF-8 bytes
+and without carriage returns or line feeds, so normal startup has a durable
+browser login path after the token is removed.
 
-```bash
-curl -fsS -X POST http://127.0.0.1:8000/users \
-  -H "X-Athena-Bootstrap-Token: $ATHENA_BOOTSTRAP_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@example.com","name":"Admin","password":"change-me"}'
-```
+Present the token only in the dedicated header. Do not attach an
+`Idempotency-Key`: before an actor exists there is no durable principal to own
+such a receipt, so Athena rejects it with the same state-independent `401
+authentication required` instead of silently ignoring the retry contract.
 
 Athena always makes that first user an `admin`. Missing, malformed, wrong, and
 unconfigured bootstrap credentials return the same `401 authentication required`
@@ -405,17 +583,26 @@ as an anonymous request after bootstrap; the response does not reveal whether th
 database is empty or a token is configured. The bootstrap token grants nothing
 after the first user exists.
 
-Stop the bootstrap process, clear both shell variables, and restart Athena
-without `ATHENA_BOOTSTRAP_TOKEN` immediately after success:
+The block stops the bootstrap process and destroys its shell variables after
+proving login. In a normal service shell, export only the durable paths and
+restart without `ATHENA_BOOTSTRAP_TOKEN`:
 
 ```bash
-unset athena_bootstrap_token ATHENA_BOOTSTRAP_TOKEN
+export ATHENA_DB=/var/lib/athena/athena.db
+export ATHENA_ATTACH_DIR=/var/lib/athena/attachments
+unset ATHENA_BOOTSTRAP_TOKEN
+athena-serve --host 127.0.0.1 --port 8000
 ```
 
-Do this before enabling a reverse proxy or shared ingress; a proxy that connects
-over loopback does not turn its remote clients into trusted local callers. After
-the first user exists, creating users requires an admin actor. Browser admins can
-create users, change roles, and set or reset browser passwords at `/admin/users`.
+Normal startup refuses a lingering bootstrap token, a userless/adminless
+database, or an active administrator with no configured recovery credential.
+Password recovery additionally requires a browser-addressable email and a valid
+bounded hash, or a legacy/unbounded hash carried under the historical 1 MiB body
+envelope. A live admin-scoped token or a matching configured OIDC identity is an
+alternative recovery path.
+After the first user exists, creating users requires an admin actor. Browser
+admins can create users, change roles, and set or reset browser passwords at
+`/admin/users`.
 
 ## Roles
 
@@ -606,9 +793,8 @@ read-only; they do not change authentication or token behavior.
 
 Bearer-token API traffic is rate limited per token by
 `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`. A rejected request returns `429`, a
-`Retry-After` header, and rate-limit headers. Browser sessions and the trusted
-`X-Athena-Actor` bootstrap path are not token-limited; leave actor-header trust
-off anywhere untrusted.
+`Retry-After` header, and rate-limit headers. Browser sessions are not
+token-limited. `athena-serve` refuses the legacy `X-Athena-Actor` trust mode.
 
 
 ## Delegation Pickup
@@ -945,36 +1131,12 @@ the 412 response tag. When combining `If-Match` with `idempotency_key`, changing
 the precondition changes the request fingerprint: use a new idempotency key for
 the merged retry.
 
-## Headless Admin Token Bootstrap
+## Admin Token Bootstrap
 
-If you cannot use the browser UI to create the first admin token, temporarily
-trust the local actor header, mint a token for user id `1`, then turn the header
-back off.
-
-1. Start Athena on a trusted local/tailnet interface with actor-header trust on:
-
-   ```bash
-   ATHENA_DB=/var/lib/athena/athena.db \
-   ATHENA_TRUST_ACTOR_HEADER=1 \
-   uvicorn athena.main:app --host 127.0.0.1 --port 8000
-   ```
-
-2. Mint an admin token for the bootstrap admin:
-
-   ```bash
-   curl -fsS -X POST http://127.0.0.1:8000/tokens \
-     -H 'X-Athena-Actor: 1' \
-     -H 'Content-Type: application/json' \
-     -d '{"name":"bootstrap-admin","scopes":["admin"]}'
-   ```
-
-3. Store the returned `token` value somewhere safe. It is shown once.
-
-4. Restart Athena without `ATHENA_TRUST_ACTOR_HEADER=1`.
-
-Never expose an instance that trusts `X-Athena-Actor` to untrusted clients. If a
-reverse proxy sits in front of Athena, strip inbound `X-Athena-Actor` unless the
-proxy itself is intentionally providing that identity on a private network.
+Sign in with the first administrator's bootstrap password, open
+`/settings/tokens`, and mint the narrowest token needed. Store the raw value
+immediately; it is shown once. The supported launcher does not provide the old
+headless `X-Athena-Actor` shortcut because that header proves no identity.
 
 ## AI Agent Access (MCP)
 
@@ -1018,23 +1180,30 @@ procedure above.
 Before leaving laptop-only development:
 
 - Use Python 3.12 and one Athena process/uvicorn worker.
+- Start long-running instances through `athena-serve`, never raw Uvicorn.
 - Set `ATHENA_DB` to an absolute path owned by the service user.
 - Set `ATHENA_ATTACH_DIR` to an absolute local-storage path owned by the service
   user and keep it outside every statically served directory.
-- Keep the bind address private: `127.0.0.1` behind a reverse proxy, or a tailnet
-  address for tailnet-only use.
-- Complete first-user bootstrap on loopback before enabling shared ingress, then
-  remove `ATHENA_BOOTSTRAP_TOKEN` and restart.
-- Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
-- Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
-- Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads or
-  signed-inbound endpoints are reachable from an untrusted network.
+- Use direct loopback, or explicitly select `tailnet`, an exact Tailscale bind,
+  and exact Host authorities on the listener port.
+- Complete first-user bootstrap on loopback, then remove
+  `ATHENA_BOOTSTRAP_TOKEN` and restart normally.
+- Leave `ATHENA_TRUST_ACTOR_HEADER` unset; the launcher refuses it.
+- Leave `ATHENA_COOKIE_SECURE` off; the current direct-HTTP launcher refuses it.
+  Do not add TLS termination or a proxy without defining and reviewing a new
+  supported deployment contract.
+- Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) when optional-identity
+  REST reads or signed-inbound endpoints need a direct-peer-IP ceiling. It does
+  not globally limit anonymous browser pages.
 - Keep exactly one webhook/automation runner; the supported shape is the single
   process above (see Background Loops).
-- Keep `/readyz` in the service or reverse-proxy health check.
-- Run `athena-doctor` against the configured database and attachment directory
+- Keep `/readyz` in the service health check.
+- Run `athena-doctor --deployment --host <exact-ip> --port <exact-port>` against
+  the exact configured database, attachment directory, and subsequent listener
   before returning local/tailnet traffic to a restored, moved, or upgraded
   instance.
 - Store a matched SQLite snapshot and attachment-directory snapshot away from the
   service host; `athena-backup` alone does not include attachment blobs.
-- Do not treat this checklist as approval for direct public-internet exposure.
+- Verify Tailscale ACL and Funnel state externally; Athena cannot observe them.
+- Do not publish loopback through a proxy/tunnel or treat this checklist as
+  approval for direct public-internet exposure.
