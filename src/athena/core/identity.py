@@ -200,10 +200,9 @@ def enforce_anon_rate_limit(request: Request) -> None:
     """Charge the anonymous per-IP limiter, raising 429 when the caller is over
     budget. No-op when no limiter is configured (the limit defaults off).
 
-    Used for genuinely anonymous traffic: credential-free reads (optional_actor),
-    invalid-bearer floods (current_actor), and the unauthenticated forge inbound
-    route — the one path with no actor resolution at all, which must charge this
-    limiter itself before doing any work."""
+    Used for credential-free reads (optional_actor) and invalid-bearer floods
+    (current_actor). Signed machine-inbound routes are charged earlier by the
+    outer ASGI perimeter, before body or session work."""
     limiter: rate_limits.FixedWindowRateLimiter | None = getattr(
         request.app.state, "anon_rate_limiter", None
     )

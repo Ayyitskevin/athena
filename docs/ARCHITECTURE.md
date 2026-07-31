@@ -201,8 +201,9 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   command-migration debt is tracked in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md).
   Scopes narrow bearer tokens but never expand a user's role. Bearer traffic is
   rate-limited per token
-  (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); anonymous reads can be throttled per
-  client IP (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default).
+  (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); anonymous reads and signed-inbound
+  attempts can be throttled per client IP
+  (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default).
 - Optional OIDC single sign-on activates only when all four `ATHENA_OIDC_*`
   connection settings are present; first-login auto-provisioning can be locked
   to an email-domain allow-list. Local email+password login is unaffected.

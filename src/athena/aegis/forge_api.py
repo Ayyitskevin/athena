@@ -3,13 +3,12 @@
 One route accepts events. Everything about it is shaped by the fact that it is
 **the only endpoint in Athena an unauthenticated stranger is expected to hit**.
 
-**The signature is checked before the payload is parsed.** This handler takes the
-raw ``Request`` and declares no Pydantic body model, which is a deliberate
-difference from the Icarus callback: FastAPI parses a declared body *before* the
-handler runs, so a declared model would put the JSON parser and its validation in
-front of the authentication check. Here the order is: bound the size, read the
-bytes, verify the HMAC over exactly those bytes, and only then parse. An
-unsigned or mis-signed delivery never reaches a parser at all.
+**The signature is checked before the payload is parsed.** Like the Icarus
+callback, this handler takes the raw ``Request`` and declares no Pydantic body
+model: FastAPI would otherwise put JSON parsing in front of authentication. The
+shared signed-inbound middleware charges the anonymous peer budget before body or
+session work; the global cap then bounds the bytes, and only an HMAC-authenticated
+body reaches a parser. An unsigned or mis-signed delivery never reaches one.
 
 **A refusal reveals nothing.** An unknown source name and a bad signature return
 the same 401, so this endpoint cannot be used to enumerate which sources a
@@ -31,7 +30,7 @@ from pydantic import BaseModel
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor, enforce_anon_rate_limit
+from athena.core.identity import admin_actor
 
 router = APIRouter(tags=["forge"])
 
@@ -157,13 +156,6 @@ async def receive_forge_event(
     delivery that matches no issue is a **success**: authentic, understood, and
     about work this workspace does not track.
     """
-    # This is the one route with no actor to charge, so it charges the anonymous
-    # per-IP limiter ITSELF — before the source lookup, before the body read.
-    # Enumeration probes and 512KB-body HMAC work are not free: a burst against
-    # an unknown or paused source gets a 429, not a database hit. (Off when the
-    # anon limit is unconfigured, like every other anonymous path.)
-    enforce_anon_rate_limit(request)
-
     source = event_sources.get_source_by_name(conn, source_name)
 
     # Bound BEFORE reading: content-length is a claim, but an honest sender sets

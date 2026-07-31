@@ -40,7 +40,7 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE` | `120` | Per-bearer-token request ceiling for API/agent traffic. Set to `0` only when a trusted reverse proxy enforces equivalent token limits. |
 | `ATHENA_AGENT_RUN_STALE_SECONDS` | `90` | Maximum check-in age still labeled `reporting_recently`; older reports are `stale`. |
 | `ATHENA_AGENT_RUN_MAX_CHECKINS_PER_AGENT` | `1000` | Durable check-in row ceiling per agent. Existing ids remain refreshable at the ceiling; new ids receive `409`. |
-| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous (credential-free) reads. Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever anonymous reads face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling on anonymous traffic: credential-free reads and each signed-inbound attempt (forge and Icarus callbacks). Keyed by the direct peer IP, not `X-Forwarded-For`. Enable (e.g. `120`) wherever these paths face an untrusted network; behind a proxy every anonymous request shares the proxy's IP, so account for it there instead. |
 | `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the direct peer IP; behind a shared-IP proxy, raise it or enforce at the proxy. Set `0` to disable. |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
 | `ATHENA_WEBHOOK_DELIVERY` | `true` | Run the in-process webhook delivery loop. Exactly one process per deployment may run it — see Background Loops. |
@@ -992,8 +992,8 @@ Before leaving laptop-only development:
   address for tailnet-only use.
 - Leave `ATHENA_TRUST_ACTOR_HEADER` unset except during headless bootstrap.
 - Set `ATHENA_COOKIE_SECURE=1` when the browser reaches Athena over HTTPS.
-- Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads are
-  reachable from an untrusted network.
+- Set `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` (e.g. `120`) if anonymous reads or
+  signed-inbound endpoints are reachable from an untrusted network.
 - Keep exactly one webhook/automation runner; the supported shape is the single
   process above (see Background Loops).
 - Keep `/readyz` in the service or reverse-proxy health check.

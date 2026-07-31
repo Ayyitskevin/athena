@@ -120,19 +120,10 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     ("*", "athena.mentor.run_learnings", "record_learning"): (
         "documented learning-promotion command owner without the _commands suffix"
     ),
-    # --- Delivery outcome recording (COMMAND_MIGRATION.md, "Dispatch" /
-    # "Event sources"): the executor callback and the forge delivery path are
-    # deliberately not commands; their writes are follow-up events and
-    # *imported* history owned by the delivery subsystem.
-    ("athena.aegis.dispatch_api", "athena.core.dispatch", "record_evidence"): (
-        "executor-callback outcome write owned by the dispatch subsystem"
-    ),
-    ("athena.aegis.dispatch_api", "athena.core.dispatch", "record_terminal"): (
-        "executor-callback outcome write owned by the dispatch subsystem"
-    ),
-    ("athena.aegis.dispatch_api", "athena.core.activity", "record"): (
-        "the callback's follow-up events; the one transport that may record"
-    ),
+    # --- Inbound event-source recording (COMMAND_MIGRATION.md, "Event
+    # sources"): the forge delivery path is deliberately not a command; it writes
+    # *imported* history owned by the delivery subsystem. Dispatch callback writes
+    # have no exception here: icarus_commands.apply_callback owns them.
     ("athena.aegis.forge_api", "athena.aegis.forge", "land_delivery"): (
         "the HMAC-verified delivery path writes imported history by design"
     ),

@@ -16,9 +16,12 @@ what makes that provable rather than aspirational.
 """
 
 import ast
+from io import BytesIO
+import runpy
 import subprocess
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
 
 REPO = Path(__file__).resolve().parent.parent
 EXECUTOR = REPO / "examples" / "icarus_executor.py"
@@ -35,6 +38,77 @@ def test_the_reference_executor_is_a_genuinely_separate_system():
     assert "athena" not in imported, "the executor must not import Athena"
     non_stdlib = imported - set(sys.stdlib_module_names)
     assert not non_stdlib, f"the executor must be stdlib-only, found: {non_stdlib}"
+
+
+def test_reference_executor_sends_cumulative_safe_callbacks():
+    # Pin the wire example itself, not merely the final field-exercise row. The
+    # terminal report must repeat the canonical evidence so network reordering
+    # converges, and malformed signature text must be a refusal rather than a
+    # compare_digest TypeError.
+    executor = runpy.run_path(str(EXECUTOR))
+    payloads = []
+
+    def capture(payload):
+        payloads.append(payload)
+        return 202, "accepted"
+
+    do_the_work = executor["_do_the_work"]
+    do_the_work.__globals__["_call_back"] = capture
+    do_the_work(
+        {"policy_digest": "digest", "idempotency_key": "key"},
+        "executor-run",
+    )
+    assert len(payloads) == 2
+    assert payloads[0]["evidence_ref"] == payloads[1]["evidence_ref"]
+    assert payloads[1]["outcome"] == "completed"
+
+    body = b'{"dispatch_id":1}'
+    assert executor["_verified"]({"X-Athena-Signature": executor["_sign"](body)}, body)
+    assert not executor["_verified"]({"X-Athena-Signature": "sha256=ÿ"}, body)
+    first_run, should_launch = executor["_accept_once"]("dispatch-key")
+    repeated_run, should_relaunch = executor["_accept_once"]("dispatch-key")
+    assert first_run == repeated_run == "icarus-ref-dispatch-key"
+    assert should_launch is True
+    assert should_relaunch is False
+
+
+def test_reference_executor_retries_the_pre_acceptance_404(monkeypatch):
+    executor = runpy.run_path(str(EXECUTOR))
+    callback = executor["_call_back"]
+
+    class Response:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b"accepted"
+
+    class FlakyOpener:
+        attempts = 0
+
+        def open(self, request, timeout):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise HTTPError(
+                    request.full_url,
+                    404,
+                    "acceptance not visible yet",
+                    {},
+                    BytesIO(b'{"detail":"no such dispatch"}'),
+                )
+            return Response()
+
+    opener = FlakyOpener()
+    callback.__globals__["_OPENER"] = opener
+    monkeypatch.setattr(callback.__globals__["time"], "sleep", lambda _delay: None)
+    status, detail = callback({"icarus_run_id": "run", "policy_digest": "digest"})
+    assert (status, detail) == (202, "accepted")
+    assert opener.attempts == 3
 
 
 def test_the_loop_composes_over_real_http():

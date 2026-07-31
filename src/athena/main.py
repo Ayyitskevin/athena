@@ -20,6 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette._utils import get_route_path
 
 from athena import config
 from athena.aegis import api as aegis_api
@@ -125,6 +126,54 @@ def _configure_logging() -> None:
 # Emit the "cookies are not Secure" warning at most once per process, no matter how
 # many apps a test suite builds. Flipped true the first time create_app() warns.
 _cookie_secure_warned = False
+
+
+def _is_signed_inbound(method: str, path: str) -> bool:
+    """Machine-to-machine routes whose request body carries its own credential."""
+    return method == "POST" and (
+        path == "/callbacks/icarus"
+        or path.startswith("/callbacks/icarus/")
+        or path.startswith("/forge/")
+    )
+
+
+class SignedInboundRateLimitMiddleware:
+    """Throttle signed-inbound attempts before body, session, or route work.
+
+    These routes have no Athena actor. Their shared direct-peer-IP limiter must
+    therefore sit outside the request-body buffer and browser middleware; putting
+    the same check in a handler bounds HMAC/lookup work but still lets a saturated
+    peer make Athena read a body and resolve an attacker-supplied session cookie.
+    """
+
+    def __init__(self, app, limiter: rate_limits.FixedWindowRateLimiter):
+        self.app = app
+        self.limiter = limiter
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not _is_signed_inbound(
+            scope.get("method", ""), get_route_path(scope)
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        client = scope.get("client")
+        client_ip = client[0] if client is not None else "unknown"
+        decision = self.limiter.check(client_ip)
+        if decision.allowed:
+            await self.app(scope, receive, send)
+            return
+        await _send_json_response(
+            send,
+            {"detail": "anonymous rate limit exceeded"},
+            status_code=429,
+            extra_headers={
+                "Cache-Control": "private, no-store",
+                "Retry-After": str(decision.retry_after_seconds),
+                "X-RateLimit-Limit": str(decision.limit),
+                "X-RateLimit-Remaining": str(decision.remaining),
+            },
+        )
 
 
 class RequestBodyLimitMiddleware:
@@ -524,7 +573,16 @@ class IdempotencyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        path = scope.get("path", "")
+        # Starlette strips ASGI root_path before routing. Classify the same
+        # route-relative path here so a mounted deployment cannot bypass either
+        # idempotency handling or the signed-inbound exemption.
+        path = get_route_path(scope)
+        # Signed machine callbacks own retry semantics in their authenticated
+        # command. An attacker-supplied Idempotency-Key must not intercept the
+        # request before its HMAC gate or trigger credential/database work.
+        if _is_signed_inbound(method, path):
+            await self.app(scope, receive, send)
+            return
         is_secret_create = method == "POST" and path in _SECRET_CREATE_PATHS
         key_values = self._header_values(scope, b"idempotency-key")
         if not key_values:
@@ -1308,13 +1366,15 @@ def create_app(
 
     app.add_exception_handler(undo.UndoRefused, _undo_refused)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
-    # Throttles anonymous (credential-free) reads by client IP; see optional_actor.
+    # Throttles anonymous reads and signed-inbound attempts by direct client IP.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
     # Throttles POST /login by client IP, before the password hash; see web/auth.py.
     app.state.login_rate_limiter = rate_limits.FixedWindowRateLimiter(login_limit)
-    # Middleware is registered inside-out. Idempotency wraps the routes, run
-    # context wraps idempotency, and the request-body cap is outermost so keyed
-    # requests are bounded before the fingerprint layer buffers them.
+    # Middleware is registered inside-out. Among the general request stack,
+    # idempotency wraps the routes, run context wraps idempotency, and the
+    # request-body cap is outermost so keyed requests are bounded before the
+    # fingerprint layer buffers them. The signed-inbound limiter is registered
+    # last below and sits outside this entire stack.
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,
@@ -1340,7 +1400,13 @@ def create_app(
         # Whether SSO is configured, so the nav can show the linked-identities link
         # only when it's relevant. Evaluated per request so tests/config see it live.
         request.state.oidc_enabled = config.oidc_enabled()
-        raw = request.cookies.get(config.SESSION_COOKIE)
+        # Machine callbacks authenticate their raw body, not a browser cookie.
+        # Ignoring cookies here keeps an attacker-controlled cookie from opening
+        # SQLite before the endpoint's HMAC gate.
+        signed_inbound = _is_signed_inbound(
+            request.method, get_route_path(request.scope)
+        )
+        raw = None if signed_inbound else request.cookies.get(config.SESSION_COOKIE)
         if raw:
             conn = db.connect(request.app.state.db_path)
             try:
@@ -1371,6 +1437,13 @@ def create_app(
         return _attach_security_headers(
             response, is_https=request.url.scheme == "https"
         )
+
+    # Registered last, therefore outermost: a saturated signed-inbound peer is
+    # refused before the body cap buffers bytes or browser/session middleware runs.
+    app.add_middleware(
+        SignedInboundRateLimitMiddleware,
+        limiter=app.state.anon_rate_limiter,
+    )
 
     # Mount web foundation (static + Jinja templates + page router).
     # This is the only place the web layer is wired. Do not change /healthz or lifespan.

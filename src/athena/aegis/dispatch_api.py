@@ -19,20 +19,28 @@ change an issue, or name an actor.
 
 from __future__ import annotations
 
-import hmac
 import sqlite3
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from athena import config
 from athena.aegis import icarus_commands
-from athena.core import activity, db, dispatch, identity, run_context, tokens, webhooks
+from athena.core import dispatch, identity, tokens, webhooks
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
 router = APIRouter(tags=["aegis"])
+
+_STATUS_BY_KIND: dict[str, int] = {
+    "unauthorized": 401,
+    "forbidden": 403,
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "unavailable": 503,
+}
 
 
 class DispatchIn(BaseModel):
@@ -79,16 +87,61 @@ class CallbackIn(BaseModel):
     # Echoed back so Athena can check the authorization state it dispatched under
     # against the one the executor claims it acted under.
     policy_digest: str = Field(min_length=1, max_length=200)
-    evidence_ref: str | None = Field(default=None, max_length=dispatch.MAX_REF_CHARS)
-    completion_ref: str | None = Field(default=None, max_length=dispatch.MAX_REF_CHARS)
+    evidence_ref: str | None = Field(
+        default=None, min_length=1, max_length=dispatch.MAX_REF_CHARS
+    )
+    completion_ref: str | None = Field(
+        default=None, min_length=1, max_length=dispatch.MAX_REF_CHARS
+    )
     # Absent for a progress report; present for a terminal one.
     outcome: Literal["completed", "failed"] | None = None
 
 
-def _refuse(exc: dispatch.DispatchError) -> HTTPException:
-    return HTTPException(
-        status_code=dispatch.STATUS_BY_KIND[exc.kind], detail=exc.detail
-    )
+class CallbackOut(BaseModel):
+    dispatch_id: int
+    policy_digest_matches: bool
+
+
+class CallbackErrorOut(BaseModel):
+    detail: str
+
+
+_CALLBACK_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    status: {"model": CallbackErrorOut, "description": description}
+    for status, description in {
+        400: "The request Content-Length is invalid",
+        401: "Missing or invalid HMAC signature",
+        404: "Authenticated callback names no dispatch",
+        409: "Authenticated callback conflicts with canonical evidence",
+        413: "The request body exceeds Athena's global request-size limit",
+        422: "Authenticated callback payload is invalid",
+        429: "Anonymous direct-peer-IP budget exhausted",
+        503: "No execution fleet is configured",
+    }.items()
+}
+
+
+def _refuse(exc: icarus_commands.IcarusCommandError) -> HTTPException:
+    return HTTPException(status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail)
+
+
+async def _verified_callback(
+    request: Request,
+    x_athena_signature: str | None = Header(default=None, include_in_schema=False),
+) -> CallbackIn:
+    """Authenticate the raw bounded body before parsing it or opening SQLite."""
+    if not config.icarus_configured():
+        raise HTTPException(status_code=503, detail="no execution fleet is configured")
+    body = await request.body()
+    if not webhooks.verify(config.ICARUS_SECRET, body, x_athena_signature):
+        raise HTTPException(status_code=401, detail="invalid signature")
+    try:
+        return CallbackIn.model_validate_json(body)
+    except ValidationError as exc:
+        # Authentication succeeded, so validation may now be distinguished from
+        # auth failure. Keep the detail generic: malformed Unicode from an
+        # authenticated but buggy peer must not be echoed through the response.
+        raise HTTPException(status_code=422, detail="invalid callback payload") from exc
 
 
 def _dispatch_reader(actor: dict = Depends(current_actor)) -> dict:
@@ -126,7 +179,7 @@ def create_dispatch(
         # Post-commit. A delivery failure is recorded on the dispatch, not raised:
         # the caller's write succeeded, and the state says what happened next.
         return icarus_commands.deliver_dispatch(conn, dispatch_id=record["id"])
-    except dispatch.DispatchError as exc:
+    except icarus_commands.IcarusCommandError as exc:
         raise _refuse(exc) from exc
 
 
@@ -163,11 +216,32 @@ def show(
     return record
 
 
-@router.post("/callbacks/icarus", status_code=202)
+@router.post(
+    "/callbacks/icarus",
+    response_model=CallbackOut,
+    status_code=202,
+    responses=_CALLBACK_ERROR_RESPONSES,
+    # Manual raw-body parsing is required for HMAC-before-JSON. Preserve the
+    # public request contract that FastAPI would otherwise derive from a body
+    # parameter.
+    openapi_extra={
+        "parameters": [
+            {
+                "name": "x-athena-signature",
+                "in": "header",
+                "required": True,
+                "description": "sha256=<hex HMAC of the exact request body>",
+                "schema": {"type": "string"},
+            }
+        ],
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": CallbackIn.model_json_schema()}},
+        },
+    },
+)
 async def icarus_callback(
-    request: Request,
-    payload: CallbackIn,
-    x_athena_signature: str | None = Header(default=None),
+    payload: CallbackIn = Depends(_verified_callback),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Accept evidence or a terminal outcome from the executor.
@@ -178,100 +252,27 @@ async def icarus_callback(
     anything is looked up, so this endpoint cannot be used to probe which
     dispatches exist.
 
-    **Idempotent.** A replayed progress callback re-records the same evidence
-    pointer; a replayed terminal callback after the dispatch already settled is
-    accepted and ignored. Executors retry, and a retry must not fork the record.
+    **Idempotent.** The first evidence pointer is canonical. Its exact replay is a
+    no-op; a different pointer conflicts while work is open because this protocol
+    carries no sequence that could prove which is newer. Once terminal, outcome
+    changes and evidence overwrites are absorbed. A legacy terminal callback that
+    omitted evidence may still have its one null evidence slot filled by delayed
+    progress. Executors retry and callbacks reorder, and neither may fork or roll
+    back the record.
 
     **The policy digest is checked, and a mismatch is recorded rather than
     rejected.** If the executor claims it acted under authorization that differs
     from what Athena dispatched, that is precisely the event an operator needs to
     see — dropping it would destroy the evidence the digest exists to produce.
     """
-    if not config.icarus_configured():
-        raise HTTPException(status_code=503, detail="no execution fleet is configured")
-    body = await request.body()
-    expected = webhooks.sign(config.ICARUS_SECRET, body)
-    if not x_athena_signature or not hmac.compare_digest(x_athena_signature, expected):
-        raise HTTPException(status_code=401, detail="invalid signature")
-
-    with db.transaction(conn, immediate=True):
-        # The dispatch row is read INSIDE the write reservation, not before it:
-        # the terminal-state decision below must consult the row as it is under
-        # the lock. A snapshot taken before BEGIN IMMEDIATE can be stale the
-        # moment a second worker's callback settles the same dispatch first —
-        # the exact check-then-write race the immediate transaction exists to
-        # close. (record_terminal's own predicated UPDATE is the backstop that
-        # makes a lost race a no-op rather than a flipped outcome.)
-        record = dispatch.get_by_icarus_run(conn, payload.icarus_run_id)
-        if record is None:
-            raise HTTPException(status_code=404, detail="no such dispatch")
-
-        digest_matches = hmac.compare_digest(
-            payload.policy_digest, record["policy_digest"]
+    try:
+        return icarus_commands.apply_callback(
+            conn,
+            icarus_run_id=payload.icarus_run_id,
+            policy_digest=payload.policy_digest,
+            evidence_ref=payload.evidence_ref,
+            completion_ref=payload.completion_ref,
+            outcome=payload.outcome,
         )
-        # Stamp everything recorded here with the dispatch's own run, so the
-        # executor's reports join the control-plane trail as that run's events and
-        # appear in its replay and lineage.
-        # set_run_id, not set_client_run_id: `icarus:` is a RESERVED namespace, and
-        # the client form drops reserved ids to None precisely so a caller cannot
-        # forge one. Athena is the one stamping here — it minted this run, it
-        # created this dispatch, and it authenticated the callback before reaching
-        # this line.
-        token = run_context.set_run_id(record["run_id"])
-        try:
-            if not digest_matches:
-                activity.record(
-                    conn,
-                    actor_id=record["dispatched_by"],
-                    verb=dispatch.VERB_DIGEST_MISMATCH,
-                    target_kind="issue",
-                    target_id=record["work_item_id"],
-                    detail=(
-                        f"dispatched {record['policy_digest'][:16]}…, "
-                        f"reported {payload.policy_digest[:16]}…"
-                    ),
-                    commit=False,
-                )
-            if payload.evidence_ref:
-                dispatch.record_evidence(
-                    conn,
-                    dispatch_id=record["id"],
-                    evidence_ref=payload.evidence_ref,
-                )
-                activity.record(
-                    conn,
-                    actor_id=record["dispatched_by"],
-                    verb=dispatch.VERB_EVIDENCE,
-                    target_kind="issue",
-                    target_id=record["work_item_id"],
-                    detail=payload.evidence_ref[: dispatch.MAX_REF_CHARS],
-                    commit=False,
-                )
-            if payload.outcome is not None:
-                # False when the dispatch was already settled: the replayed or
-                # racing callback is accepted and ignored — no state change, and
-                # no second terminal event on the trail.
-                landed = dispatch.record_terminal(
-                    conn,
-                    dispatch_id=record["id"],
-                    state=payload.outcome,
-                    completion_ref=payload.completion_ref,
-                )
-                if landed:
-                    activity.record(
-                        conn,
-                        actor_id=record["dispatched_by"],
-                        verb=dispatch.VERB_TERMINAL,
-                        target_kind="issue",
-                        target_id=record["work_item_id"],
-                        detail=(
-                            f"{payload.outcome}: {payload.completion_ref or 'no ref'}"
-                        )[: dispatch.MAX_REF_CHARS],
-                        commit=False,
-                    )
-        finally:
-            run_context.reset_run_id(token)
-    return {
-        "dispatch_id": record["id"],
-        "policy_digest_matches": digest_matches,
-    }
+    except icarus_commands.IcarusCommandError as exc:
+        raise _refuse(exc) from exc

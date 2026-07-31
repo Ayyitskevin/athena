@@ -260,6 +260,12 @@ EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
         "run-scoped; imported rows carry NULL run coordinates",
     ),
     (
+        "core/dispatch.py",
+        "digest_mismatch_recorded",
+        "run-scoped retry deduplication; imported rows carry NULL run "
+        "coordinates and cannot satisfy run_id = ?",
+    ),
+    (
         "core/notifications.py",
         "process_mentions",
         "called from the native record wrappers with the id of the event just "

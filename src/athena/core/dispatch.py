@@ -14,7 +14,9 @@ to a check-in — Athena reports what it was told, timestamped by its own clock.
 **Evidence is referenced, never copied.** `evidence_ref` and `completion_ref` are
 opaque strings the executor chose. Copying artifacts across the boundary would
 make one system's storage the other's problem, which is precisely what "no shared
-database" rules out.
+database" rules out. Callback v1 has no sender sequence, so `evidence_ref` is one
+immutable canonical pointer: Athena can prove an exact retry, but it cannot invent
+an ordering between two different pointers.
 
 **The policy digest is tamper-evident, not tamper-proof.** It hashes the
 authorization state in force at dispatch. A callback carrying a different digest is
@@ -29,7 +31,7 @@ import hashlib
 import json
 import sqlite3
 
-from athena.core import access, db
+from athena.core import access
 
 #: Athena's knowledge of a dispatch. Read these as "what has Athena been told".
 PENDING_DELIVERY = "pending_delivery"
@@ -53,25 +55,6 @@ RUN_PREFIX = "icarus:"
 MAX_REF_CHARS = 500
 MAX_SQLITE_INTEGER = (1 << 63) - 1
 MAX_LIST_LIMIT = 200
-
-
-class DispatchError(Exception):
-    """A transport-neutral rejection. ``kind`` maps to each adapter's status."""
-
-    def __init__(self, kind: str, detail: str) -> None:
-        super().__init__(detail)
-        self.kind = kind
-        self.detail = detail
-
-
-STATUS_BY_KIND: dict[str, int] = {
-    "unauthorized": 401,
-    "forbidden": 403,
-    "not_found": 404,
-    "invalid": 422,
-    "conflict": 409,
-    "unavailable": 503,
-}
 
 
 @dataclass(frozen=True)
@@ -246,6 +229,19 @@ def fork_run_ids(conn: sqlite3.Connection, run_id: str) -> list[str]:
     return [row["run_id"] for row in rows]
 
 
+def digest_mismatch_recorded(conn: sqlite3.Connection, run_id: str) -> bool:
+    """Whether this dispatch run already has its one mismatch warning.
+
+    Callback retries are expected. The warning is a fact about the dispatch, not
+    a counter of how many times the executor retried the same report.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM activity WHERE run_id = ? AND verb = ? LIMIT 1",
+        (run_id, VERB_DIGEST_MISMATCH),
+    ).fetchone()
+    return row is not None
+
+
 def create_dispatch(
     conn: sqlite3.Connection,
     *,
@@ -286,40 +282,57 @@ def create_dispatch(
 
 def mark_accepted(
     conn: sqlite3.Connection, *, dispatch_id: int, icarus_run_id: str
-) -> None:
-    """The executor answered with its own run id. Its own transaction: this happens
-    AFTER the dispatch record committed, because the outbound call must never run
-    inside a write transaction."""
-    with db.transaction(conn, immediate=True):
-        conn.execute(
-            "UPDATE icarus_dispatches SET state = ?, icarus_run_id = ?, "
-            "last_error = NULL, updated_at = datetime('now') WHERE id = ?",
-            (ACCEPTED, icarus_run_id, dispatch_id),
-        )
+) -> bool:
+    """Record one pending dispatch's acceptance without committing.
+
+    The state predicate makes concurrent or repeated delivery outcomes
+    first-writer-wins. The command owner uses the return value to emit exactly one
+    audit event in the same transaction.
+    """
+    cur = conn.execute(
+        "UPDATE icarus_dispatches SET state = ?, icarus_run_id = ?, "
+        "last_error = NULL, updated_at = datetime('now') "
+        "WHERE id = ? AND state = ?",
+        (ACCEPTED, icarus_run_id, dispatch_id, PENDING_DELIVERY),
+    )
+    return cur.rowcount > 0
 
 
 def mark_undeliverable(
     conn: sqlite3.Connection, *, dispatch_id: int, reason: str
-) -> None:
-    """Athena could not hand the work over. The record stays — an operator needs to
-    see that Athena tried and failed, not to find nothing at all."""
-    with db.transaction(conn, immediate=True):
-        conn.execute(
-            "UPDATE icarus_dispatches SET state = ?, last_error = ?, "
-            "updated_at = datetime('now') WHERE id = ?",
-            (UNDELIVERABLE, reason[:MAX_REF_CHARS], dispatch_id),
-        )
+) -> bool:
+    """Record one pending dispatch's delivery failure without committing.
+
+    The record stays — an operator needs to see that Athena tried and failed, not
+    to find nothing at all. A concurrent accepted/settled row is never rolled
+    backward to undeliverable.
+    """
+    cur = conn.execute(
+        "UPDATE icarus_dispatches SET state = ?, last_error = ?, "
+        "updated_at = datetime('now') WHERE id = ? AND state = ?",
+        (UNDELIVERABLE, reason[:MAX_REF_CHARS], dispatch_id, PENDING_DELIVERY),
+    )
+    return cur.rowcount > 0
 
 
 def record_evidence(
     conn: sqlite3.Connection, *, dispatch_id: int, evidence_ref: str
-) -> None:
-    """Point at what the executor produced. Does not commit."""
-    conn.execute(
+) -> bool:
+    """Set the dispatch's canonical evidence pointer exactly once.
+
+    Evidence is immutable because callback v1 carries no sequence that could
+    prove one different pointer is newer than another. A terminal row whose
+    pointer is still NULL may accept that one missing pointer so legacy
+    progress/terminal reordering does not lose evidence; no value is ever
+    overwritten. The return value lets the command emit an audit event only when
+    a transition actually landed.
+    """
+    cur = conn.execute(
         "UPDATE icarus_dispatches SET evidence_ref = ?, updated_at = datetime('now') "
-        "WHERE id = ?",
+        "WHERE id = ? AND evidence_ref IS NULL",
         (evidence_ref[:MAX_REF_CHARS], dispatch_id),
     )
+    return cur.rowcount > 0
 
 
 def record_terminal(

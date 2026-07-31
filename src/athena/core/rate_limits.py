@@ -7,7 +7,7 @@ only bounds one app instance.
 
 The one limiter is a fixed-window counter keyed by any hashable identity: a
 bearer token's id for the per-token limit, or an anonymous caller's client IP for
-the anonymous-read limit. Same mechanics, different key.
+credential-free reads and signed-inbound attempts. Same mechanics, different key.
 """
 
 from __future__ import annotations

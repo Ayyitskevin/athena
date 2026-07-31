@@ -52,6 +52,7 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 ATHENA_URL = os.environ.get("ATHENA_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -68,8 +69,14 @@ def _sign(body: bytes) -> str:
 
 
 def _verified(headers, body: bytes) -> bool:
+    expected = _sign(body).encode("ascii")
     provided = headers.get("X-Athena-Signature", "")
-    return bool(provided) and hmac.compare_digest(provided, _sign(body))
+    try:
+        encoded = provided.encode("ascii")
+    except (AttributeError, UnicodeEncodeError):
+        encoded = b""
+    candidate = encoded if len(encoded) == len(expected) else b"\0" * len(expected)
+    return hmac.compare_digest(candidate, expected)
 
 
 # Callbacks go straight to the operator-configured Athena URL, never through an
@@ -79,12 +86,29 @@ def _verified(headers, body: bytes) -> bool:
 # it simply breaks.
 _OPENER = build_opener(ProxyHandler({}))
 
+# Athena may repeat a delivery after an ambiguous response. The reference keeps
+# one in-process work launch per dispatch key and always returns the same run id.
+# A production executor must persist this single-flight state in its own store.
+_ACCEPTED_KEYS: set[str] = set()
+_ACCEPTED_KEYS_LOCK = threading.Lock()
+
+
+def _accept_once(key: str) -> tuple[str, bool]:
+    """Return the stable run id and whether this process should launch the work."""
+    run_id = f"icarus-ref-{key}"
+    with _ACCEPTED_KEYS_LOCK:
+        first_delivery = key not in _ACCEPTED_KEYS
+        _ACCEPTED_KEYS.add(key)
+    return run_id, first_delivery
+
+
 # The contract says callbacks are idempotent and executors retry. This reference
 # retries a few times with a short backoff — a one-shot callback would lose a
 # report to any transient failure, including the benign race where the callback
 # lands before Athena finishes recording the acceptance it is a callback to.
 CALLBACK_ATTEMPTS = 5
 CALLBACK_BACKOFF_SECONDS = 0.5
+_RETRYABLE_CALLBACK_STATUSES = frozenset({404, 408, 425, 429, 500, 502, 503, 504})
 
 
 def _call_back(payload: dict) -> tuple[int, str]:
@@ -103,7 +127,24 @@ def _call_back(payload: dict) -> tuple[int, str]:
         try:
             with _OPENER.open(request, timeout=10) as response:  # noqa: S310
                 return response.status, response.read().decode()
-        except OSError as exc:  # HTTPError is an OSError; so are socket failures
+        except HTTPError as exc:
+            response_body = exc.read().decode(errors="replace")
+            if exc.code not in _RETRYABLE_CALLBACK_STATUSES:
+                return exc.code, response_body
+            last_error = f"HTTP {exc.code}: {response_body}"
+            if attempt < CALLBACK_ATTEMPTS:
+                retry_after = exc.headers.get("Retry-After")
+                try:
+                    requested_delay = float(retry_after or 0)
+                except ValueError:
+                    requested_delay = 0
+                time.sleep(
+                    max(
+                        CALLBACK_BACKOFF_SECONDS * attempt,
+                        min(requested_delay, 30),
+                    )
+                )
+        except OSError as exc:
             last_error = str(exc)
             if attempt < CALLBACK_ATTEMPTS:
                 time.sleep(CALLBACK_BACKOFF_SECONDS * attempt)
@@ -119,11 +160,12 @@ def _do_the_work(envelope: dict, run_id: str) -> None:
     """
     digest = envelope["policy_digest"]
     key = envelope["idempotency_key"]
+    evidence_ref = f"example://evidence/{key}"
     status, _ = _call_back(
         {
             "icarus_run_id": run_id,
             "policy_digest": digest,
-            "evidence_ref": f"example://evidence/{key}",
+            "evidence_ref": evidence_ref,
         }
     )
     print(f"[executor] progress callback for {run_id}: HTTP {status}", flush=True)
@@ -131,6 +173,9 @@ def _do_the_work(envelope: dict, run_id: str) -> None:
         {
             "icarus_run_id": run_id,
             "policy_digest": digest,
+            # Cumulative terminal reports make callback reordering harmless:
+            # whichever report arrives first names the same canonical evidence.
+            "evidence_ref": evidence_ref,
             "completion_ref": f"example://result/{key}",
             "outcome": "completed",
         }
@@ -170,18 +215,20 @@ class Handler(BaseHTTPRequestHandler):
             self._reply(422, {"error": "unknown schema"})
             return
 
-        run_id = f"icarus-ref-{envelope['idempotency_key']}"
+        key = envelope["idempotency_key"]
+        run_id, first_delivery = _accept_once(key)
         print(
             f"[executor] accepted dispatch {envelope['dispatch_id']} "
             f"({envelope['capability']} on {envelope['repo']}@"
             f"{envelope['base_commit']}) as {run_id}",
             flush=True,
         )
-        timer = threading.Timer(
-            CALLBACK_DELAY_SECONDS, _do_the_work, args=(envelope, run_id)
-        )
-        timer.daemon = True
-        timer.start()
+        if first_delivery:
+            timer = threading.Timer(
+                CALLBACK_DELAY_SECONDS, _do_the_work, args=(envelope, run_id)
+            )
+            timer.daemon = True
+            timer.start()
         self._reply(200, {"icarus_run_id": run_id})
 
     def log_message(self, *args) -> None:  # keep stdout for the transcript

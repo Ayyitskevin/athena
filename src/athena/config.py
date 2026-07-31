@@ -158,14 +158,12 @@ def icarus_configured() -> bool:
 # forever and still never grow the registry past this ceiling.
 WORKER_MAX_PER_AGENT = _int_env("ATHENA_WORKER_MAX_PER_AGENT", 50, minimum=1)
 
-# Per-client-IP limit on ANONYMOUS reads (optional_actor endpoints reached with no
-# valid credential). The per-token limiter never runs for these, so without this a
-# credential-free caller can hammer public reads unbounded. Defaults to 0 (OFF): a
-# local/tailnet box behind auth doesn't need it, and normal anonymous browsing (and
-# the test suite) hits these paths freely. Turn it on (e.g. 120) for any deployment
-# that exposes anonymous reads to an untrusted network. Keyed by the direct peer IP
-# (request.client.host), NOT X-Forwarded-For — so front it with a proxy that either
-# terminates anonymous traffic or is accounted for separately.
+# Per-client-IP limit on ANONYMOUS traffic: optional_actor reads reached with no
+# valid credential, invalid-bearer attempts, and signed machine-inbound deliveries
+# that have no Athena actor. The per-token limiter never runs for these. Defaults
+# to 0 (OFF) for local/tailnet use; turn it on (e.g. 120) wherever anonymous reads
+# or inbound callbacks face an untrusted network. Keyed by the direct peer IP,
+# NOT X-Forwarded-For — account for a shared reverse proxy separately.
 ANON_RATE_LIMIT_PER_MINUTE = _int_env("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", 0, minimum=0)
 
 # Per-client-IP limit on POST /login attempts. Password login is credential-free at the
