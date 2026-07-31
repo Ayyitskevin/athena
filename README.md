@@ -130,16 +130,21 @@ Every pull request runs the repository's
 coverage run is:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install \
+python3.12 -I -m venv .venv
+.venv/bin/python -I -m pip install \
+  --only-binary :all: \
+  --require-hashes -r constraints/bootstrap-py312.txt
+.venv/bin/python -I -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/python -m pip check
-.venv/bin/python -m pip freeze --exclude-editable \
+.venv/bin/python -I -m pip check
+.venv/bin/python -I -m pip freeze --exclude-editable \
   | diff -u constraints/ci-py312.txt -
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
+.venv/bin/python scripts/check_write_ownership.py
+.venv/bin/python scripts/check_imported_at_guards.py
 scripts/coverage.sh
 ```
 
@@ -153,11 +158,18 @@ undo — over real loopback HTTP, with nothing stubbed.
 The coverage script runs the complete test suite with full-source branch
 coverage and enforces the floors in `pyproject.toml`. The current baseline, final
 evidence, explicit non-runs, and release blockers live in
-[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). CI then builds an sdist
-and its wheel in isolation, verifies the packaged runtime files from both the
-checkout and extracted sdist, installs the wheel, and runs the process smoke
-outside the checkout. The exact local packaging recipe is in
-[CONTRIBUTING.md](CONTRIBUTING.md); the constrained dependency graph is
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). After that gate, CI
+snapshots one bounded sdist and builds one wheel from that exact snapshot with a
+hash-locked evidence toolchain. It binds the wheel payload to the sdist source,
+verifies the packaged runtime files, boots the wheel outside the checkout, and
+requires fresh Linux/CPython 3.12 base and MCP installs—resolved under the CI
+constraints—to equal the dependency closures evaluated from the installed
+wheel metadata. `pip-audit` checks those exact third-party name/version sets for
+known advisories, then Athena binds the verified graph to the wheel SHA-256 in
+CycloneDX evidence. Runtime downloads remain version-pinned rather than
+artifact-hash-locked; the candidate is unsigned and is not a published release.
+The exact local recipe is in
+[CONTRIBUTING.md](CONTRIBUTING.md); the version-pinned dependency graph is
 [`constraints/ci-py312.txt`](constraints/ci-py312.txt).
 
 ## Status and boundaries
