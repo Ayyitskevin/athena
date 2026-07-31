@@ -155,20 +155,39 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt — including transport-side authorization on the mentor page/comment, issue-comment, and event-source commands — is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
-| Dependency/security scan | No reproducible scanner is pinned in the repository contract | NOT RUN |
+| Dependency/security scan | Hash-locked `pip-audit` 2.10.1 scans the 61-package CI graph, pinned pip, and pinned setuptools backend; the isolated scanner lock is also audited; no ignores or soft pass | PASS |
 | GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were disabled when last inspected; settings changes are out of scope for a code change | NOT CONFIGURED |
-| SBOM / signing / provenance | None produced | NOT RUN |
+| SBOM / signing / provenance | The advisory gate emits and semantically verifies an exact 63-component CycloneDX input SBOM; no released-wheel SBOM, signature, or provenance attestation exists | PARTIAL |
+
+### Python supply-chain evidence (2026-07-31)
+
+A fresh Linux/Python 3.12 environment installed pip 26.1.2 and the
+`pip-audit` 2.10.1 toolchain exclusively from the repository's hash-locked
+requirement files. `pip check` passed, the scanner's own complete 29-package
+lock reported no known vulnerabilities, and the application-input scan
+reported zero known vulnerabilities across exactly 63 subjects: 61 CI
+dependency pins, pip, and the setuptools build backend.
+
+`scripts/check_supply_chain.py` then independently verified the generated
+CycloneDX 1.4 document structure against that complete normalized name/version
+set and required no reported vulnerability entries. The SBOM stays a
+point-in-time record: its UUID, timestamp, and generated `bom-ref` values are
+intentionally not treated as reproducible bytes, and a later run may correctly
+fail when PyPI publishes new advisory data.
 
 ## Remaining blockers and residual risk
 
 These are the reasons the decision above is `HOLD` for public production. None is
 resolved by a green test run.
 
-- **Supply chain.** No SBOM, artifact signature, provenance attestation, or
-  published release exists. The pinned `anomalyco/opencode` composite action
-  resolves the latest OpenCode release at runtime, invokes `actions/cache@v4` by a
-  mutable tag, and pipes an unpinned remote installer into Bash — the repository
-  reference is immutable, its transitive execution is not reproducible.
+- **Supply chain.** The repository now has a fail-closed advisory gate and an
+  exact input SBOM, but the application constraint graph is version-pinned
+  rather than hash-locked. No released-wheel SBOM, artifact signature,
+  provenance attestation, or published release exists. The pinned
+  `anomalyco/opencode` composite action resolves the latest OpenCode release at
+  runtime, invokes `actions/cache@v4` by a mutable tag, and pipes an unpinned
+  remote installer into Bash — the repository reference is immutable, its
+  transitive execution is not reproducible.
 - **Repository security automation is off.** Private vulnerability reporting,
   Dependabot, secret scanning, and push protection were disabled when inspected.
 - **Deployment shape.** Public-internet exposure, hostile multi-tenancy, multiple

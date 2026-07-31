@@ -36,6 +36,14 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Fail-closed Python supply-chain evidence.** CI now installs its package
+  installer from a hash-verified pin and runs an independent weekly and
+  per-change security job. A hash-locked `pip-audit` toolchain audits itself,
+  then scans the exact 61-package CI graph plus pip and the setuptools build
+  backend with no ignore list or soft-pass path. The resulting CycloneDX input
+  SBOM must contain exactly those 63 normalized name/version pairs and zero
+  reported vulnerabilities before it is retained as workflow evidence.
+
 - **Sprint lifecycle parity for MCP agents.** Agents can now read one sprint and
   create, edit, start, complete, or delete sprints through the same REST routes,
   creator-only authorization, audited commands, and durable idempotency boundary
