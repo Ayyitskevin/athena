@@ -8,6 +8,7 @@ from hashlib import sha256
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import stat
 import subprocess
@@ -738,6 +739,172 @@ def test_final_sbom_binds_wheel_root_components_and_edges(tmp_path, monkeypatch)
     )
 
 
+def test_final_sbom_accepts_another_supported_cpython_patch(tmp_path, monkeypatch):
+    closure, _constraints, _bootstrap = _closure(tmp_path, monkeypatch)
+    sbom = _write_final_sbom(tmp_path, closure)
+    document = json.loads(sbom.read_text(encoding="utf-8"))
+    for prop in document["metadata"]["component"]["properties"]:
+        if prop["name"] == "athena:python":
+            prop["value"] = "CPython 3.12.99"
+    sbom.write_text(json.dumps(document), encoding="utf-8")
+
+    assert check_wheel_evidence.verify_runtime_sbom(sbom, closure) == len(
+        closure.third_party
+    )
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "PyPy 3.12.13",
+        "CPython 3.11.99",
+        "CPython 3.12",
+        "CPython 03.12.13",
+        "CPython 3.12.13rc1",
+        "CPython 3.12.13.0",
+    ],
+)
+def test_final_sbom_rejects_invalid_or_unsupported_python_identity(
+    tmp_path, monkeypatch, identity
+):
+    closure, _constraints, _bootstrap = _closure(tmp_path, monkeypatch)
+    sbom = _write_final_sbom(tmp_path, closure)
+    document = json.loads(sbom.read_text(encoding="utf-8"))
+    for prop in document["metadata"]["component"]["properties"]:
+        if prop["name"] == "athena:python":
+            prop["value"] = identity
+    sbom.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Python identity"):
+        check_wheel_evidence.verify_runtime_sbom(sbom, closure)
+
+
+def _candidate_python_result(tmp_path, monkeypatch, identity):
+    python = tmp_path / "python"
+    python.write_text("candidate", encoding="utf-8")
+
+    def fake_run(command, **kwargs):
+        assert command[0] == str(python.absolute())
+        assert command[1:3] == ["-I", "-c"]
+        assert kwargs == {
+            "check": True,
+            "capture_output": True,
+            "text": True,
+            "cwd": "/tmp",
+        }
+        stdout = identity if isinstance(identity, str) else json.dumps(identity)
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(check_wheel_evidence.subprocess, "run", fake_run)
+    return python
+
+
+def test_candidate_interpreter_binds_cpython_version_platform_and_site(
+    tmp_path, monkeypatch
+):
+    site_packages = tmp_path / "site-packages"
+    identity = {
+        "implementation": "cpython",
+        "platform": f"{sys.platform}-{os.uname().machine}",
+        "python": sys.version.split()[0],
+        "site_packages": str(site_packages),
+    }
+    python = _candidate_python_result(tmp_path, monkeypatch, identity)
+
+    assert (
+        check_wheel_evidence._site_packages_from_python(
+            python,
+            requires_python=">=3.12,<3.13",
+        )
+        == site_packages
+    )
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "json",
+        "keys",
+        "implementation",
+        "version",
+        "noncanonical-version",
+        "platform",
+        "relative-site",
+        "non-string-site",
+    ],
+)
+def test_candidate_interpreter_rejects_identity_drift(tmp_path, monkeypatch, defect):
+    current_version = sys.version.split()[0]
+    version_parts = current_version.split(".")
+    other_patch = ".".join([*version_parts[:2], str(int(version_parts[2]) + 1)])
+    identity = {
+        "implementation": "cpython",
+        "platform": f"{sys.platform}-{os.uname().machine}",
+        "python": current_version,
+        "site_packages": str(tmp_path / "site-packages"),
+    }
+    if defect == "json":
+        identity = "{"
+    elif defect == "keys":
+        identity.pop("site_packages")
+    elif defect == "implementation":
+        identity["implementation"] = "pypy"
+    elif defect == "version":
+        identity["python"] = other_patch
+    elif defect == "noncanonical-version":
+        identity["python"] = ".".join(version_parts[:2])
+    elif defect == "platform":
+        identity["platform"] = "windows-arm64"
+    elif defect == "relative-site":
+        identity["site_packages"] = "relative/site-packages"
+    else:
+        identity["site_packages"] = None
+    python = _candidate_python_result(tmp_path, monkeypatch, identity)
+
+    with pytest.raises(ValueError):
+        check_wheel_evidence._site_packages_from_python(
+            python,
+            requires_python=">=3.12,<3.13",
+        )
+
+
+def test_candidate_interpreter_rejects_incompatible_verifier(tmp_path, monkeypatch):
+    python = tmp_path / "python"
+    python.write_text("candidate", encoding="utf-8")
+    monkeypatch.setattr(
+        check_wheel_evidence.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("candidate must not run"),
+    )
+
+    with pytest.raises(ValueError, match="verifier Python identity is incompatible"):
+        check_wheel_evidence._site_packages_from_python(
+            python,
+            requires_python=">=99",
+        )
+
+
+def test_candidate_interpreter_rejects_non_cpython_verifier(tmp_path, monkeypatch):
+    python = tmp_path / "python"
+    python.write_text("candidate", encoding="utf-8")
+    monkeypatch.setattr(
+        check_wheel_evidence.sys,
+        "implementation",
+        SimpleNamespace(name="pypy"),
+    )
+    monkeypatch.setattr(
+        check_wheel_evidence.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("candidate must not run"),
+    )
+
+    with pytest.raises(ValueError, match="verifier is not CPython"):
+        check_wheel_evidence._site_packages_from_python(
+            python,
+            requires_python=">=3.12,<3.13",
+        )
+
+
 @pytest.mark.parametrize("defect", ["root-hash", "component-ref", "edge", "scope"])
 def test_final_sbom_rejects_root_component_and_graph_tampering(
     tmp_path, monkeypatch, defect
@@ -797,6 +964,8 @@ def _bundle(tmp_path, monkeypatch, *, bundle_verifier=None):
                             "excluded": (
                                 "athena-code,bootstrap,build,dev,scanner,native-system"
                             ),
+                            "python": f"CPython {sys.version.split()[0]}",
+                            "platform": f"{sys.platform}-{os.uname().machine}",
                         }
                     ),
                 }
@@ -826,7 +995,7 @@ def _bundle(tmp_path, monkeypatch, *, bundle_verifier=None):
     monkeypatch.setattr(
         check_wheel_evidence,
         "_site_packages_from_python",
-        lambda _python: Path("/tmp/site"),
+        lambda _python, **_kwargs: Path("/tmp/site"),
     )
     monkeypatch.setattr(
         check_wheel_evidence,
@@ -932,6 +1101,8 @@ def test_candidate_bundle_has_exact_allowlist_and_verified_manifest(
         "commit",
         "sbom-ref",
         "source-revision",
+        "environment",
+        "producer",
         "artifact-swap",
         "input-filename",
         "sdist",
@@ -953,6 +1124,28 @@ def test_candidate_bundle_rejects_extra_symlink_hash_and_identity_tampering(
         manifest_path = output / "athena-candidate.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest["workflow"]["checkout_commit"] = "not-a-git-oid"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif defect == "environment":
+        manifest_path = output / "athena-candidate.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["environment"] = {
+            "implementation": "pypy",
+            "platform": "windows-arm64",
+            "python": "not-a-version",
+        }
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif defect == "producer":
+        sbom_path = output / "athena-runtime-base-python312.cdx.json"
+        sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+        for prop in sbom["metadata"]["component"]["properties"]:
+            if prop["name"] == "athena:python":
+                prop["value"] = "CPython 3.12.99"
+        sbom_path.write_text(json.dumps(sbom), encoding="utf-8")
+        manifest_path = output / "athena-candidate.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifacts"]["base_sbom"] = check_wheel_evidence._manifest_artifact(
+            sbom_path
+        )
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     elif defect == "artifact-swap":
         manifest_path = output / "athena-candidate.json"
@@ -993,6 +1186,8 @@ def test_candidate_bundle_rejects_extra_symlink_hash_and_identity_tampering(
         "commit",
         "sbom-ref",
         "source-revision",
+        "environment",
+        "producer",
         "artifact-swap",
         "input-filename",
         "sdist",

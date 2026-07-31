@@ -113,9 +113,13 @@ verified closure. The final allowlisted candidate directory contains exactly
 seven regular files: the sdist, wheel, input SBOM, two runtime SBOMs, candidate
 manifest, and `SHA256SUMS`. Final verification rechecks the input SBOM, both
 installed environments, both runtime SBOMs, the wheel's complete `RECORD`, and
-every manifest/checksum identity. CI then force-reinstalls the copied bundle
-wheel into both environments and runs the standalone verifier against those
-environments before the directory is uploaded.
+every manifest/checksum identity. The SBOM retains the exact producer Python
+patch as provenance while the standalone verifier accepts another canonical
+CPython patch within the wheel's declared Python 3.12 range on the same
+platform. Both candidate environments must match that verifier's implementation,
+exact patch, and platform. CI then force-reinstalls the copied bundle wheel into
+both environments and runs the standalone verifier against those environments
+before the directory is uploaded.
 
 This is branch-local evidence until hosted CI succeeds for the final draft-PR
 head. It is not a release attestation: runtime downloads remain version-pinned
