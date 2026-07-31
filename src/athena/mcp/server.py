@@ -34,7 +34,7 @@ from athena.aegis import (
     issues,
     lease_commands,
 )
-from athena.core import run_context
+from athena.core import dispatch, run_context
 from athena.mcp.client import AthenaClient, AthenaError
 
 
@@ -121,6 +121,10 @@ FleetActorLimit = Annotated[
 FleetMetricDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
 FleetWorkLimit = Annotated[int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)]
 FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+DispatchIssueId = Annotated[
+    int, Field(strict=True, ge=1, le=dispatch.MAX_SQLITE_INTEGER)
+]
+DispatchLimit = Annotated[int, Field(strict=True, ge=1, le=dispatch.MAX_LIST_LIMIT)]
 AutomationTriggerType = Literal["event", "schedule"]
 AutomationScheduleAt = Annotated[
     str, Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -654,7 +658,7 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     @mutation_tool
     def dispatch_to_icarus(
-        issue_id: int,
+        issue_id: DispatchIssueId,
         repo: str,
         base_commit: str,
         capability: Literal["repo.edit", "ci.run"],
@@ -687,9 +691,9 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     @tool
     def list_dispatches(
-        work_item_id: int | None = None,
+        work_item_id: DispatchIssueId | None = None,
         state: str | None = None,
-        limit: int = 50,
+        limit: DispatchLimit = 50,
     ) -> list:
         """What Athena has handed to the executor, newest first. Filter by
         work_item_id or by state ('pending_delivery', 'accepted', 'undeliverable',

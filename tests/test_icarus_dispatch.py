@@ -9,6 +9,8 @@ keeping those two things apart.
   and no read here will imply otherwise.
 * The outbound call happens AFTER the record commits, so the durable fact "Athena
   decided to dispatch this" survives a far side that never answers.
+* Operator reads inherit issue visibility in SQL BEFORE their bound, so executor
+  metadata cannot reveal private work or make hidden rows consume a visible page.
 * A callback carries no Athena credential — it is authenticated by HMAC over the
   exact body — and can do exactly two things: attach evidence, and report an
   outcome.
@@ -27,6 +29,7 @@ from athena import config
 from athena.aegis import icarus_commands
 from athena.core import db, dispatch, webhooks
 from athena.main import create_app
+from athena.mcp.client import AthenaClient
 
 H1 = {"X-Athena-Actor": "1"}
 SECRET = "icarus-test-secret"
@@ -445,7 +448,7 @@ def test_the_same_intent_dispatched_twice_is_one_dispatch(tmp_path):
     first = icarus_commands.request_dispatch(conn, actor=actor, **payload)
     second = icarus_commands.request_dispatch(conn, actor=actor, **payload)
     assert first["id"] == second["id"]
-    assert len(dispatch.list_dispatches(conn)) == 1
+    assert len(dispatch.list_dispatches(conn, actor=actor)) == 1
     conn.close()
     assert len(_events(db_file, dispatch.VERB_REQUESTED)) == 1
 
@@ -530,6 +533,232 @@ def test_the_rest_route_dispatches_and_lists(tmp_path, monkeypatch):
         assert [row["id"] for row in listed] == [created.json()["id"]]
         assert c.get("/dispatches?state=accepted", headers=H1).json()
         assert c.get("/dispatches?state=failed", headers=H1).json() == []
+
+
+def test_dispatch_reads_cannot_bypass_private_issue_visibility(tmp_path, monkeypatch):
+    """WHY: a dispatch repeats repository, commit, run, policy, error, and evidence
+    metadata from its issue. Gating the issue while exposing its dispatch therefore
+    discloses the private work, and filtering only after LIMIT makes page fullness an
+    existence oracle."""
+
+    hidden_failed_id: int | None = None
+
+    def poster(url, body, headers):
+        envelope = json.loads(body)
+        if envelope["work_item_id"] == hidden_failed_id:
+            return False, "private executor failure"
+        return True, json.dumps(
+            {"icarus_run_id": f"visible-test-{envelope['dispatch_id']}"}
+        )
+
+    monkeypatch.setattr(webhooks, "urllib_poster", lambda timeout: poster)
+    app, _ = _app(tmp_path, "dispatch-visibility.db")
+    with TestClient(app) as c:
+        _bootstrap(c)
+        creator = c.post(
+            "/users",
+            json={
+                "email": "creator@e.com",
+                "name": "Creator",
+                "password": "pw",
+                "role": "member",
+            },
+            headers=H1,
+        ).json()
+        assert creator["role"] == "member"
+        creator_headers = {"X-Athena-Actor": str(creator["id"])}
+        outsider = _agent(c, email="outsider@e.com", scopes=("read",))
+        worker = _agent(c, email="worker@e.com", scopes=("issue:write",))
+        docs_only = _agent(c, email="docs@e.com", scopes=("docs:write",))
+        outsider_headers = _bearer(outsider)
+
+        public_project = c.post(
+            "/projects",
+            json={"name": "Public", "key": "PUB"},
+            headers=H1,
+        ).json()
+        public_issue = c.post(
+            "/issues",
+            json={"title": "Public project work", "project_id": public_project["id"]},
+            headers=H1,
+        ).json()
+        backlog_issue = _issue(c, "Shared backlog work")
+        private_project = c.post(
+            "/projects",
+            json={"name": "Private", "key": "PRV"},
+            headers=creator_headers,
+        ).json()
+        hidden_issue = c.post(
+            "/issues",
+            json={"title": "Secret work", "project_id": private_project["id"]},
+            headers=creator_headers,
+        ).json()
+        hidden_failed = c.post(
+            "/issues",
+            json={"title": "Secret failed work", "project_id": private_project["id"]},
+            headers=creator_headers,
+        ).json()
+        hidden_failed_id = hidden_failed["id"]
+        assert (
+            c.put(
+                f"/projects/{private_project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=creator_headers,
+            ).status_code
+            == 200
+        )
+
+        dispatch_payload = {
+            "repo": "git@example.com:acme/private.git",
+            "base_commit": "abc123",
+            "capability": "repo.edit",
+        }
+
+        def send(issue_id, headers):
+            response = c.post(
+                f"/issues/{issue_id}/dispatch",
+                json=dispatch_payload,
+                headers=headers,
+            )
+            assert response.status_code == 201, response.text
+            return response.json()
+
+        # Visible rows are deliberately oldest. A post-LIMIT Python filter would
+        # inspect only the two newest hidden rows and return an empty page.
+        public_record = send(public_issue["id"], H1)
+        backlog_record = send(backlog_issue["id"], H1)
+        hidden_record = send(hidden_issue["id"], creator_headers)
+        hidden_failed_record = send(hidden_failed["id"], creator_headers)
+        assert hidden_failed_record["state"] == dispatch.UNDELIVERABLE
+
+        assert (
+            c.get(f"/issues/{hidden_issue['id']}", headers=outsider_headers).status_code
+            == 404
+        )
+        visible = c.get("/dispatches?limit=2", headers=outsider_headers)
+        assert visible.status_code == 200
+        assert [row["id"] for row in visible.json()] == [
+            backlog_record["id"],
+            public_record["id"],
+        ]
+        assert (
+            c.get(
+                f"/dispatches?work_item_id={hidden_issue['id']}",
+                headers=outsider_headers,
+            ).json()
+            == []
+        )
+        assert (
+            c.get(
+                f"/dispatches?work_item_id={hidden_issue['id'] + 1_000_000}",
+                headers=outsider_headers,
+            ).json()
+            == []
+        )
+        assert (
+            c.get("/dispatches?state=undeliverable", headers=outsider_headers).json()
+            == []
+        )
+
+        hidden_response = c.get(
+            f"/dispatches/{hidden_record['id']}", headers=outsider_headers
+        )
+        missing_response = c.get("/dispatches/999999", headers=outsider_headers)
+        assert hidden_response.status_code == missing_response.status_code == 404
+        assert (
+            hidden_response.json()
+            == missing_response.json()
+            == {"detail": "no such dispatch"}
+        )
+        assert c.get(f"/dispatches/{hidden_record['id']}").status_code == 401
+        assert c.get("/dispatches", headers=_bearer(worker)).status_code == 200
+        docs_denied = c.get("/dispatches", headers=_bearer(docs_only))
+        assert docs_denied.status_code == 403
+        assert (
+            docs_denied.json()["detail"] == "token scope required: read or issue:write"
+        )
+        admin_token = c.post(
+            "/tokens",
+            json={"name": "dispatch-admin", "scopes": ["admin"]},
+            headers=H1,
+        ).json()
+        assert (
+            c.get(
+                "/dispatches",
+                headers={"Authorization": f"Bearer {admin_token['token']}"},
+            ).status_code
+            == 200
+        )
+
+        # The MCP client is a REST client; pin the same scoped-token behavior so
+        # the agent surface cannot drift into a second visibility model.
+        agent_http = TestClient(app)
+        agent_http.headers.update(outsider_headers)
+        with agent_http:
+            through_mcp = AthenaClient(client=agent_http).list_dispatches(limit=2)
+        assert [row["id"] for row in through_mcp] == [
+            backlog_record["id"],
+            public_record["id"],
+        ]
+
+        # Admins and the private project's non-admin creator retain access.
+        assert len(c.get("/dispatches", headers=H1).json()) == 4
+        assert (
+            c.get(
+                f"/dispatches/{hidden_record['id']}", headers=creator_headers
+            ).status_code
+            == 200
+        )
+
+        # Membership changes take effect on the next read; a read-scoped agent may
+        # read a project it is a member of but still gains no write scope.
+        granted = c.post(
+            f"/projects/{private_project['id']}/members",
+            json={"user_id": outsider["user"]["id"]},
+            headers=creator_headers,
+        )
+        assert granted.status_code == 201, granted.text
+        assert (
+            c.get(
+                f"/dispatches/{hidden_record['id']}", headers=outsider_headers
+            ).status_code
+            == 200
+        )
+        assert {
+            hidden_record["id"],
+            hidden_failed_record["id"],
+        }.issubset(
+            {row["id"] for row in c.get("/dispatches", headers=outsider_headers).json()}
+        )
+        assert (
+            c.delete(
+                f"/projects/{private_project['id']}/members/{outsider['user']['id']}",
+                headers=creator_headers,
+            ).status_code
+            == 200
+        )
+        assert (
+            c.get(
+                f"/dispatches/{hidden_record['id']}", headers=outsider_headers
+            ).status_code
+            == 404
+        )
+
+        # Visibility changes are live too; no dispatch row caches project access.
+        assert (
+            c.put(
+                f"/projects/{private_project['id']}/visibility",
+                json={"visibility": "public"},
+                headers=creator_headers,
+            ).status_code
+            == 200
+        )
+        assert (
+            c.get(
+                f"/dispatches/{hidden_record['id']}", headers=outsider_headers
+            ).status_code
+            == 200
+        )
 
 
 def test_an_approved_gate_is_recorded_on_the_dispatch(tmp_path, monkeypatch):
@@ -844,6 +1073,20 @@ def test_dispatch_input_and_reads_are_bounded(tmp_path):
             )
         assert c.get("/dispatches?limit=0", headers=H1).status_code == 422
         assert c.get("/dispatches/999999", headers=H1).status_code == 404
+        oversized = dispatch.MAX_SQLITE_INTEGER + 1
+        assert c.get(f"/dispatches/{oversized}", headers=H1).status_code == 422
+        assert (
+            c.get(f"/dispatches?work_item_id={oversized}", headers=H1).status_code
+            == 422
+        )
+        assert (
+            c.post(
+                f"/issues/{oversized}/dispatch",
+                json={"repo": "r", "base_commit": "c", "capability": "repo.edit"},
+                headers=H1,
+            ).status_code
+            == 422
+        )
 
     conn = db.connect(db_file)
     actor = dict(conn.execute("SELECT * FROM users WHERE id = 1").fetchone())
@@ -871,7 +1114,17 @@ def test_dispatch_input_and_reads_are_bounded(tmp_path):
         icarus_commands.deliver_dispatch(conn, dispatch_id=999999)
     assert unknown.value.kind == "not_found"
     with pytest.raises(ValueError):
-        dispatch.list_dispatches(conn, limit=0)
+        dispatch.list_dispatches(conn, actor=actor, limit=0)
+    with pytest.raises(ValueError):
+        dispatch.list_dispatches(
+            conn, actor=actor, work_item_id=dispatch.MAX_SQLITE_INTEGER + 1
+        )
+    assert (
+        dispatch.get_visible_dispatch(
+            conn, dispatch.MAX_SQLITE_INTEGER + 1, actor=actor
+        )
+        is None
+    )
     conn.close()
 
 
