@@ -15,9 +15,15 @@ The suite-wide conftest enables the header by default (it models a trusted local
 box); tests here that assert the locked-down default flip it back OFF explicitly.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 from fastapi.testclient import TestClient
+import pytest
 
 from athena import config
+from athena.core import oidc_flow
+from athena.core import activity, db, user_commands
 from athena.main import create_app
 
 
@@ -75,6 +81,143 @@ def test_first_user_bootstrap_works_with_header_off(tmp_path, monkeypatch):
         r = client.post("/users", json={"email": "founder@e.com", "name": "Founder"})
         assert r.status_code == 201
         assert r.json()["id"] == 1
+
+
+def test_concurrent_first_user_bootstrap_creates_exactly_one_admin(
+    tmp_path, monkeypatch
+):
+    # WHY (load-bearing): the public first-user exception is a privilege grant. Two
+    # requests may both read an empty database before either writes, so eligibility
+    # and role selection must be rechecked while holding SQLite's write reservation.
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+    db_file = tmp_path / "bootstrap-race.db"
+    app = create_app(db_file)
+
+    real_bootstrap = user_commands.bootstrap_user
+    both_observed_empty = threading.Barrier(2)
+
+    def synchronized_bootstrap(*args, **kwargs):
+        # Reaching this wrapper proves each route already took its unlocked empty-DB
+        # branch. Release them together so the command lock is the deciding control.
+        both_observed_empty.wait(timeout=5)
+        return real_bootstrap(*args, **kwargs)
+
+    monkeypatch.setattr(user_commands, "bootstrap_user", synchronized_bootstrap)
+
+    with TestClient(app) as client:
+
+        def create(email):
+            return client.post("/users", json={"email": email, "name": email})
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(create, "first-racer@e.com"),
+                pool.submit(create, "second-racer@e.com"),
+            ]
+            responses = [future.result(timeout=10) for future in futures]
+
+    assert sorted(response.status_code for response in responses) == [201, 401]
+    assert {
+        response.json()["detail"]
+        for response in responses
+        if response.status_code == 401
+    } == {"authentication required"}
+
+    conn = db.connect(db_file)
+    try:
+        durable_users = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, email, role FROM users ORDER BY id"
+            ).fetchall()
+        ]
+        created_events = [
+            event
+            for event in activity.list_activity(conn, limit=10)
+            if event["verb"] == user_commands.VERB_CREATED_USER
+        ]
+    finally:
+        conn.close()
+
+    assert len(durable_users) == 1
+    assert durable_users[0]["role"] == "admin"
+    assert durable_users[0]["email"] in {"first-racer@e.com", "second-racer@e.com"}
+    assert len(created_events) == 1
+    assert created_events[0]["actor_id"] == durable_users[0]["id"]
+    assert created_events[0]["target_id"] == durable_users[0]["id"]
+
+
+def test_concurrent_oidc_provisioning_cannot_consume_admin_bootstrap(
+    tmp_path, monkeypatch
+):
+    # WHY: OIDC once provisioned a member through a separate connection after REST
+    # observed an empty database. With the same email, that could make the pending
+    # admin insert collide and strand the durable database with zero administrators.
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+    db_file = tmp_path / "bootstrap-oidc-race.db"
+    app = create_app(db_file)
+
+    real_bootstrap = user_commands.bootstrap_user
+
+    def bootstrap_after_oidc_attempt(*args, **kwargs):
+        oidc_conn = db.connect(db_file)
+        try:
+            with pytest.raises(
+                oidc_flow.OidcError, match="administrator bootstrap is required"
+            ):
+                oidc_flow.provision_or_link(
+                    oidc_conn,
+                    issuer="https://identity.example.test",
+                    claims={
+                        "sub": "concurrent-member",
+                        "email": "local-admin@e.com",
+                        "email_verified": True,
+                        "name": "OIDC Member",
+                    },
+                )
+        finally:
+            oidc_conn.close()
+        return real_bootstrap(*args, **kwargs)
+
+    monkeypatch.setattr(user_commands, "bootstrap_user", bootstrap_after_oidc_attempt)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/users", json={"email": "local-admin@e.com", "name": "Local Admin"}
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["role"] == "admin"
+
+    conn = db.connect(db_file)
+    try:
+        durable_users = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT email, role FROM users ORDER BY id"
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+
+    assert durable_users == [{"email": "local-admin@e.com", "role": "admin"}]
+
+
+def test_bootstrap_command_requires_a_top_level_write_transaction(tmp_path):
+    # WHY: db.transaction uses only a savepoint when nested, so it cannot promise
+    # that bootstrap's eligibility read acquired the writer reservation first.
+    conn = db.connect(tmp_path / "nested-bootstrap.db")
+    db.migrate(conn)
+    try:
+        conn.execute("BEGIN")
+        with pytest.raises(RuntimeError, match="top-level transaction"):
+            user_commands.bootstrap_user(
+                conn, email="unsafe-admin@e.com", name="Unsafe Admin"
+            )
+        assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    finally:
+        conn.rollback()
+        conn.close()
 
 
 def test_bootstrap_then_enable_header_to_mint_first_token(tmp_path, monkeypatch):

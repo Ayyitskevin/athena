@@ -83,9 +83,10 @@ Therefore:
   the route module), so the same refusal can be a 422 in REST and a 400 in a
   form without the command knowing a transport exists. `issue_commands`,
   `page_commands`, `worker_commands`, `agent_run_commands`, and
-  `event_source_commands` carry the target shape; command modules that still
+  `event_source_commands`, and `user_commands` carry the target shape; command
+  modules that still
   raise `status_code`-carrying errors (e.g. `space_commands`,
-  `comment_commands`, `sprint_commands`, `user_commands`, `agent_commands`,
+  `comment_commands`, `sprint_commands`, `agent_commands`,
   `token_commands`, `webhook_commands`, `automation_commands`,
   `status_commands`, `attachment_commands`, `page_comment_commands`) are
   migration debt — migrate them when you touch them, do not copy the shape into

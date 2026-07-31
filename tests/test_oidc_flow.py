@@ -18,7 +18,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from athena.core import db, oidc, oidc_flow, users
+from athena.core import db, oidc, oidc_flow, user_commands, users
 
 ISS = "https://idp.example.com"
 CLIENT = "athena-client"
@@ -239,8 +239,40 @@ def _conn(tmp_path):
     return conn
 
 
+def _bootstrap_admin(conn):
+    return user_commands.bootstrap_user(
+        conn,
+        email="bootstrap-admin@local.test",
+        name="Bootstrap Admin",
+        password="test-password",
+    )
+
+
+def test_first_login_cannot_preempt_local_admin_bootstrap(tmp_path):
+    conn = _conn(tmp_path)
+    claims = {
+        "sub": "s1",
+        "email": "new@acme.com",
+        "email_verified": True,
+        "name": "New",
+    }
+    with pytest.raises(
+        oidc_flow.OidcError, match="administrator bootstrap is required"
+    ):
+        oidc_flow.provision_or_link(conn, issuer=ISS, claims=claims)
+    assert users.count_users(conn) == 0
+    assert oidc.find_user_by_identity(conn, issuer=ISS, subject="s1") is None
+
+    admin = _bootstrap_admin(conn)
+    member = oidc_flow.provision_or_link(conn, issuer=ISS, claims=claims)
+    assert admin["role"] == users.ADMIN_ROLE
+    assert member["role"] == users.MEMBER_ROLE
+    conn.close()
+
+
 def test_first_login_provisions_a_member(tmp_path):
     conn = _conn(tmp_path)
+    _bootstrap_admin(conn)
     claims = {
         "sub": "s1",
         "email": "new@acme.com",
@@ -252,7 +284,7 @@ def test_first_login_provisions_a_member(tmp_path):
     # Idempotent: a second login resolves by sub to the SAME user, no duplicate.
     again = oidc_flow.provision_or_link(conn, issuer=ISS, claims=claims)
     assert again["id"] == user["id"]
-    assert users.count_users(conn) == 1
+    assert users.count_users(conn) == 2
     conn.close()
 
 
@@ -309,6 +341,7 @@ def test_disallowed_domain_is_refused(tmp_path):
             claims={"sub": "s", "email": "x@evil.com", "email_verified": True},
             allowed_domains=("acme.com",),
         )
+    _bootstrap_admin(conn)
     # The allowed domain goes through.
     ok = oidc_flow.provision_or_link(
         conn,
@@ -335,6 +368,7 @@ def test_already_linked_resolves_by_sub_regardless_of_email(tmp_path):
     # Once linked, later logins resolve by sub — email can change at the IdP and the
     # domain/verified policy no longer gates an established account.
     conn = _conn(tmp_path)
+    _bootstrap_admin(conn)
     first = oidc_flow.provision_or_link(
         conn,
         issuer=ISS,
