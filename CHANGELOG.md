@@ -66,12 +66,29 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Wheel-bound release-candidate evidence.** The required test gate now
+  precedes one fail-closed evidence job that builds a single source distribution
+  and its derived wheel with hash-locked tooling. It snapshots the sdist once
+  before extraction and carries that SHA-256 through promotion. Bounded raw and
+  semantic archive inspection rejects unsafe, noncanonical, or oversized visible
+  members and hidden control metadata, then binds the sdist's project metadata
+  and complete installable source payload to the wheel. Fresh Linux/CPython 3.12
+  base and MCP installs, resolved under
+  `constraints/ci-py312.txt`, must match the wheel's recursively evaluated
+  metadata closures, including dependency extras. `pip-audit` checks those exact
+  third-party name/version sets for known advisories; Athena's verifier then
+  creates CycloneDX documents rooted at the exact wheel SHA-256 with matching
+  dependency edges. The evidence job uploads its candidate bundle only after
+  every verification step passes; it does not sign, attest, tag, publish,
+  hash-lock runtime downloads, or claim that `pip-audit` analyzed Athena's
+  first-party code.
+
 - **Fail-closed Python supply-chain evidence.** CI now installs its package
-  installer from a hash-verified pin and runs an independent weekly and
-  per-change security job. A hash-locked `pip-audit` toolchain audits itself,
-  then scans the exact 61-package CI graph plus pip and the setuptools build
-  backend with no ignore list or soft-pass path. The resulting CycloneDX input
-  SBOM must contain exactly those 63 normalized name/version pairs and zero
+  installer from a hash-verified pin and runs the evidence job per change and
+  weekly after the required test gate. A hash-locked evidence toolchain audits
+  itself, then scans the exact 61-package CI graph plus pip and the setuptools
+  build backend with no ignore list or soft-pass path. The resulting CycloneDX
+  input SBOM must contain exactly those 63 normalized name/version pairs and zero
   reported vulnerabilities before it is retained as workflow evidence.
 
 - **Sprint lifecycle parity for MCP agents.** Agents can now read one sprint and
