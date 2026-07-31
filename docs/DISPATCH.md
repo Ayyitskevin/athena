@@ -135,6 +135,14 @@ dispatch_to_icarus(issue_id, repo, base_commit, capability)
 list_dispatches(work_item_id=None, state=None)
 ```
 
+Dispatch reads require an Athena identity and inherit the referenced issue's
+visibility. A hidden dispatch and a missing dispatch both return `404`; list filters
+visibility in SQLite before ordering and limiting, so private rows neither leak
+their metadata nor consume an outsider's bounded page. The REST rule automatically
+governs `list_dispatches` over MCP because the MCP client uses this API rather than a
+parallel data path. Bearer tokens need `read` or `issue:write`; `docs:write` alone
+does not cross the Aegis boundary.
+
 Capabilities are a **closed set** (`repo.edit`, `ci.run`). An open one would mean
 Athena forwarding capability names it has never heard of and cannot reason about.
 

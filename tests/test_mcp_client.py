@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from athena.main import create_app
 from athena.aegis import automation, issues
-from athena.core import db
+from athena.core import db, dispatch
 from athena.mcp.client import AthenaClient, AthenaError
 
 
@@ -2080,6 +2080,23 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             "attach_label",
             "detach_label",
         } <= names
+
+        dispatch_schema = tools["dispatch_to_icarus"].inputSchema
+        dispatch_issue_id = dispatch_schema["properties"]["issue_id"]
+        assert dispatch_issue_id["minimum"] == 1
+        assert dispatch_issue_id["maximum"] == dispatch.MAX_SQLITE_INTEGER
+
+        dispatch_list_schema = tools["list_dispatches"].inputSchema
+        dispatch_work_item = next(
+            option
+            for option in dispatch_list_schema["properties"]["work_item_id"]["anyOf"]
+            if option["type"] == "integer"
+        )
+        assert dispatch_work_item["minimum"] == 1
+        assert dispatch_work_item["maximum"] == dispatch.MAX_SQLITE_INTEGER
+        dispatch_limit = dispatch_list_schema["properties"]["limit"]
+        assert dispatch_limit["minimum"] == 1
+        assert dispatch_limit["maximum"] == dispatch.MAX_LIST_LIMIT
 
         # Placement's two nullable values are required in the MCP contract. This
         # keeps omission distinct from an explicit backlog/no-sprint placement.

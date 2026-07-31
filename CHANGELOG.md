@@ -194,6 +194,16 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
+- **Private issues no longer leak through executor dispatch reads.** Authenticated
+  outsiders could receive a private issue's repository, commit, run, policy,
+  idempotency, evidence, and error metadata from `GET /dispatches` and
+  `GET /dispatches/{id}` even while the issue itself correctly returned `404`.
+  Dispatch list and detail now inherit issue/project visibility in one SQLite
+  statement; hidden and missing detail reads are indistinguishable, and visibility
+  is applied before `LIMIT` so newer hidden rows cannot under-fill a visible page or
+  become a pagination oracle. The same rule reaches MCP through its REST client.
+  Dispatch reads now also enforce `read` or `issue:write` bearer scope, and oversized
+  dispatch/work-item identifiers fail validation instead of overflowing SQLite.
 - **Wave H-2: documentation reconciliation, and one real bug found while
   verifying it** (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - `POST /labels` answered 500 on a duplicate-name race: two concurrent creates

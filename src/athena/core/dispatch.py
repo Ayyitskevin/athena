@@ -29,7 +29,7 @@ import hashlib
 import json
 import sqlite3
 
-from athena.core import db
+from athena.core import access, db
 
 #: Athena's knowledge of a dispatch. Read these as "what has Athena been told".
 PENDING_DELIVERY = "pending_delivery"
@@ -51,6 +51,8 @@ VERB_DIGEST_MISMATCH = "dispatch_policy_digest_mismatch"
 RUN_PREFIX = "icarus:"
 
 MAX_REF_CHARS = 500
+MAX_SQLITE_INTEGER = (1 << 63) - 1
+MAX_LIST_LIMIT = 200
 
 
 class DispatchError(Exception):
@@ -110,16 +112,69 @@ class PolicyFacts:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-_COLUMNS = (
-    "id, work_item_id, run_id, parent_run_id, icarus_run_id, repo, base_commit, "
-    "capability, policy_digest, approval_state, idempotency_key, evidence_ref, "
-    "completion_ref, state, last_error, dispatched_by, created_at, updated_at"
+_COLUMN_NAMES = (
+    "id",
+    "work_item_id",
+    "run_id",
+    "parent_run_id",
+    "icarus_run_id",
+    "repo",
+    "base_commit",
+    "capability",
+    "policy_digest",
+    "approval_state",
+    "idempotency_key",
+    "evidence_ref",
+    "completion_ref",
+    "state",
+    "last_error",
+    "dispatched_by",
+    "created_at",
+    "updated_at",
 )
+_COLUMNS = ", ".join(_COLUMN_NAMES)
+_VISIBLE_COLUMNS = ", ".join(f"d.{column}" for column in _COLUMN_NAMES)
+_VISIBLE_FROM = (
+    " FROM icarus_dispatches AS d "
+    "JOIN issues AS i ON i.id = d.work_item_id "
+    "LEFT JOIN projects AS p ON p.id = i.project_id"
+)
+
+
+def _visibility_clause(actor: dict | None) -> tuple[str, list]:
+    """One-snapshot issue visibility for operator-facing dispatch reads."""
+    project_gate, params = access.project_visibility_clause(actor, alias="p")
+    return (
+        f"(i.project_id IS NULL OR (p.id IS NOT NULL AND ({project_gate})))",
+        params,
+    )
 
 
 def get_dispatch(conn: sqlite3.Connection, dispatch_id: int) -> dict | None:
     row = conn.execute(
         f"SELECT {_COLUMNS} FROM icarus_dispatches WHERE id = ?", (dispatch_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_visible_dispatch(
+    conn: sqlite3.Connection,
+    dispatch_id: int,
+    *,
+    actor: dict | None,
+) -> dict | None:
+    """Return a dispatch only when its issue is visible to ``actor``.
+
+    The issue, project, membership, and dispatch are resolved in one SQL statement,
+    so a privacy flip or membership revocation cannot race a later row fetch. Missing
+    and hidden dispatches both return ``None`` for a non-enumerating adapter response.
+    """
+    if type(dispatch_id) is not int or not 1 <= dispatch_id <= MAX_SQLITE_INTEGER:
+        return None
+    visibility, visibility_params = _visibility_clause(actor)
+    row = conn.execute(
+        f"SELECT {_VISIBLE_COLUMNS}{_VISIBLE_FROM} WHERE d.id = ? AND {visibility}",
+        [dispatch_id, *visibility_params],
     ).fetchone()
     return dict(row) if row else None
 
@@ -142,25 +197,36 @@ def get_by_icarus_run(conn: sqlite3.Connection, icarus_run_id: str) -> dict | No
 def list_dispatches(
     conn: sqlite3.Connection,
     *,
+    actor: dict | None,
     work_item_id: int | None = None,
     state: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """Newest first. Bounded, like every other operator read here."""
+    """Visible dispatches, newest first and bounded like every operator read.
+
+    Visibility is part of the SQL before ``ORDER BY`` and ``LIMIT``. Filtering a
+    bounded page in Python would let newer hidden rows starve visible results and
+    turn page fullness into a private-work oracle.
+    """
     if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
         raise ValueError("limit must be a positive integer")
-    clauses: list[str] = []
-    params: list[object] = []
+    if work_item_id is not None and (
+        type(work_item_id) is not int or not 1 <= work_item_id <= MAX_SQLITE_INTEGER
+    ):
+        raise ValueError(f"work_item_id must be between 1 and {MAX_SQLITE_INTEGER}")
+    visibility, visibility_params = _visibility_clause(actor)
+    clauses = [visibility]
+    params: list[object] = [*visibility_params]
     if work_item_id is not None:
-        clauses.append("work_item_id = ?")
+        clauses.append("d.work_item_id = ?")
         params.append(int(work_item_id))
     if state is not None:
-        clauses.append("state = ?")
+        clauses.append("d.state = ?")
         params.append(state)
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(min(limit, 200))
+    params.append(min(limit, MAX_LIST_LIMIT))
     rows = conn.execute(
-        f"SELECT {_COLUMNS} FROM icarus_dispatches{where} ORDER BY id DESC LIMIT ?",
+        f"SELECT {_VISIBLE_COLUMNS}{_VISIBLE_FROM} "
+        f"WHERE {' AND '.join(clauses)} ORDER BY d.id DESC LIMIT ?",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

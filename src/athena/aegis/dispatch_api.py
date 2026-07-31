@@ -5,6 +5,10 @@ Two directions, authorized in completely different ways.
 *Outbound* (`POST /issues/{id}/dispatch`) is an ordinary authenticated write: the
 command checks role, scope, visibility, budget, and any approval gate.
 
+*Reads* inherit the work item's visibility. List filtering is composed into SQL
+before its bound, and detail resolves hidden and missing dispatches identically, so
+executor metadata cannot become a side channel around private issues.
+
 *Inbound* (`POST /callbacks/icarus`) has **no Athena credential at all**. The
 executor is not an Athena user and holds no token; it authenticates with an HMAC
 over the exact request body, using the shared secret. That is why the callback
@@ -17,14 +21,14 @@ from __future__ import annotations
 
 import hmac
 import sqlite3
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena import config
 from athena.aegis import icarus_commands
-from athena.core import activity, db, dispatch, run_context, webhooks
+from athena.core import activity, db, dispatch, identity, run_context, tokens, webhooks
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -87,9 +91,19 @@ def _refuse(exc: dispatch.DispatchError) -> HTTPException:
     )
 
 
+def _dispatch_reader(actor: dict = Depends(current_actor)) -> dict:
+    """Authenticated Aegis reader, including least-privilege worker tokens."""
+    if not (
+        identity.token_has_scope(actor, tokens.READ_SCOPE)
+        or identity.token_has_scope(actor, tokens.ISSUE_WRITE_SCOPE)
+    ):
+        raise identity.ScopeDenied(actor, "read or issue:write")
+    return actor
+
+
 @router.post("/issues/{issue_id}/dispatch", response_model=DispatchOut, status_code=201)
 def create_dispatch(
-    issue_id: int,
+    issue_id: Annotated[int, Path(ge=1, le=dispatch.MAX_SQLITE_INTEGER)],
     payload: DispatchIn,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -118,16 +132,20 @@ def create_dispatch(
 
 @router.get("/dispatches", response_model=list[DispatchOut])
 def index(
-    work_item_id: int | None = Query(None),
+    work_item_id: int | None = Query(None, ge=1, le=dispatch.MAX_SQLITE_INTEGER),
     state: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    actor: dict = Depends(current_actor),
+    limit: int = Query(50, ge=1, le=dispatch.MAX_LIST_LIMIT),
+    actor: dict = Depends(_dispatch_reader),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     """What Athena has handed out, newest first."""
     try:
         return dispatch.list_dispatches(
-            conn, work_item_id=work_item_id, state=state, limit=limit
+            conn,
+            actor=actor,
+            work_item_id=work_item_id,
+            state=state,
+            limit=limit,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -135,11 +153,11 @@ def index(
 
 @router.get("/dispatches/{dispatch_id}", response_model=DispatchOut)
 def show(
-    dispatch_id: int,
-    actor: dict = Depends(current_actor),
+    dispatch_id: Annotated[int, Path(ge=1, le=dispatch.MAX_SQLITE_INTEGER)],
+    actor: dict = Depends(_dispatch_reader),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    record = dispatch.get_dispatch(conn, dispatch_id)
+    record = dispatch.get_visible_dispatch(conn, dispatch_id, actor=actor)
     if record is None:
         raise HTTPException(status_code=404, detail="no such dispatch")
     return record
