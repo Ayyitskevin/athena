@@ -61,6 +61,28 @@ Never include a live token, password, private database, attachment, operator not
 journal text, customer information, or other secret in an issue, discussion, pull
 request, public message, or log paste.
 
+## Automated analysis
+
+The repository's CodeQL workflow analyzes Python, first-party browser
+JavaScript, and GitHub Actions on pull requests to `main`, pushes to `main`, a
+weekly schedule, and explicit operator dispatch. Python scope includes sources
+under `src/`, `scripts/`, and `examples/`; JavaScript scope includes first-party
+browser code under `src/`; and workflow scope includes `.github/`. Tests and the
+vendored `src/athena/static/htmx.min.js` library are excluded. Athena does not
+claim language-specific CodeQL coverage for shell, Jinja template semantics,
+standalone SQL migration contents, or CSS. The workflow uses GitHub's
+`security-extended` query suite, so triage may include lower-confidence results
+that the default suite would omit.
+
+The scanner references no repository-configured secret and receives no
+content-write, identity-token, issue, or pull-request authority. Its only write
+capability is the `security-events` permission required to publish SARIF results
+to GitHub code scanning. Every external action reference is pinned to a full
+commit SHA and checked by the test suite, including references in local actions
+reached from a workflow. A clean scan is point-in-time evidence, not proof that
+Athena is vulnerability-free and not authority to expose the unsupported public
+deployment shape.
+
 A useful report includes:
 
 - the affected current-`main` commit hash;
