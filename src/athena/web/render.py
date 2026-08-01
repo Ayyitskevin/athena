@@ -215,6 +215,41 @@ def _embed_html(resolved: dict) -> str:
             f'<div class="embed embed-issue">{head}{_issue_row(resolved["item"])}</div>'
         )
 
+    if kind == "rollup":
+        rollup = resolved["rollup"]
+        if not rollup["total"]:
+            body = '<div class="embed-message">No sub-issues to roll up.</div>'
+        else:
+            # Segment widths are computed here, from counts this function was
+            # handed — the same numbers the issue page draws, never a second
+            # calculation of "how done is this".
+            segments = "".join(
+                f'<span class="rollup-seg rollup-{bucket}" '
+                f'style="width: {rollup["counts"][bucket] * 100 / rollup["total"]:.2f}%"'
+                f' title="{escape(str(rollup["counts"][bucket]))} {bucket}"></span>'
+                for bucket in ("done", "doing", "todo")
+                if rollup["counts"][bucket]
+            )
+            archived = ""
+            if rollup["archived_excluded"]:
+                noun = (
+                    "child is" if rollup["archived_excluded"] == 1 else "children are"
+                )
+                archived = (
+                    f" · {escape(str(rollup['archived_excluded']))} archived "
+                    f"{noun} not counted"
+                )
+            body = (
+                f'<div class="rollup"><div class="rollup-bar">{segments}</div>'
+                f'<div class="embed-message">{escape(str(rollup["percent_done"]))}% '
+                f"done — {escape(str(rollup['done']))} of "
+                f"{escape(str(rollup['total']))} sub-issues{archived}</div></div>"
+            )
+        return (
+            f'<div class="embed embed-rollup">{head}'
+            f"{_issue_row(resolved['item'])}{body}</div>"
+        )
+
     rows = "".join(_issue_row(item) for item in resolved.get("items", []))
     if not rows:
         rows = '<div class="embed-message">No issues match.</div>'

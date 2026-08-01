@@ -85,11 +85,16 @@ def child_rollup(
     done, matching ``statuses.is_done``.
     """
     clause, params = _visibility_clause(visible_project_ids)
+    # The alias is `bucket`, never `category`: the LEFT JOIN brings a real
+    # `project_statuses.category` column into scope, and `GROUP BY category`
+    # binds to THAT column rather than to this expression — which silently
+    # groups every backlog child (whose joined category is NULL) into one row
+    # and reports one arbitrary child's category for all of them.
     rows = conn.execute(
-        f"SELECT {_CATEGORY} AS category, COUNT(*) AS n"
+        f"SELECT {_CATEGORY} AS bucket, COUNT(*) AS n"
         f" FROM issues c{_JOIN}"
         f" WHERE c.parent_id = ? AND c.archived_at IS NULL{clause}"
-        " GROUP BY category",
+        " GROUP BY bucket",
         [issue_id, *params],
     ).fetchall()
     counts = {bucket: 0 for bucket in BUCKETS}
@@ -97,7 +102,7 @@ def child_rollup(
         # A category outside the vocabulary cannot come from category_sql, but a
         # hand-edited project_statuses row could carry one; count it as doing
         # rather than dropping it, so the total always equals the children shown.
-        bucket = row["category"] if row["category"] in counts else "doing"
+        bucket = row["bucket"] if row["bucket"] in counts else "doing"
         counts[bucket] += int(row["n"])
 
     archived = conn.execute(

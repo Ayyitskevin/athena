@@ -27,7 +27,7 @@ from typing import Any
 
 import re
 
-from athena.aegis import issue_query, issues
+from athena.aegis import issue_query, issues, rollups
 from athena.core import access, embeds, links, work_query
 from athena.core.embeds import Directive
 
@@ -76,6 +76,9 @@ def resolve(
 
     if directive.kind == "issue":
         return _resolve_issue(conn, directive, actor=actor, visible=visible)
+
+    if directive.kind == "rollup":
+        return _resolve_rollup(conn, directive, actor=actor, visible=visible)
 
     try:
         parsed = work_query.parse(directive.query)
@@ -138,21 +141,8 @@ def _resolve_issue(
     cross-link renderer already applies to `[[ATH-12]]`.
     """
     ref = directive.issue_ref.strip()
-    issue_id: int | None = None
-    parsed_id = issues.parse_filter_id(ref)
-    if issues.is_filter_id(parsed_id):
-        issue_id = parsed_id
-    else:
-        # A project key like ATH-12. Reuses the SAME resolver the [[ATH-12]]
-        # cross-link renderer uses, so an embed and a wikilink can never disagree
-        # about which issue a key names.
-        match = _KEY_REF.fullmatch(ref)
-        if match is not None:
-            keyed = links.resolve_key_ref(conn, match.group(1), int(match.group(2)))
-            if keyed["exists"]:
-                issue_id = int(keyed["id"])
-
-    if issue_id is None or not access.can_see_issue(conn, actor, issue_id):
+    issue_id = _resolve_issue_ref(conn, ref, actor=actor)
+    if issue_id is None:
         return _error(directive, f"no issue matches {ref!r}")
     row = issues.get_issue(conn, issue_id)
     if row is None:
@@ -162,6 +152,60 @@ def _resolve_issue(
         "kind": "issue",
         "title": directive.title,
         "item": _issue_summary(row),
+        "error": None,
+    }
+
+
+def _resolve_issue_ref(
+    conn: sqlite3.Connection, ref: str, *, actor: dict | None
+) -> int | None:
+    """The issue an ``issue:`` reference names, if the caller may see it.
+
+    Shared by every issue-targeting kind so a reference resolves identically
+    whichever embed used it — and so a hidden issue stays indistinguishable from
+    a missing one in all of them.
+    """
+    parsed_id = issues.parse_filter_id(ref)
+    issue_id: int | None = parsed_id if issues.is_filter_id(parsed_id) else None
+    if issue_id is None:
+        # A project key like ATH-12. Reuses the SAME resolver the [[ATH-12]]
+        # cross-link renderer uses, so an embed and a wikilink can never disagree
+        # about which issue a key names.
+        match = _KEY_REF.fullmatch(ref)
+        if match is not None:
+            keyed = links.resolve_key_ref(conn, match.group(1), int(match.group(2)))
+            if keyed["exists"]:
+                issue_id = int(keyed["id"])
+    if issue_id is None or not access.can_see_issue(conn, actor, issue_id):
+        return None
+    return issue_id
+
+
+def _resolve_rollup(
+    conn: sqlite3.Connection,
+    directive: Directive,
+    *,
+    actor: dict | None,
+    visible: set[int] | None,
+) -> dict[str, Any]:
+    """One parent issue's sub-issue progress, counted live.
+
+    Unlike ``kind: issue`` this KEEPS the project filter: the parent may be
+    visible while some of its children are not, and the counts must be the
+    viewer's own or the bar becomes an existence oracle for private work.
+    """
+    ref = directive.issue_ref.strip()
+    issue_id = _resolve_issue_ref(conn, ref, actor=actor)
+    if issue_id is None:
+        return _error(directive, f"no issue matches {ref!r}")
+    row = issues.get_issue(conn, issue_id)
+    if row is None:
+        return _error(directive, f"no issue matches {ref!r}")
+    return {
+        "kind": "rollup",
+        "title": directive.title,
+        "item": _issue_summary(row),
+        "rollup": rollups.child_rollup(conn, issue_id, visible_project_ids=visible),
         "error": None,
     }
 

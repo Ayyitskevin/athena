@@ -29,6 +29,7 @@ from athena.aegis import (
     issue_search,
     issues,
     projects,
+    rollups,
     sprints,
     statuses,
 )
@@ -1076,8 +1077,10 @@ def _render_issue_detail(
             else None
         ),
         "children": children,
-        "children_done": sum(
-            1 for c in children if statuses.is_done(conn, c["project_id"], c["status"])
+        # One owner for the number: the same rollup the embed resolves, so the
+        # page and a dashboard-in-a-page can never disagree about progress.
+        "rollup": rollups.child_rollup(
+            conn, issue_id, visible_project_ids=visible_project_ids
         ),
         "can_modify": can_modify,
         "can_write": can_write,

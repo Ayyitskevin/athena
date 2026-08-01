@@ -2046,3 +2046,19 @@ footer {
     color: #666;
     font-size: 0.85rem;
 }
+
+/* Sub-issue rollup — a live progress bar keyed on status CATEGORY, never on a
+   status name, so a project whose done state is called "shipped" colours the
+   same as one calling it "done". */
+.rollup { margin: 0.35rem 0 0.75rem; }
+.rollup-bar {
+    display: flex;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #e5e7eb;
+}
+.rollup-seg { display: block; height: 100%; }
+.rollup-done { background: #059669; }
+.rollup-doing { background: #2563eb; }
+.rollup-todo { background: #9ca3af; }
