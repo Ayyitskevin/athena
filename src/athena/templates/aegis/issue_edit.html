@@ -20,8 +20,23 @@
 
         <div class="form-group">
             <label for="body">Description</label>
-            <textarea id="body" name="body" rows="8"
-                      placeholder="Details, steps to reproduce, acceptance criteria...">{{ issue.body }}</textarea>
+            {# Side-by-side preview, filled by the SAME function the issue view
+               uses — including its limits, so an embed directive previews as the
+               "not rendered here" box the saved issue will show. Without
+               JavaScript the editor behaves exactly as before. #}
+            <div class="editor-split">
+                <textarea id="body" name="body" rows="8"
+                          placeholder="Details, steps to reproduce, acceptance criteria..."
+                          hx-post="/aegis/issues/preview"
+                          hx-trigger="keyup changed delay:300ms"
+                          hx-target="#body-preview"
+                          hx-include="closest form"
+                          hx-sync="this:replace">{{ issue.body }}</textarea>
+                <div class="editor-preview">
+                    <div class="editor-preview-label">Preview</div>
+                    <div id="body-preview" class="body-text">{{ body_html }}</div>
+                </div>
+            </div>
         </div>
 
         <div class="form-actions">

@@ -19,7 +19,22 @@
         </div>
         <div class="form-group">
             <label for="body">Body</label>
-            <textarea id="body" name="body" rows="12" placeholder="Write the page...">{{ page.body }}</textarea>
+            {# Side-by-side preview. The pane is filled by the SAME function the
+               page view uses, so what an author sees here is what readers
+               get. Without JavaScript the textarea and the Save button still
+               work exactly as before; the preview simply stays empty. #}
+            <div class="editor-split">
+                <textarea id="body" name="body" rows="12" placeholder="Write the page..."
+                          hx-post="/mentor/pages/preview"
+                          hx-trigger="keyup changed delay:300ms"
+                          hx-target="#body-preview"
+                          hx-include="closest form"
+                          hx-sync="this:replace">{{ page.body }}</textarea>
+                <div class="editor-preview">
+                    <div class="editor-preview-label">Preview</div>
+                    <div id="body-preview" class="body-text">{{ body_html }}</div>
+                </div>
+            </div>
         </div>
         <div class="form-actions">
             <button type="submit" class="button">Save Changes</button>

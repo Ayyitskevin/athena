@@ -2081,3 +2081,32 @@ footer {
     border-radius: 3px;
     user-select: all;
 }
+
+/* Editor preview — the writing pane and the rendered result side by side. Falls
+   back to stacked on narrow screens, and the editor still works with the preview
+   empty (no JavaScript required to write or save). */
+.editor-split {
+    display: flex;
+    gap: 0.75rem;
+    align-items: stretch;
+}
+.editor-split > textarea { flex: 1 1 50%; }
+.editor-preview {
+    flex: 1 1 50%;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    background: #fcfcfd;
+    overflow-y: auto;
+    max-height: 30rem;
+}
+.editor-preview-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9ca3af;
+    margin-bottom: 0.35rem;
+}
+@media (max-width: 780px) {
+    .editor-split { flex-direction: column; }
+}
