@@ -151,7 +151,10 @@ def render_comment(conn: sqlite3.Connection, text: str | None) -> Markup:
 
 
 def _extract_embeds(
-    text: str, embed_results: list[dict] | None
+    text: str,
+    embed_results: list[dict] | None,
+    *,
+    show_refused_directives: bool = False,
 ) -> tuple[str, dict[str, str]]:
     """Replace each ```athena block with an opaque token, returning the rewritten
     source and the token→HTML map.
@@ -171,6 +174,18 @@ def _extract_embeds(
         token = f"athenaembed{nonce}x{index}"
         if embed_results is not None and index < len(embed_results):
             html = _embed_html(embed_results[index])
+        elif show_refused_directives:
+            # An export is a SNAPSHOT. A live embed must be visibly dead in it —
+            # otherwise it is stale data wearing a live face — but simply
+            # deleting it would lose what the author actually wrote. So the
+            # refusal carries the directive it came from: a reader sees both
+            # that nothing was resolved and exactly what would have been.
+            html = (
+                '<div class="embed embed-error"><div class="embed-message">'
+                "Not rendered here — this embed is live in Athena and cannot be "
+                "resolved in an exported copy.</div>"
+                f'<pre class="embed-directive">{escape(whole.strip())}</pre></div>'
+            )
         else:
             html = (
                 '<div class="embed embed-error"><div class="embed-message">'
@@ -298,6 +313,7 @@ def render_body(
     *,
     actor: dict | None | object = links._UNGATED,
     embed_results: list[dict] | None = None,
+    show_refused_directives: bool = False,
 ) -> Markup:
     """Render a body (Markdown) to safe HTML with cross-references linked. A
     reference to a real target becomes an <a class="xref">title</a>; a broken one
@@ -328,7 +344,9 @@ def render_body(
     # already do — and it carries a per-render random component, so an author
     # cannot write a literal token into their page and have Athena replace it
     # with someone else's embed.
-    text, placeholders = _extract_embeds(text, embed_results)
+    text, placeholders = _extract_embeds(
+        text, embed_results, show_refused_directives=show_refused_directives
+    )
 
     # Markdown (raw HTML escaped by html=False), then an independent sanitizer
     # pass. nh3 keeps a strict allowlist of formatting tags and drops anything
