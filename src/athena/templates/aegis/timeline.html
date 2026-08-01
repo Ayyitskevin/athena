@@ -102,6 +102,17 @@
     {{ "links" if timeline.edges_outside == 1 else "link" }} to work outside this view and
     {{ "is" if timeline.edges_outside == 1 else "are" }} not drawn.
     {% endif %}
+    {% if timeline.omitted_lanes %}
+    {{ timeline.omitted_lanes }} older sprint {{ "lane is" if timeline.omitted_lanes == 1 else "lanes are" }}
+    not drawn{% if timeline.omitted_lane_issues %} ({{ timeline.omitted_lane_issues }}
+    {{ "issue" if timeline.omitted_lane_issues == 1 else "issues" }} with them —
+    neither drawn nor counted above){% endif %} — the picture keeps the newest
+    {{ timeline.lanes | length - 1 }} sprints.
+    {% endif %}
+    {% if timeline.fetch_clipped %}
+    The counts above describe the first {{ timeline.fetch_limit }} live issues this
+    read loaded — more exist beyond them.
+    {% endif %}
     Archived issues are left out, and only issues you can see are drawn.
     Lanes are in date order; their width is not a duration.
 </p>

@@ -41,6 +41,19 @@ MAX_MAX_PER_LANE = 40
 #: of thousands of boxes.
 DEFAULT_MAX_ITEMS = 120
 MAX_MAX_ITEMS = 400
+#: How many SPRINT lanes the picture draws (the backlog lane is always drawn).
+#: The oldest are dropped first — ancient sprint history is what an operator
+#: scrolls a sprint page for, not a roadmap — and the drop is reported, never
+#: silent. Without this, width grows by one lane per sprint forever.
+DEFAULT_MAX_LANES = 30
+MAX_MAX_LANES = 100
+#: How many live issues one timeline read loads. The drawn set was always
+#: capped; this bounds the QUERY, which an anonymous caller can reach on a
+#: public project — the same reason issues.py reserves bounded limits for the
+#: REST path. When the cap bites, the totals describe what was loaded and the
+#: page says more exist.
+DEFAULT_MAX_FETCH = 2000
+MAX_MAX_FETCH = 5000
 
 # Geometry. Pure layout constants; every value here is a pixel in the SVG's own
 # coordinate space, which the template scales to the viewport.
@@ -90,6 +103,8 @@ def project_timeline(
     visible_project_ids: set[int] | None = None,
     max_per_lane: int = DEFAULT_MAX_PER_LANE,
     max_items: int = DEFAULT_MAX_ITEMS,
+    max_lanes: int = DEFAULT_MAX_LANES,
+    max_fetch: int = DEFAULT_MAX_FETCH,
 ) -> dict:
     """One project's sprints as lanes, its issues placed in them, laid out.
 
@@ -112,6 +127,8 @@ def project_timeline(
         max_per_lane, default=DEFAULT_MAX_PER_LANE, maximum=MAX_MAX_PER_LANE
     )
     ceiling = _bounded(max_items, default=DEFAULT_MAX_ITEMS, maximum=MAX_MAX_ITEMS)
+    lanes_cap = _bounded(max_lanes, default=DEFAULT_MAX_LANES, maximum=MAX_MAX_LANES)
+    fetch_cap = _bounded(max_fetch, default=DEFAULT_MAX_FETCH, maximum=MAX_MAX_FETCH)
 
     lane_specs: list[dict] = [
         {
@@ -126,6 +143,12 @@ def project_timeline(
             sprints.list_sprints(conn, project_id=project_id), key=_lane_sort_key
         )
     ]
+    # Oldest lanes drop first when the cap bites, and their issues are COUNTED
+    # OUT LOUD rather than misfiled into the backlog lane — a card in the wrong
+    # lane is worse than an admitted omission.
+    omitted_lanes = max(0, len(lane_specs) - lanes_cap)
+    omitted_lane_keys = {spec["key"] for spec in lane_specs[:omitted_lanes]}
+    lane_specs = lane_specs[omitted_lanes:]
     # The backlog lane always exists: "nothing is unscheduled" is a fact worth
     # showing, and an absent lane would read as a rendering gap instead.
     lane_specs.append(
@@ -145,12 +168,21 @@ def project_timeline(
     # its own sprint_id, so the partition is exact. Archived issues are excluded
     # by list_issues' default: the timeline shows work that is still live.
     by_lane: dict[str, list[dict]] = {spec["key"]: [] for spec in lane_specs}
-    for issue in issues.list_issues(
-        conn, project_id=project_id, visible_project_ids=visible_project_ids
-    ):
+    fetched = issues.list_issues(
+        conn,
+        project_id=project_id,
+        visible_project_ids=visible_project_ids,
+        limit=fetch_cap + 1,
+    )
+    fetch_clipped = len(fetched) > fetch_cap
+    omitted_lane_issues = 0
+    for issue in fetched[:fetch_cap]:
         lane_key = (
             BACKLOG_LANE if issue["sprint_id"] is None else str(issue["sprint_id"])
         )
+        if lane_key in omitted_lane_keys:
+            omitted_lane_issues += 1
+            continue
         # A sprint outside this project's lane list cannot happen today (sprints
         # belong to one project, and moving projects clears the sprint). If it
         # ever did, the issue lands in the backlog lane rather than in an orphan
@@ -253,6 +285,14 @@ def project_timeline(
         "edges_outside": dependencies.count_edges_touching(
             conn, drawn_ids, visible_project_ids=visible_project_ids
         ),
+        # The bounds' own disclosures: sprint lanes dropped (oldest first) with
+        # the issue count that left with them, and whether the issue READ hit
+        # its cap — in which case every total above describes what was loaded,
+        # not the whole project, and the page must say so.
+        "omitted_lanes": omitted_lanes,
+        "omitted_lane_issues": omitted_lane_issues,
+        "fetch_clipped": fetch_clipped,
+        "fetch_limit": fetch_cap,
         "width": round(width, 2),
         "height": round(height, 2),
     }

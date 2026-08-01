@@ -141,7 +141,11 @@ def child_rollup(
                 "count": counts[bucket],
                 "percent": round(counts[bucket] * 100 / total, 2),
             }
-            for bucket in ("done", "doing", "todo")
+            # Finished-first is the bar's reading order; the NAMES come from
+            # BUCKETS, never a second literal tuple — a category added to the
+            # vocabulary must appear in the bar the same day it appears in the
+            # counts, or the bar quietly sums below 100% (review finding).
+            for bucket in reversed(BUCKETS)
             if counts[bucket]
         ]
         if total
