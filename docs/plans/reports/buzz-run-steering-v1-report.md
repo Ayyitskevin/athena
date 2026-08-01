@@ -235,6 +235,22 @@ Validation at this phase boundary (all green, `.venv312` = CI-mirror Python 3.12
 
 Deviation from design: none. One addition — `idempotency_key` is included in the
 read projection (operator metadata needed for retry ergonomics).
+
+### Phase 3 — REST endpoints: COMPLETE
+
+Delivered: `core/run_controls_api.py` (`/run-controls` router — create 201,
+list with derived-state filters incl. `open`, get, acknowledge, decline,
+complete; opaque RunId/Handoff schemas with command-side validation; `_refuse`
+mapping via the command's STATUS_BY_KIND) and `main.py` wiring (router include +
+`/run-controls` added to `_IDEMPOTENCY_API_ROOTS`).
+
+Validation: live-HTTP smoke over TestClient (fresh DB, all 70 migrations applied
+incl. 0070): bootstrap → onboard agent → heartbeat-only run steered via the
+check-in fallback → create 201 → agent inbox → third-user list `[]` and get 404
+(existence oracle closed) → admin settlement refused 403 "bearer token required"
+→ ack 200 acknowledged → complete 200 completed → middleware Idempotency-Key
+replay (`Idempotent-Replay: true`) and mismatch 409 `idempotency_mismatch` →
+fresh-context handoff completion → decline with reason. All as designed.
 - Phase 2 (domain/command layer + migration): pending
 - Phase 3 (REST): pending
 - Phase 4 (MCP): pending

@@ -54,6 +54,7 @@ from athena.core import (
     notifications_api,
     rate_limits,
     run_context,
+    run_controls_api,
     search_api,
     security_api,
     sessions,
@@ -374,6 +375,7 @@ _IDEMPOTENCY_API_ROOTS = (
     "/notifications",
     "/pages",
     "/projects",
+    "/run-controls",
     "/spaces",
     "/sprints",
     "/tokens",
@@ -1550,6 +1552,7 @@ def create_app(
     app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
+    app.include_router(run_controls_api.router)
     app.include_router(search_api.router)
     app.include_router(activity_api.router)
     app.include_router(events_api.router)
