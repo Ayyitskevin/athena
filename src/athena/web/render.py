@@ -35,6 +35,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup, escape
 import nh3
 
+from athena.aegis import embed_data
 from athena.core import embeds, links, users
 
 # One configured Markdown renderer for every body. `html=False` is the security
@@ -410,3 +411,47 @@ def render_body(
         # paragraph so a block-level embed is not nested inside a <p>.
         linked = linked.replace(f"<p>{token}</p>", html).replace(token, html)
     return Markup(linked)
+
+
+#: The ceiling on text a preview will render, matching the embed resolver's own
+#: bound. A preview renders arbitrary unsaved text on every keystroke, so it
+#: needs the same limit the saved path has.
+MAX_PREVIEW_CHARS = 200_000
+
+
+# --- Per-surface rendering --------------------------------------------------
+#
+# Each surface renders a body ONE way, and that way is named here so display and
+# preview cannot drift. R-1's whole promise is that what an author sees while
+# writing is what readers get; the way to keep that true is not discipline but
+# structure — a single function per surface, called by both.
+
+
+def render_page_body(
+    conn: sqlite3.Connection, text: str | None, *, actor: dict | None
+) -> Markup:
+    """A Mentor page body, exactly as the page view renders it.
+
+    Embeds resolve here, per request and against THIS viewer — never cached,
+    because a page-keyed cache would serve one reader's visibility to another.
+    """
+    return render_body(
+        conn,
+        text,
+        actor=actor,
+        embed_results=embed_data.resolve_body(conn, text, actor=actor),
+    )
+
+
+def render_issue_body(
+    conn: sqlite3.Connection, text: str | None, *, actor: dict | None
+) -> Markup:
+    """An issue body, exactly as the issue view renders it.
+
+    Embeds are deliberately NOT resolved on issues (EMBEDS.md defers them), so a
+    directive in an issue body renders its "not rendered here" box. The preview
+    shows that same box rather than a live embed: a preview that rendered
+    something the issue page will not is the drift this pairing exists to
+    prevent. When issue embeds ship, both surfaces gain them from this one line.
+    """
+    return render_body(conn, text, actor=actor)

@@ -21,7 +21,6 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from athena import config
-from athena.aegis import embed_data
 from athena.core import (
     access,
     activity,
@@ -46,7 +45,7 @@ from athena.mentor import (
     spaces,
 )
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_comment
+from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.router import _readonly_response, get_templates
 
 router = APIRouter()
@@ -802,12 +801,7 @@ def page_detail(
             # that member could already see, and nothing is cached between
             # viewers, because a cache keyed on the page would serve one reader's
             # visibility to another.
-            "body_html": render_body(
-                conn,
-                page["body"],
-                actor=user,
-                embed_results=embed_data.resolve_body(conn, page["body"], actor=user),
-            ),
+            "body_html": render_page_body(conn, page["body"], actor=user),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
             "all_labels": labels.list_labels(
@@ -859,8 +853,39 @@ def edit_page_form(
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_edit.html",
-        context={"page": page, "space": spaces.get_space(conn, page["space_id"])},
+        context={
+            "page": page,
+            "space": spaces.get_space(conn, page["space_id"]),
+            # The preview starts populated rather than blank: an author opening
+            # an existing page sees it as readers do before touching a key.
+            "body_html": render_page_body(conn, page["body"], actor=user),
+        },
     )
+
+
+@router.post("/mentor/pages/preview", dependencies=[Depends(verify_csrf)])
+def preview_page_body(
+    request: Request,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Render unsaved page text exactly as the page view will render it.
+
+    This calls ``render_page_body`` — the SAME function the page itself calls —
+    so the preview cannot drift from the display. It renders against the signed-in
+    viewer, which matters: cross-links and embeds resolve per reader, so a preview
+    rendered as anyone else would be a preview of someone else's page.
+
+    Nothing is written. A preview is a read of text the author has in hand.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("preview")
+    if len(body) > MAX_PREVIEW_CHARS:
+        return HTMLResponse(
+            '<div class="error">Too long to preview.</div>', status_code=413
+        )
+    return HTMLResponse(str(render_page_body(conn, body, actor=user)))
 
 
 @router.post("/mentor/pages/{page_id}/edit", dependencies=[Depends(verify_csrf)])

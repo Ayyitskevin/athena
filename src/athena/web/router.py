@@ -50,7 +50,12 @@ from athena.core import (
 )
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_comment, render_snippet
+from athena.web.render import (
+    MAX_PREVIEW_CHARS,
+    render_comment,
+    render_issue_body,
+    render_snippet,
+)
 
 router = APIRouter()
 
@@ -744,7 +749,10 @@ def edit_issue_form(
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
-        context={"issue": issue},
+        context={
+            "issue": issue,
+            "body_html": render_issue_body(conn, issue["body"], actor=user),
+        },
     )
 
 
@@ -879,6 +887,34 @@ def change_issue_priority(
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/preview", dependencies=[Depends(verify_csrf)])
+def preview_issue_body(
+    request: Request,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Render unsaved issue text exactly as the issue view will render it.
+
+    Calls ``render_issue_body`` — the SAME function the issue page calls — so the
+    two cannot drift. That includes the parts an author might wish were
+    different: embeds are not resolved on issues, so a directive previews as its
+    "not rendered here" box, because showing a live embed here would promise
+    something the saved issue will not deliver.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to'
+            " preview.</div>",
+            status_code=401,
+        )
+    if len(body) > MAX_PREVIEW_CHARS:
+        return HTMLResponse(
+            '<div class="error">Too long to preview.</div>', status_code=413
+        )
+    return HTMLResponse(str(render_issue_body(conn, body, actor=user)))
 
 
 @router.get("/aegis/issues/{issue_id}/graph", response_class=HTMLResponse)
@@ -1039,7 +1075,7 @@ def _render_issue_detail(
 
     context = {
         "issue": issue,
-        "body_html": render_body(conn, issue["body"], actor=user),
+        "body_html": render_issue_body(conn, issue["body"], actor=user),
         # "Referenced by" hides sources in projects/spaces the viewer can't see.
         "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
         # Typed dependencies, gated like the backlinks: a blocks/relates edge to an
