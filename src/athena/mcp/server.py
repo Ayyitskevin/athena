@@ -34,7 +34,7 @@ from athena.aegis import (
     issues,
     lease_commands,
 )
-from athena.core import dispatch, run_context
+from athena.core import dispatch, run_context, run_control_commands, run_controls
 from athena.mcp.client import AthenaClient, AthenaError
 
 
@@ -136,6 +136,28 @@ AutomationScheduleInterval = Annotated[
         ge=automation.MIN_SCHEDULE_INTERVAL_SECONDS,
         le=automation.MAX_SCHEDULE_INTERVAL_SECONDS,
     ),
+]
+RunControlKind = Literal["steer", "request_cancel", "request_fresh_context"]
+RunControlStateFilter = Literal[
+    "requested", "acknowledged", "completed", "declined", "expired", "open"
+]
+RunControlId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+RunControlPayload = Annotated[
+    str, Field(max_length=run_control_commands.MAX_PAYLOAD_CHARS)
+]
+RunControlSummary = Annotated[
+    str, Field(min_length=1, max_length=run_control_commands.MAX_RESULT_SUMMARY_CHARS)
+]
+RunControlTtl = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=run_control_commands.MIN_TTL_SECONDS,
+        le=run_control_commands.MAX_TTL_SECONDS,
+    ),
+]
+RunControlListLimit = Annotated[
+    int, Field(strict=True, ge=1, le=run_controls.MAX_LIST_LIMIT)
 ]
 
 
@@ -819,6 +841,100 @@ def build_server(client: AthenaClient) -> FastMCP:
         Refused once acknowledged — it may already be shutting down. Requires an
         admin token."""
         return client.cancel_worker_kill(worker_id, idempotency_key=idempotency_key)
+
+    @mutation_tool
+    def create_run_control(
+        run_id: RunId,
+        kind: RunControlKind,
+        payload: RunControlPayload | None = None,
+        worker_id: int | None = None,
+        ttl_seconds: RunControlTtl | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: record a control request against a live run.
+
+        'steer' hands the run's agent bounded guidance (payload required);
+        'request_cancel' asks it to wind this run down cooperatively;
+        'request_fresh_context' asks it to close out with a structured handoff a
+        fresh context can continue from. This RECORDS A REQUEST; it does not
+        change what any process is doing. Only the agent bound to the run can
+        read and settle it, and an unanswered request reads as expired after
+        ttl_seconds (default one hour). Requires an admin token."""
+        return client.create_run_control(
+            run_id=run_id,
+            kind=kind,
+            payload=payload,
+            worker_id=worker_id,
+            ttl_seconds=ttl_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    @tool
+    def list_run_controls(
+        run_id: str | None = None,
+        state: RunControlStateFilter | None = None,
+        limit: RunControlListLimit = 50,
+    ) -> list:
+        """Run controls — operator requests on live runs and how their agents
+        answered. Admins see everything; anyone else sees only controls addressed
+        to them. state='open' is YOUR inbox: unsettled, not yet expired — poll it
+        while you work and answer what you find. `state` reports what was
+        actually said; 'expired' means the clock ran out, never that anything
+        stopped."""
+        return client.list_run_controls(run_id=run_id, state=state, limit=limit)
+
+    @tool
+    def get_run_control(control_id: RunControlId) -> dict:
+        """One run control, for an admin or the agent it is addressed to."""
+        return client.get_run_control(control_id)
+
+    @mutation_tool
+    def acknowledge_run_control(
+        control_id: RunControlId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Record that YOU read a control addressed to your run.
+
+        Receipt, nothing more — follow up with decline_run_control or
+        complete_run_control when you have actually acted. Re-acknowledging is a
+        no-op. Refused once the control is settled or expired."""
+        return client.acknowledge_run_control(
+            control_id, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def decline_run_control(
+        control_id: RunControlId,
+        reason: RunControlSummary,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Decline a control addressed to your run, with the reason the operator
+        will read. An answer, not an error — say why you will not comply."""
+        return client.decline_run_control(
+            control_id, reason=reason, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def complete_run_control(
+        control_id: RunControlId,
+        summary: RunControlSummary | None = None,
+        handoff: dict | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Complete a control addressed to your run.
+
+        For steer and request_cancel, pass a bounded summary of what you actually
+        did. For request_fresh_context, pass handoff instead: an object with
+        summary (required), unresolved_questions, athena_refs, evidence_refs —
+        bounded lists of short strings; never transcripts or hidden reasoning.
+        Completion is YOUR CLAIM, recorded as such — it does not prove any
+        process-level effect."""
+        return client.complete_run_control(
+            control_id,
+            summary=summary,
+            handoff=handoff,
+            idempotency_key=idempotency_key,
+        )
 
     @mutation_tool
     def undo_action(
