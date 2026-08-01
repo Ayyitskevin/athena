@@ -317,8 +317,17 @@
             <ul class="attachment-list">
                 {% for a in attachments %}
                 <li>
+                    {# An image shows itself and offers the markdown that embeds
+                       it — otherwise the inline-image capability is invisible. #}
+                    {% if a.content_type in inline_image_types %}
+                    <a href="/attachments/{{ a.id }}"><img src="/attachments/{{ a.id }}"
+                         alt="{{ a.filename }}" class="attachment-thumb"></a>
+                    {% endif %}
                     <a href="/attachments/{{ a.id }}">{{ a.filename }}</a>
                     <span class="muted">({{ a.byte_size }} bytes)</span>
+                    {% if a.content_type in inline_image_types %}
+                    <code class="attachment-embed">![{{ a.filename }}](/attachments/{{ a.id }})</code>
+                    {% endif %}
                     {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/attachments/{{ a.id }}/delete"
                           data-confirm="Remove {{ a.filename }}?" style="display:inline">

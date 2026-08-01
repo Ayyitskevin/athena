@@ -2062,3 +2062,22 @@ footer {
 .rollup-done { background: #059669; }
 .rollup-doing { background: #2563eb; }
 .rollup-todo { background: #9ca3af; }
+
+/* Attachment images — a thumbnail so an author can see what a file is, and the
+   markdown that embeds it, because a capability nothing mentions is invisible. */
+.attachment-thumb {
+    max-height: 48px;
+    max-width: 80px;
+    vertical-align: middle;
+    border-radius: 3px;
+    border: 1px solid #e5e7eb;
+    margin-right: 0.4rem;
+}
+.attachment-embed {
+    font-size: 0.8rem;
+    color: #6b7280;
+    background: #f3f4f6;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    user-select: all;
+}

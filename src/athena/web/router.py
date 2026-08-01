@@ -1048,6 +1048,10 @@ def _render_issue_detail(
         "links": dependencies.list_links(conn, issue_id, actor=user),
         "comments": comment_rows,
         "attachments": attachments.list_for(conn, "issue", issue_id),
+        # The types the download route serves inline — the template offers a
+        # thumbnail and an embed snippet for exactly these, so the affordance
+        # and the actual behaviour come from one list.
+        "inline_image_types": attachments.INLINE_CONTENT_TYPES,
         "is_watching": user is not None
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
