@@ -46,7 +46,15 @@
     {% for control in controls %}
         <tr>
             <td>
+                {# A run with no visible activity events has no lineage page —
+                   heartbeat-only runs are steerable but have nothing to draw.
+                   Show the id plainly rather than linking to a 404. #}
+                {% if control.run_id in linkable_runs %}
                 <a href="/aegis/activity/runs/{{ control.run_id | urlencode }}/lineage"><code>{{ control.run_id }}</code></a>
+                {% else %}
+                <code>{{ control.run_id }}</code>
+                <div class="muted">no lineage page — this run has only checked in</div>
+                {% endif %}
                 <div class="muted">{{ control.agent_name }}{% if control.worker_key %} · worker {{ control.worker_key }}{% endif %}</div>
             </td>
             <td>

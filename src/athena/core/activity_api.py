@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from athena.core import activity, activity_chain, agents, run_replay, undo
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, current_actor
 
@@ -501,7 +502,7 @@ class UndoOut(BaseModel):
 
 @router.post("/{event_id}/undo", response_model=UndoOut, status_code=201)
 def undo_event(
-    event_id: int,
+    event_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:

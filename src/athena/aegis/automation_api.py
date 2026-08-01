@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, StrictInt
 
 from athena.aegis import automation, automation_commands
 from athena.core.deps import get_conn
+from athena.core.ids import RowIdPath
 from athena.core.identity import admin_actor
 
 router = APIRouter(prefix="/automation", tags=["aegis"])
@@ -117,7 +118,7 @@ def create(
 
 @router.get("/rules/{rule_id}", response_model=RuleOut)
 def show(
-    rule_id: int,
+    rule_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -129,7 +130,7 @@ def show(
 
 @router.patch("/rules/{rule_id}", response_model=RuleOut)
 def update(
-    rule_id: int,
+    rule_id: RowIdPath,
     payload: RuleUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -145,7 +146,7 @@ def update(
 
 @router.delete("/rules/{rule_id}", status_code=204)
 def remove(
-    rule_id: int,
+    rule_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

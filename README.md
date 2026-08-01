@@ -49,6 +49,10 @@ disables webhook delivery and automation, and has no public-bind option. Use
 `--seed-only` to create the workspace without starting the server. See
 [REVIEW_GUIDE.md](REVIEW_GUIDE.md) for a focused 30-minute code tour.
 
+Setting up an instance you intend to **keep** — bootstrap an administrator,
+onboard your first agent, and close the operator loop once — is the second path
+in [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
 ## The operator loop
 
 | Step | Athena makes it concrete |
@@ -244,6 +248,7 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 
 ## Project guides
 
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — five minutes: the disposable demo, or the instance you keep
 - [REVIEW_GUIDE.md](REVIEW_GUIDE.md) — bounded peer-review path and questions
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, workflow, and architecture guardrails
 - [SECURITY.md](SECURITY.md) — trust boundary and private reporting
@@ -261,6 +266,11 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/FORGE.md](docs/FORGE.md) — forge integration: inbound signed events as imported history
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
+- [docs/RUN_CONTROLS.md](docs/RUN_CONTROLS.md) — steering one live run by recorded request
+- [docs/TRAIL_INTEGRITY.md](docs/TRAIL_INTEGRITY.md) — the activity trail's hash chain, and what it does not claim
+- [docs/ANSWERABILITY.md](docs/ANSWERABILITY.md) — asks and answers per agent, never a score
+- [docs/PLANNING.md](docs/PLANNING.md) — the project timeline and live parent rollups
+- [docs/EDITING.md](docs/EDITING.md) — preview, crash-safe drafts, inline images, HTML export
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals
 - [docs/RUN_LEARNINGS.md](docs/RUN_LEARNINGS.md) — promoting what a run learned into Mentor
 - [docs/DISPATCH.md](docs/DISPATCH.md) — handing work to an external executor, and hearing back

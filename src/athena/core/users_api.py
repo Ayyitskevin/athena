@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from athena import config
 from athena.core import agent_commands, approvals, budgets, user_commands, users
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
@@ -330,7 +331,7 @@ def onboard_agent(
 
 @router.get("/{user_id}", response_model=UserOut)
 def show(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -344,7 +345,7 @@ def show(
 
 @router.put("/{user_id}/role", response_model=UserOut)
 def update_role(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserRoleUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -361,7 +362,7 @@ def update_role(
 
 @router.put("/{user_id}/agent", response_model=UserOut)
 def update_agent(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserAgentUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -381,7 +382,7 @@ def update_agent(
 
 @router.put("/{user_id}/password", response_model=UserOut)
 def reset_password(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserPasswordReset,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -405,7 +406,7 @@ def reset_password(
 
 @router.get("/{user_id}/budget", response_model=BudgetOut | None)
 def read_budget(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | None:
@@ -425,7 +426,7 @@ def read_budget(
 
 @router.put("/{user_id}/budget", response_model=BudgetOut)
 def set_budget(
-    user_id: int,
+    user_id: RowIdPath,
     payload: BudgetUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -455,7 +456,7 @@ def set_budget(
 
 @router.delete("/{user_id}/budget", status_code=204)
 def clear_budget(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -469,7 +470,7 @@ def clear_budget(
 
 @router.put("/{user_id}/paused", response_model=UserOut)
 def update_paused(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserPausedUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -487,7 +488,7 @@ def update_paused(
 
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)
 def revoke_user_tokens(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -505,7 +506,7 @@ def revoke_user_tokens(
 
 @router.post("/{user_id}/offboard", response_model=OffboardOut)
 def offboard(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:

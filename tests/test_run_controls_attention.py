@@ -180,3 +180,40 @@ def test_dashboard_card_names_the_signal_when_controls_wait(tmp_path):
         assert dashboard.status_code == 200
         assert "Run controls awaiting an agent" in dashboard.text
         assert "/admin/run-controls" in dashboard.text
+
+
+def test_the_controls_page_does_not_link_a_run_with_no_lineage_page(tmp_path):
+    # WHY: a heartbeat-only run is steerable (the check-in fallback admits it)
+    # but has no lineage page — that page is built from activity events and
+    # such a run has none. Linking anyway handed the operator a 404 from their
+    # own cockpit (review finding). The id still shows; only the link is gone.
+    app, _ = _app(tmp_path, "controls_linkable.db")
+    with TestClient(app) as client:
+        _bootstrap(client)
+        sol = _agent(client)
+        bearer = _bearer(sol)
+        # Heartbeat only: no tagged write, so no activity events for this run.
+        beat = client.put(
+            "/agent-runs/heartbeat", json={"run_id": "quiet-run"}, headers=bearer
+        )
+        assert beat.status_code in (200, 201), beat.text
+        assert _create(client, "quiet-run", payload="wrap up")
+
+        # And one ordinary run that DOES have events, for contrast.
+        _bind_run(client, bearer, "loud-run")
+        _create(client, "loud-run", payload="carry on")
+
+        client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        page = client.get("/admin/run-controls")
+        assert page.status_code == 200
+        assert "quiet-run" in page.text
+        assert "/aegis/activity/runs/quiet-run/lineage" not in page.text
+        assert "only checked in" in page.text
+        # The run with real events keeps its link.
+        assert "/aegis/activity/runs/loud-run/lineage" in page.text
+        # And the dead link would have 404'd, which is what we avoided.
+        assert client.get("/aegis/activity/runs/quiet-run/lineage").status_code == 404

@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from athena import config
 from athena.core import access, attachment_commands, attachments, tokens
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor, require_token_scope, write_actor
 
@@ -69,7 +70,7 @@ class AttachmentOut(BaseModel):
 
 @router.get("/{attachment_id}")
 def download(
-    attachment_id: int,
+    attachment_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -117,7 +118,7 @@ def download(
 
 @router.delete("/{attachment_id}", status_code=204)
 def remove(
-    attachment_id: int,
+    attachment_id: RowIdPath,
     actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

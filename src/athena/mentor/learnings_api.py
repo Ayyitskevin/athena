@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.core import access
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
 from athena.mentor import run_learnings
@@ -53,7 +54,7 @@ class LearningOut(BaseModel):
     "/issues/{issue_id}/learnings", response_model=LearningOut, status_code=201
 )
 def record_learning(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LearningIn,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -90,7 +91,7 @@ def record_learning(
 
 @router.get("/issues/{issue_id}/runbook", response_model=LearningOut | None)
 def read_runbook(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | None:

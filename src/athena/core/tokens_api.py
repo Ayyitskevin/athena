@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from athena.core import token_commands, tokens
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, token_management_actor
 
@@ -78,7 +79,7 @@ def index(
 
 @router.delete("/{token_id}", status_code=204)
 def revoke(
-    token_id: int,
+    token_id: RowIdPath,
     actor: dict = Depends(token_management_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> Response:

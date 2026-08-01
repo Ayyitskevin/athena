@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from athena.core import approvals, users
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
@@ -69,7 +70,7 @@ def index(
 
 @router.get("/{request_id}", response_model=ApprovalOut)
 def show(
-    request_id: int,
+    request_id: RowIdPath,
     response: Response,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -83,7 +84,7 @@ def show(
 
 @router.post("/{request_id}/decision", response_model=ApprovalOut)
 def decide(
-    request_id: int,
+    request_id: RowIdPath,
     payload: ApprovalDecision,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -111,7 +112,7 @@ def decide(
 
 @router.get("/policies/{user_id}", response_model=list[str])
 def read_policy(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[str]:
@@ -123,7 +124,7 @@ def read_policy(
 
 @router.put("/policies/{user_id}", response_model=list[str])
 def set_policy(
-    user_id: int,
+    user_id: RowIdPath,
     payload: ApprovalPolicyUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -146,7 +147,7 @@ def set_policy(
 
 @router.delete("/policies/{user_id}/{action_kind}", response_model=list[str])
 def clear_policy(
-    user_id: int,
+    user_id: RowIdPath,
     action_kind: str,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
