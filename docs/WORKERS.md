@@ -29,6 +29,13 @@ stored in three separate columns because they are three separate facts:
 Collapsing those into one `killed` flag would be exactly the lie this design
 exists to prevent.
 
+The kill is worker-scoped: it addresses a *process*, whatever run it is on. To
+reach one *run* — steer it, ask it to wind down cooperatively, or ask for a
+fresh-context handoff — record a **run control**
+([`RUN_CONTROLS.md`](RUN_CONTROLS.md)), which follows this same
+request-and-reply discipline at run granularity and may name a worker as
+targeting metadata (never authority).
+
 ## Reading `kill_state`
 
 | State | Means |
