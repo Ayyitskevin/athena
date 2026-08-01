@@ -105,6 +105,20 @@ the newest one and for what tagging still requires.
   reputation scalar, on purpose; the non-claims are in
   [`docs/ANSWERABILITY.md`](docs/ANSWERABILITY.md).
 
+- **Run controls: steering a live run by recorded request.** Between "let it
+  run" and "kill the worker" there was nothing. An admin can now record a
+  bounded control against a live run — `steer` with guidance, `request_cancel`
+  for cooperative wind-down, or `request_fresh_context` for a structured
+  handoff — which only the run's bound agent can read and settle (acknowledge,
+  decline, or complete; unanswered requests expire by the server clock, an
+  observation rather than an event). One row per control (migration 0070) with
+  transition-only triggers, at-most-one-live per (run, kind), domain
+  idempotency keys, and fail-closed admission resolving the run's owner from
+  its binding or sole check-in. REST under `/run-controls`, six MCP tools, a
+  panel on the run lineage page, and the same epistemic honesty as the worker
+  kill: acknowledgement proves receipt, completion is the agent's claim,
+  nothing proves an OS effect (see [`docs/RUN_CONTROLS.md`](docs/RUN_CONTROLS.md)).
+
 - **Editing that keeps its promises, and a way out that needs no Athena.** Page
   and issue editors gained a live side-by-side preview rendered by the same
   function the view itself uses (`render_page_body` / `render_issue_body`), so a

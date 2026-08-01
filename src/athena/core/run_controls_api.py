@@ -17,7 +17,7 @@ import sqlite3
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
-from pydantic import BaseModel, ConfigDict, WithJsonSchema
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 
 from athena.core import run_control_commands, run_controls
 from athena.core.deps import get_conn
@@ -85,8 +85,10 @@ class RunControlCreateIn(BaseModel):
     payload: str | None = None
     # Optional targeting metadata: which registered worker the operator means.
     # Workers hold no credential of their own, so this narrows intent, never
-    # authority.
-    worker_id: int | None = None
+    # authority. Bounded to SQLite's integer range for the same reason the id
+    # PATH parameters are (the adversarial-review 2^63 fix): an out-of-range id
+    # must be a 422, not a driver OverflowError.
+    worker_id: int | None = Field(None, ge=1, le=2**63 - 1)
     ttl_seconds: int | None = None
     # Domain single-flight key; minted server-side when omitted. Retrying with
     # the same key returns the same control; reusing it differently is refused.

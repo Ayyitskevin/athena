@@ -1,5 +1,12 @@
 # Run Report — Buzz Run Steering v1
 
+> **Post-session correction (2026-08-01):** this report's "Branch" and
+> "nothing pushed" statements describe the authoring session's local state and
+> did not survive it. The work actually landed on
+> `claude/athena-buzz-integration-4hkyx8`, was pushed there, and continued
+> (Stage Q, R-1–R-4, and the round-2 features). The technical content below is
+> unchanged; read the delivery-summary claims as historical.
+
 Branch: `codex/buzz-run-steering-v1`
 Starting SHA: `37d6e410bd2c708dff5d43b6347d279da05ea512` (origin/main at session start —
 identical to the research anchor commit, so main had not moved past the research SHA).

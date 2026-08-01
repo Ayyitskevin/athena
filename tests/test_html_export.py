@@ -243,3 +243,125 @@ def test_an_empty_space_still_exports_a_readable_file(tmp_path, monkeypatch):
         ).text
         assert "Handbook" in document
         assert "0 pages exported" in document
+
+
+def test_a_skipped_image_leaves_no_broken_tag_behind(tmp_path, monkeypatch):
+    # WHY: the placeholder must REPLACE the tag. The first implementation
+    # replaced only the src prefix, leaving `<img src=" alt=...>` glued to the
+    # explanation — a broken half-image in the standalone file (review finding).
+    monkeypatch.setattr(html_export, "MAX_IMAGE_BYTES", 10)
+    with TestClient(_app(tmp_path, monkeypatch)) as client:
+        space = _space(client)
+        page = _page(client, space["id"], "Shots", "x")
+        stored = client.post(
+            f"/pages/{page['id']}/attachments",
+            files={"file": ("huge.png", PNG, "image/png")},
+            headers=H1,
+        ).json()
+        client.patch(
+            f"/pages/{page['id']}",
+            json={"body": f"![huge](/attachments/{stored['id']})"},
+            headers=H1,
+        )
+        document = client.get(
+            f"/mentor/spaces/{space['id']}/export.html", headers=H1
+        ).text
+        assert "Image not included" in document
+        assert '<img src=" ' not in document
+        assert 'src=" alt' not in document
+        # The whole original tag is gone — not half of it.
+        assert f"/attachments/{stored['id']}" not in document
+
+
+def test_an_inlined_image_keeps_its_alt_and_whole_tag(tmp_path, monkeypatch):
+    # WHY: inlining swaps the src VALUE only; the tag's alt text and closing
+    # bracket must survive the substitution byte-for-byte.
+    with TestClient(_app(tmp_path, monkeypatch)) as client:
+        space = _space(client)
+        page = _page(client, space["id"], "Shots", "x")
+        stored = client.post(
+            f"/pages/{page['id']}/attachments",
+            files={"file": ("shot.png", PNG, "image/png")},
+            headers=H1,
+        ).json()
+        client.patch(
+            f"/pages/{page['id']}",
+            json={"body": f"![the shot](/attachments/{stored['id']})"},
+            headers=H1,
+        )
+        document = client.get(
+            f"/mentor/spaces/{space['id']}/export.html", headers=H1
+        ).text
+        assert 'src="data:image/png;base64,' in document
+        assert 'alt="the shot"' in document
+        assert f"/attachments/{stored['id']}" not in document
+
+
+def test_subtree_export_contains_the_root_and_its_descendants_only(
+    tmp_path, monkeypatch
+):
+    # WHY: EDITING.md says the builder supports a page-subtree root. The first
+    # implementation appended every page OUTSIDE the subtree as well (and the
+    # root twice) via the unreachable-pages fallback — a whole-space file
+    # wearing a subtree name (review finding).
+    from athena.core import db as core_db
+    from athena.core import users as core_users
+
+    with TestClient(_app(tmp_path, monkeypatch, name="subtree.db")) as client:
+        space = _space(client)
+        root = _page(client, space["id"], "Guide", "root body")
+        child = _page(
+            client, space["id"], "Chapter", "child body", parent_id=root["id"]
+        )
+        _page(client, space["id"], "Section", "grandchild body", parent_id=child["id"])
+        _page(client, space["id"], "Unrelated", "sibling body")
+
+    conn = core_db.connect(tmp_path / "subtree.db")
+    try:
+        actor = core_users.get_user(conn, 1)
+        document = html_export.build_space_html(
+            conn, space["id"], actor=actor, root_page_id=root["id"]
+        )
+        assert document is not None
+        assert document.count('class="page"') == 3
+        assert document.count(f'id="page-{root["id"]}"') == 1
+        assert "Chapter" in document and "Section" in document
+        assert "Unrelated" not in document
+        # An unknown root answers exactly like a page that does not exist.
+        assert (
+            html_export.build_space_html(
+                conn, space["id"], actor=actor, root_page_id=999999
+            )
+            is None
+        )
+    finally:
+        conn.close()
+
+
+def test_the_total_budget_footer_fires_when_the_allowance_runs_out(
+    tmp_path, monkeypatch
+):
+    # WHY: the footer line existed but its condition (remaining <= 0) could
+    # only trigger on an exact-byte landing, since images larger than the
+    # remainder are skipped BEFORE spending it — a bound whose disclosure
+    # never fires reads as "nothing was left out" (review finding).
+    monkeypatch.setattr(html_export, "MAX_INLINE_TOTAL_BYTES", 10)
+    with TestClient(_app(tmp_path, monkeypatch)) as client:
+        space = _space(client)
+        page = _page(client, space["id"], "Shots", "x")
+        stored = client.post(
+            f"/pages/{page['id']}/attachments",
+            files={"file": ("shot.png", PNG, "image/png")},
+            headers=H1,
+        ).json()
+        assert stored["byte_size"] > 10  # bigger than the whole allowance
+        client.patch(
+            f"/pages/{page['id']}",
+            json={"body": f"![shot](/attachments/{stored['id']})"},
+            headers=H1,
+        )
+        document = client.get(
+            f"/mentor/spaces/{space['id']}/export.html", headers=H1
+        ).text
+        assert "Image not included" in document
+        assert "file grew too large" in document

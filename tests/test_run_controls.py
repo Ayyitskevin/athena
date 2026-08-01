@@ -1617,3 +1617,43 @@ def test_schema_version_and_result_payload_round_trip(tmp_path):
         )
     finally:
         conn.close()
+
+
+def test_settlement_requires_a_write_scope_not_just_the_right_identity(tmp_path):
+    """RUN_CONTROLS.md: settling takes "an agent account and a live write
+    scope". The identity check alone passing would let a read-only credential
+    of the RIGHT agent answer a control — this pins the scope half of the
+    documented rule (review finding: documented, previously untested)."""
+    app, db_file = _app(tmp_path, "write_scope.db")
+    with TestClient(app) as client:
+        _bootstrap(client)
+        sol = _agent(client)
+        bearer = _bearer(sol)
+        _bind_run(client, bearer, "goal-ws")
+        control = _create(client, "goal-ws").json()
+
+        mint = db.connect(db_file)
+        try:
+            readonly = tokens.create_token(
+                mint, user_id=sol["user"]["id"], name="ro", scopes=["read"]
+            )
+        finally:
+            mint.close()
+        ro_bearer = {"Authorization": f"Bearer {readonly['token']}"}
+
+        refused = client.post(
+            f"/run-controls/{control['id']}/acknowledge", headers=ro_bearer
+        )
+        assert refused.status_code == 403
+        assert "write scope" in refused.json()["detail"]
+
+        # Reading its instructions stays allowed on any live credential of the
+        # bound agent — only ANSWERING is write-scoped — and the refused
+        # attempt changed nothing.
+        assert (
+            client.get(f"/run-controls/{control['id']}", headers=ro_bearer).status_code
+            == 200
+        )
+        current = client.get(f"/run-controls/{control['id']}", headers=bearer).json()
+        assert current["state"] == "requested"
+        assert current["acknowledged_at"] is None

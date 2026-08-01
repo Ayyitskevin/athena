@@ -122,7 +122,9 @@ escalation, SLA math. Athena schedules nothing and chases nobody.
 
 If the need reappears, it should arrive with the question it answers, not as a
 column. Note for whoever picks it up: the guide names "migration 0069" for it,
-but 0069 and 0070 are long since applied — the next free number is 0071.
+but that number (and several after it) is long since applied — check
+`src/athena/core/migrations/` for the next free number rather than trusting
+any doc to have kept count.
 
 ## Limits, stated
 

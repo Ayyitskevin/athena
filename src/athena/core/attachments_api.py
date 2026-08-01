@@ -5,10 +5,14 @@ Upload + list live on the OWNING module's routers (an issue attachment under
 exists, and core/ must not import aegis/mentor. Download and delete only touch the
 attachments table, so they live here in core/ and serve both kinds.
 
-Download is an open read (like every other read), but always served as an
-ATTACHMENT (never inline) with the global nosniff header, so an uploaded HTML/SVG
-can't execute in the browser. Delete is uploader-only and requires the write scope
-that matches the attachment's kind.
+Download is an open read (like every other read). Raster images whose type was
+SNIFFED FROM THE BYTES at upload (the closed allowlist in
+``attachments.INLINE_CONTENT_TYPES`` — deliberately excluding SVG, which is a
+scriptable document) are served inline so a ``![…](/attachments/N)`` displays;
+everything else is served as an ATTACHMENT. Both paths carry the global nosniff
+header and a type that never comes from the uploader's claim, so an uploaded
+HTML/SVG cannot execute in the browser. Delete is uploader-only and requires
+the write scope that matches the attachment's kind.
 """
 
 from __future__ import annotations

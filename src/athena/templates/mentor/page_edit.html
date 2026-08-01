@@ -53,6 +53,12 @@
 
     <form method="post" action="/mentor/pages/{{ page.id }}/edit" class="issue-form">
         {% include "partials/csrf.html" %}
+        {# The baseline this editing session started from, carried through every
+           autosave so the draft records the page the author actually SAW.
+           Restoring a draft continues the session that produced it, so the
+           draft's own baseline rides along — not today's etag, which would
+           quietly mark stale work fresh. #}
+        <input type="hidden" name="based_on" value="{{ draft.based_on if restored else page_etag }}">
         <div class="form-group">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required value="{{ draft.title if restored else page.title }}">

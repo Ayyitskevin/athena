@@ -42,16 +42,10 @@ def get_draft(conn: sqlite3.Connection, *, page_id: int, owner_id: int) -> dict 
     return None if row is None else dict(row)
 
 
-def list_for_owner(
-    conn: sqlite3.Connection, *, owner_id: int, limit: int = 50
-) -> list[dict]:
-    """One author's drafts, freshest first — "what am I part-way through?"."""
-    rows = conn.execute(
-        f"SELECT {_COLUMNS} FROM page_drafts WHERE owner_id = ? "
-        "ORDER BY updated_at DESC, page_id LIMIT ?",
-        (owner_id, max(1, min(int(limit), 200))),
-    ).fetchall()
-    return [dict(row) for row in rows]
+# NOTE: a "list my drafts" reader was shipped here once, unused — removed
+# rather than left as dead code (review finding). The 0071 owner index that
+# would serve it remains, as migrations are forward-only; the reader returns
+# with the surface that actually renders it.
 
 
 def save_draft(

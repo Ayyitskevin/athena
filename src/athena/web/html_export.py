@@ -44,7 +44,10 @@ MAX_INLINE_TOTAL_BYTES = 32 * 1024 * 1024
 #: The rendered form of an Athena attachment reference. The renderer normalises
 #: its own output, so this matches what `render_body` actually emits rather than
 #: anything an author typed.
-_IMG_SRC_RE = re.compile(r'<img\s+src="/attachments/(\d+)"', re.IGNORECASE)
+# The WHOLE tag is matched so a skipped image can be replaced by its
+# placeholder alone — replacing only the src prefix left a dangling
+# `<img src="` glued to the tag's remaining attributes.
+_IMG_SRC_RE = re.compile(r'(<img\s+src=")/attachments/(\d+)("[^>]*>)', re.IGNORECASE)
 
 _STYLE = """
 body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
@@ -77,6 +80,13 @@ def _ordered_subtree(rows: list[dict], root_id: int | None) -> list[tuple[int, d
     so the traversal costs no queries and cannot loop: a page whose parent is not
     in the visible set is attached at the root instead of vanishing, because a
     page the reader may see should not be hidden by one they may not.
+
+    With ``root_id`` the list is exactly that page and its descendants — the
+    root at depth 0, nothing outside the subtree. (A descendant whose parent
+    chain leaves the visible set re-attaches at the SPACE root, so it exits the
+    subtree — membership must be provable from what this reader can see.) An
+    unknown root returns the empty list, which the caller answers exactly as it
+    would for a page that does not exist.
     """
     by_parent: dict[int | None, list[dict]] = {}
     present = {row["id"] for row in rows}
@@ -95,7 +105,16 @@ def _ordered_subtree(rows: list[dict], root_id: int | None) -> list[tuple[int, d
             ordered.append((depth, row))
             walk(row["id"], depth + 1)
 
-    walk(root_id, 0)
+    if root_id is not None:
+        root = next((row for row in rows if row["id"] == root_id), None)
+        if root is None:
+            return []
+        seen.add(root_id)
+        ordered.append((0, root))
+        walk(root_id, 1)
+        return ordered
+
+    walk(None, 0)
     # Anything the walk could not reach still belongs in the file.
     for row in rows:
         if row["id"] not in seen:
@@ -103,28 +122,38 @@ def _ordered_subtree(rows: list[dict], root_id: int | None) -> list[tuple[int, d
     return ordered
 
 
-def _inline_images(html: str, conn: sqlite3.Connection, budget: list[int]) -> str:
+def _inline_images(html: str, conn: sqlite3.Connection, budget: dict) -> str:
     """Replace attachment image sources with self-contained data URIs.
 
     ``/attachments/N`` is a live, visibility-gated route: in a file opened from
     disk it resolves to nothing. Inlining the bytes is what makes the document
-    genuinely standalone. ``budget`` is a one-element list holding the remaining
-    byte allowance, so the cap applies across the WHOLE export rather than per
-    image — one enormous page cannot spend everyone else's room silently.
+    genuinely standalone. ``budget["remaining"]`` is the byte allowance for the
+    WHOLE export rather than per image — one enormous page cannot spend
+    everyone else's room silently — and ``budget["budget_skips"]`` counts the
+    images that allowance (not the per-image cap) forced out, because the
+    footer's "file grew too large" line must fire exactly when that happened.
     """
 
     def replace(match: re.Match[str]) -> str:
-        attachment_id = int(match.group(1))
+        attachment_id = int(match.group(2))
         record = attachments.get(conn, attachment_id)
         if record is None or record["content_type"] not in (
             attachments.INLINE_CONTENT_TYPES
         ):
             return match.group(0)
-        if record["byte_size"] > MAX_IMAGE_BYTES or record["byte_size"] > budget[0]:
+        if (
+            record["byte_size"] > MAX_IMAGE_BYTES
+            or record["byte_size"] > budget["remaining"]
+        ):
+            if record["byte_size"] <= MAX_IMAGE_BYTES:
+                budget["budget_skips"] += 1
+            # The placeholder REPLACES the tag: a file opened from disk must
+            # not carry a broken half-image beside the explanation of why the
+            # image is absent.
             return (
                 f'<span class="missing-image">Image not included: '
                 f"{html_escape(record['filename'])} "
-                f'({record["byte_size"]} bytes)</span><img src="'
+                f"({record['byte_size']} bytes)</span>"
             )
         stored = attachments.get_stored_name(conn, attachment_id)
         if stored is None:
@@ -136,9 +165,13 @@ def _inline_images(html: str, conn: sqlite3.Connection, budget: list[int]) -> st
                 data = handle.read()
         except (OSError, ValueError):
             return match.group(0)
-        budget[0] -= len(data)
+        budget["remaining"] -= len(data)
         encoded = base64.b64encode(data).decode("ascii")
-        return f'<img src="data:{record["content_type"]};base64,{encoded}"'
+        return (
+            f"{match.group(1)}"
+            f"data:{record['content_type']};base64,{encoded}"
+            f"{match.group(3)}"
+        )
 
     return _IMG_SRC_RE.sub(replace, html)
 
@@ -164,17 +197,12 @@ def build_space_html(
 
     rows = pages.list_pages_in_space(conn, space_id)
     ordered = _ordered_subtree(rows, root_page_id)
-    if root_page_id is not None:
-        root = next((row for row in rows if row["id"] == root_page_id), None)
-        if root is None:
-            return None
-        ordered = [(0, root)] + [
-            (depth + 1, row) for depth, row in _ordered_subtree(rows, root_page_id)
-        ]
+    if root_page_id is not None and not ordered:
+        return None
 
     omitted_pages = max(0, len(ordered) - MAX_PAGES)
     ordered = ordered[:MAX_PAGES]
-    budget = [MAX_INLINE_TOTAL_BYTES]
+    budget = {"remaining": MAX_INLINE_TOTAL_BYTES, "budget_skips": 0}
 
     parts: list[str] = []
     toc: list[str] = []
@@ -220,7 +248,7 @@ def build_space_html(
             f"{'page was' if omitted_pages == 1 else 'pages were'} not included "
             f"— this export stops at {MAX_PAGES} pages."
         )
-    if budget[0] <= 0:
+    if budget["budget_skips"]:
         notes.append("Some images were left out because the file grew too large.")
 
     return (
