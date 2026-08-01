@@ -1273,7 +1273,11 @@ class AthenaClient:
         idempotency_key: str | None = None,
     ) -> Any:
         """Admin: record a control request against a live run. Records the ask;
-        the bound agent answers or it expires."""
+        the bound agent answers or it expires.
+
+        The key rides both layers on purpose: in the body it becomes the
+        control's domain single-flight binding, and as the Idempotency-Key
+        header it gets the transport replay contract every other mutation has."""
         return self._mutate(
             self._client.post,
             "/run-controls",
@@ -1285,6 +1289,7 @@ class AthenaClient:
                 ttl_seconds=ttl_seconds,
                 idempotency_key=idempotency_key,
             ),
+            idempotency_key=idempotency_key,
         )
 
     def list_run_controls(

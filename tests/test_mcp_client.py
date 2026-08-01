@@ -321,6 +321,32 @@ MUTATION_CASES = [
         lambda c, k: c.cancel_worker_kill(3, idempotency_key=k),
     ),
     (
+        "create_run_control",
+        "POST",
+        "/run-controls",
+        lambda c, k: c.create_run_control(
+            run_id="goal-1", kind="steer", payload="x", idempotency_key=k
+        ),
+    ),
+    (
+        "acknowledge_run_control",
+        "POST",
+        "/run-controls/3/acknowledge",
+        lambda c, k: c.acknowledge_run_control(3, idempotency_key=k),
+    ),
+    (
+        "decline_run_control",
+        "POST",
+        "/run-controls/3/decline",
+        lambda c, k: c.decline_run_control(3, reason="busy", idempotency_key=k),
+    ),
+    (
+        "complete_run_control",
+        "POST",
+        "/run-controls/3/complete",
+        lambda c, k: c.complete_run_control(3, summary="done", idempotency_key=k),
+    ),
+    (
         "undo_action",
         "POST",
         "/activity/12/undo",
@@ -471,6 +497,10 @@ MCP_MUTATION_CASES = [
     ("worker_heartbeat", {"worker_key": "w-1"}),
     ("request_worker_kill", {"worker_id": 3}),
     ("cancel_worker_kill", {"worker_id": 3}),
+    ("create_run_control", {"run_id": "goal-1", "kind": "steer", "payload": "x"}),
+    ("acknowledge_run_control", {"control_id": 3}),
+    ("decline_run_control", {"control_id": 3, "reason": "busy"}),
+    ("complete_run_control", {"control_id": 3, "summary": "done"}),
     ("undo_action", {"event_id": 12}),
     ("decide_approval", {"request_id": 7, "decision": "approve"}),
     ("set_approval_policy", {"user_id": 9, "action_kind": "issue.close"}),
