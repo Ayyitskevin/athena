@@ -110,7 +110,7 @@ The top-level object contains:
 | `scope` | Exact scope id, `visible_to_request_actor` |
 | `semantics` | Snapshot kind and explicit assertions not made |
 | `issue` | Root issue summary and bounded description |
-| `issue_etag` | Strong validator for the issue singleton representation |
+| `issue_etag` | Strong validator for the request actor's issue singleton representation |
 | `warnings` | Advisory warning codes described below |
 | `hierarchy` | Visible parent and bounded visible children |
 | `dependencies` | Four bounded visible relationship groups |
@@ -251,7 +251,7 @@ Two strong, opaque validators appear, and they are not interchangeable:
    or when a claim handoff is yielded or resumed, even if the issue singleton
    does not. The official MCP client exposes this
    header as top-level `_etag`.
-2. The JSON body's `issue_etag` validates the root issue's public singleton
+2. The JSON body's `issue_etag` validates the root issue's actor-visible singleton
    representation. Copy this value exactly into `If-Match`/`if_match`
    for `PATCH /issues/{id}` and the guarded `PUT` assignee, project, and sprint
    issue mutations, and for both acquisition and same-holder renewal through
@@ -263,6 +263,13 @@ quotes and must be treated as opaque. A guarded claim accepts exactly one strong
 root issue tag; the context `_etag`, weak tags, wildcards, and tag lists do not
 stand in for it.
 
+The singleton projection and its validator use the same visibility boundary. If
+the issue's parent is hidden from the request actor, `parent_id` is `null` in the
+singleton and the tag hashes that redacted value. Replacing one hidden parent with
+another therefore does not invalidate that actor's tag, while it does invalidate
+the tag of an actor who can see the relationship. The write command compares the
+same actor-visible representation inside its transaction.
+
 This endpoint currently returns the context tag as a response validator but
 does not implement conditional `If-None-Match`/`304` reads. The browser
 preview displays `issue_etag` but does not emit the JSON context tag as its
@@ -273,8 +280,8 @@ own HTML response validator.
 - A missing root and a root hidden from the actor both return `404`. REST
   uses the same `{"detail":"no such issue"}` response; the browser uses the
   same static not-found response. The caller cannot distinguish those cases.
-- A hidden parent is `null`. Hidden children and dependency targets are
-  omitted.
+- A hidden parent is `null` in both the issue singleton and
+  `hierarchy.parent`. Hidden children and dependency targets are omitted.
 - Hidden outgoing targets and hidden backlink sources are omitted.
 - Activity is filtered through event visibility before its count and limit.
 - Claim handoffs are returned only with a visible root issue. Their structured

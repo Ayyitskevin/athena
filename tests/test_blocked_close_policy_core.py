@@ -196,11 +196,11 @@ def test_eligible_human_requires_explicit_audited_override_with_lineage_and_etag
     _block(conn, blocker, target, admin)
     notifications.watch(conn, watcher["id"], "issue", target["id"])
 
-    stale_tag = issue_etags.current_etag(conn, target)
+    stale_tag = issue_etags.current_etag(conn, target, actor=actor)
     target = issue_commands.update_issue(
         conn, actor=actor, issue_id=target["id"], title="Target revised"
     )
-    current_tag = issue_etags.current_etag(conn, target)
+    current_tag = issue_etags.current_etag(conn, target, actor=actor)
     with pytest.raises(issue_commands.IssueCommandError) as stale:
         issue_commands.update_issue(
             conn,
@@ -254,7 +254,7 @@ def test_eligible_human_requires_explicit_audited_override_with_lineage_and_etag
         run_context.reset_run_id(run_token)
 
     assert updated["status"] == "done"
-    assert issue_etags.current_etag(conn, updated) != current_tag
+    assert issue_etags.current_etag(conn, updated, actor=actor) != current_tag
     events = [
         dict(row)
         for row in conn.execute(

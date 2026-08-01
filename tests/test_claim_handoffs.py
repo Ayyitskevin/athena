@@ -67,7 +67,7 @@ def _delegated_issue(conn):
 def _issue_tag(conn, issue_id):
     issue = issues.get_issue(conn, issue_id)
     assert issue is not None
-    return issue_etags.current_etag(conn, issue)
+    return issue_etags.current_etag(conn, issue, actor=_actor(conn, 1))
 
 
 def _claim(conn, user_id, issue_id, *, generation=None):

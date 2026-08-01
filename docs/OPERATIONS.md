@@ -1208,6 +1208,13 @@ edits and placement changes by copying that value exactly into `If-Match` on
 The header is optional for backward compatibility, but agent read-modify-write
 loops should send it.
 
+The tag covers the representation visible to the actor that fetched it. A hidden
+parent is serialized and hashed as `parent_id: null`; changing one hidden parent
+to another does not stale that actor's tag, while it does stale a tag fetched by
+an actor who can see the relationship. Fetch and submit the validator using the
+same identity. A tag from a more privileged view does not authorize a less
+privileged actor's write.
+
 A stale strong tag returns `412` with `code: precondition_failed` and the
 current `ETag` response header; refetch, merge deliberately, and retry with that
 fresh tag. Malformed and oversized conditions return `400 invalid_if_match` and

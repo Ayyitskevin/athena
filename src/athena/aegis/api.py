@@ -258,6 +258,7 @@ class IssueOut(BaseModel):
     assignee_is_agent: bool | None = None
     project_id: int | None = None
     project_name: str | None = None
+    # Null when there is no parent or the request actor cannot see it.
     parent_id: int | None = None
     # The sprint this issue is in, or null for the backlog.
     sprint_id: int | None = None
@@ -447,31 +448,38 @@ def _validate_key(key: str) -> str:
     return normalized
 
 
-def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
-    """Attach the issue's labels under a "labels" key. Issues own their core row
-    (issues.py); labels are composed on here so the two modules stay in their
-    lanes and reads still come back as one object for the client."""
-    issue["labels"] = labels.labels_for_issue(conn, issue["id"])
-    return issue
+def _with_labels(conn: sqlite3.Connection, issue: dict, *, actor: dict | None) -> dict:
+    """Return one canonical actor-visible issue representation with labels."""
+    return issue_etags.resource_and_etag(conn, issue, actor=actor)[0]
 
 
 def _tagged_issue(
     conn: sqlite3.Connection,
     issue: dict,
     response: Response,
+    *,
+    actor: dict | None,
 ) -> dict:
-    """Return the exact public representation and its matching strong ETag."""
-    public, current_etag = issue_etags.resource_and_etag(conn, issue)
+    """Return the exact actor-visible representation and matching strong ETag."""
+    public, current_etag = issue_etags.resource_and_etag(conn, issue, actor=actor)
     response.headers["ETag"] = current_etag
     return public
 
 
-def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
-    """Same as _with_labels but for a list, using one bulk query (no N+1)."""
+def _with_labels_many(
+    conn: sqlite3.Connection, rows: list[dict], *, actor: dict | None
+) -> list[dict]:
+    """Return canonical actor-visible list representations without N+1 queries."""
     by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
-    for r in rows:
-        r["labels"] = by_issue.get(r["id"], [])
-    return rows
+    return [
+        resource
+        for resource, _ in issue_etags.resources_and_etags(
+            conn,
+            rows,
+            actor=actor,
+            label_rows_by_issue=by_issue,
+        )
+    ]
 
 
 @router.post("", response_model=IssueOut, status_code=201)
@@ -495,7 +503,7 @@ def create(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _tagged_issue(conn, issue, response)
+    return _tagged_issue(conn, issue, response, actor=actor)
 
 
 def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
@@ -588,7 +596,7 @@ def index(
             )
         except issue_query.QueryCompileError as exc:
             raise _query_refusal(exc, exc.atom) from exc
-        return _with_labels_many(conn, rows)
+        return _with_labels_many(conn, rows, actor=actor)
     # Optional filters, same semantics the web list uses (one shared path in
     # issues.list_issues). A label name is resolved to issue ids by labels.py so
     # issues.py stays decoupled from the join; an unknown label matches nothing.
@@ -619,7 +627,7 @@ def index(
         limit=limit,
         offset=offset,
     )
-    return _with_labels_many(conn, rows)
+    return _with_labels_many(conn, rows, actor=actor)
 
 
 class QueryCountOut(BaseModel):
@@ -726,7 +734,7 @@ def show(
         conn, actor, issue["project_id"]
     ):
         raise HTTPException(status_code=404, detail="no such issue")
-    return _tagged_issue(conn, issue, response)
+    return _tagged_issue(conn, issue, response, actor=actor)
 
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
@@ -817,7 +825,7 @@ def link_issue_mention(
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    return _tagged_issue(conn, updated, response, actor=actor)
 
 
 class IssueStateOut(BaseModel):
@@ -925,7 +933,7 @@ def update(
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    return _tagged_issue(conn, updated, response, actor=actor)
 
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
@@ -949,7 +957,7 @@ def set_assignee(
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    return _tagged_issue(conn, updated, response, actor=actor)
 
 
 @router.post("/{issue_id}/archive", response_model=IssueOut)
@@ -967,7 +975,7 @@ def archive_issue(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    return _with_labels(conn, updated, actor=actor)
 
 
 @router.post("/{issue_id}/unarchive", response_model=IssueOut)
@@ -984,7 +992,7 @@ def unarchive_issue(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    return _with_labels(conn, updated, actor=actor)
 
 
 _BULK_MAX = 500
@@ -1080,7 +1088,7 @@ def set_sprint(
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    return _tagged_issue(conn, updated, response, actor=actor)
 
 
 @router.put("/{issue_id}/project", response_model=IssueOut)
@@ -1104,7 +1112,7 @@ def set_project(
         )
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    return _tagged_issue(conn, updated, response, actor=actor)
 
 
 @router.put("/{issue_id}/parent", response_model=IssueOut)
@@ -1124,7 +1132,7 @@ def set_parent(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, updated)
+    return _with_labels(conn, updated, actor=actor)
 
 
 @router.get("/{issue_id}/children", response_model=list[IssueOut])
@@ -1142,7 +1150,7 @@ def list_children(
     children = issues.list_children(
         conn, issue_id, visible_project_ids=access.visible_project_filter(conn, actor)
     )
-    return _with_labels_many(conn, children)
+    return _with_labels_many(conn, children, actor=actor)
 
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
@@ -1809,7 +1817,7 @@ def attach_label(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, issue)
+    return _with_labels(conn, issue, actor=actor)
 
 
 @router.delete("/{issue_id}/labels/{label_id}", response_model=IssueOut)
@@ -1825,7 +1833,7 @@ def detach_label(
         )
     except issue_commands.IssueCommandError as exc:
         raise _issue_command_http_error(exc) from exc
-    return _with_labels(conn, issue)
+    return _with_labels(conn, issue, actor=actor)
 
 
 # --- Contributors on an issue: delegating teammates (humans or agents) ------

@@ -196,6 +196,24 @@ def test_issue_detail_hides_private_parent(tmp_path):
         conn.commit()
 
         # The public child is viewable by the outsider, but its hidden parent's title
-        # must not render; the creator (who can see the parent) does see it.
+        # and id must not render; the creator (who can see the parent) does see them.
         anon = client.get(f"/aegis/issues/{child}").text
         assert "SecretParent" not in anon
+
+        assert client.get(f"/issues/{child}").json()["parent_id"] is None
+        assert (
+            client.get(f"/issues/{child}", headers=H_OUTSIDER).json()["parent_id"]
+            is None
+        )
+        assert (
+            client.get(f"/issues/{child}", headers=H_CREATOR).json()["parent_id"]
+            == parent
+        )
+
+        login = client.post(
+            "/login",
+            data={"email": "c@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert "SecretParent" in client.get(f"/aegis/issues/{child}").text

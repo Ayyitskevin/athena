@@ -498,7 +498,9 @@ def build_work_context(
 
         visible_project_ids = access.visible_project_filter(conn, actor)
         visible_space_ids = access.visible_space_filter(conn, actor)
-        public_issue, issue_etag = issue_etags.resource_and_etag(conn, issue)
+        public_issue, issue_etag = issue_etags.resource_and_etag(
+            conn, issue, actor=actor
+        )
         status_category = statuses.category_of(
             conn, issue["project_id"], issue["status"]
         )

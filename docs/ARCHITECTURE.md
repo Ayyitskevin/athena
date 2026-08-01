@@ -231,8 +231,10 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   or placement changes; this is intentionally broader than per-target
   invalidation. A paused account's keyed requests skip idempotency processing
   entirely and receive the same audited 403 refusal as its unkeyed requests.
-- Strong, content-derived issue `ETag` validators cover the exact public singleton
-  representation. Core issue edits plus assignee/project/sprint placement accept
+- Strong, content-derived issue `ETag` validators cover the exact actor-visible
+  singleton representation. A parent hidden from that actor is projected as null
+  before both serialization and hashing. Core issue edits plus
+  assignee/project/sprint placement accept
   optional `If-Match`; authorization and validation precede an atomic comparison
   and write, preventing two read-modify-write loops from committing the same tag.
 - Users have coarse roles: `admin`, `member`, and read-only `viewer`. The first

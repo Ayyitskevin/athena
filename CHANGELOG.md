@@ -12,6 +12,14 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **Issue relationships no longer disclose hidden parents through public
+  representations or validators.** Issue JSON now returns a null `parent_id`
+  when the parent is absent or outside the actor's visible projects, and strong
+  ETags hash that exact actor-visible representation across singleton, list,
+  saved-filter, work-context, board, write-precondition, and claim surfaces.
+  Changing one hidden parent to another therefore leaves an outsider's body and
+  validator unchanged, while gaining project access reveals both together.
+
 - **Supported deployments now start through a fail-closed launcher.**
   `athena-serve` preflights absolute storage paths, SQLite and attachment
   integrity, an active administrator's durable recovery credential, direct

@@ -55,7 +55,7 @@ def _user(conn, user_id: int) -> dict:
 def _issue_tag(conn, issue_id: int) -> str:
     issue = issues.get_issue(conn, issue_id)
     assert issue is not None
-    return issue_etags.current_etag(conn, issue)
+    return issue_etags.current_etag(conn, issue, actor=_user(conn, 1))
 
 
 def _seed_claim(

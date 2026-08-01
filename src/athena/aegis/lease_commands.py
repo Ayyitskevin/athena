@@ -155,6 +155,7 @@ def claim_issue(
             conn,
             issue,
             if_match,
+            actor=actor,
             required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
             exact=True,
         )

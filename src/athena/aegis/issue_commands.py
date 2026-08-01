@@ -130,10 +130,11 @@ def _check_issue_precondition(
     issue: dict,
     if_match: list[str] | None,
     *,
+    actor: dict,
     required_detail: str | None = None,
     exact: bool = False,
 ) -> None:
-    """Evaluate one issue precondition against the current public representation.
+    """Evaluate one issue precondition against the actor-visible representation.
 
     The caller must hold the write transaction that owns the mutation. Optional
     issue updates retain normal HTTP If-Match list/wildcard semantics; commands
@@ -148,7 +149,7 @@ def _check_issue_precondition(
             )
         return
 
-    current_etag = issue_etags.current_etag(conn, issue)
+    current_etag = issue_etags.current_etag(conn, issue, actor=actor)
     try:
         condition = etag.parse_if_match(if_match)
         matches = (
@@ -492,7 +493,7 @@ def _update_issue(
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
         # writers holding the same tag cannot both pass and mutate.
-        _check_issue_precondition(conn, before, if_match)
+        _check_issue_precondition(conn, before, if_match, actor=actor)
 
         final_status = status_value or before["status"]
         if (

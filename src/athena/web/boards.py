@@ -112,10 +112,15 @@ def _render_board(
     )
     _attach_labels(conn, filtered)
     if user is not None:
-        for issue in filtered:
-            issue["etag"] = issue_etags.representation_and_etag(issue, issue["labels"])[
-                1
-            ]
+        labels_by_issue = {issue["id"]: issue["labels"] for issue in filtered}
+        tagged = issue_etags.resources_and_etags(
+            conn,
+            filtered,
+            actor=user,
+            label_rows_by_issue=labels_by_issue,
+        )
+        for issue, (_, current_etag) in zip(filtered, tagged, strict=True):
+            issue["etag"] = current_etag
 
     # Each card carries its OWN project's status menu, so the keyboard "Move" control
     # offers exactly the valid targets for that issue (the backlog uses the default

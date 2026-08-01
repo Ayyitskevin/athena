@@ -193,4 +193,4 @@ def run(
         # running it — the reason to save that query rather than a fixed user id.
         actor=actor,
     )
-    return api._with_labels_many(conn, rows)
+    return api._with_labels_many(conn, rows, actor=actor)

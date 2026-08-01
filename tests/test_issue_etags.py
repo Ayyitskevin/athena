@@ -62,6 +62,169 @@ def test_issue_etag_is_strong_stable_and_changes_only_with_representation(tmp_pa
         assert changed.json()["title"] == "two"
 
 
+def test_hidden_parent_is_redacted_from_actor_visible_etags_and_writes(tmp_path):
+    """A hidden relationship must not leak through JSON, validators, or If-Match."""
+    with TestClient(create_app(tmp_path / "parent-visibility.db")) as client:
+        _bootstrap(client)
+        outsider = client.post(
+            "/users",
+            json={
+                "email": "outsider@e.com",
+                "name": "Outsider",
+                "password": "pw",
+                "is_agent": True,
+            },
+            headers=H1,
+        ).json()
+        secret_project = client.post(
+            "/projects",
+            json={"name": "Secret", "key": "SEC"},
+            headers=H1,
+        ).json()
+        first_parent, _ = _create_issue(
+            client,
+            title="First hidden parent",
+            project_id=secret_project["id"],
+        )
+        second_parent, _ = _create_issue(
+            client,
+            title="Second hidden parent",
+            project_id=secret_project["id"],
+        )
+        child, child_tag = _create_issue(client, title="redactionchild")
+        assigned = client.put(
+            f"/issues/{child['id']}/assignee",
+            json={"assignee_id": outsider["id"]},
+            headers={**H1, "If-Match": child_tag},
+        )
+        assert assigned.status_code == 200
+        assert (
+            client.put(
+                f"/issues/{child['id']}/parent",
+                json={"parent_id": first_parent["id"]},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        path = f"/issues/{child['id']}"
+        public_parent_view = client.get(path, headers=H2)
+        assert public_parent_view.json()["parent_id"] == first_parent["id"]
+        assert (
+            client.put(
+                f"/projects/{secret_project['id']}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+
+        anonymous_first = client.get(path)
+        outsider_first = client.get(path, headers=H2)
+        owner_first = client.get(path, headers=H1)
+        assert anonymous_first.json()["parent_id"] is None
+        assert outsider_first.json()["parent_id"] is None
+        assert owner_first.json()["parent_id"] == first_parent["id"]
+        assert anonymous_first.headers["etag"] == outsider_first.headers["etag"]
+        assert outsider_first.headers["etag"] == strong_etag(
+            "issue-v1", outsider_first.json()
+        )
+        assert owner_first.headers["etag"] == strong_etag(
+            "issue-v1", owner_first.json()
+        )
+        assert owner_first.headers["etag"] != outsider_first.headers["etag"]
+        assert owner_first.headers["etag"] == public_parent_view.headers["etag"]
+
+        for params in ({"search": "redactionchild"}, {"q": "redactionchild"}):
+            listed = client.get("/issues", params=params, headers=H2)
+            assert listed.status_code == 200
+            listed_child = next(
+                row for row in listed.json() if row["id"] == child["id"]
+            )
+            assert listed_child["parent_id"] is None
+
+        outsider_context = client.get(f"{path}/work-context", headers=H2).json()
+        assert outsider_context["hierarchy"]["parent"] is None
+        assert outsider_context["issue_etag"] == outsider_first.headers["etag"]
+
+        assert (
+            client.put(
+                f"/issues/{child['id']}/parent",
+                json={"parent_id": second_parent["id"]},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        outsider_second = client.get(path, headers=H2)
+        owner_second = client.get(path, headers=H1)
+        assert outsider_second.json() == outsider_first.json()
+        assert outsider_second.headers["etag"] == outsider_first.headers["etag"]
+        assert owner_second.json()["parent_id"] == second_parent["id"]
+        assert owner_second.headers["etag"] != owner_first.headers["etag"]
+
+        wrong_actor_tag = client.patch(
+            path,
+            json={"body": "must not land"},
+            headers={**H2, "If-Match": owner_second.headers["etag"]},
+        )
+        assert wrong_actor_tag.status_code == 412
+        assert wrong_actor_tag.headers["etag"] == outsider_second.headers["etag"]
+
+        grant = client.post(
+            f"/projects/{secret_project['id']}/members",
+            json={"user_id": outsider["id"]},
+            headers=H1,
+        )
+        assert grant.status_code == 201
+        member_view = client.get(path, headers=H2)
+        assert member_view.json()["parent_id"] == second_parent["id"]
+        assert member_view.headers["etag"] == owner_second.headers["etag"]
+
+        revoke = client.delete(
+            f"/projects/{secret_project['id']}/members/{outsider['id']}",
+            headers=H1,
+        )
+        assert revoke.status_code == 200
+        redacted_again = client.get(path, headers=H2)
+        assert redacted_again.json()["parent_id"] is None
+        assert redacted_again.headers["etag"] == outsider_second.headers["etag"]
+
+        stale_owner = client.patch(
+            path,
+            json={"body": "must not land"},
+            headers={**H1, "If-Match": owner_first.headers["etag"]},
+        )
+        assert stale_owner.status_code == 412
+        assert stale_owner.headers["etag"] == owner_second.headers["etag"]
+
+        accepted_outsider = client.patch(
+            path,
+            json={"body": "actor-visible edit"},
+            headers={**H2, "If-Match": outsider_first.headers["etag"]},
+        )
+        assert accepted_outsider.status_code == 200
+        assert accepted_outsider.json()["parent_id"] is None
+        assert accepted_outsider.headers["etag"] == strong_etag(
+            "issue-v1", accepted_outsider.json()
+        )
+
+        claimed = client.post(
+            f"{path}/claim",
+            headers={**H2, "If-Match": accepted_outsider.headers["etag"]},
+        )
+        assert claimed.status_code == 201
+
+        login = client.post(
+            "/login",
+            data={"email": "outsider@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        board = client.get("/aegis/boards")
+        assert board.status_code == 200
+        escaped_outsider_tag = accepted_outsider.headers["etag"].replace('"', "&#34;")
+        assert f'value="{escaped_outsider_tag}"' in board.text
+
+
 def test_stale_if_match_is_412_and_has_no_side_effect(tmp_path):
     with TestClient(create_app(tmp_path / "stale.db")) as client:
         _bootstrap(client)
