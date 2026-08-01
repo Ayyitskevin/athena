@@ -426,3 +426,110 @@ def test_search_endpoint_carries_context_and_pages(tmp_path):
         assert (
             p0[0]["source_id"] != p1[0]["source_id"] or p0[0]["kind"] != p1[0]["kind"]
         )
+
+
+def test_search_endpoint_preserves_room_event_navigation_coordinates(tmp_path):
+    db_file = tmp_path / "api-room-event.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_api_user(db_file)
+        headers = {"X-Athena-Actor": "1"}
+        project_response = client.post(
+            "/projects",
+            json={"name": "Search Rooms Project", "key": "SRP"},
+            headers=headers,
+        )
+        assert project_response.status_code == 201
+        project = project_response.json()
+        rooms_response = client.get(
+            f"/projects/{project['id']}/rooms",
+            headers=headers,
+        )
+        assert rooms_response.status_code == 200
+        main_room = next(
+            room for room in rooms_response.json()["items"] if room["slug"] == "main"
+        )
+        event_response = client.post(
+            f"/rooms/{main_room['id']}/events",
+            json={
+                "event_kind": "decision",
+                "body": "roomnavmarker remains navigable through search",
+            },
+            headers=headers,
+        )
+        assert event_response.status_code == 201
+        event = event_response.json()
+
+        response = client.get(
+            "/search",
+            params={"q": "roomnavmarker", "kind": "room_event"},
+            headers=headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()) == 1
+        hit = response.json()[0]
+        assert hit["source_id"] == event["activity_id"]
+        assert hit["room_id"] == main_room["id"]
+        assert hit["room_slug"] == "main"
+        assert hit["project_id"] == project["id"]
+        assert hit["event_kind"] == "decision"
+
+
+def test_admin_room_event_search_requires_a_live_owning_project(tmp_path):
+    db_file = tmp_path / "api-deleted-room-project.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _seed_api_user(db_file)
+        conn = db.connect(db_file)
+        conn.execute("UPDATE users SET role = 'admin' WHERE id = 1")
+        conn.commit()
+        conn.close()
+        headers = {"X-Athena-Actor": "1"}
+        project = client.post(
+            "/projects",
+            json={"name": "Disposable Room Project", "key": "DRP"},
+            headers=headers,
+        ).json()
+        rooms_payload = client.get(
+            f"/projects/{project['id']}/rooms",
+            headers=headers,
+        ).json()
+        main_room = next(
+            room for room in rooms_payload["items"] if room["slug"] == "main"
+        )
+        event = client.post(
+            f"/rooms/{main_room['id']}/events",
+            json={
+                "event_kind": "message",
+                "body": "deletedprojectmarker must not outlive its owner in search",
+            },
+            headers=headers,
+        ).json()
+
+        before = client.get(
+            "/search",
+            params={"q": "deletedprojectmarker", "kind": "room_event"},
+            headers=headers,
+        )
+        assert [hit["source_id"] for hit in before.json()] == [event["activity_id"]]
+
+        deleted = client.delete(f"/projects/{project['id']}", headers=headers)
+        assert deleted.status_code == 204
+        conn = db.connect(db_file)
+        try:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM rooms WHERE id = ?", (main_room["id"],)
+                ).fetchone()[0]
+                == 1
+            )
+        finally:
+            conn.close()
+
+        after = client.get(
+            "/search",
+            params={"q": "deletedprojectmarker", "kind": "room_event"},
+            headers=headers,
+        )
+        assert after.status_code == 200
+        assert after.json() == []

@@ -541,7 +541,11 @@ def process_pending(
     the cursor nor blocks the rest of the batch."""
     cursor = get_cursor(conn)
     events = activity.list_events(
-        conn, after_id=cursor, native_only=True, limit=max_batch
+        conn,
+        after_id=cursor,
+        native_only=True,
+        delivery_eligible=True,
+        limit=max_batch,
     )
     if not events:
         return 0

@@ -136,7 +136,7 @@ class AgentOnboard(BaseModel):
     name: str
     # REQUIRED: an agent's first credential must say what it may do — the same
     # least-privilege rule as POST /tokens (no omitted-scopes fail-open).
-    scopes: list[Literal["read", "issue:write", "docs:write", "admin"]]
+    scopes: list[Literal["read", "issue:write", "docs:write", "rooms:write", "admin"]]
     # Defaults to the agent's name.
     token_name: str | None = None
 

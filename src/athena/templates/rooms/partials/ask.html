@@ -1,0 +1,32 @@
+<section class="room-panel" aria-labelledby="room-ask-heading">
+    <h2 id="room-ask-heading">Ask the Room</h2>
+    <p class="muted">
+        Assemble a deterministic <code>athena.room-context.v1</code> packet from
+        visible room-scoped records. This does not call an LLM, provider, tool, or
+        external service.
+    </p>
+    <form method="post"
+          action="/aegis/rooms/{{ room.id }}/ask#room-context"
+          hx-post="/aegis/rooms/{{ room.id }}/ask"
+          hx-target="#room-context"
+          hx-swap="outerHTML"
+          hx-sync="this:replace"
+          class="room-ask-form issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="room-question">Room-scoped question</label>
+            <textarea id="room-question" name="question" rows="3"
+                      maxlength="{{ question_max_chars }}" required
+                      aria-describedby="room-question-help">{{ question or "" }}</textarea>
+            <p id="room-question-help" class="note-small">
+                Ask what changed, what is blocked, what was decided, or which
+                receipts support the visible record.
+            </p>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Assemble sources</button>
+        </div>
+    </form>
+</section>
+
+{% include "rooms/partials/ask_result.html" %}

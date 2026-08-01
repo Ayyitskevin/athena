@@ -1,0 +1,99 @@
+{% if can_post %}
+<section class="room-panel room-composer" aria-labelledby="room-composer-heading">
+    <h2 id="room-composer-heading">Record an update</h2>
+    <p class="muted">
+        This appends inert coordination prose. It does not dispatch work, call a
+        tool, create an approval, or trigger automation.
+    </p>
+    {% if message_error %}
+    <div class="room-state room-state-error" role="alert">{{ message_error }}</div>
+    {% endif %}
+    <form method="post"
+          action="/aegis/rooms/{{ room.id }}/events"
+          hx-post="/aegis/rooms/{{ room.id }}/events"
+          hx-target="#room-stream"
+          hx-swap="outerHTML"
+          hx-sync="this:replace"
+          class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="room-composer-row">
+            <div class="form-group">
+                <label for="room-event-kind">Update type</label>
+                <select id="room-event-kind" name="event_kind" required>
+                    {% for value, label in postable_event_kinds %}
+                    <option value="{{ value }}" {% if message_event_kind == value %}selected{% endif %}>
+                        {{ label }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="room-event-body">Coordination note</label>
+                <textarea id="room-event-body" name="body" rows="4"
+                          maxlength="{{ event_max_chars }}" required
+                          aria-describedby="room-event-help">{{ message_draft or "" }}</textarea>
+                <p id="room-event-help" class="note-small">
+                    Plain text only. Do not paste credentials, filesystem paths,
+                    provider payloads, or secret-prone logs.
+                </p>
+            </div>
+        </div>
+
+        <details>
+            <summary>Link an authoritative record</summary>
+            <div class="room-composer-row">
+                <div class="form-group">
+                    <label for="room-reference-kind">Record type</label>
+                    <select id="room-reference-kind" name="reference_kind">
+                        <option value="">No linked record</option>
+                        {% for value, label in reference_kinds %}
+                        <option value="{{ value }}" {% if message_reference_kind == value %}selected{% endif %}>
+                            {{ label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="room-reference-id">Record identifier</label>
+                    <input id="room-reference-id" name="reference_id" type="text"
+                           maxlength="{{ reference_id_max_chars }}"
+                           value="{{ message_reference_id or '' }}"
+                           placeholder="Exact Athena record ID">
+                </div>
+            </div>
+            <p class="note-small">
+                Athena re-authorizes the linked record. An unavailable reference
+                never exposes its title or content.
+            </p>
+        </details>
+
+        <div class="form-actions">
+            <button type="submit" class="button">Record update</button>
+        </div>
+    </form>
+</section>
+{% elif historical_link %}
+<div class="room-state room-state-warning" role="note">
+    <strong>Historical linked room.</strong> New events are disabled because the
+    linked work item or agent is no longer active.
+</div>
+{% elif room.archived_at %}
+<div class="room-state room-state-archived" role="note">
+    <strong>Archived room.</strong> The durable record remains readable, but new
+    events cannot be posted.
+</div>
+{% elif room.room_type == "brief" %}
+<div class="room-state room-state-info" role="note">
+    <strong>Read-only live brief.</strong> Its contents are projected from
+    authoritative Athena records.
+</div>
+{% elif request.state.user %}
+<div class="room-state room-state-info" role="note">
+    <strong>Read-only access.</strong> Your current role cannot post room events.
+</div>
+{% else %}
+<div class="room-state room-state-info" role="note">
+    <strong>Sign-in required.</strong> <a href="/login">Sign in</a> to contribute
+    if your role permits it.
+</div>
+{% endif %}

@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% from "rooms/macros.html" import room_type %}
+
+{% block title %}{{ project.name }} rooms — Aegis{% endblock %}
+
+{% block content %}
+<div class="room-wide">
+    <nav class="room-breadcrumbs" aria-label="Breadcrumb">
+        <a href="/aegis/projects">Projects</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{{ project.name }}</span>
+    </nav>
+
+    <div class="page-header">
+        <div>
+            <h1>{{ project.name }}</h1>
+            <p class="subtitle">
+                <code>{{ project.key }}</code>
+                · durable coordination rooms and source receipts
+            </p>
+            <div class="room-heading-meta">
+                {% if project.visibility == "private" %}
+                <span class="room-kind room-kind-system" title="Private project">Private</span>
+                {% else %}
+                <span class="room-kind room-kind-system">Public</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="page-header-actions">
+            <a href="/aegis/issues?project={{ project.id }}" class="button secondary">Issues</a>
+            <a href="/aegis/projects/{{ project.id }}/sprints" class="button secondary">Sprints</a>
+            {% if can_edit %}
+            <a href="/aegis/projects/{{ project.id }}/edit" class="button secondary">Edit</a>
+            {% endif %}
+            {% if can_manage %}
+            <a href="/aegis/projects/{{ project.id }}/access" class="button secondary">Access</a>
+            {% endif %}
+        </div>
+    </div>
+
+    <section class="room-project-summary room-panel" aria-labelledby="project-purpose">
+        <h2 id="project-purpose">Project purpose</h2>
+        {% if project.description %}
+        <p>{{ project.description }}</p>
+        {% else %}
+        <p class="muted">No project description has been recorded.</p>
+        {% endif %}
+        <p class="note-small">
+            Rooms coordinate work. Issues, approvals, knowledge, runs, and artifacts
+            remain authoritative in their owning Athena records.
+        </p>
+    </section>
+
+    <div class="room-shell">
+        <section class="room-main" aria-labelledby="project-rooms-heading">
+            <div class="page-header">
+                <div>
+                    <h2 id="project-rooms-heading">Rooms</h2>
+                    <p class="subtitle">Focused, project-scoped views over durable work.</p>
+                </div>
+                <form method="get" action="/aegis/projects/{{ project.id }}" class="inline-form">
+                    <label class="filter-check" for="rooms-show-archived">
+                        <input id="rooms-show-archived" type="checkbox" name="archived" value="1"
+                               {% if include_archived %}checked{% endif %}>
+                        Show archived
+                    </label>
+                    <button type="submit" class="button secondary small">Apply</button>
+                </form>
+            </div>
+
+            {% if room_list %}
+            <div class="project-room-grid">
+                {% for room in room_list %}
+                <article class="room-card">
+                    <div class="room-inline-meta">
+                        <span class="room-type room-type-{{ room.room_type }}">{{ room_type(room.room_type) }}</span>
+                        {% if room.visibility == "members" %}
+                        <span class="pill">Members</span>
+                        {% endif %}
+                        {% if room.archived_at %}
+                        <span class="archived-badge">Archived</span>
+                        {% endif %}
+                        {% if room.room_type in ["work_item", "agent"] and room.link_state not in ["active", "available"] %}
+                        <span class="room-kind room-kind-approval">Historical link</span>
+                        {% endif %}
+                    </div>
+                    <h3>
+                        <a href="/aegis/rooms/{{ room.id }}" class="room-card-title">{{ room.title }}</a>
+                    </h3>
+                    <p class="room-card-purpose">{{ room.purpose or "No room purpose recorded." }}</p>
+                    <div class="room-card-footer">
+                        <span><code>{{ room.slug }}</code></span>
+                        <span>
+                            {% if room.issue_id %}issue #{{ room.issue_id }}
+                            {% elif room.agent_id %}agent #{{ room.agent_id }}
+                            {% else %}project {{ project.key }}{% endif %}
+                        </span>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                {% if room_cursor %}
+                No additional visible rooms are available in this bounded view.
+                {% elif include_archived %}
+                No visible rooms are available for this project.
+                {% else %}
+                No active visible rooms are available.
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if room_cursor or room_page.has_more %}
+            <nav class="form-actions" aria-label="Room pages">
+                {% if room_cursor %}
+                <a class="button secondary"
+                   href="/aegis/projects/{{ project.id }}{% if include_archived %}?archived=1{% endif %}">
+                    First rooms
+                </a>
+                {% endif %}
+                {% if room_page.has_more and room_page.next_cursor %}
+                <a class="button secondary"
+                   href="/aegis/projects/{{ project.id }}?cursor={{ room_page.next_cursor }}{% if include_archived %}&amp;archived=1{% endif %}">
+                    More rooms
+                </a>
+                {% endif %}
+            </nav>
+            {% endif %}
+
+            {% if request.state.user and not can_write %}
+            <div class="room-state room-state-info" role="note">
+                <strong>Read-only access.</strong> Viewer role cannot post room events.
+            </div>
+            {% elif not request.state.user %}
+            <p class="note-small">
+                <a href="/login">Sign in</a> to contribute. Visibility still follows
+                this project's access policy.
+            </p>
+            {% endif %}
+        </section>
+
+        <aside class="room-rail" aria-label="Project room context">
+            {% if brief %}
+                {% include "rooms/partials/live_brief.html" %}
+            {% elif brief_error %}
+            <section class="room-state room-state-warning" role="note">
+                <h2>Live brief unavailable</h2>
+                <p>{{ brief_error }}</p>
+            </section>
+            {% elif brief_room %}
+            <section class="room-panel">
+                <h2>Live brief</h2>
+                <p class="muted">The brief has no visible facts in this bounded view.</p>
+                <p><a href="/aegis/rooms/{{ brief_room.id }}">Open live brief</a></p>
+            </section>
+            {% endif %}
+
+            <section class="room-panel">
+                <h2>Observation boundary</h2>
+                <p class="muted">
+                    Room activity does not prove that an agent is live, work is
+                    executing, or an approval has been consumed. Follow receipts to
+                    authoritative records before acting.
+                </p>
+            </section>
+        </aside>
+    </div>
+</div>
+{% endblock %}

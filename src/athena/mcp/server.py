@@ -33,6 +33,9 @@ from athena.aegis import (
     fleet_work,
     issues,
     lease_commands,
+    room_context,
+    room_timeline,
+    rooms,
 )
 from athena.core import dispatch, run_context
 from athena.mcp.client import AthenaClient, AthenaError
@@ -110,6 +113,36 @@ IssueFilterId = Annotated[
     Field(strict=True, ge=0, le=issues.MAX_SQLITE_INTEGER),
 ]
 ProjectId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+RoomId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+RoomListCursor = Annotated[str, Field(min_length=1, max_length=160)]
+RoomTimelineCursor = Annotated[str, Field(min_length=1, max_length=128)]
+RoomListLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+RoomTimelineLimit = Annotated[int, Field(strict=True, ge=1, le=room_timeline.MAX_LIMIT)]
+RoomContextLimit = Annotated[
+    int, Field(strict=True, ge=1, le=room_context.MAX_SELECTION_LIMIT)
+]
+RoomQuestion = Annotated[
+    str, Field(min_length=1, max_length=room_context.MAX_QUESTION_CHARS)
+]
+RoomEventBody = Annotated[
+    str, Field(min_length=1, max_length=rooms.MAX_EVENT_BODY_CHARS)
+]
+RoomReferenceId = Annotated[
+    str, Field(min_length=1, max_length=rooms.MAX_REFERENCE_ID_CHARS)
+]
+RoomEventKind = Literal[
+    "message", "check_in", "handoff", "decision", "evidence", "system_notice"
+]
+RoomReferenceKind = Literal[
+    "issue",
+    "page",
+    "approval",
+    "activity",
+    "handoff",
+    "dispatch",
+    "run",
+    "attachment",
+]
 SprintId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 PermanentDeleteConfirmation = Annotated[bool, Field(strict=True)]
 FleetMetricId = Annotated[
@@ -180,12 +213,32 @@ def build_server(client: AthenaClient) -> FastMCP:
         guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{idempotency_guidance}"
         return mcp.tool()(guarded)
 
+    def close_room_tool_arguments(function):
+        """Forbid unknown keys for the intentionally strict Rooms tool surface."""
+        registered = mcp._tool_manager.get_tool(function.__name__)
+        if registered is None:
+            raise RuntimeError(f"room tool was not registered: {function.__name__}")
+        argument_model = registered.fn_metadata.arg_model
+        argument_model.model_config["extra"] = "forbid"
+        argument_model.model_rebuild(force=True)
+        registered.parameters = argument_model.model_json_schema(by_alias=True)
+        return function
+
+    def room_tool(function):
+        """Register one read-only Rooms tool with a closed argument model."""
+        return close_room_tool_arguments(tool(function))
+
+    def room_mutation_tool(function):
+        """Register one Rooms mutation with retry guidance and closed arguments."""
+        return close_room_tool_arguments(mutation_tool(function))
+
     # --- search & read ------------------------------------------------------
 
     @tool
     def search(query: str, kind: str | None = None) -> list:
-        """Full-text search across Aegis issues and Mentor pages. Optionally narrow
-        to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
+        """Search issues, pages, their comments, and Room events. Narrow by kind;
+        Room-event hits include navigable Room and project coordinates alongside
+        the ranked title and snippet."""
         return client.search(query, kind=kind)
 
     @tool
@@ -1372,6 +1425,84 @@ def build_server(client: AthenaClient) -> FastMCP:
     ) -> dict:
         """Remove a label from an issue. Returns the updated issue."""
         return client.detach_label(issue_id, label_id, idempotency_key=idempotency_key)
+
+    # --- rooms ---------------------------------------------------------------
+
+    @room_tool
+    def list_rooms(
+        project_id: ProjectId,
+        include_archived: bool = False,
+        cursor: RoomListCursor | None = None,
+        limit: RoomListLimit = 50,
+    ) -> dict:
+        """List one visible project's rooms as a bounded cursor page. Rooms are
+        coordination views; listing them does not claim, dispatch, or execute work."""
+        return client.list_rooms(
+            project_id,
+            include_archived=include_archived,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    @room_tool
+    def get_room(room_id: RoomId) -> dict:
+        """Read one room and its bounded visible-agent projection. Credential
+        capability details are unavailable unless this token is an admin."""
+        return client.get_room(room_id)
+
+    @room_tool
+    def get_room_timeline(
+        room_id: RoomId,
+        cursor: RoomTimelineCursor | None = None,
+        limit: RoomTimelineLimit = room_timeline.DEFAULT_LIMIT,
+    ) -> dict:
+        """Read a newest-first room timeline page. Pass next_cursor back verbatim
+        to continue; entries are recorded facts and references, not execution proof."""
+        return client.get_room_timeline(room_id, cursor=cursor, limit=limit)
+
+    @room_mutation_tool
+    def post_room_event(
+        room_id: RoomId,
+        event_kind: RoomEventKind,
+        body: RoomEventBody,
+        reference_kind: RoomReferenceKind | None = None,
+        reference_id: RoomReferenceId | RoomId | None = None,
+        supersedes_event_id: RoomId | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Append inert coordination prose as the authenticated token actor.
+        Messages never dispatch work, call tools/providers, open approvals, schedule
+        automation, or emit webhooks. Optional references name an existing controlled
+        Athena record; supersession appends a replacement and never edits history."""
+        return client.post_room_event(
+            room_id,
+            event_kind=event_kind,
+            body=body,
+            reference_kind=reference_kind,
+            reference_id=reference_id,
+            supersedes_event_id=supersedes_event_id,
+            idempotency_key=idempotency_key,
+        )
+
+    @room_tool
+    def get_room_context(
+        room_id: RoomId,
+        question: RoomQuestion,
+        limit: RoomContextLimit = room_context.DEFAULT_SELECTION_LIMIT,
+    ) -> dict:
+        """Build athena.room-context.v1: a bounded, visibility-safe, deterministic
+        evidence packet with exact receipts. It calls no model or provider and makes
+        no claim of truth, completeness, approval, execution, or causality."""
+        return client.get_room_context(room_id, question=question, limit=limit)
+
+    @room_tool
+    def get_room_brief(
+        room_id: RoomId,
+        cursor: RoomTimelineCursor | None = None,
+    ) -> dict:
+        """Read a live, bounded project brief assembled from authoritative Athena
+        work, blockers, agent observations, decisions, knowledge, and activity."""
+        return client.get_room_brief(room_id, cursor=cursor)
 
     # --- projects & users ---------------------------------------------------
 

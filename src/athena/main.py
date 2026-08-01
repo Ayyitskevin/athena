@@ -36,6 +36,7 @@ from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
 from athena.aegis import fleet_work_api as aegis_fleet_work_api
 from athena.aegis import sprints_api as aegis_sprints_api
 from athena.aegis import work_context_api as aegis_work_context_api
+from athena.aegis import rooms_api as aegis_rooms_api
 from athena.core import (
     activity,
     agent_runs_api,
@@ -79,6 +80,7 @@ from athena.web import fleet_metrics as web_fleet_metrics
 from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
 from athena.web import projects as web_projects
+from athena.web import rooms as web_rooms
 from athena.web import work_context as web_work_context
 from athena.web import init_templates, router as web_router
 
@@ -374,6 +376,7 @@ _IDEMPOTENCY_API_ROOTS = (
     "/notifications",
     "/pages",
     "/projects",
+    "/rooms",
     "/spaces",
     "/sprints",
     "/tokens",
@@ -1529,6 +1532,7 @@ def create_app(
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)
+    app.include_router(web_rooms.router)
     app.include_router(web_activity.router)
     app.include_router(web_boards.router)
     app.include_router(web_filters.router)
@@ -1561,6 +1565,7 @@ def create_app(
     app.include_router(aegis_api.router)
     app.include_router(aegis_api.labels_router)
     app.include_router(aegis_api.projects_router)
+    app.include_router(aegis_rooms_api.router)
     app.include_router(aegis_delegations_api.router)
     app.include_router(aegis_filters_api.router)
     app.include_router(aegis_fleet_work_api.router)

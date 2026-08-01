@@ -92,6 +92,7 @@ def _selected_scopes(
     read: str | None,
     issue_write: str | None,
     docs_write: str | None,
+    rooms_write: str | None,
     admin: str | None,
 ) -> list[str]:
     scopes: list[str] = []
@@ -101,6 +102,8 @@ def _selected_scopes(
         scopes.append(tokens.ISSUE_WRITE_SCOPE)
     if docs_write:
         scopes.append(tokens.DOCS_WRITE_SCOPE)
+    if rooms_write:
+        scopes.append(tokens.ROOMS_WRITE_SCOPE)
     if admin:
         scopes.append(tokens.ADMIN_SCOPE)
     return scopes
@@ -122,6 +125,7 @@ def _token_context(
             (tokens.READ_SCOPE, "Read"),
             (tokens.ISSUE_WRITE_SCOPE, "Aegis writes"),
             (tokens.DOCS_WRITE_SCOPE, "Mentor writes"),
+            (tokens.ROOMS_WRITE_SCOPE, "Rooms writes"),
             (tokens.ADMIN_SCOPE, "Admin"),
         ],
     }
@@ -316,6 +320,7 @@ def create_token(
     scope_read: str | None = Form(None),
     scope_issue_write: str | None = Form(None),
     scope_docs_write: str | None = Form(None),
+    scope_rooms_write: str | None = Form(None),
     scope_admin: str | None = Form(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -334,7 +339,11 @@ def create_token(
             status_code=400,
         )
     scopes = _selected_scopes(
-        scope_read, scope_issue_write, scope_docs_write, scope_admin
+        scope_read,
+        scope_issue_write,
+        scope_docs_write,
+        scope_rooms_write,
+        scope_admin,
     )
     try:
         created = token_commands.mint_token(
@@ -508,6 +517,7 @@ def onboard_agent(
     scope_read: str | None = Form(None),
     scope_issue_write: str | None = Form(None),
     scope_docs_write: str | None = Form(None),
+    scope_rooms_write: str | None = Form(None),
     scope_admin: str | None = Form(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -530,7 +540,11 @@ def onboard_agent(
             email=email,
             name=name,
             scopes=_selected_scopes(
-                scope_read, scope_issue_write, scope_docs_write, scope_admin
+                scope_read,
+                scope_issue_write,
+                scope_docs_write,
+                scope_rooms_write,
+                scope_admin,
             ),
             token_name=token_name.strip() or None,
         )

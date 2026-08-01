@@ -425,6 +425,7 @@ def deliver_pending(
             conn,
             after_id=wh["cursor"],
             target_kind=wh["event_kind"],
+            delivery_eligible=True,
             limit=max_batch,
         )
         failure_count = wh["failure_count"]

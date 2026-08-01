@@ -1,0 +1,26 @@
+<section id="room-timeline" class="room-timeline room-panel" aria-labelledby="room-timeline-heading">
+    <div class="page-header">
+        <div>
+            <h2 id="room-timeline-heading">Timeline</h2>
+            <p class="subtitle">Newest first · append-only visible facts</p>
+        </div>
+        <a href="/aegis/rooms/{{ room.id }}" class="button secondary small">Refresh</a>
+    </div>
+
+    {% if timeline_error %}
+    <div class="room-state room-state-warning" role="note">
+        <strong>Timeline degraded.</strong> {{ timeline_error }}
+    </div>
+    {% endif %}
+
+    <ol class="room-timeline-list" aria-live="polite">
+        {% include "rooms/partials/timeline_page.html" %}
+    </ol>
+
+    {% if timeline_cursor %}
+    <p class="note-small">
+        This is an older bounded page.
+        <a href="/aegis/rooms/{{ room.id }}">Return to newest activity</a>.
+    </p>
+    {% endif %}
+</section>

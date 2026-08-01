@@ -1,0 +1,156 @@
+<section id="room-context" class="room-context room-panel" aria-live="polite"
+         aria-labelledby="room-context-heading">
+    <h2 id="room-context-heading" tabindex="-1">Room context packet</h2>
+
+    {% if context_error %}
+    <div class="room-state room-state-error" role="alert">{{ context_error }}</div>
+    {% elif context_packet %}
+    {% set query_value = context_packet.query.normalized if context_packet.query is mapping else context_packet.query %}
+    <div class="room-context-contract">
+        <p>
+            <strong>Sources assembled — no generated answer.</strong>
+            This deterministic packet makes no claim that a source is true,
+            complete, approved, causally explanatory, or proof of current execution.
+        </p>
+        <dl class="room-context-bounds">
+            <dt>Schema</dt><dd><code>{{ context_packet.schema }}</code></dd>
+            <dt>Room</dt>
+            <dd>
+                <code>{{ context_packet.room.id }}</code>
+                {% if context_packet.room.slug %}· <code>{{ context_packet.room.slug }}</code>{% endif %}
+            </dd>
+            <dt>Requester</dt>
+            <dd>
+                {% if context_packet.requester.id is not none %}
+                {{ context_packet.requester.name }} · user {{ context_packet.requester.id }}
+                {% else %}
+                <span class="muted">Anonymous visible-project reader</span>
+                {% endif %}
+            </dd>
+            <dt>Snapshot</dt><dd>{{ context_packet.snapshot_at }}</dd>
+        </dl>
+    </div>
+
+    <h3>Question</h3>
+    <blockquote class="room-question">{{ query_value }}</blockquote>
+
+    <h3>Selection bounds</h3>
+    <dl class="room-context-bounds">
+        <dt>Candidate limit</dt><dd>{{ context_packet.bounds.candidate_limit }}</dd>
+        <dt>Selection limit</dt><dd>{{ context_packet.bounds.selection_limit }}</dd>
+        <dt>Visible candidates</dt><dd>{{ context_packet.bounds.visible_candidate_count }}</dd>
+        <dt>Selected</dt><dd>{{ context_packet.bounds.selected_count }}</dd>
+        <dt>Candidate scan</dt>
+        <dd>
+            {% if context_packet.bounds.candidate_scan_clipped %}
+            Clipped at its bounded window.
+            {% else %}Complete within the visible bounded scan.{% endif %}
+        </dd>
+        <dt>Selection</dt>
+        <dd>
+            {% if context_packet.bounds.selection_clipped %}
+            Clipped; additional visible candidates were not selected.
+            {% else %}Not clipped within this packet.{% endif %}
+        </dd>
+    </dl>
+
+    <h3>Selected source receipts</h3>
+    {% if context_packet.records %}
+    <ol class="room-receipt-list">
+        {% for source in context_packet.records %}
+        <li class="room-receipt">
+            <div class="room-receipt-title">
+                <span class="room-kind room-kind-evidence">
+                    {{ source.record_type | replace("_", " ") }}
+                </span>
+                {% if source.receipt and source.receipt.path %}
+                <a href="{{ source.receipt.path }}">
+                    {{ source.title or source.record_type ~ " #" ~ source.record_id }}
+                </a>
+                {% else %}
+                {{ source.title or source.record_type ~ " #" ~ source.record_id }}
+                {% endif %}
+            </div>
+            {% if source.snippet %}
+            <p class="room-receipt-snippet">
+                {{ source.snippet }}
+                {% if source.snippet_truncated %}<strong>… truncated</strong>{% endif %}
+            </p>
+            {% endif %}
+            <div class="room-receipt-meta">
+                <span>record <code>{{ source.record_id }}</code></span>
+                <span>rank {{ source.rank }}</span>
+                {% if source.source_revision %}
+                <span>revision <code>{{ source.source_revision }}</code></span>
+                {% endif %}
+                {% if source.source_activity_id %}
+                <span>activity <code>#{{ source.source_activity_id }}</code></span>
+                {% endif %}
+                {% if source.digest_sha256 %}
+                <span>SHA-256 <code>{{ source.digest_sha256 }}</code></span>
+                {% endif %}
+                {% if source.receipt %}
+                <span>receipt <code>{{ source.receipt.method }}</code> <code>{{ source.receipt.path }}</code></span>
+                {% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">
+        No authorized record matched this bounded query. Hidden records did not
+        affect snippets, rank, counts, or clipping.
+    </p>
+    {% endif %}
+
+    {% if context_packet.omissions %}
+    <h3>Omissions</h3>
+    <ul class="room-omission-list">
+        {% for omission in context_packet.omissions %}
+        <li>
+            <strong>{{ omission.kind | replace("_", " ") | title }}:</strong>
+            {{ omission.reason }}
+            {% if omission.visible_count is not none %}
+            · {{ omission.visible_count }} visible
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if context_packet.truncation %}
+    <h3>Truncation</h3>
+    <ul class="room-omission-list">
+        {% if context_packet.truncation is mapping %}
+            {% for key, value in context_packet.truncation.items() %}
+            <li><strong>{{ key | replace("_", " ") | title }}:</strong> {{ value }}</li>
+            {% endfor %}
+        {% elif context_packet.truncation is string %}
+            <li>{{ context_packet.truncation }}</li>
+        {% else %}
+            {% for item in context_packet.truncation %}<li>{{ item }}</li>{% endfor %}
+        {% endif %}
+    </ul>
+    {% endif %}
+
+    {% if context_packet.uncertainty %}
+    <div class="room-state room-state-warning" role="note">
+        <strong>Uncertainty and non-guarantees.</strong>
+        <p>{{ context_packet.uncertainty.notice }}</p>
+        {% if context_packet.uncertainty.does_not_assert %}
+        <p class="note-small">
+            Does not assert:
+            {% for item in context_packet.uncertainty.does_not_assert %}
+            <code>{{ item }}</code>{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="muted">
+        Ask a bounded room-scoped question to assemble exact, visibility-safe
+        source receipts. Athena does not call a model or provider.
+    </p>
+    {% endif %}
+</section>

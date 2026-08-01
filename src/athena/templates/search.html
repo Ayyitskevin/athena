@@ -6,12 +6,12 @@
 <div class="page-header">
     <div>
         <h1>Search</h1>
-        <p class="subtitle">Across issues and pages, ranked best-first</p>
+        <p class="subtitle">Across issues, pages, and room coordination, ranked best-first</p>
     </div>
 </div>
 
 <form method="get" action="/find" class="search-form">
-    <input type="search" name="q" value="{{ q }}" placeholder="Search issues and pages…"
+    <input type="search" name="q" value="{{ q }}" placeholder="Search issues, pages, and rooms…"
            class="search-input search-input-wide" autofocus>
     <button type="submit" class="button">Search</button>
     <div class="search-filters">
@@ -39,12 +39,13 @@
 
 {% if q %}
     {% if filtered_mode %}
-    <p class="note-small">Showing issues that match the filters. <a href="/find?q={{ q | urlencode }}">Clear filters</a> to search pages too.</p>
+    <p class="note-small">Showing issues that match the filters. <a href="/find?q={{ q | urlencode }}">Clear filters</a> to search pages and rooms too.</p>
     {% else %}
     <div class="search-scope">
         <a href="{{ scope_urls.all }}" class="search-scope-tab {{ 'active' if not kind }}">All</a>
         <a href="{{ scope_urls.issue }}" class="search-scope-tab {{ 'active' if kind == 'issue' }}">Issues</a>
         <a href="{{ scope_urls.page }}" class="search-scope-tab {{ 'active' if kind == 'page' }}">Pages</a>
+        <a href="{{ scope_urls.room_event }}" class="search-scope-tab {{ 'active' if kind == 'room_event' }}">Rooms</a>
     </div>
     {% endif %}
 
@@ -62,7 +63,7 @@
                 {% endif %}
                 {# A comment borrows its parent's title/context above; the badge says it's
                    discussion, not the doc itself, and the link lands on that parent. #}
-                <span class="search-hit-kind">{{ 'comment' if h.kind in ('issue_comment', 'page_comment') else h.kind }}</span>
+                <span class="search-hit-kind">{{ 'comment' if h.kind in ('issue_comment', 'page_comment') else ('room event' if h.kind == 'room_event' else h.kind) }}</span>
             </div>
             {% if h.snippet_html %}<p class="search-hit-snippet">{{ h.snippet_html }}</p>{% endif %}
         </li>
@@ -80,6 +81,6 @@
     <p class="empty-state">No matches for “{{ q }}”{% if kind %} in {{ kind }}s{% endif %}.</p>
     {% endif %}
 {% else %}
-<p class="note">Type a query above to search every issue and page.</p>
+<p class="note">Type a query above to search every visible issue, page, and room event.</p>
 {% endif %}
 {% endblock %}

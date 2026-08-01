@@ -202,6 +202,7 @@ def record(
     detail: str = "",
     commit: bool = True,
     issue_project_ids: Collection[int | None] | object = _AUTO_ISSUE_PROJECTS,
+    delivery_eligible: bool = True,
     imported_at: str | None = None,
 ) -> dict:
     """Append one activity row and return it. Raises sqlite3.IntegrityError if
@@ -232,11 +233,14 @@ def record(
     # Resolve every access-envelope input after acquiring SQLite's writer
     # reservation. A standalone commit=False call leaves this transaction open for
     # its command owner; nested command calls already hold the reservation.
+    if not isinstance(delivery_eligible, bool):
+        raise ValueError("delivery_eligible must be a boolean")
     opened_transaction = not conn.in_transaction
     if opened_transaction:
         conn.execute("BEGIN IMMEDIATE")
     try:
         scope_is_complete = True
+        resolved_scope_keys: set[str] = set()
         if target_kind == "issue" and issue_project_ids is _AUTO_ISSUE_PROJECTS:
             row = conn.execute(
                 "SELECT project_id FROM issues WHERE id = ?", (target_id,)
@@ -248,13 +252,25 @@ def record(
                 resolved_project_ids = {row["project_id"]}
         elif target_kind == "issue":
             resolved_project_ids = set(cast(Collection[int | None], issue_project_ids))
+        elif target_kind == "room":
+            room_scope = conn.execute(
+                "SELECT r.project_scope_key FROM rooms r "
+                "JOIN projects p ON p.id = r.project_id "
+                "AND p.activity_scope_key = r.project_scope_key "
+                "WHERE r.id = ?",
+                (target_id,),
+            ).fetchone()
+            resolved_project_ids = set()
+            if room_scope is None:
+                scope_is_complete = False
+            else:
+                resolved_scope_keys.add(room_scope["project_scope_key"])
         elif target_kind == "project":
             resolved_project_ids = {target_id}
         else:
             resolved_project_ids = set()
         resolved_project_ids.discard(None)
 
-        resolved_scope_keys: set[str] = set()
         for project_id in sorted(resolved_project_ids):
             scope = conn.execute(
                 "SELECT activity_scope_key FROM projects WHERE id = ?",
@@ -288,8 +304,8 @@ def record(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
             "forked_from_event_id, visibility_restricted, reverses_event_id, "
-            "imported_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "delivery_eligible, imported_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 actor_id,
                 verb,
@@ -301,6 +317,7 @@ def record(
                 forked_from_event_id,
                 0 if scope_is_complete else 1,
                 _take_pending_reversal(),
+                1 if delivery_eligible else 0,
                 imported_at,
             ),
         )
@@ -390,6 +407,7 @@ def list_activity(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     verb: str | None = None,
+    delivery_eligible: bool | None = None,
     search: str | None = None,
     before_id: int | None = None,
     limit: int = 50,
@@ -425,6 +443,11 @@ def list_activity(
     if target_id is not None:
         clauses.append("a.target_id = ?")
         params.append(target_id)
+    if delivery_eligible is not None:
+        if not isinstance(delivery_eligible, bool):
+            raise ValueError("delivery_eligible must be a boolean")
+        clauses.append("a.delivery_eligible = ?")
+        params.append(1 if delivery_eligible else 0)
     if actor_id is not None:
         clauses.append("a.actor_id = ?")
         params.append(actor_id)
@@ -478,6 +501,7 @@ def list_events(
     parent_run_id: str | None = None,
     verb: str | None = None,
     native_only: bool = False,
+    delivery_eligible: bool | None = None,
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
@@ -522,6 +546,11 @@ def list_events(
     if target_id is not None:
         clauses.append("a.target_id = ?")
         params.append(target_id)
+    if delivery_eligible is not None:
+        if not isinstance(delivery_eligible, bool):
+            raise ValueError("delivery_eligible must be a boolean")
+        clauses.append("a.delivery_eligible = ?")
+        params.append(1 if delivery_eligible else 0)
     if actor_id is not None:
         clauses.append("a.actor_id = ?")
         params.append(actor_id)

@@ -1,0 +1,59 @@
+{% macro room_type(value) -%}
+    {%- if value == "project" -%}Project
+    {%- elif value == "work_item" -%}Work item
+    {%- elif value == "agent" -%}Agent
+    {%- elif value == "brief" -%}Live brief
+    {%- else -%}{{ value | replace("_", " ") | title }}
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro entry_kind(value) -%}
+    {%- if value == "human" -%}Human
+    {%- elif value == "agent" -%}Agent
+    {%- elif value == "system" -%}System
+    {%- elif value == "approval" -%}Approval
+    {%- elif value == "evidence" -%}Evidence
+    {%- elif value == "imported" -%}Imported
+    {%- elif value == "message" -%}Message
+    {%- elif value == "check_in" -%}Check-in
+    {%- elif value == "handoff" -%}Handoff
+    {%- elif value == "decision" -%}Decision
+    {%- elif value == "system_notice" -%}System notice
+    {%- else -%}{{ value | replace("_", " ") | title }}
+    {%- endif -%}
+{%- endmacro %}
+
+{% macro group_summary(group) %}
+    {% if group %}
+    <p class="room-group-summary">
+        Showing {{ group["items"] | length }} of {{ group.visible_total }} visible
+        item{{ "s" if group.visible_total != 1 }}.
+        {% if group.clipped %}
+        <strong>Clipped:</strong> more visible items are outside this bounded view.
+        {% endif %}
+    </p>
+    {% endif %}
+{% endmacro %}
+
+{% macro safe_reference(reference) %}
+    {% if reference and reference.available %}
+    <div class="room-entry-reference">
+        <strong>{{ reference.kind | replace("_", " ") | title }}</strong>
+        {% if reference.receipt %}
+        <a href="{{ reference.receipt }}">
+            {{ reference.title or reference.kind ~ " #" ~ reference.id }}
+        </a>
+        {% else %}
+        {{ reference.title or reference.kind ~ " #" ~ reference.id }}
+        {% endif %}
+        <span class="muted">record {{ reference.id }}</span>
+    </div>
+    {% elif reference %}
+    <div class="room-entry-reference room-entry-reference-unavailable">
+        <strong>Linked record unavailable.</strong>
+        <span class="muted">
+            It may be hidden, missing, or outside this viewer's current access.
+        </span>
+    </div>
+    {% endif %}
+{% endmacro %}

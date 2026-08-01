@@ -82,7 +82,7 @@ def test_find_blank_query_shows_prompt_not_results(tmp_path):
         )
         body = client.get("/find").text
         assert "secret thing" not in body
-        assert "search every issue and page" in body
+        assert "search every visible issue, page, and room event" in body
 
 
 def test_find_no_match_says_so(tmp_path):

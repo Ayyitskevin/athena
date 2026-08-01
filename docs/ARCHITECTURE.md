@@ -15,7 +15,7 @@ Two modules over one shared core:
 | Module | Role | Holds |
 |--------|------|-------|
 | **Mentor** | Knowledge (Notion/Obsidian-adjacent) | spaces, pages (a tree), markdown bodies, versions, wikilinks |
-| **Aegis** | Work (task tracker) | issues, statuses, boards, sprints/cycles, comments, labels |
+| **Aegis** | Work and coordination | issues, statuses, boards, sprints/cycles, comments, labels, rooms |
 
 We are **not** building a Notion block editor or an Obsidian vault-on-disk. We
 **are** building a unified command center: write docs, track work, cross-link
@@ -68,8 +68,9 @@ src/athena/
              webhooks, backups, portability (export/import), OIDC, deployment
              policy, the issue<->doc cross-link resolver
   aegis/     issues, projects, statuses, boards, sprints, labels, comments,
-             saved filters, automation rules, and application commands that own
-             audited write transactions shared by REST + web
+             rooms, deterministic context/brief projections, saved filters,
+             automation rules, and application commands that own audited write
+             transactions shared by REST + web
   mentor/    spaces, pages (tree), versions, page comments
   web/       route handlers for the browser UI (Jinja + HTMX) — a thin client
              over the same data the REST API serves, never a second data owner
@@ -90,6 +91,28 @@ Keeping them below `src/athena/` makes editable checkouts and installed wheels u
 the same files from the same owner. The repository CI workflow is configured to
 build the installable wheel through an extracted source distribution and run the
 retained verification helpers, so both formats must preserve those runtime owners.
+
+## Coordination Rooms
+
+Rooms are an Aegis coordination projection over Athena's authoritative work,
+identity, activity, approval, run, and knowledge records. A project receives
+stable main and read-only brief rooms; project-owned issues receive focused
+work-item rooms; participating agents receive project-local agent rooms. Typed
+room events extend the append-only activity log rather than creating a second
+conversation store.
+
+Room prose is inert by contract. Its activity rows are marked ineligible for
+automation and webhook delivery, and no room command dispatches work, grants an
+approval, schedules execution, or calls an external provider. REST, Jinja/HTMX,
+and MCP share the same transactional command and visibility-safe projections.
+The deterministic `athena.room-context.v1` assembler selects bounded, currently
+visible records and receipts without invoking a model.
+
+The complete schema, authorization, move/delete history semantics, bounds,
+non-goals, demo path, and the Block Buzz design comparison live in
+[ROOMS.md](ROOMS.md) and
+[ADR 0001](adr/0001-rooms-coordination-substrate.md).
+
 
 ## Deployment boundary and limits
 

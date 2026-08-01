@@ -305,6 +305,7 @@ def personal_write_actor(actor: dict = Depends(current_actor)) -> dict:
     if scopes is not None and not set(scopes) & {
         tokens.ISSUE_WRITE_SCOPE,
         tokens.DOCS_WRITE_SCOPE,
+        tokens.ROOMS_WRITE_SCOPE,
         tokens.ADMIN_SCOPE,
     }:
         raise ScopeDenied(actor, "a write scope")

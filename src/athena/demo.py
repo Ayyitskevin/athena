@@ -15,7 +15,7 @@ from pathlib import Path
 import sys
 
 from athena import config
-from athena.aegis import issue_commands, project_commands
+from athena.aegis import issue_commands, project_commands, room_commands, rooms
 from athena.core import (
     db,
     deployment,
@@ -133,6 +133,20 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
             key="ATH",
             description="Synthetic work for the five-minute reviewer tour.",
         )
+        project_commands.add_project_member(
+            conn,
+            actor_id=operator["id"],
+            project_id=project["id"],
+            user_id=sol["id"],
+            member_name=sol["name"],
+        )
+        project_commands.add_project_member(
+            conn,
+            actor_id=operator["id"],
+            project_id=project["id"],
+            user_id=terra["id"],
+            member_name=terra["name"],
+        )
         command_issue = issue_commands.create_issue(
             conn,
             actor=operator,
@@ -242,12 +256,75 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
                 tokens.READ_SCOPE,
                 tokens.ISSUE_WRITE_SCOPE,
                 tokens.DOCS_WRITE_SCOPE,
+                tokens.ROOMS_WRITE_SCOPE,
             ],
+        )
+        main_room = rooms.get_room_by_slug(conn, project["id"], "main")
+        command_room = rooms.get_work_item_room(conn, command_issue["id"])
+        sol_room = rooms.get_room_by_slug(conn, project["id"], f"agent-{sol['id']}")
+        if main_room is None or command_room is None or sol_room is None:
+            raise DemoSetupError("default room seed is incomplete")
+        room_commands.post_event(
+            conn,
+            actor=operator,
+            room_id=main_room["id"],
+            event_kind="message",
+            body=(
+                "Review the command boundary, then follow the linked work receipt "
+                "before accepting the implementation."
+            ),
+            reference_kind="issue",
+            reference_id=command_issue["id"],
+        )
+        room_commands.post_event(
+            conn,
+            actor=operator,
+            room_id=command_room["id"],
+            event_kind="decision",
+            body=(
+                "Keep Rooms model-free and coordination-only; every action remains "
+                "an explicit Athena command."
+            ),
+            reference_kind="page",
+            reference_id=guide["id"],
+        )
+        sol_actor = tokens.resolve_token(conn, agent_token["token"])
+        if sol_actor is None:
+            raise DemoSetupError("demo agent token did not resolve")
+        room_commands.post_event(
+            conn,
+            actor=sol_actor,
+            room_id=sol_room["id"],
+            event_kind="check_in",
+            body="Command boundary implemented; focused verification is in progress.",
+            reference_kind="run",
+            reference_id=DEMO_RUN_ID,
+        )
+        room_commands.post_event(
+            conn,
+            actor=sol_actor,
+            room_id=command_room["id"],
+            event_kind="handoff",
+            body=(
+                "Implementation is ready for Terra to inspect against the visible "
+                "run and issue receipts."
+            ),
+            reference_kind="issue",
+            reference_id=command_issue["id"],
         )
 
         counts = {
             table: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
-            for table in ("users", "projects", "issues", "spaces", "pages", "activity")
+            for table in (
+                "users",
+                "projects",
+                "issues",
+                "spaces",
+                "pages",
+                "rooms",
+                "room_events",
+                "activity",
+            )
         }
         return {
             "db_path": str(db_path),
@@ -269,6 +346,9 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
                 "command_issue": command_issue["id"],
                 "demo_issue": demo_issue["id"],
                 "docs_issue": docs_issue["id"],
+                "main_room": main_room["id"],
+                "command_room": command_room["id"],
+                "sol_room": sol_room["id"],
             },
             "counts": counts,
         }

@@ -1,24 +1,24 @@
-"""Unified full-text search over issues and pages — the second one-roof payoff.
+"""Unified full-text search across issues, pages, comments, and Room events.
 
-Because Aegis and Mentor share one database, a single FTS5 index (`search_index`,
-migration 0013) can rank issue and page hits together. This module:
+Because Aegis, Mentor, and Rooms share one database, a single FTS5 index
+(`search_index`, migration 0013) can rank work, documentation, discussion, and
+coordination hits together. This module:
 
-  * keeps that derived index current (index_document, called from the issue/page
-    data-access layer on every write, exactly like core/links.sync_links),
-  * answers a query, ranked best-first across both kinds, paged (search), and
-  * enriches each hit with the little context that makes a result scannable — an
-    issue's key (ATH-12) and status, a page's space key — by reading the source
-    tables directly (the same direct-read contract used everywhere here, so still
-    no aegis/mentor import and no dependency cycle).
+  * keeps that derived index current (index_document, called from entity/comment
+    writers and the Room event command, exactly like core/links.sync_links),
+  * answers a query, ranked best-first across every supported kind, paged (search),
+    and
+  * enriches each hit with the context that makes it scannable — issue key/status,
+    page space, comment parent coordinates, or Room/project coordinates and event
+    kind — by reading the source tables directly.
 
-It lives in core/ for the same reason links does: it is the one place that
-deliberately knows about BOTH issues and pages. It reads those tables directly
-via a fixed internal map and never imports aegis/mentor, so there is no
+It lives in core/ for the same reason links does: it deliberately knows about
+multiple source tables while never importing aegis/mentor modules, so there is no
 dependency cycle (aegis/mentor import core, never the reverse).
 
-The index is DERIVED, not truth: the `issues`/`pages` rows are the truth, and a
-row's entry is re-derived from the live row on every write. If the two ever drift,
-the source row wins and a reindex repairs the index.
+The index is DERIVED, not truth: the mapped source rows and Room event metadata are
+the truth, and entries are re-derived from their live sources on every write. If
+they drift, the source rows win and a reindex repairs the index.
 """
 
 from __future__ import annotations
@@ -35,11 +35,10 @@ MAX_OFFSET = 2**63 - 1
 
 
 # The searchable kinds and how to read each one's text: the table, its title column
-# (None for a comment, which has no title of its own), and its body column. Issues and
-# pages carry title + body; issue/page comments carry only a body (the FTS title is
-# indexed empty and the hit borrows its PARENT's title at read time, see _enrich).
-# Values are fixed literals, never caller input, so building a query string from them is
-# safe. The two comment kinds make discussion searchable alongside the docs it annotates.
+# (None for comments and Room activity, which have no title of their own), and its body
+# column. Issues/pages carry title + body; comments and Room events carry only prose
+# (their FTS title is indexed empty and _enrich supplies parent/Room context). Values
+# are fixed literals, never caller input, so building a query string from them is safe.
 class _SourceSpec(TypedDict):
     table: str
     title: str | None
@@ -51,6 +50,7 @@ _SOURCE: dict[str, _SourceSpec] = {
     "page": {"table": "pages", "title": "title", "body": "body"},
     "issue_comment": {"table": "comments", "title": None, "body": "body"},
     "page_comment": {"table": "page_comments", "title": None, "body": "body"},
+    "room_event": {"table": "activity", "title": None, "body": "detail"},
 }
 
 # Comment kinds → the parent (kind, table, foreign-key column) the hit resolves to for its
@@ -72,17 +72,18 @@ def index_document(
 ) -> None:
     """Make the search_index entry for one source match its live row exactly.
 
-    Called from the data-access layer after an issue/page/comment is created or edited.
-    We REPLACE (delete-then-insert) rather than diff: the source row is the single
-    source of truth, so re-deriving from it is simplest and always correct — and,
-    crucially, re-reading the WHOLE row means a title-only or body-only edit still
+    Called after an issue/page/comment is created or edited and after a Room event is
+    appended. We REPLACE (delete-then-insert) rather than diff: the source row is the
+    single source of truth, so re-deriving from it is simplest and always correct —
+    and, crucially, re-reading the WHOLE row means a title-only or body-only edit still
     indexes the full current text, not a stale half. If the row is gone (a deleted
-    comment, or a purged page), the entry is simply removed — so calling this AFTER a
-    delete clears the FTS entry. ``commit=False`` lets an application command commit the
-    source, projections, and audit together.
+    comment or purged page), the entry is simply removed — so calling this AFTER a
+    delete clears the FTS entry. ``commit=False`` lets an application command commit
+    the source, projections, and audit together.
 
-    A comment has no title column, so its FTS title is indexed empty (`_SOURCE[kind]`
-    carries title=None); the hit borrows its parent's title at read time (_enrich)."""
+    Comments and Room activity have no title column, so their FTS title is indexed
+    empty (`_SOURCE[kind]` carries title=None); _enrich supplies the parent or Room
+    title and coordinates at read time."""
     spec = _SOURCE[kind]
     cols = spec["body"] if spec["title"] is None else f"{spec['title']}, {spec['body']}"
     row = conn.execute(
@@ -118,12 +119,11 @@ def _to_match(query: str) -> str:
 
 
 def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
-    """Attach per-kind context to each hit so a result is scannable at a glance: an
-    issue gets its key (ATH-12, or None for a backlog issue) and status; a page gets
-    its space key. Resolved with ONE batch query per kind — not per hit — reading the
-    source tables directly, the same contract index_document uses, so this stays free
-    of any aegis/mentor import. A hit whose source row vanished between the FTS read
-    and this read just gets no context and still renders by title."""
+    """Attach scannable per-kind context: issue key/status, page space, a comment's
+    parent coordinates/title, or a Room event's room/project coordinates, event kind,
+    and room title. Each kind is resolved with one batch query, not per hit, by reading
+    source tables directly; this stays free of aegis/mentor imports. A hit whose source
+    row vanished between the FTS read and enrichment gets empty context."""
     issue_ids = [h["source_id"] for h in hits if h["kind"] == "issue"]
     page_ids = [h["source_id"] for h in hits if h["kind"] == "page"]
     issue_ctx: dict[int, dict] = {}
@@ -191,6 +191,20 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
                 "title": row["title"],
                 "space_key": row["space_key"],
             }
+    # Room-event prose lives on activity; metadata supplies the navigable Room,
+    # project, event kind, and display title in one batch.
+    room_event_ids = [h["source_id"] for h in hits if h["kind"] == "room_event"]
+    room_event_ctx: dict[int, dict] = {}
+    if room_event_ids:
+        ph = ",".join("?" for _ in room_event_ids)
+        for row in conn.execute(
+            f"SELECT re.activity_id, re.event_kind, r.id AS room_id, "
+            f"r.project_id, r.slug AS room_slug, r.title "
+            f"FROM room_events re JOIN rooms r ON r.id = re.room_id "
+            f"WHERE re.activity_id IN ({ph})",
+            room_event_ids,
+        ).fetchall():
+            room_event_ctx[row["activity_id"]] = dict(row)
     for h in hits:
         if h["kind"] == "issue":
             ctx = issue_ctx.get(h["source_id"], {})
@@ -212,44 +226,58 @@ def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
             h["parent_id"] = ctx.get("parent_id")
             h["title"] = ctx.get("title") or ""  # borrow the parent page's title
             h["space_key"] = ctx.get("space_key")
+        elif h["kind"] == "room_event":
+            ctx = room_event_ctx.get(h["source_id"], {})
+            h["room_id"] = ctx.get("room_id")
+            h["room_slug"] = ctx.get("room_slug")
+            h["project_id"] = ctx.get("project_id")
+            h["event_kind"] = ctx.get("event_kind")
+            h["title"] = ctx.get("title") or ""
     return hits
 
 
 def _visibility_clause(
     conn: sqlite3.Connection, actor: dict | None
 ) -> tuple[str, list]:
-    """Build the SQL fragment (with a leading AND) + params that keep only hits the
-    actor may see: an issue hit whose project is visible (or backlog), a page hit whose
-    space is visible, and a COMMENT hit whose parent issue/page is visible on the same
-    rule (a comment inherits its parent's audience). Returns ('', []) for an admin (who
-    sees all — no gate needed). The subqueries resolve the visible source ids from the
-    visible project/space sets, so we never enumerate them in Python. An actor with no
-    visible spaces matches no pages (nor page comments); backlog issues (no project)
-    always pass, so do comments on them.
+    """Build the leading-AND SQL fragment and params that retain only visible hits.
 
-    A comment kind NOT listed in the disjunction would be dropped entirely (source_id in
-    nothing), so every searchable kind must appear here — the reason this gate and the
-    _SOURCE map are edited together."""
+    Issues inherit project visibility (with backlog remaining visible), pages inherit
+    space visibility, and comments inherit their parent issue/page audience. Room
+    events require native Room metadata, current Room access, and their immutable
+    activity visibility envelope. Admins bypass audience filtering, but Room hits must
+    still resolve to live native metadata. Subqueries resolve visible source ids in SQL, so
+    Python never enumerates them.
+
+    A kind omitted from the disjunction would be dropped entirely, so every searchable
+    kind must appear here — the reason this gate and _SOURCE are edited together."""
     vis_projects = access.visible_project_filter(conn, actor)
-    if vis_projects is None:  # admin → unrestricted
-        return "", []
+    if vis_projects is None:  # admin → unrestricted except native Room provenance
+        return (
+            "AND (kind <> 'room_event' OR source_id IN ("
+            "SELECT re.activity_id FROM room_events re "
+            "JOIN activity room_activity ON room_activity.id = re.activity_id "
+            "JOIN rooms r ON r.id = re.room_id "
+            "JOIN projects p ON p.id = r.project_id "
+            "AND p.activity_scope_key = r.project_scope_key "
+            "WHERE room_activity.imported_at IS NULL)) ",
+            [],
+        )
     vis_spaces = access.visible_space_filter(conn, actor)
 
     params: list = []
     if vis_projects:
         ph = ",".join("?" for _ in vis_projects)
         issue_where = f"project_id IS NULL OR project_id IN ({ph})"
+        room_project_where = f"r.project_id IN ({ph})"
     else:
         issue_where = "project_id IS NULL"
+        room_project_where = "0"
     if vis_spaces:
         ph2 = ",".join("?" for _ in vis_spaces)
         page_where = f"space_id IN ({ph2})"
     else:
-        page_where = "0"  # no visible spaces → no page (or page-comment) hits
+        page_where = "0"  # no visible spaces means no page/comment hit
 
-    # The visible-issue and visible-page id sets, reused for both the entity hits and the
-    # comment hits that hang off them. Params are appended in clause order: issue set,
-    # issue-comment set (issue params again), page set, page-comment set (space again).
     issue_src = f"SELECT id FROM issues WHERE {issue_where}"
     ic_src = (
         f"SELECT c.id FROM comments c JOIN issues i ON i.id = c.issue_id "
@@ -260,17 +288,43 @@ def _visibility_clause(
         f"SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
         f"WHERE {page_where.replace('space_id', 'pg.space_id')}"
     )
+    if actor is None:
+        room_access = f"{room_project_where} AND r.visibility = 'project'"
+        room_params: list[object] = list(vis_projects)
+    else:
+        room_access = (
+            f"{room_project_where} AND (r.visibility = 'project' OR "
+            "(r.visibility = 'members' AND (p.created_by = ? OR EXISTS ("
+            "SELECT 1 FROM project_members pm WHERE pm.project_id = r.project_id "
+            "AND pm.user_id = ?))))"
+        )
+        room_params = [*vis_projects, actor["id"], actor["id"]]
+    event_gate, event_gate_params = access.event_visibility_clause(
+        conn, actor, alias="room_activity"
+    )
+    room_src = (
+        "SELECT re.activity_id FROM room_events re "
+        "JOIN activity room_activity ON room_activity.id = re.activity_id "
+        "JOIN rooms r ON r.id = re.room_id "
+        "JOIN projects p ON p.id = r.project_id "
+        "AND p.activity_scope_key = r.project_scope_key "
+        f"WHERE room_activity.imported_at IS NULL AND {room_access}"
+        f"{f' AND ({event_gate})' if event_gate else ''}"
+    )
+    room_params.extend(event_gate_params)
     if vis_projects:
-        params.extend(vis_projects)  # issue_src
-        params.extend(vis_projects)  # ic_src
+        params.extend(vis_projects)
+        params.extend(vis_projects)
     if vis_spaces:
-        params.extend(vis_spaces)  # page_src
-        params.extend(vis_spaces)  # pc_src
+        params.extend(vis_spaces)
+        params.extend(vis_spaces)
+    params.extend(room_params)
     clause = (
         f"AND ((kind = 'issue' AND source_id IN ({issue_src})) "
         f"OR (kind = 'issue_comment' AND source_id IN ({ic_src})) "
         f"OR (kind = 'page' AND source_id IN ({page_src})) "
-        f"OR (kind = 'page_comment' AND source_id IN ({pc_src}))) "
+        f"OR (kind = 'page_comment' AND source_id IN ({pc_src})) "
+        f"OR (kind = 'room_event' AND source_id IN ({room_src}))) "
     )
     return clause, params
 
@@ -286,16 +340,15 @@ def search(
     include_archived: bool = False,
     actor: dict | None | object = _UNGATED,
 ) -> list[dict]:
-    """Best-first hits for `query` across issues and pages.
+    """Best-first hits for `query` across every supported source kind.
 
-    Each hit is {kind, source_id, title, snippet} plus the per-kind context _enrich
-    adds (an issue's key/status, a page's space_key). The snippet is a short body
-    excerpt with the matched terms wrapped in [..] for highlighting. Ranking is bm25
-    with the title column weighted above the body, so a title match outranks a
-    body-only match. An empty/whitespace query returns [] (a search box with no input
-    shows nothing, it does not dump the table). `kind` optionally narrows to one side
-    ('issue' | 'page'); an unknown kind simply matches nothing. `limit`/`offset` page
-    the ranked result set, so a caller can fetch one window at a time.
+    Each hit starts with {kind, source_id, title, snippet}; _enrich adds issue
+    key/status, page space, comment parent coordinates, or Room/project coordinates
+    and event kind. The snippet is a short body excerpt with matched terms wrapped in
+    [..] for highlighting. Ranking is bm25 with title weighted above body. An empty or
+    whitespace query returns [] rather than dumping the table. `kind` may narrow to
+    issue, page, issue_comment, page_comment, or room_event; an unknown kind matches
+    nothing. `limit`/`offset` page the ranked result set.
 
     `ids` optionally restricts the hits to these source ids — the generic hook that
     lets a caller intersect full-text relevance with a structured pre-filter (e.g.
@@ -303,17 +356,16 @@ def search(
     source_ids are per-kind, so a caller passing `ids` must also fix `kind`; an empty
     list matches nothing (an "IN ()" is both invalid SQL and the right answer).
 
-    `actor` gates the hits by visibility: an issue hit survives only if its project is
-    visible to the actor (or it is a backlog issue), and a page hit only if its space
-    is. The default (_UNGATED) applies no gate — for internal callers and ranking
-    tests; pass the real actor (a user dict, or None for anonymous) to filter. Gating
-    happens in SQL, before LIMIT/OFFSET, so paging stays correct. An admin sees
-    everything, so no predicate is added for them.
+    `actor` gates hits by visibility: issues use their project (or backlog), pages use
+    their space, comments use their parent, and Room events use current Room access plus
+    the immutable activity envelope. The default (_UNGATED) applies no gate for
+    internal callers and ranking tests; pass a user dict or None for anonymous access.
+    Gating happens in SQL before LIMIT/OFFSET. Admins bypass audience restrictions, but
+    Room-event hits still require native metadata.
 
-    `include_archived` defaults False: archived (soft-deleted) issues and pages drop out
-    of every list, so search excludes them too — the derived FTS index doesn't carry the
-    archived flag, so the exclusion is applied here by source for both kinds. Pass True to
-    search the archive as well."""
+    `include_archived` defaults False: archived issues/pages, comments whose parent is
+    archived, and events in archived Rooms are excluded by source before paging. Pass
+    True to include them."""
     if offset < 0 or offset > MAX_OFFSET:
         raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
     if not query or not query.strip():
@@ -340,11 +392,9 @@ def search(
             sql += clause
             params.extend(vis_params)
     if not include_archived:
-        # Exclude archived issues AND archived pages by source (the FTS index carries no
-        # archived flag). Both kinds soft-delete via archived_at, so a hit is dropped
-        # when its own row is archived — and a COMMENT is dropped when its PARENT is
-        # archived, matching how the parent itself drops out (an archived doc hides its
-        # discussion too). Applied in SQL before LIMIT/OFFSET, so paging stays correct.
+        # The FTS index carries no archive flag. Drop archived issues/pages, comments
+        # whose parent is archived, and events whose Room is archived. Apply every
+        # exclusion before LIMIT/OFFSET so paging stays correct.
         sql += (
             "AND NOT (kind = 'issue' AND source_id IN "
             "(SELECT id FROM issues WHERE archived_at IS NOT NULL)) "
@@ -356,6 +406,9 @@ def search(
             "AND NOT (kind = 'page_comment' AND source_id IN "
             "(SELECT c.id FROM page_comments c JOIN pages pg ON pg.id = c.page_id "
             "WHERE pg.archived_at IS NOT NULL)) "
+            "AND NOT (kind = 'room_event' AND source_id IN "
+            "(SELECT re.activity_id FROM room_events re JOIN rooms r "
+            "ON r.id = re.room_id WHERE r.archived_at IS NOT NULL)) "
         )
     # bm25() column order is (kind, source_id, title, body); weight title 2x body.
     sql += "ORDER BY bm25(search_index, 0.0, 0.0, 2.0, 1.0) LIMIT ? OFFSET ?"

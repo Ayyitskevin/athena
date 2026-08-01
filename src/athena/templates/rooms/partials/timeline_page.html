@@ -1,0 +1,103 @@
+{% from "rooms/macros.html" import entry_kind, safe_reference %}
+
+{% for entry in timeline["items"] %}
+{% set kind_key = entry.classification or entry.event_kind or "system" %}
+<li id="room-activity-{{ entry.activity_id }}"
+    class="room-entry room-entry-{{ kind_key }}">
+    <article aria-labelledby="room-activity-{{ entry.activity_id }}-heading">
+        <div class="room-entry-meta">
+            <div class="room-inline-meta">
+                <span class="room-kind room-kind-{{ kind_key }}">{{ entry_kind(kind_key) }}</span>
+                {% if entry.event_kind and entry.event_kind != "message" and entry.event_kind != kind_key %}
+                <span class="room-kind room-kind-{{ entry.event_kind }}">{{ entry_kind(entry.event_kind) }}</span>
+                {% endif %}
+                <strong id="room-activity-{{ entry.activity_id }}-heading" class="room-entry-author">
+                    {{ entry.actor.name if entry.actor else "Athena" }}
+                </strong>
+                {% if entry.actor and entry.actor.is_agent %}
+                <span class="agent-badge">agent</span>
+                {% endif %}
+            </div>
+            <time datetime="{{ entry.created_at }}">{{ entry.created_at }}</time>
+        </div>
+
+        <div class="room-entry-body">
+            {% if entry.body %}
+            <p>{{ entry.body }}</p>
+            {% elif entry.verb %}
+            <p>{{ entry.verb | replace("_", " ") | capitalize }}</p>
+            {% else %}
+            <p class="muted">Recorded activity without coordination text.</p>
+            {% endif %}
+            {% if entry.body_truncated %}
+            <p class="note-small"><strong>Truncated:</strong> this bounded view contains only an excerpt.</p>
+            {% endif %}
+        </div>
+
+        {{ safe_reference(entry.reference) }}
+
+        {% if not entry.reference and entry.target %}
+        <div class="room-entry-reference">
+            <strong>Authoritative target</strong>
+            {{ entry.target.kind | replace("_", " ") | title }}
+            <code>#{{ entry.target.id }}</code>
+            <span class="muted">No navigable receipt was supplied.</span>
+        </div>
+        {% endif %}
+
+        <div class="room-entry-receipts">
+            <span>Activity <code>#{{ entry.activity_id }}</code></span>
+            {% if entry.run_id %}
+            · run
+            {% if entry.run_receipt %}
+            <a href="{{ entry.run_receipt }}"><code>{{ entry.run_id }}</code></a>
+            {% else %}
+            <code>{{ entry.run_id }}</code>
+            {% endif %}
+            {% if entry.run_receipt_unavailable_reason %}
+            <span class="muted"> (receipt unavailable:
+                {{ entry.run_receipt_unavailable_reason | replace("_", " ") }})</span>
+            {% endif %}
+            {% endif %}
+            {% if entry.parent_run_id %}
+            · parent run <code>{{ entry.parent_run_id }}</code>
+            {% endif %}
+            {% if entry.forked_from_event_id %}
+            · forked from activity <code>#{{ entry.forked_from_event_id }}</code>
+            {% endif %}
+            {% if entry.supersedes_event_id %}
+            · supersedes room event <code>#{{ entry.supersedes_event_id }}</code>
+            {% endif %}
+            {% if not entry.is_current and entry.successor_event_id %}
+            · superseded by room event <code>#{{ entry.successor_event_id }}</code>
+            {% elif entry.event_kind %}
+            · current room event
+            {% endif %}
+
+            {% if entry.content_sha256 %}
+            · content SHA-256 <code>{{ entry.content_sha256 }}</code>
+            {% endif %}
+            {% if entry.imported_at %}
+            · imported <time datetime="{{ entry.imported_at }}">{{ entry.imported_at }}</time>
+            {% endif %}
+        </div>
+    </article>
+</li>
+{% else %}
+<li class="empty-state">
+    No visible room activity is included in this bounded page.
+</li>
+{% endfor %}
+
+{% if timeline.page.has_more and timeline.page.next_cursor %}
+<li class="room-timeline-pager">
+    <a class="button secondary"
+       href="/aegis/rooms/{{ room.id }}/timeline?cursor={{ timeline.page.next_cursor }}"
+       hx-get="/aegis/rooms/{{ room.id }}/timeline?cursor={{ timeline.page.next_cursor }}"
+       hx-target="closest li"
+       hx-swap="outerHTML"
+       hx-sync="this:drop">
+        Older activity
+    </a>
+</li>
+{% endif %}

@@ -9,6 +9,9 @@
         <h1>{{ issue.key or "#" ~ issue.id }} {{ issue.title }}</h1>
     </div>
     <div class="header-actions">
+        {% if work_room %}
+        <a href="/aegis/rooms/{{ work_room.id }}" class="button secondary small">Work room</a>
+        {% endif %}
         <a href="/aegis/issues/{{ issue.id }}/work-context" class="button secondary small">Agent work context</a>
         <span class="status {{ issue.status }} large">{{ issue.status }}</span>
         {% if request.state.user %}
@@ -92,7 +95,7 @@
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
         <div class="meta-item"><strong>Project</strong>
             {% if issue.project_id %}
-            <a href="/aegis/issues?project={{ issue.project_id }}">{{ issue.project_name }}</a>
+            <a href="/aegis/projects/{{ issue.project_id }}">{{ issue.project_name }}</a>
             {% else %}
             <span class="muted">No project</span>
             {% endif %}

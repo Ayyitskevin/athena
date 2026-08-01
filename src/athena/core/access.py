@@ -436,6 +436,44 @@ def _event_project_scope_clause(
     )
 
 
+def _room_access_clause(
+    room_alias: str,
+    project_alias: str,
+    actor: dict | None,
+) -> tuple[str, list]:
+    """SQL predicate for a room and its owning project in one snapshot.
+
+    ``project`` rooms inherit their project's audience. ``members`` rooms are
+    narrower even when the project itself is public: only a signed-in project
+    creator or explicit member may read them (admins return before this helper is
+    used). Keeping this correlated in the caller's statement prevents a room from
+    changing audience between an authorization query and a paged activity read.
+    """
+    project_access, project_params = _container_access_clause(
+        project_alias,
+        actor,
+        membership_table="project_members",
+        container_id_column="project_id",
+    )
+    if actor is None:
+        room_access = f"{room_alias}.visibility = 'project'"
+        room_params: list = []
+    else:
+        room_access = (
+            f"({room_alias}.visibility = 'project' OR "
+            f"({room_alias}.visibility = 'members' AND "
+            f"({project_alias}.created_by = ? OR EXISTS ("
+            "SELECT 1 FROM project_members room_membership "
+            f"WHERE room_membership.project_id = {project_alias}.id "
+            "AND room_membership.user_id = ?))))"
+        )
+        room_params = [actor["id"], actor["id"]]
+    return f"({project_access} AND {room_access})", [
+        *project_params,
+        *room_params,
+    ]
+
+
 def event_visibility_clause(
     conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
 ) -> tuple[str, list]:
@@ -477,6 +515,8 @@ def event_visibility_clause(
         alias, actor
     )
 
+    room_access, room_params = _room_access_clause("target_room", "room_project", actor)
+    room_scope_access, room_scope_params = _event_project_scope_clause(alias, actor)
     clause = (
         f"(({alias}.target_kind = 'issue' "
         f"AND {alias}.visibility_restricted = 0 "
@@ -497,7 +537,14 @@ def event_visibility_clause(
         f"AND EXISTS (SELECT 1 FROM projects target_project "
         f"WHERE target_project.id = {alias}.target_id "
         f"AND {target_project_access}) "
-        f"AND {project_scope_access}))"
+        f"AND {project_scope_access}) "
+        f"OR ({alias}.target_kind = 'room' "
+        f"AND {alias}.visibility_restricted = 0 "
+        f"AND EXISTS (SELECT 1 FROM rooms target_room "
+        f"JOIN projects room_project ON room_project.id = target_room.project_id "
+        f"AND room_project.activity_scope_key = target_room.project_scope_key "
+        f"WHERE target_room.id = {alias}.target_id AND {room_access}) "
+        f"AND {room_scope_access}))"
     )
     params = [
         *current_project_params,
@@ -506,6 +553,8 @@ def event_visibility_clause(
         *target_space_params,
         *target_project_params,
         *project_scope_params,
+        *room_params,
+        *room_scope_params,
     ]
     return clause, params
 

@@ -38,6 +38,12 @@ what it said back; it cannot signal a process). *Process-level* kill and *genera
 undo across every write remain roadmap goals rather than guarantees Athena makes
 today.
 
+Project-scoped [Rooms](ROOMS.md) are the shipped coordination view across this
+loop: operators and agents see work, decisions, check-ins, evidence, and receipts
+together. They are deliberately inert and model-free—not general chat, automatic
+execution, or a new approval boundary—so the solo operator remains the conductor.
+
+
 1. **Direct** — capture intent as work agents can pick up (issues with clear acceptance
    criteria, docs as playbooks).
 2. **Delegate** — hand a task to a specific agent with a scoped token, a budget, and a

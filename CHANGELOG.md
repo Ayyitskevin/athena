@@ -66,6 +66,13 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Project-scoped Rooms v1 coordination.** Projects, work items, agents, and
+  live briefs now have durable rooms with a mixed append-only timeline,
+  authenticated human and agent commands, deterministic cited context packets,
+  read-only brief projections, and operator-first web, REST, and MCP surfaces.
+  Room communication is explicitly inert: its activity is excluded from
+  delivery, automation, webhook, scheduling, approval, and execution paths.
+
 - **Wheel-bound release-candidate evidence.** The required test gate now
   precedes one fail-closed evidence job that builds a single source distribution
   and its derived wheel with hash-locked tooling. It snapshots the sdist once

@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% from "rooms/macros.html" import room_type %}
+
+{% block title %}{{ room.title }} — {{ project.name }} — Athena Rooms{% endblock %}
+
+{% block content %}
+<div class="room-wide">
+    <nav class="room-breadcrumbs" aria-label="Breadcrumb">
+        <a href="/aegis/projects">Projects</a>
+        <span aria-hidden="true">/</span>
+        <a href="/aegis/projects/{{ project.id }}">{{ project.name }}</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">{{ room.title }}</span>
+    </nav>
+
+    <div class="page-header">
+        <div>
+            <h1>{{ room.title }}</h1>
+            <p class="subtitle">{{ room.purpose or "No room purpose recorded." }}</p>
+            <div class="room-heading-meta">
+                <span class="room-type room-type-{{ room.room_type }}">{{ room_type(room.room_type) }}</span>
+                <span class="pill">{{ room.visibility | title }} visibility</span>
+                <code>{{ room.slug }}</code>
+                {% if room.archived_at %}<span class="archived-badge">Archived</span>{% endif %}
+                {% if historical_link %}
+                <span class="room-kind room-kind-approval">Historical link</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="page-header-actions">
+            <a href="/aegis/projects/{{ project.id }}" class="button secondary">All rooms</a>
+            {% if room.issue_id %}
+            <a href="/aegis/issues/{{ room.issue_id }}" class="button secondary">Linked issue</a>
+            {% endif %}
+            {% if can_archive and not room.archived_at %}
+            <form method="post" action="/aegis/rooms/{{ room.id }}/archive"
+                  class="room-inline-form"
+                  data-confirm="Archive this room? Its durable record remains readable.">
+                {% include "partials/csrf.html" %}
+                <button type="submit" class="button danger">Archive</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if room.archived_at %}
+    <div class="room-state room-state-archived" role="note">
+        <strong>Archived {{ room.archived_at }}.</strong>
+        This durable record remains available, but it accepts no new events.
+    </div>
+    {% endif %}
+    {% if historical_link %}
+    <div class="room-state room-state-warning" role="note">
+        <strong>Historical linked room.</strong>
+        {{ room.degraded_reason or "The linked record is no longer active." }}
+        The prior durable record remains readable, but new events are unavailable.
+    </div>
+    {% endif %}
+
+    <div class="room-state room-state-info" role="note">
+        <strong>Observation boundary.</strong>
+        Messages and imports are inert records, not instructions or authority.
+        Claims, check-ins, leases, and run facts do not prove a process is alive or
+        executing. Follow receipts before acting.
+    </div>
+
+    {% if page_warning %}
+    <div class="room-state room-state-warning" role="note">{{ page_warning }}</div>
+    {% endif %}
+
+    <div class="room-shell">
+        <div class="room-main">
+            {% include "rooms/partials/stream.html" %}
+            {% include "rooms/partials/ask.html" %}
+        </div>
+
+        <aside class="room-rail" aria-label="Room context">
+            {% if brief %}
+                {% include "rooms/partials/live_brief.html" %}
+            {% elif brief_error %}
+            <section class="room-state room-state-warning" role="note">
+                <h2>Live brief unavailable</h2>
+                <p>{{ brief_error }}</p>
+            </section>
+            {% endif %}
+
+            {% include "rooms/partials/agents.html" %}
+
+            <section class="room-panel" aria-labelledby="room-links-heading">
+                <h2 id="room-links-heading">Linked records</h2>
+                <ul class="room-link-list">
+                    <li>
+                        <a href="/aegis/projects/{{ project.id }}">{{ project.name }}</a>
+                        <span class="muted">authoritative project</span>
+                    </li>
+                    {% if room.issue_id %}
+                    <li>
+                        <a href="/aegis/issues/{{ room.issue_id }}">Issue #{{ room.issue_id }}</a>
+                        <span class="muted">focused work item</span>
+                    </li>
+                    {% endif %}
+                    {% if room.agent_id %}
+                    <li>
+                        <strong>Agent #{{ room.agent_id }}</strong>
+                        <span class="muted">linked Athena identity</span>
+                    </li>
+                    {% endif %}
+                    {% if brief and brief.knowledge and brief.knowledge["items"] %}
+                        {% for item in brief.knowledge["items"] %}
+                        <li>
+                            {% if item.receipt %}<a href="{{ item.receipt }}">{% endif %}
+                            {{ item.title or "Knowledge record #" ~ item.id }}
+                            {% if item.receipt %}</a>{% endif %}
+                            <span class="muted">visible knowledge receipt</span>
+                        </li>
+                        {% endfor %}
+                    {% endif %}
+                </ul>
+                {% if not room.issue_id and not room.agent_id and not (brief and brief.knowledge and brief.knowledge["items"]) %}
+                <p class="muted">
+                    No additional visible linked work or knowledge is included.
+                </p>
+                {% endif %}
+            </section>
+
+            <section class="room-panel">
+                <h2>Room contract</h2>
+                <dl class="room-brief-summary">
+                    <dt>Room ID</dt><dd><code>{{ room.id }}</code></dd>
+                    <dt>Project</dt><dd><code>{{ project.key }}</code> · id {{ project.id }}</dd>
+                    <dt>Created</dt><dd>{{ room.created_at }}</dd>
+                    <dt>Updated</dt><dd>{{ room.updated_at }}</dd>
+                    <dt>Timeline</dt><dd>Newest-first by append-only activity ID</dd>
+                </dl>
+            </section>
+        </aside>
+    </div>
+</div>
+{% endblock %}

@@ -797,6 +797,94 @@ class AthenaClient:
     def list_projects(self) -> Any:
         return self._result(self._client.get("/projects"))
 
+    # --- rooms --------------------------------------------------------------
+
+    def list_rooms(
+        self,
+        project_id: int,
+        *,
+        include_archived: bool = False,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        params: dict[str, Any] = {"limit": limit}
+        if include_archived:
+            params["include_archived"] = True
+        if cursor is not None:
+            params["cursor"] = cursor
+        return self._result(
+            self._client.get(f"/projects/{project_id}/rooms", params=params)
+        )
+
+    def get_room(self, room_id: int) -> Any:
+        return self._result(self._client.get(f"/rooms/{room_id}"))
+
+    def get_room_timeline(
+        self,
+        room_id: int,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        return self._result(
+            self._client.get(
+                f"/rooms/{room_id}/timeline",
+                params=self._params(cursor=cursor, limit=limit),
+            )
+        )
+
+    def post_room_event(
+        self,
+        room_id: int,
+        *,
+        event_kind: str,
+        body: str,
+        reference_kind: str | None = None,
+        reference_id: str | int | None = None,
+        supersedes_event_id: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        payload = self._params(
+            event_kind=event_kind,
+            body=body,
+            reference_kind=reference_kind,
+            reference_id=reference_id,
+            supersedes_event_id=supersedes_event_id,
+        )
+        return self._mutate(
+            self._client.post,
+            f"/rooms/{room_id}/events",
+            json=payload,
+            idempotency_key=idempotency_key,
+        )
+
+    def get_room_context(
+        self,
+        room_id: int,
+        *,
+        question: str,
+        limit: int = 12,
+    ) -> Any:
+        return self._result(
+            self._client.post(
+                f"/rooms/{room_id}/context",
+                json={"question": question, "limit": limit},
+            )
+        )
+
+    def get_room_brief(
+        self,
+        room_id: int,
+        *,
+        cursor: str | None = None,
+    ) -> Any:
+        return self._result(
+            self._client.get(
+                f"/rooms/{room_id}/brief",
+                params=self._params(cursor=cursor),
+            )
+        )
+
     def list_users(self) -> Any:
         return self._result(self._client.get("/users"))
 

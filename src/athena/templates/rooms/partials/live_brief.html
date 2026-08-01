@@ -1,0 +1,81 @@
+{% macro brief_group(title, group, empty_message) %}
+<section class="room-brief-group">
+    <h3>{{ title }}</h3>
+    {% if group and group.unavailable_reason %}
+    <div class="room-state room-state-warning" role="note">{{ group.unavailable_reason }}</div>
+    {% elif group %}
+    <p class="room-group-summary">
+        Showing {{ group["items"] | length }} of {{ group.visible_total }} visible
+        item{{ "s" if group.visible_total != 1 }}.
+        {% if group.clipped %}<strong>Clipped:</strong> more visible items are outside this brief.{% endif %}
+    </p>
+    {% endif %}
+
+    {% if group and group["items"] %}
+    <ul class="room-brief-list">
+        {% for item in group["items"] %}
+        <li>
+            {% if item.receipt %}<a href="{{ item.receipt }}">{% endif %}
+            <strong>{{ item.title or item.name or item.summary or item.verb or item.kind | replace("_", " ") | title }}</strong>
+            {% if item.receipt %}</a>{% endif %}
+            {% if item.status %}<span class="status {{ item.status }}">{{ item.status }}</span>{% endif %}
+            {% if item.priority %}<span class="priority {{ item.priority }}">{{ item.priority }}</span>{% endif %}
+            {% if item.body or item.detail %}
+            <div class="muted">{{ item.body or item.detail }}</div>
+            {% endif %}
+            <div class="note-small">
+                {% if item.actor %}{{ item.actor.name or item.actor }} · {% endif %}
+                {% if item.created_at %}{{ item.created_at }}{% elif item.updated_at %}{{ item.updated_at }}{% endif %}
+                {% if item.activity_id %} · activity #{{ item.activity_id }}{% endif %}
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">{{ empty_message }}</p>
+    {% endif %}
+</section>
+{% endmacro %}
+
+<section class="room-panel" aria-labelledby="room-brief-heading">
+    <div class="page-header">
+        <div>
+            <h2 id="room-brief-heading">Live brief</h2>
+            {% if brief.snapshot_at %}
+            <p class="subtitle">Snapshot {{ brief.snapshot_at }}</p>
+            {% endif %}
+        </div>
+        {% if brief.room and brief.room.id and (room is not defined or brief.room.id != room.id) %}
+        <a href="/aegis/rooms/{{ brief.room.id }}" class="button secondary small">Open</a>
+        {% endif %}
+    </div>
+
+    {% if brief.purpose %}
+    <p>{{ brief.purpose }}</p>
+    {% endif %}
+
+    <p class="note-small">
+        Live, bounded, read-only projection. Empty groups refer only to records
+        visible in this snapshot.
+    </p>
+
+    {{ brief_group("Priorities", brief.open_priority, "No visible open priority work is included.") }}
+    {{ brief_group("Blocked work", brief.blockers, "No visible blocked work is included.") }}
+    {{ brief_group("Agent observations", brief.agents, "No visible recent agent observations are included.") }}
+    {{ brief_group("Decisions and approvals", brief.decisions, "No visible recent decisions are included.") }}
+    {{ brief_group("Related knowledge", brief.knowledge, "No visible linked knowledge is included.") }}
+    {{ brief_group("Recent activity", brief.recent_timeline, "No visible recent activity is included.") }}
+
+    {% if brief.uncertainty %}
+    <div class="room-state room-state-warning" role="note">
+        <strong>Brief uncertainty.</strong>
+        {% if brief.uncertainty is string %}
+        {{ brief.uncertainty }}
+        {% else %}
+        <ul>
+            {% for notice in brief.uncertainty %}<li>{{ notice }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>

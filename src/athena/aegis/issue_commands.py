@@ -24,6 +24,7 @@ from athena.aegis import (
     issues,
     projects,
     sprints,
+    rooms,
     statuses,
 )
 from athena.core import (
@@ -249,6 +250,14 @@ def create_issue(
             created_by=actor["id"],
             commit=False,
         )
+        rooms.ensure_work_item_room(conn, issue_id=issue["id"], created_by=actor["id"])
+        if actor.get("is_agent") and project_id is not None:
+            rooms.ensure_agent_room(
+                conn,
+                project_id=project_id,
+                agent_id=actor["id"],
+                created_by=actor["id"],
+            )
         issue_activity.record_created(
             conn,
             actor_id=actor["id"],
@@ -579,6 +588,36 @@ def _update_issue(
             )
             if updated is None:
                 raise IssueCommandError("not_found", "no such issue")
+        if project_changed:
+            rooms.move_work_item_room(
+                conn,
+                issue_id=issue_id,
+                project_id=updated["project_id"],
+            )
+        elif "title" in provided:
+            rooms.ensure_work_item_room(conn, issue_id=issue_id)
+
+        room_agent_ids: set[int] = set()
+        if enforce_actor_policy and actor.get("is_agent"):
+            room_agent_ids.add(actor["id"])
+        if updated["assignee_id"] is not None:
+            assigned = users.get_user(conn, updated["assignee_id"])
+            if assigned is not None and assigned["is_agent"]:
+                room_agent_ids.add(assigned["id"])
+        if project_changed:
+            room_agent_ids.update(
+                contributor["user_id"]
+                for contributor in contributors_data.list_contributors(conn, issue_id)
+                if contributor["is_agent"]
+            )
+        if updated["project_id"] is not None:
+            for agent_id in sorted(room_agent_ids):
+                rooms.ensure_agent_room(
+                    conn,
+                    project_id=updated["project_id"],
+                    agent_id=agent_id,
+                    created_by=actor["id"],
+                )
 
         transition_project_ids = (
             {before["project_id"], updated["project_id"]} if project_changed else None
@@ -889,7 +928,7 @@ def _add_contributor(
 ) -> tuple[list[dict], bool]:
     """The shared contributor write. Returns ``(contributors, changed)``."""
     with db.transaction(conn, immediate=True):
-        resolved, _ = _resolve_write_actor(
+        resolved, issue = _resolve_write_actor(
             conn, actor, issue_id, enforce_actor_policy=enforce_actor_policy
         )
         target = users.get_user(conn, user_id)
@@ -913,6 +952,13 @@ def _add_contributor(
                 user_id=user_id,
                 commit=False,
             )
+            if target["is_agent"] and issue["project_id"] is not None:
+                rooms.ensure_agent_room(
+                    conn,
+                    project_id=issue["project_id"],
+                    agent_id=target["id"],
+                    created_by=resolved["id"],
+                )
         return contributors_data.list_contributors(conn, issue_id), changed
 
 

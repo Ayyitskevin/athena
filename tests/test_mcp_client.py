@@ -391,6 +391,14 @@ MUTATION_CASES = [
         "/automation/rules/7",
         lambda c, k: c.delete_automation_rule(7, idempotency_key=k),
     ),
+    (
+        "post_room_event",
+        "POST",
+        "/rooms/11/events",
+        lambda c, k: c.post_room_event(
+            11, event_kind="message", body="x", idempotency_key=k
+        ),
+    ),
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
@@ -487,6 +495,10 @@ MCP_MUTATION_CASES = [
         {"rule_id": 7, "enabled": False},
     ),
     ("delete_automation_rule", {"rule_id": 7}),
+    (
+        "post_room_event",
+        {"room_id": 11, "event_kind": "message", "body": "x"},
+    ),
 ]
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES

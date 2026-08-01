@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import project_activity, project_etags, projects
+from athena.aegis import project_activity, project_etags, projects, rooms
 from athena.core import access, db, etag, identity, tokens, users
 
 _POLICY_ERROR_KINDS = (
@@ -66,6 +66,15 @@ def create_project(
             description=description,
             commit=False,
         )
+        rooms.ensure_project_rooms(conn, project_id=project["id"], created_by=actor_id)
+        creator = users.get_user(conn, actor_id)
+        if creator is not None and creator["is_agent"]:
+            rooms.ensure_agent_room(
+                conn,
+                project_id=project["id"],
+                agent_id=actor_id,
+                created_by=actor_id,
+            )
         project_activity.record_project_created(
             conn,
             actor_id=actor_id,
@@ -115,6 +124,7 @@ def update_project(
             commit=False,
         )
         assert updated is not None
+        rooms.ensure_project_rooms(conn, project_id=project_id)
         summary = _edit_summary(before, updated)
         if summary:
             project_activity.record_project_edited(
@@ -222,6 +232,14 @@ def add_project_member(
                 member_name=member_name,
                 commit=False,
             )
+            member = users.get_user(conn, user_id)
+            if member is not None and member["is_agent"]:
+                rooms.ensure_agent_room(
+                    conn,
+                    project_id=project_id,
+                    agent_id=user_id,
+                    created_by=actor_id,
+                )
         return added
 
 

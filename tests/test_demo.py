@@ -21,6 +21,8 @@ def test_seed_demo_builds_a_cross_linked_agent_workspace(tmp_path):
     assert seeded["counts"]["issues"] == 3
     assert seeded["counts"]["spaces"] == 1
     assert seeded["counts"]["pages"] == 2
+    assert seeded["counts"]["rooms"] == 7
+    assert seeded["counts"]["room_events"] == 4
 
     conn = db.connect(db_path)
     try:
@@ -43,6 +45,18 @@ def test_seed_demo_builds_a_cross_linked_agent_workspace(tmp_path):
             "SELECT COUNT(*) AS n FROM links WHERE target_kind = 'issue'"
         ).fetchone()["n"]
         assert linked >= 3
+        room_events = conn.execute(
+            "SELECT re.event_kind, a.delivery_eligible "
+            "FROM room_events re JOIN activity a ON a.id = re.activity_id "
+            "ORDER BY re.activity_id"
+        ).fetchall()
+        assert [row["event_kind"] for row in room_events] == [
+            "message",
+            "decision",
+            "check_in",
+            "handoff",
+        ]
+        assert all(row["delivery_eligible"] == 0 for row in room_events)
     finally:
         conn.close()
 
@@ -141,7 +155,12 @@ def test_seed_demo_mints_a_scoped_agent_token_for_mcp(tmp_path):
 
     assert seeded["agent_email"] == "sol@athena.local"
     assert seeded["agent_token"].startswith("ath_")
-    assert seeded["agent_scopes"] == ["read", "issue:write", "docs:write"]
+    assert seeded["agent_scopes"] == [
+        "read",
+        "issue:write",
+        "docs:write",
+        "rooms:write",
+    ]
 
     conn = db.connect(db_path)
     try:
@@ -149,7 +168,7 @@ def test_seed_demo_mints_a_scoped_agent_token_for_mcp(tmp_path):
             "SELECT user_id, scopes, token_hash FROM api_tokens"
         ).fetchone()
         assert row["user_id"] == seeded["ids"]["sol"]
-        assert row["scopes"] == "read issue:write docs:write"
+        assert row["scopes"] == "read issue:write docs:write rooms:write"
         assert row["token_hash"] != seeded["agent_token"]  # hash, never the raw
         minted = [
             e

@@ -1,0 +1,205 @@
+{% from "rooms/macros.html" import group_summary %}
+
+<section class="room-panel" aria-labelledby="room-agents-heading">
+    <h2 id="room-agents-heading">Visible agents</h2>
+    <p class="muted">
+        Claims and check-ins are recorded observations, not proof that a process is
+        alive or executing.
+    </p>
+
+    {% if agents_error %}
+    <div class="room-state room-state-warning" role="note">
+        <strong>Agent projection degraded.</strong> {{ agents_error }}
+    </div>
+    {% endif %}
+
+    {% if agents %}
+    {{ group_summary(agents) }}
+    {% endif %}
+
+    {% if agents and agents["items"] %}
+    <ul class="room-agent-list">
+        {% for agent in agents["items"] %}
+        <li class="room-agent">
+            <div class="room-agent-name">
+                <span>{{ agent.name or "Agent #" ~ agent.id }}</span>
+                {% if agent.is_agent %}
+                <span class="agent-badge">agent</span>
+                {% else %}
+                <span class="pill">former agent</span>
+                {% endif %}
+                <span class="pill">{{ agent.role }}</span>
+                <span class="room-kind room-kind-agent">{{ agent.account_state | replace("_", " ") }}</span>
+            </div>
+
+            {% if not agent.is_agent %}
+            <p class="room-agent-state room-agent-state-warning">
+                This linked identity is no longer registered as an Athena agent.
+            </p>
+            {% elif agent.paused_at %}
+            <p class="room-agent-state room-agent-state-warning">
+                Paused at <time datetime="{{ agent.paused_at }}">{{ agent.paused_at }}</time>.
+            </p>
+            {% elif agent.revoked %}
+            <p class="room-agent-state room-agent-state-warning">
+                No live Athena credential is recorded.
+            </p>
+            {% elif agent.account_state == "unavailable" %}
+            <p class="room-agent-state room-agent-state-warning">
+                No usable Athena credential posture is available.
+            </p>
+            {% else %}
+            <p class="room-agent-state">Registered Athena agent identity.</p>
+            {% endif %}
+
+            <h3>Recorded claims</h3>
+            {{ group_summary(agent.current_claims) }}
+            {% if agent.current_claims["items"] %}
+            <ul class="room-link-list">
+                {% for claim in agent.current_claims["items"] %}
+                <li>
+                    {% if claim.receipt %}<a href="{{ claim.receipt }}">{% else %}<strong>{% endif %}
+                    {{ claim.key }} · {{ claim.title }}
+                    {% if claim.receipt %}</a>{% else %}</strong>{% endif %}
+                    <span class="status {{ claim.status }}">{{ claim.status }}</span>
+                    <span class="priority {{ claim.priority }}">{{ claim.priority }}</span>
+                    <div class="note-small">
+                        Recorded {{ claim.claimed_at }} · lease through {{ claim.expires_at }}
+                        · generation {{ claim.generation }}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="muted">No visible current claim is recorded.</p>
+            {% endif %}
+
+            <dl class="room-agent-facts">
+                <dt>Latest check-in</dt>
+                <dd>
+                    {% if agent.latest_check_in %}
+                    {{ agent.latest_check_in.reporting_state | replace("_", " ") }}
+                    · last recorded {{ agent.latest_check_in.last_seen_at }}
+                    {% if agent.latest_check_in.receipt %}
+                    · <a href="{{ agent.latest_check_in.receipt }}">
+                        <code>{{ agent.latest_check_in.run_id }}</code>
+                      </a>
+                    {% elif agent.latest_check_in.run_id %}
+                    · run <code>{{ agent.latest_check_in.run_id }}</code>
+                    {% endif %}
+                    {% else %}
+                    <span class="muted">
+                        No visible cooperative check-in recorded{% if agent.latest_check_in_unavailable_reason %}:
+                        {{ agent.latest_check_in_unavailable_reason | replace("_", " ") }}{% endif %}.
+                    </span>
+                    {% endif %}
+                </dd>
+
+                <dt>Capability</dt>
+                <dd>
+                    {% if agent.capability.status == "available" %}
+                        {% if agent.capability.token_scopes %}
+                            {% for scope in agent.capability.token_scopes %}
+                            <code>{{ scope }}</code>{% if not loop.last %}, {% endif %}
+                            {% endfor %}
+                        {% else %}
+                        <span class="muted">No effective live token scopes recorded.</span>
+                        {% endif %}
+                    {% else %}
+                    <span class="muted">
+                        Capability details unavailable:
+                        {{ agent.capability.unavailable_reason | replace("_", " ") }}.
+                    </span>
+                    {% endif %}
+                </dd>
+            </dl>
+
+            {% if agent.capability.credential_posture %}
+            <details>
+                <summary>Admin-only credential posture</summary>
+                <dl class="room-agent-facts">
+                    <dt>Live tokens</dt><dd>{{ agent.capability.credential_posture.live_token_count }}</dd>
+                    <dt>Revoked tokens</dt><dd>{{ agent.capability.credential_posture.revoked_token_count }}</dd>
+                    <dt>Last token use</dt>
+                    <dd>{{ agent.capability.credential_posture.last_used_at or "Never recorded" }}</dd>
+                </dl>
+            </details>
+            {% endif %}
+
+            {% if agent.recent_contributions["items"] %}
+            <details>
+                <summary>
+                    {{ agent.recent_contributions["items"] | length }} recent visible
+                    contribution{{ "s" if agent.recent_contributions["items"] | length != 1 }}
+                </summary>
+                {{ group_summary(agent.recent_contributions) }}
+                <ul class="room-link-list">
+                    {% for item in agent.recent_contributions["items"] %}
+                    <li>
+                        {% if item.target_kind == "issue" %}
+                        <a href="/aegis/issues/{{ item.target_id }}">
+                            {{ item.verb | replace("_", " ") }} · issue #{{ item.target_id }}
+                        </a>
+                        {% elif item.target_kind == "page" %}
+                        <a href="/mentor/pages/{{ item.target_id }}">
+                            {{ item.verb | replace("_", " ") }} · page #{{ item.target_id }}
+                        </a>
+                        {% else %}
+                        {{ item.verb | replace("_", " ") }} ·
+                        {{ item.target_kind }} #{{ item.target_id }}
+                        {% endif %}
+                        <span class="muted"> · {{ item.created_at }}</span>
+                        {% if item.run_id %}
+                        {% set run_receipt = namespace(path=none) %}
+                        {% for run in agent.visible_lineage["items"] %}
+                            {% if run.run_id == item.run_id %}{% set run_receipt.path = run.receipt %}{% endif %}
+                        {% endfor %}
+                        · {% if run_receipt.path %}<a href="{{ run_receipt.path }}">{% endif %}<code>{{ item.run_id }}</code>{% if run_receipt.path %}</a>{% endif %}
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+
+            {% if agent.visible_lineage["items"] %}
+            <details>
+                <summary>Visible run lineage</summary>
+                <ul class="room-link-list">
+                    {% for run in agent.visible_lineage["items"] %}
+                    <li>
+                        <a href="{{ run.receipt }}"><code>{{ run.run_id }}</code></a>
+                        <span class="muted">
+                            · last visible activity #{{ run.last_activity_id }}
+                            · {{ run.last_activity_at }}
+                        </span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% if agent.visible_lineage.clipped %}
+                <p class="note-small">
+                    {% if agent.visible_lineage.unavailable_reason %}
+                    Additional lineage unavailable:
+                    {{ agent.visible_lineage.unavailable_reason | replace("_", " ") }}.
+                    {% else %}
+                    Additional lineage may exist outside the recent visible contribution window.
+                    {% endif %}
+                </p>
+                {% endif %}
+            </details>
+            {% elif agent.visible_lineage.unavailable_reason %}
+            <p class="note-small">
+                Run receipts unavailable:
+                {{ agent.visible_lineage.unavailable_reason | replace("_", " ") }}.
+            </p>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">
+        No visible participating agents are included. This does not assert that no
+        hidden or out-of-scope agent activity exists.
+    </p>
+    {% endif %}
+</section>

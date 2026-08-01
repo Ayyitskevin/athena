@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}{{ resource_label or "Room" }} not found — Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>{{ resource_label or "Room" }} not found</h1>
+        <p class="subtitle">
+            The record does not exist or is not visible to your current identity.
+        </p>
+    </div>
+</div>
+
+<div class="room-state room-state-info" role="note">
+    Athena gives missing and hidden records the same response so this page cannot
+    be used as an existence oracle.
+</div>
+
+<p><a href="/aegis/projects">← Back to projects</a></p>
+{% endblock %}

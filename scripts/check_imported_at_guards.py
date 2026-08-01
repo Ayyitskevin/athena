@@ -140,6 +140,67 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "reset the clock on work it never touched (the schedule twin of the "
         "event scan's native_only guard)",
     ),
+    (
+        "aegis/room_briefs.py",
+        "_decisions",
+        r"a\.imported_at IS NULL",
+        "the live decision projection must not promote foreign history into "
+        "current room status",
+    ),
+    (
+        "aegis/room_briefs.py",
+        "_recent_timeline",
+        r"a\.imported_at IS NULL",
+        "the live brief timeline is an operational native-only projection",
+    ),
+    (
+        "aegis/room_commands.py",
+        "_authorize_reference",
+        r"a\.imported_at IS NULL",
+        "room writes may reference only native activity and run evidence",
+    ),
+    (
+        "aegis/room_context.py",
+        "_issue_scope",
+        r"a\.imported_at IS NULL",
+        "foreign agent activity must not widen a room's operational issue scope",
+    ),
+    (
+        "aegis/room_context.py",
+        "_latest_visible_activity_id",
+        r"a\.imported_at IS NULL",
+        "context revision receipts describe native Athena work only",
+    ),
+    (
+        "aegis/room_timeline.py",
+        "_candidate_agents",
+        r"a\.imported_at IS NULL",
+        "foreign authorship must not make an agent look like a live teammate",
+    ),
+    (
+        "aegis/room_timeline.py",
+        "_recent_contributions",
+        r"a\.imported_at IS NULL",
+        "agent contribution and lineage projections describe native work only",
+    ),
+    (
+        "aegis/room_timeline.py",
+        "_resolve_reference",
+        r"a\.imported_at IS NULL",
+        "activity and run references used as operational evidence must be native",
+    ),
+    (
+        "aegis/rooms.py",
+        "<module>",
+        r"WHERE a\.imported_at IS NULL",
+        "the room-authored event reader is a native-only projection",
+    ),
+    (
+        "core/search.py",
+        "_visibility_clause",
+        r"room_activity\.imported_at IS NULL",
+        "room-event search is an actionable projection and excludes foreign history",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is
@@ -177,6 +238,20 @@ EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
         "_recent_activity",
         "the feed serves the trail as-is and SELECTs imported_at so surfaces "
         "can label foreign rows; a labeled feed is not a native-only mechanism",
+    ),
+    (
+        "aegis/room_timeline.py",
+        "_timeline_rows",
+        "the public room timeline deliberately selects imported_at and labels "
+        "foreign history; native briefs, context, agents, and contributions opt "
+        "into its native_only branch",
+    ),
+    (
+        "aegis/room_timeline.py",
+        "_safe_native_complete_run_ids",
+        "the provenance gate deliberately counts imported rows so any mixed "
+        "native/foreign run loses its receipt; no imported row is projected as "
+        "live coordination",
     ),
     (
         "core/activity.py",
@@ -448,18 +523,20 @@ def find_violations(package_root: Path) -> list[Violation]:
             violations.append(Violation(path, 1, f"missing module {relative}"))
             continue
         file_path, source, tree = entry
-        target = _functions(tree).get(function)
-        if target is None:
+        target = None if function == "<module>" else _functions(tree).get(function)
+        if function != "<module>" and target is None:
             violations.append(
                 Violation(file_path, 1, f"{relative} has no function {function}")
             )
             continue
-        segment = ast.get_source_segment(source, target) or ""
+        segment = (
+            source if target is None else (ast.get_source_segment(source, target) or "")
+        )
         if not re.search(pattern, segment):
             violations.append(
                 Violation(
                     file_path,
-                    target.lineno,
+                    target.lineno if target is not None else 1,
                     f"{relative}::{function} lost its guard /{pattern}/ ({why})",
                 )
             )

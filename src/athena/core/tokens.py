@@ -23,8 +23,15 @@ TOKEN_PREFIX = "ath_"
 READ_SCOPE = "read"
 ISSUE_WRITE_SCOPE = "issue:write"
 DOCS_WRITE_SCOPE = "docs:write"
+ROOMS_WRITE_SCOPE = "rooms:write"
 ADMIN_SCOPE = "admin"
-SCOPES = (READ_SCOPE, ISSUE_WRITE_SCOPE, DOCS_WRITE_SCOPE, ADMIN_SCOPE)
+SCOPES = (
+    READ_SCOPE,
+    ISSUE_WRITE_SCOPE,
+    DOCS_WRITE_SCOPE,
+    ROOMS_WRITE_SCOPE,
+    ADMIN_SCOPE,
+)
 # What a LEGACY stored row with no scopes column value means (rows minted before
 # scopes existed): full access. Deliberately NOT a default for new mints — there
 # is no default; normalize_scopes requires an explicit choice.

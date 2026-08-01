@@ -10,7 +10,8 @@
 Athena is a self-hosted workspace where a solo operator directs agents, gives
 them durable context, watches their work, intervenes when necessary, and can
 later reconstruct what happened. Markdown docs, issue tracking, cross-links,
-and an append-only activity trail live in one SQLite-backed FastAPI app.
+project-scoped coordination Rooms, and an append-only activity trail live in
+one SQLite-backed FastAPI app.
 
 ![Athena's operator loop](docs/assets/athena-operator-loop.svg)
 
@@ -39,10 +40,11 @@ python3.12 -m venv .venv
 
 Sign in with the printed credentials. Then follow:
 
-1. the dashboard into the **Athena Review** project;
-2. an assigned issue into its append-only activity;
-3. the agent cockpit and the seeded `demo-sol-run-001` facts; and
-4. **Operator Playbook → Fleet operating guide** into its linked issues.
+1. the dashboard into the **Athena Review** project room;
+2. its read-only live brief and mixed coordination timeline;
+3. the assigned issue's focused work room;
+4. Sol's agent room and the seeded `demo-sol-run-001` receipts; and
+5. **Operator Playbook → Fleet operating guide** into its linked issues.
 
 The command refuses to overwrite an existing database or attachment path,
 disables webhook delivery and automation, and has no public-bind option. Use
@@ -82,6 +84,10 @@ dependencies, filters, comments, watches, and automation, plus a
 shared by the browser, REST, MCP, and saved filters. Issue writes maintain
 their activity, search, link, mention, and notification projections through a
 shared command transaction.
+
+[Rooms](docs/ROOMS.md) give each project, work item, and participating agent a
+durable coordination surface over those same records, plus a read-only live
+brief and deterministic, model-free `athena.room-context.v1` packets.
 
 ### Fleet controls
 
@@ -250,6 +256,7 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [CHANGELOG.md](CHANGELOG.md) — release-facing changes
 - [docs/ROADMAP.md](docs/ROADMAP.md) — where this is going, phase by phase
 - [docs/AI_DEVELOPMENT.md](docs/AI_DEVELOPMENT.md) — transparent AI-assisted workflow
+- [docs/ROOMS.md](docs/ROOMS.md) — project rooms, inert coordination, live briefs, and context packets
 - [docs/RUNS.md](docs/RUNS.md) — run replay, lineage, and forking
 - [docs/AUTOMATION_SCHEDULES.md](docs/AUTOMATION_SCHEDULES.md) — bounded UTC schedules and recovery
 - [docs/WORKFLOW_GATES.md](docs/WORKFLOW_GATES.md) — optional project blocked-close governance

@@ -53,6 +53,22 @@ def test_dropping_a_guard_fails(tmp_path):
     assert "lost its guard" in result.stderr
 
 
+def test_dropping_a_module_level_room_guard_fails(tmp_path):
+    package_root = _tree_copy(tmp_path)
+    target = package_root / "aegis" / "rooms.py"
+    source = target.read_text(encoding="utf-8")
+    assert "WHERE a.imported_at IS NULL" in source
+    target.write_text(
+        source.replace("WHERE a.imported_at IS NULL", "WHERE 1 = 1"),
+        encoding="utf-8",
+    )
+
+    result = _run(package_root)
+
+    assert result.returncode == 1
+    assert "aegis/rooms.py::<module> lost its guard" in result.stderr
+
+
 def test_a_new_activity_reader_fails(tmp_path):
     package_root = _tree_copy(tmp_path)
     target = package_root / "aegis" / "dashboard.py"

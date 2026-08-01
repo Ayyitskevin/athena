@@ -29,6 +29,7 @@ from athena.aegis import (
     issue_search,
     issues,
     projects,
+    rooms,
     sprints,
     statuses,
 )
@@ -244,7 +245,7 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # back to "all" rather than erroring — the same forgiving rule the issue list uses
     # for its sort/order params.
     kind_raw = (request.query_params.get("kind") or "").strip().lower()
-    kind = kind_raw if kind_raw in ("issue", "page") else None
+    kind = kind_raw if kind_raw in ("issue", "page", "room_event") else None
     # Structured issue filters. Any one of them puts us in filtered issue-search mode.
     status_filter = (request.query_params.get("status") or "").strip()
     label_filter = (request.query_params.get("label") or "").strip()
@@ -298,6 +299,8 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             h["href"] = f"/mentor/pages/{h['source_id']}"
         elif h["kind"] == "issue_comment":
             h["href"] = f"/aegis/issues/{h.get('parent_id')}"
+        elif h["kind"] == "room_event":
+            h["href"] = f"/aegis/rooms/{h['room_id']}"
         else:  # page_comment
             h["href"] = f"/mentor/pages/{h.get('parent_id')}"
 
@@ -345,6 +348,7 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
                 "all": find_url(scope=None, page_num=1),
                 "issue": find_url(scope="issue", page_num=1),
                 "page": find_url(scope="page", page_num=1),
+                "room_event": find_url(scope="room_event", page_num=1),
             },
             "prev_url": find_url(scope=kind, page_num=page - 1) if page > 1 else None,
             "next_url": find_url(scope=kind, page_num=page + 1) if has_next else None,
@@ -1035,9 +1039,13 @@ def _render_issue_detail(
         for sprint in sprints.list_sprints(conn)
         if sprint["project_id"] in visible_project_names
     ]
+    work_room = rooms.get_work_item_room(conn, issue_id)
+    if work_room is not None and not rooms.can_see_room(conn, user, work_room):
+        work_room = None
 
     context = {
         "issue": issue,
+        "work_room": work_room,
         "body_html": render_body(conn, issue["body"], actor=user),
         # "Referenced by" hides sources in projects/spaces the viewer can't see.
         "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),

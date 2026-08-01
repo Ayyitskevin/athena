@@ -24,7 +24,7 @@ from athena.core.identity import current_actor, token_management_actor
 
 router = APIRouter(prefix="/tokens", tags=["core"])
 
-TokenScope = Literal["read", "issue:write", "docs:write", "admin"]
+TokenScope = Literal["read", "issue:write", "docs:write", "rooms:write", "admin"]
 
 
 class TokenCreate(BaseModel):
