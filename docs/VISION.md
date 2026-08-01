@@ -34,7 +34,11 @@ human-in-the-loop **approval gates** (opt-in, `issue.close` and
 reversible actions (see [`UNDO.md`](UNDO.md) — archives, labels, status, and
 assignee; never a rewritten trail), and a **worker registry** with a cooperative kill request (see
 [`WORKERS.md`](WORKERS.md) — Athena records that a worker was asked to stop and
-what it said back; it cannot signal a process). *Process-level* kill and *general*
+what it said back; it cannot signal a process), and **run controls** for
+steering one live run by recorded request (see
+[`RUN_CONTROLS.md`](RUN_CONTROLS.md) — steer / request-cancel / request a
+fresh-context handoff, answered only by the run's bound agent). *Process-level*
+kill and *general*
 undo across every write remain roadmap goals rather than guarantees Athena makes
 today.
 

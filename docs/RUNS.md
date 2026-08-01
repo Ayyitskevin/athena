@@ -88,6 +88,13 @@ this run recently" and carries no control flag, so a stale row can never read as
 the one place a control flag belongs. Both derive staleness the same way, and
 neither observes an OS process.
 
+An operator who wants to reach one live run — hand it guidance, ask it to wind
+down, or ask for a structured fresh-context handoff — records a **run control**
+([`RUN_CONTROLS.md`](RUN_CONTROLS.md)): a bounded request bound to the run's
+owner (the run binding when one exists, else the run's sole check-in agent),
+which only that agent can read and settle. Controls are request records over
+this run model; they add no run table and no second feed.
+
 Mission Control derives headline state from one newest check-in per agent across the
 agent's full retained history. Older and parallel run ids stay in the bounded recent
 history but do not each add another stale headline signal. Timestamp ties resolve by

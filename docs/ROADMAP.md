@@ -39,6 +39,13 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   registers by heartbeat, and an admin can ask it to stop. Athena records the
   request and the worker's reply — it cannot signal or observe a process, so a
   silent worker is stale, never terminated. That is not process-level kill.
+- **Intervene** now also reaches a single live run: an admin can record a bounded
+  control request against it — steer with guidance, request cooperative
+  cancellation, or request a structured fresh-context handoff — which only the
+  run's bound agent can read and settle (acknowledge, decline, or complete;
+  unanswered requests expire by the server clock). The same request-and-reply
+  honesty as the worker kill, at run granularity
+  (see [`RUN_CONTROLS.md`](RUN_CONTROLS.md)).
 - **Intervene** finally has one place to look: an admin-only fleet-attention
   rollup on the dashboard counts claims needing attention, waiting approvals,
   unanswered kill requests, failing automation rules and webhooks, budget ceilings
