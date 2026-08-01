@@ -206,7 +206,13 @@ unnecessary), steering server-reserved runs.
 ### Phase status log
 
 - Phase 0 (architecture verification): **COMPLETE**
-- Phase 1 (design): **COMPLETE** (this section)
+- Phase 1 (design): **COMPLETE**
+- Phase 2 (domain/command layer + migration): **COMPLETE**
+- Phase 3 (REST): **COMPLETE**
+- Phase 4 (MCP): **COMPLETE**
+- Phase 5 (web panel): **COMPLETE**
+- Phase 6 (docs): **COMPLETE**
+- Phase 7 (validation + adversarial review + report): **COMPLETE**
 
 ### Phase 2 — Domain/command layer + migration: COMPLETE
 
@@ -290,9 +296,189 @@ CSRF-less POST refused 403.
 Limitation (recorded): heartbeat-only runs are steerable over REST/MCP but have
 no lineage page (the page requires visible activity events), so their controls
 are managed via API/MCP only.
-- Phase 2 (domain/command layer + migration): pending
-- Phase 3 (REST): pending
-- Phase 4 (MCP): pending
-- Phase 5 (web panel): pending
-- Phase 6 (docs): pending
-- Phase 7 (validation + final review): pending
+
+### Phase 6 — Documentation: COMPLETE
+
+Delivered: `docs/RUN_CONTROLS.md` (house structure: VISION citation, the three
+words the feature refuses to say, closed kind table, whose-claim lifecycle
+table, authority rules, fenced REST examples, MCP tool names, handoff bounds
+table, trail semantics, negative-claims section); pointer paragraphs in
+`RUNS.md` and `WORKERS.md`; a new Intervene bullet in `ROADMAP.md` "Where the
+loop stands"; and a `VISION.md` loop-preamble mention — all describing only
+implemented behavior.
+
+### Phase 7 — Full validation, adversarial review, final report: COMPLETE
+
+Tests delivered: `tests/test_run_controls.py` — 28 deterministic tests (26 in
+the initial suite, 2 added closing the adversarial review's gaps) (real
+HTTP via TestClient, direct commands below the transport, raw SQL against the
+triggers, and the MCP client against the real app): happy paths for all three
+kinds; heartbeat-only steering; creator authority (agent/member/anonymous/
+narrow-scoped-admin-token all refused); settlement identity (wrong agent
+collapses to the missing-control 404; sessions and trusted headers refused);
+wrong run / ambiguous check-ins / human-owned runs / reserved namespaces /
+wrong-agent worker / stopped worker; revoked tokens (stale-actor recheck below
+the transport + 401 at identity), pause (settle 403, create 409, no side
+effects); ownership drift blocking both agents; domain idempotent replay,
+conflicting reuse, UNIQUE backstop; transport Idempotency-Key replay and
+mismatch; at-most-one-live per (run, kind) with freed slots after settlement;
+Barrier-coordinated settlement and creation races; derived expiry with injected
+clocks (late ack/complete/decline refused, zero writes, zero events, expired
+slot does not block a fresh ask); CAS expiry-boundary predicate; payload/
+result/handoff/TTL bounds incl. the closed handoff envelope; visibility
+isolation + SQL-level state filters + limit clamps; feed consistency (verbs on
+the /events cursor, operator event untagged, tagged agent settlement joins its
+run's replay); trigger tamper-proofing (immutable request, frozen settled row,
+no delete, write-once pointers, forged event pointers, born-settled rows);
+command guards below the transport; MCP/REST parity incl. error status+detail
+equality; web panel truthful wording, CSRF, double-submit dedupe, and
+non-admin/non-agent concealment. Plus 4 entries each in `test_mcp_client.py`'s
+two mutation-contract registries.
+
+Exact validation commands and results (`.venv312` = Python 3.12.13, deps pinned
+by `constraints/ci-py312.txt`, mirroring `.github/workflows/ci.yml` test job):
+
+| Command | Result |
+|---|---|
+| `ruff check .` | passed |
+| `ruff format --check .` | passed (384 files) |
+| `mypy src/athena` | no issues in 153 source files |
+| `python scripts/check_import_contracts.py` | passed, 153 modules |
+| `python scripts/check_write_ownership.py` | passed |
+| `python scripts/check_imported_at_guards.py` | passed |
+| `scripts/coverage.sh <fresh dir>` (= `pytest -q -n 4 --strict-markers --cov` + floors) | **3104 passed, 0 failed** (final run, after the review fixes; an earlier full run at the pre-review tip: 3102 passed); line 92.87% ≥ 92.60 floor; branch 83.24% ≥ 82.30; combined 90.67% ≥ 90.30; excluded lines 2 (existing policy) |
+| `python scripts/smoke_app.py` | passed (installed `athena-serve` bootstrap → restart → packaged assets → session auth → clean stop) |
+| Real-HTTP feature proof | booted `athena-serve --bootstrap` on :8777 (trust-header OFF — the deployment gate correctly refused an earlier attempt with it on); bootstrap 201 over HTTP; agent heartbeat; create 201 → inbox → acknowledge → complete; all three verbs observed on `GET /events`; server stopped cleanly |
+
+Adversarial diff review: five parallel lenses (correctness, authority/security,
+repo doctrine, test adequacy, protocol-contract completeness), each finding then
+handed to an independent verifier instructed to refute it against the actual
+code (several reproduced findings live against the running app). 15 findings
+survived verification (1 major code defect, 2 major test gaps, 12 minor incl.
+cross-lens duplicates — 10 unique). **All were fixed** in commit
+`fix(steering): close the adversarial review's confirmed findings`:
+
+1. **[major] Binding poison via the admission's own audit event.** An admin
+   create tagged `X-Athena-Run: <target run>` against a check-in-only run would
+   record the request event under the operator's ambient run context, whose
+   run-binding claim binds the target run TO THE OPERATOR in the same
+   transaction — control unsettleable forever (ownership-drift check), agent
+   locked out of its own run id (RunBindingError on its next tagged write),
+   admin unable to re-issue (`run is not owned by an agent account`). Fixed:
+   admission re-reads the binding after recording its event; a binding that is
+   not the admitted agent aborts the whole transaction (control + event +
+   binding all unwind). Regression test proves no rows survive and the agent
+   keeps its run id.
+2. **[minor] TTL absent from the idempotency identity** — a same-key retry with
+   a different `ttl_seconds` silently replayed the original control. Fixed: the
+   stored created→expires span joins `_control_matches_request`; mismatch → 409.
+3. **[minor] Web form swallowed unreadable TTLs** (filter-style lenient parse on
+   a write path) — `2h` became the silent default lifetime. Fixed: non-blank
+   unparsable ttl → error redirect; surfaces now agree with the API's 422.
+4. **[minor] `control_id ≥ 2^63` → 500 OverflowError** in the driver. Fixed:
+   `Path(ge=1, le=2^63−1)` on all four id routes → 422. (The same latent issue
+   exists in older resources, e.g. `/workers/{id}` — out of scope, noted as
+   residual for the repo.)
+5. **[minor] Configured default TTL could exceed the documented ceiling**
+   (`_int_env` enforces only the floor). Fixed: `default_ttl_seconds()` clamps
+   into 60–86400.
+6. **[minor] RUN_CONTROLS.md overclaimed read authority** ("read and settle …
+   write-scoped bearer") — reads actually require only the bound agent's
+   identity. Fixed: docs now separate read authority from settlement authority.
+7. **[major test gap] re-acknowledge idempotency untested** — now asserted
+   (same timestamp, single receipt event).
+8. **[major test gap] worker-targeted happy path untested** — new test covers
+   targeting metadata round-trip and settlement.
+9. **[minor test gaps] deterministic CAS boundary instants (at-expiry refuses,
+   one second earlier lands, both from one injected creation clock); the 60s-TTL
+   wall-clock race removed (1h TTL + injected expiry clock); the non-admin web
+   refusal assertion can no longer vacate (`assert csrf is not None`); the
+   both-summary-and-handoff refusal branch now covered.
+
+---
+
+## Delivery summary
+
+**Branch**: `codex/buzz-run-steering-v1` — local commits only; nothing pushed,
+no PR opened, per the session's authorization boundary.
+
+**Starting SHA**: `37d6e410bd2c708dff5d43b6347d279da05ea512` (origin/main =
+the research anchor; no drift). **Ending SHA**: the branch tip — the final
+commit adds this report section on top of the review-fixes commit; the exact
+hash is reported in the session handoff and visible via `git log`.
+
+**Commits** (in order): phase 0 verification · phase 1 design · phase 2 domain
+layer + migration 0070 · phase 3 REST · phase 4 MCP tools · phase 5 web panel ·
+phase 6 docs · the 28-test contract suite · MCP mutation-contract registration ·
+adversarial-review fixes · this report.
+
+**Changed files**: `src/athena/core/{migrations/0070_run_controls.sql,
+run_controls.py, run_control_commands.py, run_controls_api.py, activity.py (+1
+read helper), agent_run_checkins.py (+1 read helper)}`, `src/athena/config.py`,
+`src/athena/main.py` (router + idempotency-root wiring),
+`src/athena/mcp/{client.py, server.py}`, `src/athena/web/activity.py`,
+`src/athena/templates/aegis/run_lineage.html`, `docs/{RUN_CONTROLS.md,
+RUNS.md, WORKERS.md, ROADMAP.md, VISION.md}`, `tests/{test_run_controls.py,
+test_mcp_client.py}`, and this report. Zero new dependencies; zero coverage
+pragmas; no edits outside the feature.
+
+### Design decisions the prompt left open (resolved here)
+
+1. **Run identity anchor**: `run_bindings.actor_id` when bound, else the run's
+   SOLE check-in agent; ambiguity and unknown runs refuse. "Terminal runs" have
+   no stored equivalent in Athena — mapped to the real nearest facts (paused
+   owner, stopped targeted worker, expiry).
+2. **Expiry is derived, never stored, never evented** — the worker-staleness
+   doctrine applied to controls; no background sweeper, no clock in triggers
+   (commands own expiry so tests can inject time).
+3. **Worker binding is targeting metadata, not authority** — workers hold no
+   credential of their own, so enforcement binds to the agent identity;
+   documented explicitly.
+4. **Settlement is bearer-only**; reads allow any live credential of the bound
+   agent (it must be able to see its instructions from anywhere; only the
+   process can answer).
+5. **Reserved run namespaces (`automation:`, `icarus:`) refuse controls** — no
+   principal polls them.
+6. **No operator withdrawal in v1** — not in the prompt's closed lifecycle;
+   short TTLs are the mitigation (worker-kill's cancel exists because kills
+   never expire; controls do).
+7. **`conflict`→409 and `capacity`→429** chosen where the repo disagrees with
+   itself; domain idempotency keys minted server-side when omitted (icarus
+   precedent) and carried in the body, with the transport header contract also
+   available.
+8. **Activity linkage**: control events target `run_control` ids; the
+   operator's request never stamps the target run (that would forge/steal run
+   authorship); the agent's settlement joins the run's replay when the agent
+   tags its request — documented, tested.
+
+### Limitations
+
+- Heartbeat-only runs are steerable via REST/MCP but have no lineage page, so
+  the web panel cannot show their controls.
+- The web panel is create-and-observe; settlement is deliberately API/MCP-only.
+- No fleet-attention rollup card for pending controls (EXCEPTION_SURFACES.md
+  signal #8 candidate) — deferred as a follow-up to keep v1 minimal.
+- Control activity events are visible to all authenticated feed readers (the
+  repo-wide behavior for non-project-scoped events, same as worker/dispatch
+  events); payloads and results are NOT in events — only kind + run id — and
+  full rows are admin/bound-agent only.
+- `capacity` ErrorKind is declared for parity with the house vocabulary but no
+  cap currently triggers it (the per-(run,kind) liveness gate bounds live
+  controls at 3 per run; total history is append-only like activity).
+
+### Residual risks
+
+- Two agents (or an agent and a human) can still both check into an unbound run
+  id; admission refuses ambiguity, but a HUMAN-bound run refuses with `invalid`
+  which reveals the run is human-owned to an admin (acceptable: creators are
+  admins).
+- The `/workers/{id}` and other pre-existing integer-id routes still 500 on
+  ids ≥ 2^63 (the reviewer confirmed the same latent defect exists outside this
+  feature's lane); fixed here only for `/run-controls`.
+- Webhook subscribers configured for `event_kind=run_control` receive control
+  lifecycle events (detail carries kind + run id only) — consistent with every
+  other verb, but a deployment with third-party webhook endpoints should know.
+- If a future feature adds run-binding deletion or transfer, the
+  ownership-drift check's assumptions (bindings immutable once set) must be
+  revisited.
+
