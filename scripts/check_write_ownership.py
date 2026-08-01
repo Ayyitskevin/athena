@@ -66,6 +66,10 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     ("*", "athena.core.notifications", "mark_all_read"): "personal state",
     ("*", "athena.core.notifications", "watch"): "personal state",
     ("*", "athena.core.notifications", "unwatch"): "personal state",
+    # A page draft is one author's unsaved work in progress: owner-scoped, never
+    # audited, never content. Migration 0071 carries the full boundary.
+    ("*", "athena.mentor.page_drafts", "save_draft"): "personal state",
+    ("*", "athena.mentor.page_drafts", "discard_draft"): "personal state",
     # --- The login/session flow (COMMAND_MIGRATION.md, "Users and agents" /
     # "OIDC identities"): credential operational state and provider exchange
     # are documented as bounded flows outside the command layer. Scoped to the
