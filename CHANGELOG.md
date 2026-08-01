@@ -66,6 +66,24 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Editing that keeps its promises, and a way out that needs no Athena.** Page
+  and issue editors gained a live side-by-side preview rendered by the same
+  function the view itself uses (`render_page_body` / `render_issue_body`), so a
+  preview cannot drift from what readers get — including where the two surfaces
+  differ, since embeds stay unresolved on issues and preview as the box the
+  saved issue will show. Page editors now autosave **drafts**: user-private
+  state in their own table (migration 0071) that writes no activity event, is
+  visible only to its author, is never exported, and becomes a page only through
+  the ordinary audited save, which then clears it; a draft left behind by
+  someone else's save is flagged rather than silently restored over their work.
+  Attachment **images render inline**, served from a type sniffed out of the
+  bytes rather than the uploader's claim, with SVG deliberately excluded because
+  it can carry script, and image attachments now show a thumbnail and the
+  markdown that embeds them. A space **exports to one self-contained HTML file**
+  with images inlined, rendered through the same renderer, in which every embed
+  is visibly dead and carries the directive it came from — plus a footer naming
+  what was left out. See [`docs/EDITING.md`](docs/EDITING.md).
+
 - **A project timeline, and live parent rollups.** `/aegis/projects/{id}/timeline`
   draws a project's sprints as lanes in date order (undated ones after dated,
   the backlog last), places each issue in its sprint, and draws the declared

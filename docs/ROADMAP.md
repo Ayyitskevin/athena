@@ -240,7 +240,15 @@ under exactly the same architecture rules, none of which are amended.
       still changes through the sprint form that owns that write. Per-issue
       target dates were considered and deliberately not built (see
       [PLANNING.md](PLANNING.md)).
-- [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.
+- [x] **Editing and leaving**: page and issue editors show a live preview
+      rendered by the SAME function the view uses, so it cannot drift; page
+      editors autosave crash-safe drafts that are user-private state rather than
+      content (own table, no activity event, owner-only, never exported, and
+      only an explicit save turns one into a page); attachment images render
+      inline from a byte-sniffed type with SVG deliberately excluded; and a
+      space exports to one self-contained HTML file where embeds are visibly
+      dead and carry their own directive text
+      (see [EDITING.md](EDITING.md)).
 
 ## Out of scope (for now)
 

@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from athena import config
 from athena.core import (
@@ -48,6 +49,7 @@ from athena.mentor import (
 )
 from markupsafe import escape
 
+from athena.web import html_export
 from athena.web.csrf import verify_csrf
 from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.router import _readonly_response, get_templates
@@ -834,6 +836,38 @@ def page_detail(
             # Drives the Delete button: a page with children can't be deleted.
             "child_count": pages.count_child_pages(conn, page_id),
         },
+    )
+
+
+@router.get("/mentor/spaces/{space_id}/export.html")
+def export_space_html(
+    request: Request,
+    space_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Download this space as one standalone HTML file — the human-readable exit.
+
+    A read, gated exactly like the space itself: a space you cannot see is the
+    same 404 a missing one gives. The file contains only what YOU could see when
+    you asked for it, and says so in its own footer.
+    """
+    user = getattr(request.state, "user", None)
+    document = html_export.build_space_html(conn, space_id, actor=user)
+    if document is None:
+        return HTMLResponse('<div class="error">No such space.</div>', status_code=404)
+    space = spaces.get_space(conn, space_id)
+    assert space is not None  # build_space_html already refused a missing space
+    name = f"athena-{space['key'].lower()}.html"
+    encoded = quote(name)
+    disposition = (
+        f'attachment; filename="{name}"'
+        if encoded == name
+        else f"attachment; filename*=utf-8''{encoded}"
+    )
+    return Response(
+        document,
+        media_type="text/html; charset=utf-8",
+        headers={"content-disposition": disposition},
     )
 
 

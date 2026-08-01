@@ -519,6 +519,30 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                 )
             step("the next agent's work-context packet serves the runbook")
 
+            # --- the operator can leave -------------------------------------
+            # R closed the loop's last step: everything above is worthless if it
+            # can only be read inside Athena. Exercised over real HTTP because a
+            # standalone file that only works in a unit test is not an exit.
+            export_request = Request(
+                f"{athena}/mentor/spaces/{space['id']}/export.html",
+                headers=admin_h,
+                method="GET",
+            )
+            with _OPENER.open(export_request, timeout=10) as response:  # noqa: S310
+                document = response.read().decode("utf-8")
+                export_headers = dict(response.headers)
+            if "data:image" in document and "/attachments/" in document:
+                raise Failure("exported file still points at live attachments")
+            for promised in ("<!doctype html>", "is a snapshot and is not live"):
+                if promised not in document:
+                    raise Failure(f"export is missing {promised!r}")
+            if "attachment;" not in export_headers.get("content-disposition", ""):
+                raise Failure(f"export is not a download: {export_headers}")
+            step(
+                "operator exported the space as one standalone file",
+                f"{len(document)} bytes",
+            )
+
             # --- the runbook shows the issue's LIVE state --------------------
             # The payoff of embeds: a runbook that does not just describe work but
             # displays it. Appended through the ordinary page command, then read
