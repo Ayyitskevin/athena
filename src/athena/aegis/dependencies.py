@@ -226,3 +226,58 @@ def open_blockers(
         if not statuses.is_done(conn, r["project_id"], r["status"])
     ]
     return _others(conn, open_ids, actor)
+
+
+def edges_among(conn: sqlite3.Connection, issue_ids: list[int]) -> list[dict]:
+    """Every declared dependency whose BOTH ends are in the given set of issues.
+
+    The per-issue reader above is right for one issue's relationship panel and
+    wrong for a picture: drawing a project's worth of issues through it costs
+    three queries per issue plus a visibility check and a fetch per link. This is
+    the set-scoped read a drawn view needs — one query, no N+1.
+
+    **Both ends must be in the set, and that is the visibility gate.** Callers
+    pass a set they have already filtered, so an edge to an issue the viewer
+    cannot see simply has no second endpoint here and is never selected. It is
+    also what keeps an edge from pointing into empty space: an arrow to something
+    off the picture reads as a rendering bug rather than a boundary, so a view
+    that wants to admit those has to count them itself and say so.
+
+    Returns ``[{"from_id", "to_id", "kind"}]`` ordered deterministically, so a
+    layout built from it is reproducible. ``blocks`` is directed (from_id blocks
+    to_id); ``relates`` is stored once with the lower id first and is therefore
+    already exactly one row per pair — neither needs de-duplication here.
+    """
+    if len(issue_ids) < 2:
+        # One issue cannot have an edge with both ends inside the set, and zero
+        # issues would build an empty IN () that SQLite rejects.
+        return []
+    placeholders = ",".join("?" for _ in issue_ids)
+    ids = sorted(issue_ids)
+    rows = conn.execute(
+        "SELECT from_id, to_id, kind FROM issue_links"
+        f" WHERE from_id IN ({placeholders}) AND to_id IN ({placeholders})"
+        " ORDER BY kind, from_id, to_id",
+        [*ids, *ids],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_edges_touching(conn: sqlite3.Connection, issue_ids: list[int]) -> int:
+    """How many declared dependencies have EXACTLY ONE end in the given set.
+
+    These are the edges a bounded picture cannot draw — the other end is outside
+    the view, or invisible to this viewer. A view that drops them silently is
+    telling the operator this work has no outside dependencies, so the number
+    exists to be said out loud beside the drawing.
+    """
+    if not issue_ids:
+        return 0
+    placeholders = ",".join("?" for _ in issue_ids)
+    ids = sorted(issue_ids)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM issue_links"
+        f" WHERE (from_id IN ({placeholders})) != (to_id IN ({placeholders}))",
+        [*ids, *ids],
+    ).fetchone()
+    return int(row["n"])

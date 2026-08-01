@@ -879,6 +879,21 @@ class AthenaClient:
             self._client.get(f"/{base}/{node_id}/graph", params=params or None)
         )
 
+    def project_timeline(
+        self,
+        project_id: int,
+        *,
+        max_per_lane: int | None = None,
+        max_items: int | None = None,
+    ) -> Any:
+        """One project's roadmap — sprint lanes, placed issues, dependency edges."""
+        return self._result(
+            self._client.get(
+                f"/projects/{project_id}/timeline",
+                params=self._params(max_per_lane=max_per_lane, max_items=max_items),
+            )
+        )
+
     def unlinked_mentions(
         self, kind: str, node_id: int, limit: int | None = None
     ) -> Any:

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Timeline — {{ project.name }} — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Projects</a>
+        <h1>Timeline</h1>
+        <p class="subtitle">
+            {{ project.name }} <code>{{ project.key }}</code> ·
+            <a href="/aegis/projects/{{ project.id }}/sprints">Sprints</a>
+        </p>
+    </div>
+</div>
+
+{# The roadmap, drawn server-side.
+
+   No JavaScript: aegis/timeline.py returned coordinates, so this template only
+   places what it was given. Every card is a real <a>, which keeps the picture
+   keyboard-navigable and readable in a text browser — the same no-build-chain
+   rule the link graph follows. #}
+{% if timeline.cards or timeline.lanes | length > 1 %}
+<div class="timeline-wrap" style="overflow-x: auto;">
+    <svg viewBox="0 0 {{ timeline.width }} {{ timeline.height }}"
+         width="100%" style="min-width: {{ timeline.width }}px; height: auto;"
+         role="img" aria-label="Sprint timeline for {{ project.name }}">
+        <defs>
+            {# One arrowhead, reused by every blocking edge. #}
+            <marker id="tl-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280" />
+            </marker>
+        </defs>
+
+        {% for lane in timeline.lanes %}
+        <g class="timeline-lane">
+            <rect x="{{ lane.x }}" y="0" width="{{ lane.width }}" height="{{ timeline.height }}"
+                  fill="{% if lane.key == 'backlog' %}#f9fafb{% elif lane.state == 'active' %}#eff6ff{% else %}#ffffff{% endif %}"
+                  stroke="#e5e7eb" stroke-width="1" rx="6" />
+            <text x="{{ lane.x + 12 }}" y="24" font-size="13" font-weight="600" fill="#111827">
+                {{ lane.label[:22] }}{% if lane.label | length > 22 %}…{% endif %}
+            </text>
+            <text x="{{ lane.x + 12 }}" y="42" font-size="11" fill="#6b7280">
+                {%- if lane.state %}{{ lane.state }}{% endif -%}
+                {%- if lane.start_date or lane.end_date %} · {{ lane.start_date or "?" }} → {{ lane.end_date or "?" }}{% endif -%}
+                {%- if not lane.state and not lane.start_date and not lane.end_date %}unscheduled{% endif -%}
+            </text>
+        </g>
+        {% endfor %}
+
+        {# Edges before cards so the cards paint over them. #}
+        {% for edge in timeline.edges %}
+        <line x1="{{ edge.x1 }}" y1="{{ edge.y1 }}" x2="{{ edge.x2 }}" y2="{{ edge.y2 }}"
+              stroke="{% if edge.kind == 'blocks' %}#6b7280{% else %}#c7d2fe{% endif %}"
+              stroke-width="1.5"
+              {% if edge.kind == 'relates' %}stroke-dasharray="4 3"{% endif %}
+              {% if edge.kind == 'blocks' %}marker-end="url(#tl-arrow)"{% endif %} />
+        {% endfor %}
+
+        {% for item in timeline.cards %}
+        <a href="/aegis/issues/{{ item.id }}">
+            <title>{{ item.key or "#" ~ item.id }} {{ item.title }} ({{ item.status }})</title>
+            <rect x="{{ item.x + 8 }}" y="{{ item.y }}" width="{{ timeline.lanes[0].width - 16 }}" height="34"
+                  rx="5" fill="#ffffff" stroke="#d1d5db" stroke-width="1" />
+            <rect x="{{ item.x + 8 }}" y="{{ item.y }}" width="4" height="34"
+                  rx="2"
+                  fill="{% if item.category == 'done' %}#059669{% elif item.category == 'doing' %}#2563eb{% else %}#9ca3af{% endif %}" />
+            <text x="{{ item.x + 20 }}" y="{{ item.y + 15 }}" font-size="10" fill="#6b7280">
+                {{ item.key or "#" ~ item.id }}
+            </text>
+            <text x="{{ item.x + 20 }}" y="{{ item.y + 27 }}" font-size="11" fill="#111827">
+                {{ item.title[:20] }}{% if item.title | length > 20 %}…{% endif %}
+            </text>
+        </a>
+        {% endfor %}
+    </svg>
+</div>
+
+<p class="note-small">
+    {# Say what was NOT drawn. A partial picture that doesn't admit it reads as
+       the whole plan, which is the quiet lie this line exists to prevent. #}
+    {% if timeline.truncated %}
+    Showing {{ timeline.shown }} of {{ timeline.total }} issues — each lane draws its first few.
+    {% else %}
+    {{ timeline.shown }} {{ "issue" if timeline.shown == 1 else "issues" }} across
+    {{ timeline.lanes | length }} {{ "lane" if timeline.lanes | length == 1 else "lanes" }}.
+    {% endif %}
+    {% if timeline.edges_outside %}
+    {{ timeline.edges_outside }} {{ "dependency" if timeline.edges_outside == 1 else "dependencies" }}
+    {{ "links" if timeline.edges_outside == 1 else "link" }} to work outside this view and
+    {{ "is" if timeline.edges_outside == 1 else "are" }} not drawn.
+    {% endif %}
+    Archived issues are left out, and only issues you can see are drawn.
+    Lanes are in date order; their width is not a duration.
+</p>
+
+<p class="note-small">
+    Solid arrow: blocks. Dashed line: relates. To move an issue between sprints,
+    open it and use its sprint form — this view only reads.
+</p>
+{% else %}
+<p class="empty-state">
+    This project has no sprints and no issues yet, so there is no timeline to draw.
+    <a href="/aegis/projects/{{ project.id }}/sprints">Plan a sprint</a> to start one.
+</p>
+{% endif %}
+{% endblock %}

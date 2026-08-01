@@ -25,6 +25,7 @@ from athena.aegis import (
     sprints,
     status_commands,
     statuses,
+    timeline,
 )
 from athena.core import access, identity, users
 from athena.core.deps import get_conn
@@ -546,6 +547,39 @@ def _authorize_sprint_write(conn, sprint_id: int, user: dict):
     if err is not None:
         return None, err
     return sprint, None
+
+
+@router.get("/aegis/projects/{project_id}/timeline", response_class=HTMLResponse)
+def project_timeline(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """A project's roadmap — sprints as lanes, issues placed in them, dependencies
+    drawn between them. Open read like the sprint list, and read-only: moving an
+    issue happens through the sprint-assignment form on the issue itself, which
+    already owns that write and its audit event.
+
+    A separate route rather than a panel on the project page, for the same reason
+    the graph has one: a layout pass over every issue in the project is per-view
+    work that ordinary reading should not pay for."""
+    user = getattr(request.state, "user", None)
+    project = projects.get_project(conn, project_id)
+    # A private project the viewer can't see is a 404, like a missing one.
+    if project is None or not access.can_see_project(conn, user, project_id):
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/timeline.html",
+        context={
+            "project": project,
+            "timeline": timeline.project_timeline(
+                conn,
+                project_id=project_id,
+                visible_project_ids=access.visible_project_filter(conn, user),
+            ),
+        },
+    )
 
 
 @router.get("/aegis/projects/{project_id}/sprints", response_class=HTMLResponse)

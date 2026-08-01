@@ -314,6 +314,33 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.link_graph(kind, id, depth, max_nodes)
 
     @tool
+    def project_timeline(
+        project_id: ProjectId,
+        max_per_lane: int | None = None,
+        max_items: int | None = None,
+    ) -> dict:
+        """A project's roadmap: sprint lanes, the issues in them, and the declared
+        dependencies between those issues — as positioned data, the same picture
+        the browser draws.
+
+        Lanes run in date order (sprints with dates first, then undated ones, then
+        the backlog), but lane WIDTH is not a duration — sprint dates are optional,
+        so the order is the only time claim made. Each card carries its issue's
+        status and category, so you can see what is done without another lookup.
+
+        Bounded on purpose: each lane draws its first few issues and the whole
+        picture has a ceiling. `truncated` and the per-lane `shown`/`total` say
+        what was left out, and `edges_outside` counts dependencies whose other end
+        is not on this picture — nothing is silently dropped. Issues you cannot
+        see, and archived ones, are absent.
+
+        This is a read. To move an issue between sprints use the issue's own
+        sprint assignment; nothing here schedules or reorders work."""
+        return client.project_timeline(
+            project_id, max_per_lane=max_per_lane, max_items=max_items
+        )
+
+    @tool
     def unlinked_mentions(kind: str, id: int, limit: int | None = None) -> dict:
         """Documents whose text NAMES this issue/page without linking to it.
 

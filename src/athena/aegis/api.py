@@ -43,6 +43,7 @@ from athena.aegis import (
     sprints,
     status_commands,
     statuses,
+    timeline,
 )
 from athena.core import (
     access,
@@ -1703,6 +1704,29 @@ def remove_project_member(
 
 
 # --- Per-project statuses: the configurable lifecycle ---------------------
+
+
+@projects_router.get("/{project_id}/timeline")
+def project_timeline(
+    project_id: int,
+    max_per_lane: int = timeline.DEFAULT_MAX_PER_LANE,
+    max_items: int = timeline.DEFAULT_MAX_ITEMS,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The project's roadmap as positioned data rather than markup — the same
+    # structure the browser draws, so an agent reads the plan the operator sees.
+    # A project the caller cannot see is the same 404 a missing one gives.
+    project = projects.get_project(conn, project_id)
+    if project is None or not access.can_see_project(conn, actor, project_id):
+        raise HTTPException(status_code=404, detail="no such project")
+    return timeline.project_timeline(
+        conn,
+        project_id=project_id,
+        visible_project_ids=access.visible_project_filter(conn, actor),
+        max_per_lane=max_per_lane,
+        max_items=max_items,
+    )
 
 
 @projects_router.get("/{project_id}/statuses", response_model=list[StatusOut])
