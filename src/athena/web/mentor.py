@@ -814,6 +814,10 @@ def page_detail(
                 conn
             ),  # the shared vocabulary, for autocomplete
             "attachments": attachments.list_for(conn, "page", page_id),
+            # The types the download route serves inline — the template offers a
+            # thumbnail and an embed snippet for exactly these, so the affordance
+            # and the actual behaviour come from one list.
+            "inline_image_types": attachments.INLINE_CONTENT_TYPES,
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
             "backlinks": links.backlinks(conn, "page", page_id, actor=user),

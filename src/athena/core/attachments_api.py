@@ -88,11 +88,19 @@ def download(
         ) from exc
     # Open by descriptor before constructing the response. A symlink or pathname
     # swap can no longer redirect the download after the visibility check.
+    # Images are served INLINE so a `![alt](/attachments/N)` in a body actually
+    # displays; everything else stays an explicit download. The type driving this
+    # was sniffed from the bytes at upload, never taken from the uploader's claim,
+    # and the allowlist excludes SVG — serving a scriptable document inline is how
+    # an upload becomes stored XSS. `nosniff` stays on either way, so a browser
+    # never gets to guess a different type than the one declared here.
+    inline = att["content_type"] in attachments.INLINE_CONTENT_TYPES
+    kind = "inline" if inline else "attachment"
     encoded_filename = quote(att["filename"])
     if encoded_filename == att["filename"]:
-        disposition = f'attachment; filename="{att["filename"]}"'
+        disposition = f'{kind}; filename="{att["filename"]}"'
     else:
-        disposition = f"attachment; filename*=utf-8''{encoded_filename}"
+        disposition = f"{kind}; filename*=utf-8''{encoded_filename}"
     return StreamingResponse(
         _stream_blob(handle),
         media_type=att["content_type"],
