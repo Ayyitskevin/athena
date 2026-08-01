@@ -37,7 +37,12 @@ assignee; never a rewritten trail), and a **worker registry** with a cooperative
 what it said back; it cannot signal a process), and **run controls** for
 steering one live run by recorded request (see
 [`RUN_CONTROLS.md`](RUN_CONTROLS.md) — steer / request-cancel / request a
-fresh-context handoff, answered only by the run's bound agent). *Process-level*
+fresh-context handoff, answered only by the run's bound agent), and a
+**hash-chained activity trail** whose integrity is verifiable on demand (see
+[`TRAIL_INTEGRITY.md`](TRAIL_INTEGRITY.md) — tampering becomes evident, not
+impossible), with a per-agent **answerability ledger** laying recorded asks
+beside recorded answers (see [`ANSWERABILITY.md`](ANSWERABILITY.md) — facts
+per lane, never a score). *Process-level*
 kill and *general*
 undo across every write remain roadmap goals rather than guarantees Athena makes
 today.

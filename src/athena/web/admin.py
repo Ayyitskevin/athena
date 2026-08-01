@@ -21,13 +21,17 @@ from athena.aegis import (
 )
 from athena.core import (
     activity,
+    activity_chain,
     agent_commands,
     agents,
+    answerability,
     approvals,
     budgets,
     identity,
     oidc,
     oidc_commands,
+    run_control_commands,
+    run_controls,
     run_replay,
     security_events,
     token_commands,
@@ -437,6 +441,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     ]
     return {
         "agents": agent_rows,
+        # The ask-and-answer ledger, one row per agent (zero-filled). Facts per
+        # lane from core/answerability.py — deliberately never a score.
+        "answerability": answerability.build_answerability(conn)["agents"],
         "unanswered_kills": unanswered_kills,
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
@@ -1090,6 +1097,60 @@ def security_signals(
             "counts": security_events.failure_counts(conn),
             "verbs": list(security_events.SECURITY_VERBS),
             "selected_verb": selected,
+            # Trail integrity (0072): where the hash chain stands, plus a cheap
+            # tail recheck for THIS render. The card says exactly what the tail
+            # check covers; the full walk belongs to athena-doctor / the API.
+            "chain": activity_chain.status(conn),
+            "chain_tail": activity_chain.verify_tail(conn),
+        },
+        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+    )
+
+
+_CONTROL_STATE_FILTERS = (
+    run_controls.STATE_FILTER_OPEN,
+    *run_controls.CONTROL_STATES,
+    "all",
+)
+
+
+@router.get("/admin/run-controls", response_class=HTMLResponse)
+def run_controls_admin(
+    request: Request,
+    state: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Every recorded control request in one place — the page the
+    fleet-attention rollup's "Run controls awaiting an agent" count links to.
+
+    Until now controls lived only on each run's lineage page, so an operator
+    had to already know which runs they had steered. Admin-only, like the rest
+    of the fleet cockpit; the bound agent's own inbox stays the API/MCP list.
+    This page renders the same command read those serve — it owns no data."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    # A hand-edited filter falls back to the default rather than erroring —
+    # the security page's lenient stance for GET filters.
+    selected = state if state in _CONTROL_STATE_FILTERS else "open"
+    controls = run_control_commands.readable_controls(
+        conn,
+        actor=user,
+        state=None if selected == "all" else selected,
+        limit=run_controls.MAX_LIST_LIMIT,
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/run_controls.html",
+        context={
+            "controls": controls,
+            "states": list(_CONTROL_STATE_FILTERS),
+            "selected_state": selected,
+            "clipped": len(controls) == run_controls.MAX_LIST_LIMIT,
+            "limit": run_controls.MAX_LIST_LIMIT,
         },
         headers=_ACTIVE_WORK_PRIVATE_HEADERS,
     )

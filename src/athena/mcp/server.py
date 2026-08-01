@@ -807,6 +807,45 @@ def build_server(client: AthenaClient) -> FastMCP:
         HH:MM:SS'). Requires an admin token."""
         return client.list_security_events(verb=verb, since=since, limit=limit)
 
+    @tool
+    def activity_chain_status() -> dict:
+        """Where the audit trail's hash chain stands (admin only).
+
+        Returns the ANCHOR (the first chained event — rows below it predate the
+        chain and are counted, never claimed), the HEAD (the newest entry's
+        hash — note it somewhere outside Athena to make even a full-chain
+        rebuild detectable), and coverage counts. The chain proves the recorded
+        trail has not been rewritten; it does not prove what an agent's process
+        actually did off the record."""
+        return client.activity_chain_status()
+
+    @tool
+    def verify_activity_chain(
+        after_id: int | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Recompute a bounded window of the audit trail's hash chain (admin only).
+
+        Each call rehashes at most `limit` entries; loop on the returned
+        `next_after` until `has_more` is false to walk the whole chain. On a
+        break it reports the FIRST mismatching event id and reason — a finding
+        to investigate, never something Athena repairs. `ok: true` means the
+        WINDOW verified, not the whole trail."""
+        return client.verify_activity_chain(after_id=after_id, limit=limit)
+
+    @tool
+    def agent_answerability(agent_id: int | None = None) -> dict:
+        """The per-agent ask-and-answer ledger (admin only).
+
+        For each agent: run controls addressed to it (open / expired-unanswered
+        / completed / declined), kill requests to its workers (told-to-stop vs
+        confirmed), approvals its gated actions raised (pending / approved /
+        rejected), and how many of its events an undo reversed. Facts per lane,
+        derived at read time from the owning tables — deliberately NOT a score:
+        an expired control means the clock ran out, and only the operator can
+        judge why. Narrow with agent_id."""
+        return client.agent_answerability(agent_id=agent_id)
+
     @mutation_tool
     def worker_heartbeat(
         worker_key: str,

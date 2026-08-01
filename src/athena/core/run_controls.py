@@ -220,6 +220,51 @@ def list_rows(
     return [dict(row) for row in rows]
 
 
+def count_open(conn: sqlite3.Connection, *, now_stamp: str) -> int:
+    """How many controls are live right now — unsettled and unexpired.
+
+    The fleet-attention rollup's number. It uses the same state predicate the
+    list reads use, so the card can never disagree with the page it links to
+    (/admin/run-controls), which renders rows from the identical clause."""
+    clause = _state_clause(STATE_FILTER_OPEN, "?")
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM run_controls c WHERE {clause}",
+        [now_stamp] * clause.count("?"),
+    ).fetchone()
+    return int(row["n"])
+
+
+def state_counts_by_agent(
+    conn: sqlite3.Connection, *, now_stamp: str
+) -> dict[int, dict[str, int]]:
+    """Per-agent control tallies for the answerability projection.
+
+    One pass over the table; the same derived-state predicates every list read
+    uses, expressed as CASE buckets. `expired_unanswered` is the derivation the
+    docs promise — the clock's verdict on an unsettled row, never a stored
+    claim."""
+    rows = conn.execute(
+        "SELECT agent_id, "
+        "SUM(CASE WHEN settled_at IS NULL AND expires_at > :now THEN 1 ELSE 0 END)"
+        " AS open, "
+        "SUM(CASE WHEN settled_at IS NULL AND expires_at <= :now THEN 1 ELSE 0 END)"
+        " AS expired_unanswered, "
+        "SUM(CASE WHEN settlement = 'completed' THEN 1 ELSE 0 END) AS completed, "
+        "SUM(CASE WHEN settlement = 'declined' THEN 1 ELSE 0 END) AS declined "
+        "FROM run_controls GROUP BY agent_id",
+        {"now": now_stamp},
+    ).fetchall()
+    return {
+        int(row["agent_id"]): {
+            "open": int(row["open"]),
+            "expired_unanswered": int(row["expired_unanswered"]),
+            "completed": int(row["completed"]),
+            "declined": int(row["declined"]),
+        }
+        for row in rows
+    }
+
+
 def cas_acknowledge(
     conn: sqlite3.Connection, *, control_id: int, now_stamp: str
 ) -> bool:

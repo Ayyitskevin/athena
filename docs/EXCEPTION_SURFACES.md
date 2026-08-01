@@ -19,6 +19,7 @@ On the dashboard, admin-only, above everything else:
 | Claims needing attention | Rows the active-work projection marked `needs_attention` | the examined window |
 | Approvals waiting on you | Pending approval requests | standing |
 | Workers told to stop | Kill requests not yet confirmed | standing |
+| Run controls awaiting an agent | Live control requests — unsettled, unexpired | standing |
 | Failing automation rules | Rules with a recorded failure | standing |
 | Failing webhooks | Endpoints with a delivery failure | standing |
 | Budget ceilings hit | `agent_budget_exhausted` events | last 24h |

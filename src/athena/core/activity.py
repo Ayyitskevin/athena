@@ -18,7 +18,7 @@ from io import StringIO
 import sqlite3
 from typing import cast
 
-from athena.core import access, notifications, run_context
+from athena.core import access, activity_chain, notifications, run_context
 
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
@@ -318,6 +318,10 @@ def record(
         )
         event_id = cur.lastrowid
         assert event_id is not None
+        # Chain the row in the same transaction (0072): the trail's hash chain
+        # covers every row this writer records, so the event and its
+        # attestation land or roll back together.
+        activity_chain.append_entry(conn, event_id)
         conn.executemany(
             "INSERT INTO activity_visibility_projects "
             "(event_id, project_scope_key) VALUES (?, ?)",
@@ -390,6 +394,21 @@ def reversed_event_ids(
         ids,
     ).fetchall()
     return {row["reverses_event_id"] for row in rows}
+
+
+def reversed_counts_by_actor(conn: sqlite3.Connection) -> dict[int, int]:
+    """How many of each actor's NATIVE events have been reversed by an undo.
+
+    A reading lens for the answerability projection: an operator undoing an
+    agent's actions is a recorded correction signal. Counts the reversed
+    originals by their performer; imported history is excluded exactly as it is
+    from undo itself."""
+    rows = conn.execute(
+        "SELECT original.actor_id AS actor_id, COUNT(*) AS n FROM activity reversal "
+        "JOIN activity original ON original.id = reversal.reverses_event_id "
+        "WHERE original.imported_at IS NULL GROUP BY original.actor_id"
+    ).fetchall()
+    return {int(row["actor_id"]): int(row["n"]) for row in rows}
 
 
 def list_activity(

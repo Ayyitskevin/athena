@@ -117,6 +117,55 @@
 </section>
 {% endif %}
 
+{% if answerability %}
+<section class="dashboard-card" aria-labelledby="answerability-heading">
+    <h2 id="answerability-heading">Answerability</h2>
+    <p class="muted">
+        What was asked of each agent, and what was answered — facts per lane,
+        never a score. "Expired" means the clock ran out on an unanswered ask;
+        "reversed" counts events an undo compensated. Athena records asks and
+        answers; only you can judge why a number is what it is.
+    </p>
+    <table class="issues-table">
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th><a href="/admin/run-controls">Run controls</a></th>
+                <th>Worker kills</th>
+                <th>Approvals</th>
+                <th>Reversed</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in answerability %}
+            <tr>
+                <td>
+                    <strong>{{ row.agent_name }}</strong>
+                    {% if row.paused %}<span class="agent-badge">paused</span>{% endif %}
+                </td>
+                <td>
+                    {{ row.run_controls.open }} open ·
+                    {{ row.run_controls.expired_unanswered }} expired unanswered ·
+                    {{ row.run_controls.completed }} completed ·
+                    {{ row.run_controls.declined }} declined
+                </td>
+                <td>
+                    {{ row.worker_kills.told_to_stop }} told to stop ·
+                    {{ row.worker_kills.confirmed }} confirmed
+                </td>
+                <td>
+                    {{ row.approvals.pending }} pending ·
+                    {{ row.approvals.approved }} approved ·
+                    {{ row.approvals.rejected }} rejected
+                </td>
+                <td>{{ row.reversed_events }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
 {% if onboarded %}
 <div class="form-container">
     <h3>Agent onboarded: {{ onboarded.user.name }}</h3>

@@ -125,6 +125,13 @@ commands: admins record requests there; settlement is deliberately API/MCP-only,
 because settling is the *agent process's* answer and a browser session is not
 the agent.
 
+Fleet-wide, `/admin/run-controls` lists every recorded control (admin-only,
+filterable by the same derived states), each row linking back to its run's
+lineage page — and the dashboard's fleet-attention rollup counts live controls
+as **Run controls awaiting an agent**, standing rather than window-bounded,
+using the same `open` predicate the page lists by
+(see [`EXCEPTION_SURFACES.md`](EXCEPTION_SURFACES.md)).
+
 ## The fresh-context handoff
 
 A `request_fresh_context` completion stores exactly this bounded object, and

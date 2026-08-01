@@ -1227,6 +1227,36 @@ class AthenaClient:
             )
         )
 
+    def activity_chain_status(self) -> Any:
+        """Where the trail's hash chain stands — anchor, head hash, coverage
+        counts (admin only)."""
+        return self._result(self._client.get("/activity/chain"))
+
+    def verify_activity_chain(
+        self,
+        *,
+        after_id: int | None = None,
+        limit: int = 1000,
+    ) -> Any:
+        """Recompute a bounded window of the trail's hash chain (admin only).
+
+        Loop on the returned next_after until has_more is false for a full walk."""
+        return self._result(
+            self._client.get(
+                "/activity/chain/verify",
+                params=self._params(after_id=after_id, limit=limit),
+            )
+        )
+
+    def agent_answerability(self, *, agent_id: int | None = None) -> Any:
+        """The ask-and-answer ledger per agent — controls, kills, approvals,
+        reversals (admin only). Facts per lane, never a score."""
+        return self._result(
+            self._client.get(
+                "/fleet/answerability", params=self._params(agent_id=agent_id)
+            )
+        )
+
     def worker_heartbeat(
         self,
         *,

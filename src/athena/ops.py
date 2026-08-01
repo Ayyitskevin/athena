@@ -14,7 +14,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 
-from athena.core import attachments, db, deployment
+from athena.core import activity_chain, attachments, db, deployment
 from athena.core.backup import (
     backup_database,
     prune_backup_directory,
@@ -96,6 +96,51 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
     return (
         f"database: ok ({len(status.applied)} migrations, "
         f"latest {status.latest}, {action})"
+    )
+
+
+def _check_activity_chain(db_path: Path) -> str:
+    """Walk the trail's hash chain (0072) and report the first break, if any.
+
+    Read-only on purpose: a broken chain is a finding to investigate, never
+    something doctor repairs. Bounded windows keep memory flat however long the
+    trail is; the walk itself is the full verification an operator runs after a
+    restore or before trusting a copied database file.
+    """
+    conn = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        present = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'activity_chain'"
+        ).fetchone()
+        if present is None:
+            # A database that predates 0072 has nothing to verify — say so
+            # rather than failing a check the schema cannot satisfy yet.
+            return "activity chain: not present (database predates migration 0072)"
+        report = activity_chain.verify_all(conn)
+        chain_status = activity_chain.status(conn)
+    finally:
+        conn.close()
+
+    if report["mismatch"] is not None:
+        broken = report["mismatch"]
+        raise ValueError(
+            "activity chain verification failed: "
+            f"event {broken['event_id']}: {broken['reason']} ({broken['detail']})"
+        )
+    head = chain_status["head"]
+    if head is None:
+        return (
+            "activity chain: empty "
+            f"({chain_status['unchained_count']} rows predate the chain)"
+        )
+    unchained = chain_status["unchained_count"]
+    before = f"; {unchained} rows predate the chain" if unchained else ""
+    return (
+        f"activity chain: ok ({report['checked']} entries verified; "
+        f"anchor event {chain_status['anchor_event_id']}; "
+        f"head {head['entry_hash'][:12]}… at event {head['event_id']}{before})"
     )
 
 
@@ -602,6 +647,7 @@ def _doctor_checks(args: argparse.Namespace) -> list[str]:
     if args.deployment:
         return _deployment_doctor_checks(args)
     checks = [_check_database(args.db_path, migrate=args.migrate)]
+    checks.append(_check_activity_chain(args.db_path))
     if args.attach_dir is not None:
         checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
     return checks

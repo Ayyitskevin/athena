@@ -266,6 +266,15 @@ reachable. Its `--host` and `--port` must exactly mirror the subsequent
 and port. The doctor has no `--fd` mode; for socket activation, inspect the
 descriptor and pass its numeric address and port here.
 
+Without `--deployment`, the check-up also walks the activity trail's hash
+chain (migration 0072) in bounded windows and reports
+`activity chain: ok (N entries verified; anchor event A; head …)` — or fails
+naming the first broken link. A database that predates the chain reports
+`not present` rather than failing. The walk is read-only: a broken chain is a
+finding to investigate against a backup whose head hash you noted, never
+something doctor repairs (see
+[`TRAIL_INTEGRITY.md`](TRAIL_INTEGRITY.md)).
+
 `athena-doctor` detects but does not repair attachment divergence. Omitting
 `--attach-dir` omits all attachment checks. It does not apply migrations unless
 `--migrate` is passed.

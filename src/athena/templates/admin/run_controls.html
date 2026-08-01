@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+
+{% block title %}Run controls — Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/dashboard" class="muted">← Back to dashboard</a>
+        <h1>Run controls</h1>
+    </div>
+</div>
+
+<p class="muted">
+    Every recorded control request, fleet-wide: what was asked of which run, and
+    what the bound agent said back. "Open" means asked, not yet answered, clock
+    still running. Athena records requests and replies — an acknowledgement
+    proves receipt, a completion is the agent's claim, and expired means the
+    clock ran out, never that anything stopped. Create and inspect a single
+    run's controls on its lineage page.
+</p>
+
+<form method="get" action="/admin/run-controls" class="activity-filters">
+    <label>
+        State
+        <select name="state" onchange="this.form.submit()">
+            {% for s in states %}
+            <option value="{{ s }}"{{ " selected" if selected_state == s }}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Filter</button>
+</form>
+
+{% if controls %}
+{% if clipped %}
+<p class="muted">Showing the newest {{ limit }} — older controls exist beyond this page.</p>
+{% endif %}
+<table class="issues-table">
+    <thead>
+        <tr>
+            <th>Run</th><th>Request</th><th>State</th>
+            <th>Asked</th><th>Expires</th><th>Agent's answer</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for control in controls %}
+        <tr>
+            <td>
+                <a href="/aegis/activity/runs/{{ control.run_id | urlencode }}/lineage"><code>{{ control.run_id }}</code></a>
+                <div class="muted">{{ control.agent_name }}{% if control.worker_key %} · worker {{ control.worker_key }}{% endif %}</div>
+            </td>
+            <td>
+                {{ control.kind }}
+                {% if control.payload %}<div class="muted">{{ control.payload }}</div>{% endif %}
+            </td>
+            <td>
+                {{ control.state }}
+                {% if control.state == 'acknowledged' %}<div class="muted">receipt only — no outcome yet</div>{% endif %}
+                {% if control.state == 'expired' %}<div class="muted">no answer before {{ control.expires_at }}</div>{% endif %}
+            </td>
+            <td>by {{ control.requested_by_name }} <div class="muted">{{ control.created_at }}</div></td>
+            <td>{{ control.expires_at }}</td>
+            <td>
+                {% if control.settlement %}
+                {{ control.result_summary }}
+                {% if control.handoff %}<div class="muted">structured handoff — see the run's lineage page</div>{% endif %}
+                {% else %}
+                <span class="muted">—</span>
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="muted">
+    No {{ "" if selected_state == "all" else selected_state + " " }}controls recorded.
+    A quiet list means nobody has asked anything of a live run{% if selected_state != "all" %} that is still in this state{% endif %}
+    — not that every run is healthy.
+</p>
+{% endif %}
+{% endblock %}
