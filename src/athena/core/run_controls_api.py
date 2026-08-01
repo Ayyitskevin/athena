@@ -16,7 +16,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from athena.core import run_control_commands, run_controls
@@ -24,6 +24,10 @@ from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/run-controls", tags=["core"])
+
+# Bounded so an id beyond SQLite's integer range is a client error at the
+# schema, never an OverflowError inside the driver.
+ControlId = Annotated[int, Path(ge=1, le=(1 << 63) - 1)]
 
 # Opaque at the schema layer, like run ids everywhere else: the command is the
 # single validation boundary, and echoing a hostile string back through
@@ -212,7 +216,7 @@ def index(
 
 @router.get("/{control_id}", response_model=RunControlOut)
 def show(
-    control_id: int,
+    control_id: ControlId,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -226,7 +230,7 @@ def show(
 
 @router.post("/{control_id}/acknowledge", response_model=RunControlOut)
 def acknowledge(
-    control_id: int,
+    control_id: ControlId,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -244,7 +248,7 @@ def acknowledge(
 @router.post("/{control_id}/decline", response_model=RunControlOut)
 def decline(
     payload: RunControlDeclineIn,
-    control_id: int,
+    control_id: ControlId,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -260,7 +264,7 @@ def decline(
 @router.post("/{control_id}/complete", response_model=RunControlOut)
 def complete(
     payload: RunControlCompleteIn,
-    control_id: int,
+    control_id: ControlId,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
