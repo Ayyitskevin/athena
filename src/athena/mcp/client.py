@@ -1262,6 +1262,87 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def create_run_control(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        payload: str | None = None,
+        worker_id: int | None = None,
+        ttl_seconds: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: record a control request against a live run. Records the ask;
+        the bound agent answers or it expires."""
+        return self._mutate(
+            self._client.post,
+            "/run-controls",
+            json=self._params(
+                run_id=run_id,
+                kind=kind,
+                payload=payload,
+                worker_id=worker_id,
+                ttl_seconds=ttl_seconds,
+                idempotency_key=idempotency_key,
+            ),
+        )
+
+    def list_run_controls(
+        self,
+        *,
+        run_id: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        """Every control for an admin; your own addressed controls otherwise."""
+        return self._result(
+            self._client.get(
+                "/run-controls",
+                params=self._params(run_id=run_id, state=state, limit=limit),
+            )
+        )
+
+    def get_run_control(self, control_id: int) -> Any:
+        """One control, for an admin or the agent it is addressed to."""
+        return self._result(self._client.get(f"/run-controls/{control_id}"))
+
+    def acknowledge_run_control(
+        self, control_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Record that YOU read this control. Receipt, nothing more."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/acknowledge",
+            idempotency_key=idempotency_key,
+        )
+
+    def decline_run_control(
+        self, control_id: int, *, reason: str, idempotency_key: str | None = None
+    ) -> Any:
+        """Record YOUR refusal of this control, with the reason."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/decline",
+            json={"reason": reason},
+            idempotency_key=idempotency_key,
+        )
+
+    def complete_run_control(
+        self,
+        control_id: int,
+        *,
+        summary: str | None = None,
+        handoff: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Record YOUR completion claim for this control."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/complete",
+            json=self._params(summary=summary, handoff=handoff),
+            idempotency_key=idempotency_key,
+        )
+
     def undo_action(self, event_id: int, *, idempotency_key: str | None = None) -> Any:
         """Reverse one activity event by running its registered inverse as YOU.
         Records a new compensating event; never edits history."""

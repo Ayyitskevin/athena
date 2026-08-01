@@ -251,6 +251,23 @@ check-in fallback → create 201 → agent inbox → third-user list `[]` and ge
 → ack 200 acknowledged → complete 200 completed → middleware Idempotency-Key
 replay (`Idempotent-Replay: true`) and mismatch 409 `idempotency_mismatch` →
 fresh-context handoff completion → decline with reason. All as designed.
+
+### Phase 4 — MCP tools: COMPLETE
+
+Delivered: six `AthenaClient` methods (`create_run_control`, `list_run_controls`,
+`get_run_control`, `acknowledge_run_control`, `decline_run_control`,
+`complete_run_control`) hitting the REST surface, and six `build_server` tools
+(one-line delegations; `@mutation_tool` for writes with optional
+idempotency_key; bounds via Annotated aliases importing the command module's
+MAX_* constants so MCP limits cannot drift from domain limits; docstrings carry
+the epistemics: "records a request", "your claim", "expired means the clock ran
+out").
+
+Validation: scripted MCP smoke over an injected TestClient-backed AthenaClient —
+admin create via admin-scoped bearer, agent inbox (`state=open`), acknowledge,
+complete, double-settle surfaced as AthenaError 409 "control is already
+settled", admin read-back, and `build_server` tool enumeration confirming all
+six tools registered (113 total).
 - Phase 2 (domain/command layer + migration): pending
 - Phase 3 (REST): pending
 - Phase 4 (MCP): pending
