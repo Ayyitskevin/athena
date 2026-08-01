@@ -480,10 +480,18 @@ def test_segment_widths_are_computed_once_for_both_surfaces(tmp_path):
         issues.set_parent(conn, child, parent)
     conn.commit()
 
-    segments = rollups.child_rollup(conn, parent)["segments"]
+    rolled = rollups.child_rollup(conn, parent)
+    segments = rolled["segments"]
     assert [segment["bucket"] for segment in segments] == ["done", "doing", "todo"]
     assert [segment["count"] for segment in segments] == [1, 1, 2]
     assert sum(segment["percent"] for segment in segments) == pytest.approx(100)
+    # The bar's buckets DERIVE from the one vocabulary (finished-first), never
+    # a second literal tuple: a category added to statuses.CATEGORIES must
+    # appear in the bar the same day it appears in the counts, or the bar
+    # quietly sums below 100% (review finding).
+    assert [segment["bucket"] for segment in segments] == [
+        bucket for bucket in reversed(rollups.BUCKETS) if rolled["counts"][bucket]
+    ]
 
 
 def test_a_parent_with_no_children_reports_no_progress(tmp_path):
@@ -768,3 +776,55 @@ def test_an_undrawable_timeline_says_so_without_claiming_no_issues_exist(tmp_pat
         assert "and no live issues you can" in page.text
         assert "Plan a sprint" in page.text
         assert "<svg" not in page.text
+
+
+def test_ancient_sprint_lanes_drop_oldest_first_and_say_what_left(tmp_path):
+    """Width grew by one lane per sprint forever. The cap keeps the newest
+    sprints, and the dropped lanes' issues are counted out loud rather than
+    misfiled into the backlog — a card in the wrong lane is worse than an
+    admitted omission (review finding)."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    cycles = [
+        sprints.create_sprint(
+            conn, project_id=pid, name=f"C{n}", start_date=f"2026-0{n}-01"
+        )
+        for n in range(1, 5)
+    ]
+    ancient = _issue(conn, "ancient work", project_id=pid)
+    issues.set_sprint(conn, ancient, cycles[0]["id"])
+    fresh = _issue(conn, "fresh work", project_id=pid)
+    issues.set_sprint(conn, fresh, cycles[3]["id"])
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid, max_lanes=3)
+    assert [lane["label"] for lane in drawn["lanes"]] == ["C2", "C3", "C4", "Backlog"]
+    assert drawn["omitted_lanes"] == 1
+    assert drawn["omitted_lane_issues"] == 1
+    # The ancient issue is neither drawn nor silently re-homed to the backlog.
+    assert [card["id"] for card in drawn["cards"]] == [fresh]
+    assert drawn["total"] == 1
+
+    # Without the cap biting, nothing is omitted and nothing is claimed.
+    full = timeline.project_timeline(conn, project_id=pid)
+    assert (full["omitted_lanes"], full["omitted_lane_issues"]) == (0, 0)
+
+
+def test_the_issue_read_is_bounded_and_admits_the_cap(tmp_path):
+    """The drawn set was always capped; the QUERY was not, and it is reachable
+    anonymously on a public project. When the cap bites, the totals describe
+    what was loaded and the flag says more exist (review finding)."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    for n in range(5):
+        _issue(conn, f"work {n}", project_id=pid)
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid, max_fetch=3)
+    assert drawn["fetch_clipped"] is True
+    assert drawn["fetch_limit"] == 3
+    assert drawn["total"] == 3
+
+    full = timeline.project_timeline(conn, project_id=pid)
+    assert full["fetch_clipped"] is False
+    assert full["total"] == 5
