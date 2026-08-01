@@ -231,7 +231,15 @@ under exactly the same architecture rules, none of which are amended.
       history (the attention-rollup and security-counter exclusion was added
       after review — see CHANGELOG).
       Athena never calls the forge: inbound only, no stored third-party token.
-- [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.
+- [x] **Planning**: a per-project timeline draws sprints as lanes with issues
+      placed in them and declared dependencies between them, and a parent issue
+      shows live child status counts — computed on every read, never stored, and
+      available as a `kind: rollup` embed so a page can carry the same number.
+      Lane ORDER is chronological; lane WIDTH is deliberately not a duration,
+      because sprint dates are optional and unvalidated. Read-only: placement
+      still changes through the sprint form that owns that write. Per-issue
+      target dates were considered and deliberately not built (see
+      [PLANNING.md](PLANNING.md)).
 - [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.
 
 ## Out of scope (for now)

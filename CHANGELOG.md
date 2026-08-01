@@ -66,6 +66,25 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **A project timeline, and live parent rollups.** `/aegis/projects/{id}/timeline`
+  draws a project's sprints as lanes in date order (undated ones after dated,
+  the backlog last), places each issue in its sprint, and draws the declared
+  dependencies between drawn issues — a solid arrow for *blocks*, a dashed line
+  for *relates*. Lane width is deliberately not a duration: sprint dates are
+  nullable and unvalidated, so order is the only time claim made, and the view
+  says so. It is read-only — placement still changes through the issue's own
+  sprint form — and it states what it left out, including a count of
+  dependencies whose other end is off the picture. The same structure is served
+  by `GET /projects/{id}/timeline` and the `project_timeline` MCP tool.
+  A parent issue now shows its sub-issues' status-category distribution as a
+  live bar computed on every read from `aegis/rollups.py`, with buckets taken
+  from each child's own project status configuration so a custom done state
+  counts correctly; archived children are excluded and said aloud, and children
+  the viewer cannot see are excluded silently so the bar cannot become an
+  existence oracle. The same computation is available in a page as a new
+  `kind: rollup` embed. Per-issue target dates were considered and deliberately
+  not built — see [`docs/PLANNING.md`](docs/PLANNING.md).
+
 - **Wheel-bound release-candidate evidence.** The required test gate now
   precedes one fail-closed evidence job that builds a single source distribution
   and its derived wheel with hash-locked tooling. It snapshots the sdist once

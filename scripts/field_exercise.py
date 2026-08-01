@@ -451,6 +451,58 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
             assert learning is not None
             step("agent promoted a learning into the issue's runbook")
 
+            # --- the operator reads the plan ---------------------------------
+            # Q added a roadmap step to the loop: after work is placed, the
+            # operator should be able to SEE where it sits and how far along a
+            # parent is, without opening a tracker. Exercised over real HTTP
+            # because a view that only works in a unit test is not a view.
+            _, plan, _ = _request(
+                "GET",
+                f"{athena}/projects/{project['id']}/timeline",
+                headers=admin_h,
+            )
+            assert plan is not None
+            if issue["id"] not in [card["id"] for card in plan["cards"]]:
+                raise Failure(f"the delegated issue is missing from the plan: {plan}")
+            if plan["shown"] > plan["total"]:
+                raise Failure(f"timeline reported more drawn than exist: {plan}")
+            step(
+                "operator read the project timeline",
+                f"{plan['shown']} of {plan['total']} across {len(plan['lanes'])} lanes",
+            )
+
+            _, child, _ = _request(
+                "POST",
+                f"{athena}/issues",
+                headers=admin_h,
+                body={
+                    "title": "Sub-task of the field exercise",
+                    "project_id": project["id"],
+                },
+                expect=(201,),
+            )
+            assert child is not None
+            _request(
+                "PUT",
+                f"{athena}/issues/{child['id']}/parent",
+                headers=admin_h,
+                body={"parent_id": issue["id"]},
+            )
+            _, rolled, _ = _request(
+                "POST",
+                f"{athena}/embeds/resolve",
+                headers=admin_h,
+                body={"text": (f"```athena\nkind: rollup\nissue: {issue['id']}\n```")},
+            )
+            assert isinstance(rolled, list)
+            rollup = rolled[0]
+            if rollup.get("error") or rollup["rollup"]["total"] != 1:
+                raise Failure(f"rollup embed did not count the sub-issue: {rollup}")
+            step(
+                "rollup embed counted the sub-issue live",
+                f"{rollup['rollup']['percent_done']}% done",
+            )
+
             _, context, _ = _request(
                 "GET",
                 f"{athena}/issues/{issue['id']}/work-context",
