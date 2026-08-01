@@ -209,20 +209,123 @@ def test_the_timeline_reports_what_each_lane_and_the_page_left_out(tmp_path):
 
 
 def test_timeline_bounds_are_clamped_not_trusted(tmp_path):
+    """A caller asking for more than the ceiling gets the ceiling, and a caller
+    passing nonsense gets the default — both observed through what is actually
+    drawn, not merely by the call not raising."""
     conn = _conn(tmp_path)
     pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    cycle = sprints.create_sprint(
+        conn, project_id=pid, name="C1", start_date="2026-01-01"
+    )
+    for index in range(timeline.MAX_MAX_PER_LANE + 5):
+        made = _issue(conn, f"issue {index}", project_id=pid)
+        issues.set_sprint(conn, made, cycle["id"])
     conn.commit()
-    absurd = timeline.project_timeline(
+
+    greedy = timeline.project_timeline(
         conn, project_id=pid, max_per_lane=10_000, max_items=10_000
     )
-    assert absurd["lanes"]  # renders rather than refusing
-    nonsense = timeline.project_timeline(
+    assert greedy["shown"] == timeline.MAX_MAX_PER_LANE
+    assert greedy["truncated"] is True
+
+    defaulted = timeline.project_timeline(
         conn,
         project_id=pid,
         max_per_lane="all",  # type: ignore[arg-type]
         max_items=None,  # type: ignore[arg-type]
     )
-    assert nonsense["lanes"]
+    assert defaulted["shown"] == timeline.DEFAULT_MAX_PER_LANE
+
+
+def test_a_lane_drained_by_the_page_ceiling_says_so(tmp_path):
+    """The overall ceiling is spent left to right, so a later lane can be cut to
+    nothing. A lane that merely looked empty would read as "no work here"."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    first = sprints.create_sprint(
+        conn, project_id=pid, name="First", start_date="2026-01-01"
+    )
+    second = sprints.create_sprint(
+        conn, project_id=pid, name="Second", start_date="2026-02-01"
+    )
+    for sprint in (first, second):
+        for index in range(3):
+            made = _issue(conn, f"{sprint['name']} {index}", project_id=pid)
+            issues.set_sprint(conn, made, sprint["id"])
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid, max_items=3)
+    lanes = {lane["label"]: lane for lane in drawn["lanes"]}
+    assert (lanes["First"]["shown"], lanes["First"]["hidden"]) == (3, 0)
+    # Drained to nothing by the ceiling — and it reports the whole lane missing.
+    assert (lanes["Second"]["shown"], lanes["Second"]["hidden"]) == (0, 3)
+    assert lanes["Second"]["truncated"] is True
+
+
+def test_edge_endpoints_sit_on_the_cards_they_connect(tmp_path):
+    """Geometry lives in one place. If the card's box and the edge's endpoint
+    were computed separately they would drift, and an arrow would land beside
+    the box it points at."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    source = _issue(conn, "source", project_id=pid)
+    target = _issue(conn, "target", project_id=pid)
+    dependencies.add_link(
+        conn, from_id=source, to_id=target, relation="blocks", created_by=1
+    )
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    cards = {card["id"]: card for card in drawn["cards"]}
+    edge = drawn["edges"][0]
+    assert edge["x1"] == cards[source]["x"] + cards[source]["width"]
+    assert edge["x2"] == cards[target]["x"]
+    assert edge["y1"] == cards[source]["y"] + cards[source]["height"] / 2
+    # Cards sit inside their lane, so an endpoint is never on the lane border.
+    lane = drawn["lanes"][0]
+    assert cards[source]["x"] > lane["x"]
+    assert cards[source]["x"] + cards[source]["width"] < lane["x"] + lane["width"]
+
+
+def test_the_off_picture_edge_count_ignores_work_the_viewer_cannot_see(tmp_path):
+    """The counter must not move when a HIDDEN issue gains a link to a visible
+    one. A number that reacts to private work is an existence oracle just as
+    surely as a title would be — the rule the rollup already follows."""
+    conn = _conn(tmp_path)
+    public = projects.create_project(conn, key="PUB", name="Public", created_by=1)["id"]
+    secret = projects.create_project(conn, key="SEC", name="Secret", created_by=1)["id"]
+    conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (secret,))
+    shown = _issue(conn, "public work", project_id=public)
+    hidden = _issue(conn, "classified", project_id=secret)
+    conn.commit()
+
+    def outsider_count():
+        return timeline.project_timeline(
+            conn, project_id=public, visible_project_ids={public}
+        )["edges_outside"]
+
+    before = outsider_count()
+    dependencies.add_link(
+        conn, from_id=hidden, to_id=shown, relation="blocks", created_by=1
+    )
+    conn.commit()
+    assert outsider_count() == before == 0
+
+    # An admin, who may see it, still gets a truthful count.
+    assert (
+        timeline.project_timeline(conn, project_id=public, visible_project_ids=None)[
+            "edges_outside"
+        ]
+        == 1
+    )
+
+    # And a link to work the viewer CAN see is still counted for them.
+    elsewhere = _issue(conn, "other public work")
+    dependencies.add_link(
+        conn, from_id=shown, to_id=elsewhere, relation="blocks", created_by=1
+    )
+    conn.commit()
+    assert outsider_count() == 1
 
 
 def test_timeline_hides_issues_the_viewer_cannot_see(tmp_path):
@@ -307,6 +410,60 @@ def test_archived_children_are_excluded_and_said_out_loud(tmp_path):
     assert rolled["has_children"] is True
 
 
+def test_percent_reserves_the_ends_for_the_truth(tmp_path):
+    """100% must mean everything is done and 0% must mean nothing is — plain
+    rounding would call 199 of 200 children a finished job."""
+    conn = _conn(tmp_path)
+    parent = _issue(conn, "epic")
+    children = [_issue(conn, f"child {index}") for index in range(200)]
+    for child in children:
+        issues.set_parent(conn, child, parent)
+    for child in children[:199]:
+        issues.update_issue(conn, child, status="done")
+    conn.commit()
+
+    nearly = rollups.child_rollup(conn, parent)
+    assert nearly["done"] == 199 and nearly["total"] == 200
+    assert nearly["percent_done"] == 99
+
+    issues.update_issue(conn, children[199], status="done")
+    conn.commit()
+    assert rollups.child_rollup(conn, parent)["percent_done"] == 100
+
+
+def test_a_parent_whose_children_are_all_archived_says_so(tmp_path):
+    """Reporting 0% would read as untouched work; there is work, and all of it
+    was set aside."""
+    conn = _conn(tmp_path)
+    parent = _issue(conn, "epic")
+    child = _issue(conn, "abandoned")
+    issues.set_parent(conn, child, parent)
+    conn.execute(
+        "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (child,)
+    )
+    conn.commit()
+
+    rolled = rollups.child_rollup(conn, parent)
+    assert rolled["total"] == 0
+    assert rolled["archived_excluded"] == 1
+    assert rolled["has_children"] is True
+    assert rolled["segments"] == []
+
+
+def test_segment_widths_are_computed_once_for_both_surfaces(tmp_path):
+    conn = _conn(tmp_path)
+    parent = _issue(conn, "epic")
+    for index, status in enumerate(("done", "in_progress", "open", "open")):
+        child = _issue(conn, f"child {index}", status=status)
+        issues.set_parent(conn, child, parent)
+    conn.commit()
+
+    segments = rollups.child_rollup(conn, parent)["segments"]
+    assert [segment["bucket"] for segment in segments] == ["done", "doing", "todo"]
+    assert [segment["count"] for segment in segments] == [1, 1, 2]
+    assert sum(segment["percent"] for segment in segments) == pytest.approx(100)
+
+
 def test_a_parent_with_no_children_reports_no_progress(tmp_path):
     """Zero children is not "finished" — 0% with no bar, never 100%."""
     conn = _conn(tmp_path)
@@ -315,6 +472,7 @@ def test_a_parent_with_no_children_reports_no_progress(tmp_path):
     rolled = rollups.child_rollup(conn, lonely)
     assert rolled == {
         "counts": {"todo": 0, "doing": 0, "done": 0},
+        "segments": [],
         "total": 0,
         "done": 0,
         "percent_done": 0,

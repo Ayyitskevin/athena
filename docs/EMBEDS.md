@@ -25,6 +25,13 @@ copy-paste that goes stale the moment someone closes something.
 | `issues` | a table of matching issues | `q:`, `limit:`, `title:` |
 | `count` | how many match, as one number | `q:`, `title:` |
 | `issue` | one issue | `issue:` (id or `ATH-12`), `title:` |
+| `rollup` | one issue's sub-issue progress, counted live | `issue:` (id or `ATH-12`), `title:` |
+
+`rollup` counts a parent's direct children by status category on every read —
+the same computation the issue page draws, so a page and the issue it describes
+cannot disagree. Archived children are excluded and the count is stated;
+children the reader cannot see are excluded silently, so two readers of one page
+can correctly see different totals. See [PLANNING.md](PLANNING.md).
 
 `q:` is the [work query language](QUERY.md) — the same grammar the search box and
 MCP use, so a query you can type is a query you can embed.

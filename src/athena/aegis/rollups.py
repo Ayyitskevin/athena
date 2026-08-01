@@ -66,6 +66,24 @@ def _visibility_clause(visible_project_ids: set[int] | None) -> tuple[str, list]
     )
 
 
+def _percent_done(done: int, total: int) -> int:
+    """The headline percentage, with the two ends reserved for the truth.
+
+    Plain rounding would round 199/200 up to a triumphant "100% done" while a
+    child is still open, and 1/200 down to "0% done" after real work landed.
+    Both are small lies in the one number a reader takes at a glance, so 100 is
+    reserved for everything being done and 0 for nothing being done; every state
+    in between is clamped into 1-99.
+    """
+    if not total:
+        return 0
+    if done == total:
+        return 100
+    if done == 0:
+        return 0
+    return min(99, max(1, round(done * 100 / total)))
+
+
 def child_rollup(
     conn: sqlite3.Connection,
     issue_id: int,
@@ -115,9 +133,22 @@ def child_rollup(
     done = counts["done"]
     return {
         "counts": counts,
+        # Each bucket's share of the bar, computed once here so the page and the
+        # embed place identical widths instead of each doing the arithmetic.
+        "segments": [
+            {
+                "bucket": bucket,
+                "count": counts[bucket],
+                "percent": round(counts[bucket] * 100 / total, 2),
+            }
+            for bucket in ("done", "doing", "todo")
+            if counts[bucket]
+        ]
+        if total
+        else [],
         "total": total,
         "done": done,
-        "percent_done": round(done * 100 / total) if total else 0,
+        "percent_done": _percent_done(done, total),
         "archived_excluded": int(archived["n"]),
         "has_children": total > 0 or int(archived["n"]) > 0,
     }

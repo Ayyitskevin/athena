@@ -218,17 +218,24 @@ def _embed_html(resolved: dict) -> str:
     if kind == "rollup":
         rollup = resolved["rollup"]
         if not rollup["total"]:
-            body = '<div class="embed-message">No sub-issues to roll up.</div>'
+            # "No sub-issues" would be false when every one of them is archived:
+            # there IS work here, and all of it was set aside.
+            body = (
+                f'<div class="embed-message">Every sub-issue is archived '
+                f"({escape(str(rollup['archived_excluded']))}), so there is no "
+                f"live progress to report.</div>"
+                if rollup["archived_excluded"]
+                else '<div class="embed-message">No sub-issues to roll up.</div>'
+            )
         else:
-            # Segment widths are computed here, from counts this function was
-            # handed — the same numbers the issue page draws, never a second
-            # calculation of "how done is this".
+            # Widths arrive already computed, from the same rollup the issue page
+            # draws — neither surface does the arithmetic, so neither can drift.
             segments = "".join(
-                f'<span class="rollup-seg rollup-{bucket}" '
-                f'style="width: {rollup["counts"][bucket] * 100 / rollup["total"]:.2f}%"'
-                f' title="{escape(str(rollup["counts"][bucket]))} {bucket}"></span>'
-                for bucket in ("done", "doing", "todo")
-                if rollup["counts"][bucket]
+                f'<span class="rollup-seg rollup-{segment["bucket"]}" '
+                f'style="width: {segment["percent"]}%"'
+                f' title="{escape(str(segment["count"]))} '
+                f'{escape(segment["bucket"])}"></span>'
+                for segment in rollup["segments"]
             )
             archived = ""
             if rollup["archived_excluded"]:
