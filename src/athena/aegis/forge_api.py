@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
@@ -99,7 +100,7 @@ def create_event_source(
 
 @router.put("/event-sources/{source_id}/enabled")
 def set_event_source_enabled(
-    source_id: int,
+    source_id: RowIdPath,
     payload: EnabledUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -117,7 +118,7 @@ def set_event_source_enabled(
 
 @router.delete("/event-sources/{source_id}", status_code=204)
 def delete_event_source(
-    source_id: int,
+    source_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from athena.core import notifications
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 
@@ -65,7 +66,7 @@ def unread_count(
 
 @router.post("/notifications/{notification_id}/read", status_code=204)
 def mark_read(
-    notification_id: int,
+    notification_id: RowIdPath,
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -107,7 +108,7 @@ def add_watch(
 @router.delete("/watches/{target_kind}/{target_id}", status_code=204)
 def remove_watch(
     target_kind: str,
-    target_id: int,
+    target_id: RowIdPath,
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.core import webhook_commands, webhooks
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
@@ -83,7 +84,7 @@ def create(
 
 @router.get("/{webhook_id}", response_model=WebhookOut)
 def show(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -95,7 +96,7 @@ def show(
 
 @router.patch("/{webhook_id}", response_model=WebhookOut)
 def update(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     payload: WebhookUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -113,7 +114,7 @@ def update(
 
 @router.delete("/{webhook_id}", status_code=204)
 def remove(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

@@ -56,6 +56,7 @@ from athena.core import (
     users,
     work_query,
 )
+from athena.core.ids import RowIdPath
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
@@ -732,7 +733,7 @@ def show(
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
 def backlinks(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -746,7 +747,7 @@ def backlinks(
 
 @router.get("/{issue_id}/graph")
 def issue_graph(
-    issue_id: int,
+    issue_id: RowIdPath,
     depth: int = graph.DEFAULT_DEPTH,
     max_nodes: int = graph.DEFAULT_MAX_NODES,
     actor: dict | None = Depends(optional_actor),
@@ -767,7 +768,7 @@ def issue_graph(
 
 @router.get("/{issue_id}/unlinked-mentions")
 def issue_unlinked_mentions(
-    issue_id: int,
+    issue_id: RowIdPath,
     limit: int = mentions.DEFAULT_LIMIT,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -789,7 +790,7 @@ class LinkMentionIn(BaseModel):
 
 @router.post("/{issue_id}/link-mention", response_model=IssueOut)
 def link_issue_mention(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LinkMentionIn,
     response: Response,
     actor: dict = Depends(issue_write_actor),
@@ -836,7 +837,7 @@ class IssueStateOut(BaseModel):
 
 @router.get("/{issue_id}/state", response_model=IssueStateOut)
 def issue_state(
-    issue_id: int,
+    issue_id: RowIdPath,
     as_of: int | None = Query(
         None,
         description="reconstruct state as of this activity event id (default: now)",
@@ -906,7 +907,7 @@ def _issue_for_read(
 
 @router.patch("/{issue_id}", response_model=IssueOut)
 def update(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: IssueUpdate,
     request: Request,
     response: Response,
@@ -931,7 +932,7 @@ def update(
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
 def set_assignee(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: AssigneeUpdate,
     request: Request,
     response: Response,
@@ -955,7 +956,7 @@ def set_assignee(
 
 @router.post("/{issue_id}/archive", response_model=IssueOut)
 def archive_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -973,7 +974,7 @@ def archive_issue(
 
 @router.post("/{issue_id}/unarchive", response_model=IssueOut)
 def unarchive_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1062,7 +1063,7 @@ def bulk_update(
 
 @router.put("/{issue_id}/sprint", response_model=IssueOut)
 def set_sprint(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: SprintAssign,
     request: Request,
     response: Response,
@@ -1086,7 +1087,7 @@ def set_sprint(
 
 @router.put("/{issue_id}/project", response_model=IssueOut)
 def set_project(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ProjectUpdate,
     request: Request,
     response: Response,
@@ -1110,7 +1111,7 @@ def set_project(
 
 @router.put("/{issue_id}/parent", response_model=IssueOut)
 def set_parent(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ParentUpdate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1130,7 +1131,7 @@ def set_parent(
 
 @router.get("/{issue_id}/children", response_model=list[IssueOut])
 def list_children(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1148,7 +1149,7 @@ def list_children(
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
 def add_comment(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: CommentCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1169,7 +1170,7 @@ def add_comment(
 
 @router.get("/{issue_id}/comments", response_model=list[CommentOut])
 def list_comments(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1179,8 +1180,8 @@ def list_comments(
 
 def _author_comment_or_error(
     conn: sqlite3.Connection,
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict,
     *,
     allow_admin: bool = False,
@@ -1206,8 +1207,8 @@ def _author_comment_or_error(
 
 @router.patch("/{issue_id}/comments/{comment_id}", response_model=CommentOut)
 def edit_comment(
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     payload: CommentCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1233,8 +1234,8 @@ def edit_comment(
 
 @router.delete("/{issue_id}/comments/{comment_id}", status_code=204)
 def delete_comment(
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -1253,7 +1254,7 @@ def delete_comment(
 
 @router.post("/{issue_id}/attachments", response_model=AttachmentOut, status_code=201)
 def upload_issue_attachment(
-    issue_id: int,
+    issue_id: RowIdPath,
     file: UploadFile = File(...),
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1284,7 +1285,7 @@ def upload_issue_attachment(
 
 @router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])
 def list_issue_attachments(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1298,7 +1299,7 @@ def list_issue_attachments(
 
 @router.get("/{issue_id}/links", response_model=IssueLinksOut)
 def list_links(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1310,7 +1311,7 @@ def list_links(
 
 @router.post("/{issue_id}/links", response_model=IssueLinksOut, status_code=201)
 def add_link(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LinkCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1333,9 +1334,9 @@ def add_link(
 
 @router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
 def remove_link(
-    issue_id: int,
+    issue_id: RowIdPath,
     relation: str,
-    target_id: int,
+    target_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1441,7 +1442,7 @@ def create_project(
 
 @projects_router.get("/{project_id}", response_model=ProjectOut)
 def show_project(
-    project_id: int,
+    project_id: RowIdPath,
     response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1457,7 +1458,7 @@ def show_project(
 
 @projects_router.put("/{project_id}/policy", response_model=ProjectOut)
 def set_project_policy(
-    project_id: int,
+    project_id: RowIdPath,
     payload: ProjectPolicyUpdate,
     request: Request,
     response: Response,
@@ -1510,7 +1511,7 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
 
 @projects_router.patch("/{project_id}", response_model=ProjectOut)
 def update_project(
-    project_id: int,
+    project_id: RowIdPath,
     payload: ProjectEdit,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1553,7 +1554,7 @@ def update_project(
 
 @projects_router.delete("/{project_id}", status_code=204)
 def delete_project(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -1610,7 +1611,7 @@ def _project_for_privacy(
 
 @projects_router.put("/{project_id}/visibility", response_model=ProjectOut)
 def set_project_visibility(
-    project_id: int,
+    project_id: RowIdPath,
     payload: VisibilityUpdate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1637,7 +1638,7 @@ def set_project_visibility(
 
 @projects_router.get("/{project_id}/members", response_model=list[MemberOut])
 def list_project_members(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1654,7 +1655,7 @@ def list_project_members(
     "/{project_id}/members", response_model=list[MemberOut], status_code=201
 )
 def add_project_member(
-    project_id: int,
+    project_id: RowIdPath,
     payload: MemberAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1680,8 +1681,8 @@ def add_project_member(
     "/{project_id}/members/{user_id}", response_model=list[MemberOut]
 )
 def remove_project_member(
-    project_id: int,
-    user_id: int,
+    project_id: RowIdPath,
+    user_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1708,7 +1709,7 @@ def remove_project_member(
 
 @projects_router.get("/{project_id}/timeline")
 def project_timeline(
-    project_id: int,
+    project_id: RowIdPath,
     max_per_lane: int = timeline.DEFAULT_MAX_PER_LANE,
     max_items: int = timeline.DEFAULT_MAX_ITEMS,
     actor: dict | None = Depends(optional_actor),
@@ -1731,7 +1732,7 @@ def project_timeline(
 
 @projects_router.get("/{project_id}/statuses", response_model=list[StatusOut])
 def list_project_statuses(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1748,7 +1749,7 @@ def list_project_statuses(
     "/{project_id}/statuses", response_model=list[StatusOut], status_code=201
 )
 def add_project_status(
-    project_id: int,
+    project_id: RowIdPath,
     payload: StatusCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1770,7 +1771,7 @@ def add_project_status(
 
 @projects_router.delete("/{project_id}/statuses/{name}", response_model=list[StatusOut])
 def remove_project_status(
-    project_id: int,
+    project_id: RowIdPath,
     name: str,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1820,7 +1821,7 @@ def create_label(
 
 @router.post("/{issue_id}/labels", response_model=IssueOut, status_code=201)
 def attach_label(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LabelAttach,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1838,8 +1839,8 @@ def attach_label(
 
 @router.delete("/{issue_id}/labels/{label_id}", response_model=IssueOut)
 def detach_label(
-    issue_id: int,
-    label_id: int,
+    issue_id: RowIdPath,
+    label_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1981,7 +1982,7 @@ class ContributorAdd(BaseModel):
 
 @router.get("/{issue_id}/contributors", response_model=list[ContributorOut])
 def list_issue_contributors(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1995,7 +1996,7 @@ def list_issue_contributors(
     "/{issue_id}/contributors", response_model=list[ContributorOut], status_code=201
 )
 def add_issue_contributor(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ContributorAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -2014,7 +2015,7 @@ def add_issue_contributor(
     "/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201
 )
 def delegate_issue_to_agent(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ContributorAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -2039,8 +2040,8 @@ def delegate_issue_to_agent(
     "/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut]
 )
 def remove_issue_contributor(
-    issue_id: int,
-    user_id: int,
+    issue_id: RowIdPath,
+    user_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -2062,7 +2063,7 @@ def remove_issue_contributor(
 
 @router.get("/{issue_id}/lease", response_model=LeaseOut | None)
 def get_issue_lease(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -2090,7 +2091,7 @@ def get_issue_lease(
     openapi_extra=_CLAIM_IF_MATCH_OPENAPI,
 )
 def claim_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     request: Request,
     response: Response,
     payload: ClaimIn | None = None,
@@ -2121,7 +2122,7 @@ def claim_issue(
     status_code=201,
 )
 def yield_issue_claim(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: YieldClaimIn,
     response: Response,
     actor: dict = Depends(issue_write_actor),
@@ -2153,7 +2154,7 @@ def yield_issue_claim(
     response_model=ClaimHandoffOut,
 )
 def resume_issue_claim_handoff(
-    issue_id: int,
+    issue_id: RowIdPath,
     handoff_token: str,
     payload: ResumeClaimHandoffIn,
     response: Response,
@@ -2177,7 +2178,7 @@ def resume_issue_claim_handoff(
 
 @router.post("/{issue_id}/complete", status_code=204, response_model=None)
 def complete_issue_claim(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     payload: LeaseGenerationIn | None = None,
     actor: dict = Depends(issue_write_actor),
@@ -2201,7 +2202,7 @@ def complete_issue_claim(
 
 @router.post("/{issue_id}/decline", response_model=list[ContributorOut])
 def decline_issue_delegation(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     payload: DeclineDelegationIn | None = None,
     actor: dict = Depends(issue_write_actor),

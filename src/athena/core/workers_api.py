@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, WithJsonSchema
 
 from athena.core import worker_commands
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 
@@ -126,7 +127,7 @@ def index(
 
 @router.get("/{worker_id}", response_model=WorkerOut)
 def show(
-    worker_id: int,
+    worker_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -138,7 +139,7 @@ def show(
 
 @router.post("/{worker_id}/kill", response_model=WorkerOut)
 def request_kill(
-    worker_id: int,
+    worker_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -157,7 +158,7 @@ def request_kill(
 
 @router.delete("/{worker_id}/kill", response_model=WorkerOut)
 def cancel_kill(
-    worker_id: int,
+    worker_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:

@@ -32,6 +32,7 @@ from athena.core import (
     mentions,
     users,
 )
+from athena.core.ids import RowIdPath
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
@@ -313,7 +314,7 @@ def create_space(
 
 @spaces_router.get("/{space_id}", response_model=SpaceOut)
 def show_space(
-    space_id: int,
+    space_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -327,7 +328,7 @@ def show_space(
 
 @spaces_router.patch("/{space_id}", response_model=SpaceOut)
 def edit_space(
-    space_id: int,
+    space_id: RowIdPath,
     payload: SpaceUpdate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -403,7 +404,7 @@ def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> di
 
 @spaces_router.delete("/{space_id}", status_code=204)
 def delete_space(
-    space_id: int,
+    space_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -448,7 +449,7 @@ def _space_for_privacy(conn: sqlite3.Connection, space_id: int, actor: dict) -> 
 
 @spaces_router.put("/{space_id}/visibility", response_model=SpaceOut)
 def set_space_visibility(
-    space_id: int,
+    space_id: RowIdPath,
     payload: VisibilityUpdate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -474,7 +475,7 @@ def set_space_visibility(
 
 @spaces_router.get("/{space_id}/members", response_model=list[MemberOut])
 def list_space_members(
-    space_id: int,
+    space_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -490,7 +491,7 @@ def list_space_members(
     "/{space_id}/members", response_model=list[MemberOut], status_code=201
 )
 def add_space_member(
-    space_id: int,
+    space_id: RowIdPath,
     payload: MemberAdd,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -515,8 +516,8 @@ def add_space_member(
 
 @spaces_router.delete("/{space_id}/members/{user_id}", response_model=list[MemberOut])
 def remove_space_member(
-    space_id: int,
-    user_id: int,
+    space_id: RowIdPath,
+    user_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -541,7 +542,7 @@ def remove_space_member(
 
 @spaces_router.post("/{space_id}/pages", response_model=PageOut, status_code=201)
 def create_page(
-    space_id: int,
+    space_id: RowIdPath,
     payload: PageCreate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -580,7 +581,7 @@ def create_page(
 
 @spaces_router.get("/{space_id}/pages", response_model=list[PageOut])
 def list_pages(
-    space_id: int,
+    space_id: RowIdPath,
     include_archived: bool = False,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -623,7 +624,7 @@ def find_pages_by_title(
 
 @pages_router.get("/{page_id}", response_model=PageOut)
 def show_page(
-    page_id: int,
+    page_id: RowIdPath,
     response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -648,7 +649,7 @@ def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -
 
 @pages_router.patch("/{page_id}", response_model=PageOut)
 def edit_page(
-    page_id: int,
+    page_id: RowIdPath,
     payload: PageUpdate,
     request: Request,
     response: Response,
@@ -687,7 +688,7 @@ def edit_page(
 
 @pages_router.put("/{page_id}/move", response_model=PageOut)
 def move_page(
-    page_id: int,
+    page_id: RowIdPath,
     payload: ParentUpdate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -710,7 +711,7 @@ def move_page(
 
 @pages_router.delete("/{page_id}", status_code=204)
 def delete_page(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -731,7 +732,7 @@ def delete_page(
 
 @pages_router.post("/{page_id}/archive", response_model=PageOut)
 def archive_page(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
@@ -751,7 +752,7 @@ def archive_page(
 
 @pages_router.post("/{page_id}/unarchive", response_model=PageOut)
 def unarchive_page(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
@@ -770,7 +771,7 @@ def unarchive_page(
 
 @pages_router.get("/{page_id}/backlinks", response_model=list[LinkOut])
 def backlinks(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -784,7 +785,7 @@ def backlinks(
 
 @pages_router.get("/{page_id}/outgoing-links", response_model=list[LinkOut])
 def outgoing_links(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -801,7 +802,7 @@ def outgoing_links(
 
 @pages_router.get("/{page_id}/graph")
 def page_graph(
-    page_id: int,
+    page_id: RowIdPath,
     depth: int = graph.DEFAULT_DEPTH,
     max_nodes: int = graph.DEFAULT_MAX_NODES,
     actor: dict | None = Depends(optional_actor),
@@ -823,7 +824,7 @@ def page_graph(
 
 @pages_router.get("/{page_id}/unlinked-mentions")
 def page_unlinked_mentions(
-    page_id: int,
+    page_id: RowIdPath,
     limit: int = mentions.DEFAULT_LIMIT,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -838,7 +839,7 @@ def page_unlinked_mentions(
 
 @pages_router.post("/{page_id}/link-mention", response_model=PageOut)
 def link_page_mention(
-    page_id: int,
+    page_id: RowIdPath,
     payload: LinkMentionIn,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -875,7 +876,7 @@ def link_page_mention(
 
 @spaces_router.get("/{space_id}/templates", response_model=list[PageOut])
 def list_space_templates(
-    space_id: int,
+    space_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -887,7 +888,7 @@ def list_space_templates(
 
 @spaces_router.post("/{space_id}/pages/from-template", response_model=PageOut)
 def create_page_from_template(
-    space_id: int,
+    space_id: RowIdPath,
     payload: PageFromTemplate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -912,7 +913,7 @@ def create_page_from_template(
 
 @spaces_router.post("/{space_id}/daily", response_model=PageOut)
 def open_daily_note(
-    space_id: int,
+    space_id: RowIdPath,
     response: Response,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -936,7 +937,7 @@ def open_daily_note(
     "/{page_id}/comments", response_model=PageCommentOut, status_code=201
 )
 def add_page_comment(
-    page_id: int,
+    page_id: RowIdPath,
     payload: PageCommentCreate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -957,7 +958,7 @@ def add_page_comment(
 
 @pages_router.get("/{page_id}/comments", response_model=list[PageCommentOut])
 def list_page_comments(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -969,8 +970,8 @@ def list_page_comments(
 
 def _author_page_comment_or_error(
     conn: sqlite3.Connection,
-    page_id: int,
-    comment_id: int,
+    page_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict,
     *,
     allow_admin: bool = False,
@@ -994,8 +995,8 @@ def _author_page_comment_or_error(
 
 @pages_router.patch("/{page_id}/comments/{comment_id}", response_model=PageCommentOut)
 def edit_page_comment(
-    page_id: int,
-    comment_id: int,
+    page_id: RowIdPath,
+    comment_id: RowIdPath,
     payload: PageCommentCreate,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1021,8 +1022,8 @@ def edit_page_comment(
 
 @pages_router.delete("/{page_id}/comments/{comment_id}", status_code=204)
 def delete_page_comment(
-    page_id: int,
-    comment_id: int,
+    page_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -1040,7 +1041,7 @@ def delete_page_comment(
     "/{page_id}/attachments", response_model=AttachmentOut, status_code=201
 )
 def upload_page_attachment(
-    page_id: int,
+    page_id: RowIdPath,
     file: UploadFile = File(...),
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1070,7 +1071,7 @@ def upload_page_attachment(
 
 @pages_router.get("/{page_id}/attachments", response_model=list[AttachmentOut])
 def list_page_attachments(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1082,7 +1083,7 @@ def list_page_attachments(
 
 @pages_router.get("/{page_id}/versions", response_model=list[PageVersionOut])
 def list_versions(
-    page_id: int,
+    page_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1095,7 +1096,7 @@ def list_versions(
 
 @pages_router.get("/{page_id}/versions/{version}", response_model=PageVersionOut)
 def show_version(
-    page_id: int,
+    page_id: RowIdPath,
     version: int,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1111,7 +1112,7 @@ def show_version(
 
 @pages_router.post("/{page_id}/versions/{version}/restore", response_model=PageOut)
 def restore_version(
-    page_id: int,
+    page_id: RowIdPath,
     version: int,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1138,7 +1139,7 @@ def restore_version(
 
 @pages_router.post("/{page_id}/labels", response_model=PageOut, status_code=201)
 def attach_label(
-    page_id: int,
+    page_id: RowIdPath,
     payload: LabelAttach,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1159,8 +1160,8 @@ def attach_label(
 
 @pages_router.delete("/{page_id}/labels/{label_id}", response_model=PageOut)
 def detach_label(
-    page_id: int,
-    label_id: int,
+    page_id: RowIdPath,
+    label_id: RowIdPath,
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
