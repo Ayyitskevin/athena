@@ -350,6 +350,18 @@ def create_run_control_web(
             status_code=401,
         )
     back = f"/aegis/activity/runs/{quote(run_id, safe='')}/lineage"
+    # This is a WRITE, so the lenient filter-parsing stance does not apply: a
+    # ttl the operator typed but Athena cannot read must refuse, never silently
+    # become the default lifetime (the API 422s the same input).
+    ttl_text = (ttl_seconds or "").strip()
+    parsed_ttl: int | None = None
+    if ttl_text:
+        parsed_ttl = _int_or_none(ttl_text)
+        if parsed_ttl is None:
+            return RedirectResponse(
+                f"{back}?{urlencode({'error': 'ttl_seconds must be a whole number of seconds'})}",
+                status_code=303,
+            )
     try:
         control = run_control_commands.create_control(
             conn,
@@ -357,7 +369,7 @@ def create_run_control_web(
             run_id=run_id,
             kind=kind.strip(),
             payload=payload,
-            ttl_seconds=_int_or_none(ttl_seconds),
+            ttl_seconds=parsed_ttl,
             idempotency_key=idempotency_key.strip() or None,
         )
     except run_control_commands.RunControlCommandError as exc:

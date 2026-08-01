@@ -127,6 +127,16 @@ def test_steer_control_full_lifecycle(tmp_path):
         assert acked.json()["acknowledged_at"] is not None
         assert acked.json()["settlement"] is None
 
+        # Re-acknowledging is an idempotent no-op: same state, same timestamp,
+        # and no second receipt event — a repeated receipt is not a lifecycle
+        # moment (the request_kill precedent).
+        re_acked = client.post(
+            f"/run-controls/{control['id']}/acknowledge", headers=bearer
+        )
+        assert re_acked.status_code == 200
+        assert re_acked.json()["acknowledged_at"] == acked.json()["acknowledged_at"]
+        assert len(_events(db_file, run_control_commands.VERB_ACKNOWLEDGED)) == 1
+
         done = client.post(
             f"/run-controls/{control['id']}/complete",
             json={"summary": "Narrowed the failure to test_foo and fixed it."},
@@ -200,6 +210,13 @@ def test_fresh_context_completes_with_the_bounded_handoff_only(tmp_path):
             headers=bearer,
         )
         assert missing.status_code == 422
+        both = client.post(
+            f"/run-controls/{control['id']}/complete",
+            json={"summary": "done", "handoff": HANDOFF},
+            headers=bearer,
+        )
+        assert both.status_code == 422
+        assert "carries its summary inside the handoff" in both.json()["detail"]
         completed = client.post(
             f"/run-controls/{control['id']}/complete",
             json={"handoff": HANDOFF},
@@ -248,6 +265,83 @@ def test_a_heartbeat_only_run_is_steerable_through_its_sole_checkin(tmp_path):
 # ---------------------------------------------------------------------------
 # Authority — who may create, who may settle.
 # ---------------------------------------------------------------------------
+
+
+def test_a_worker_targeted_control_carries_the_targeting_and_settles(tmp_path):
+    """Naming a worker narrows INTENT, never authority: the control records
+    which process the operator meant (worker_id + worker_key in the
+    projection), and any live credential of the bound agent still settles it."""
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        agent = _agent(client)
+        bearer = _bearer(agent)
+        _bind_run(client, bearer, "targeted-run")
+        client.put(
+            "/workers/heartbeat",
+            json={"worker_key": "proc-1", "node_label": "box-a"},
+            headers=bearer,
+        )
+        worker = client.get("/workers", headers=H1).json()[0]
+
+        control = _create(client, "targeted-run", worker_id=worker["id"])
+        assert control.status_code == 201
+        assert control.json()["worker_id"] == worker["id"]
+        assert control.json()["worker_key"] == "proc-1"
+
+        inbox = client.get("/run-controls?state=open", headers=bearer).json()
+        assert inbox[0]["worker_key"] == "proc-1"
+        settled = client.post(
+            f"/run-controls/{control.json()['id']}/complete",
+            json={"summary": "proc-1 took the guidance"},
+            headers=bearer,
+        )
+        assert settled.status_code == 200
+        assert settled.json()["worker_id"] == worker["id"]
+
+
+def test_a_create_tagged_with_the_target_run_id_cannot_steal_the_binding(tmp_path):
+    """The admission's own audit event stamps the OPERATOR's ambient run
+    context. If that context names the target run and the run is only owned via
+    a check-in, the event would bind the run to the ADMIN — an unsettleable
+    control and a locked-out agent. The command refuses and unwinds whole:
+    no control, no event, no binding, and the agent keeps its run id."""
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        agent = _agent(client)
+        bearer = _bearer(agent)
+        client.put(
+            "/agent-runs/heartbeat", json={"run_id": "quiet-run"}, headers=bearer
+        )
+
+        poisoned = client.post(
+            "/run-controls",
+            json={"run_id": "quiet-run", "kind": "steer", "payload": "guidance"},
+            headers={**H1, "X-Athena-Run": "quiet-run"},
+        )
+        assert poisoned.status_code == 422
+        assert "retry without X-Athena-Run" in poisoned.json()["detail"]
+
+        conn = db.connect(db_file)
+        try:
+            assert (
+                conn.execute("SELECT COUNT(*) AS n FROM run_controls").fetchone()["n"]
+                == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM run_bindings WHERE run_id = 'quiet-run'"
+                ).fetchone()["n"]
+                == 0
+            )
+        finally:
+            conn.close()
+
+        # The whole admission unwound, so the agent can still claim its own run
+        # id, and an untagged retry of the same request succeeds.
+        _bind_run(client, bearer, "quiet-run")
+        assert _create(client, "quiet-run").status_code == 201
 
 
 def test_only_an_admin_principal_may_create(tmp_path):
@@ -532,6 +626,14 @@ def test_idempotent_retry_replays_and_conflicting_reuse_refuses(tmp_path):
         assert conflicting.status_code == 409
         assert "already used" in conflicting.json()["detail"]
 
+        # The requested LIFETIME is part of the request's identity too: a retry
+        # asking for a different TTL must refuse, never silently return a
+        # control that expires at the original deadline.
+        different_ttl = _create(
+            client, "goal-8", ttl_seconds=7200, idempotency_key="steer-goal8-1"
+        )
+        assert different_ttl.status_code == 409
+
         listed = client.get("/run-controls?run_id=goal-8", headers=H1).json()
         assert len(listed) == 1
 
@@ -731,10 +833,13 @@ def test_expiry_is_derived_and_late_answers_are_refused(tmp_path):
         agent = _agent(client)
         bearer = _bearer(agent)
         _bind_run(client, bearer, "goal-11")
-        control = _create(client, "goal-11", ttl_seconds=60).json()
+        # A one-hour TTL keeps the "before" reads deterministic no matter how
+        # slowly a loaded xdist worker gets here; expiry is exercised purely
+        # with the injected clock below, never by waiting.
+        control = _create(client, "goal-11", ttl_seconds=3600).json()
         actor = _actor(db_file, agent["token"]["token"])
 
-    later = datetime.now(UTC) + timedelta(seconds=120)
+    later = datetime.now(UTC) + timedelta(seconds=7200)
     conn = db.connect(db_file)
     try:
         admin = {"id": 1, "role": "admin", "is_agent": 0}
@@ -797,29 +902,50 @@ def test_expiry_is_derived_and_late_answers_are_refused(tmp_path):
 
 def test_expiration_race_inside_the_cas_predicate(tmp_path):
     """The settlement CAS re-checks expiry under the writer lock: a settlement
-    evaluated against a clock past `expires_at` is a 0-row no-op surfaced as
-    conflict, even if the pre-read said the control looked open."""
+    evaluated at or after the exact `expires_at` instant is a 0-row no-op,
+    while one instant earlier still lands. Both instants derive from the SAME
+    injected creation clock, so the boundary is exercised deterministically."""
     app, db_file = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap(client)
         agent = _agent(client)
         bearer = _bearer(agent)
         _bind_run(client, bearer, "goal-12")
-        control = _create(client, "goal-12", ttl_seconds=60).json()
 
     conn = db.connect(db_file)
     try:
-        boundary = datetime.now(UTC) + timedelta(seconds=60)
-        changed = run_controls.cas_settle(
+        admin = {"id": 1, "role": "admin", "is_agent": 0}
+        creation = datetime(2030, 1, 1, 12, 0, 0, tzinfo=UTC)
+        control = run_control_commands.create_control(
+            conn,
+            actor=admin,
+            run_id="goal-12",
+            kind="steer",
+            payload="boundary",
+            ttl_seconds=60,
+            now=creation,
+        )
+        at_expiry = run_controls.cas_settle(
             conn,
             control_id=control["id"],
             settled_by=2,
             settlement="completed",
             result_summary="late",
             result_payload=None,
-            now_stamp=run_controls.stamp(boundary),
+            now_stamp=run_controls.stamp(creation + timedelta(seconds=60)),
         )
-        assert changed is False
+        assert at_expiry is False
+        conn.rollback()
+        just_before = run_controls.cas_settle(
+            conn,
+            control_id=control["id"],
+            settled_by=2,
+            settlement="completed",
+            result_summary="in time",
+            result_payload=None,
+            now_stamp=run_controls.stamp(creation + timedelta(seconds=59)),
+        )
+        assert just_before is True
         conn.rollback()
     finally:
         conn.close()
@@ -872,6 +998,17 @@ def test_payload_and_result_bounds_are_enforced(tmp_path):
             headers=bearer,
         )
         assert long_summary.status_code == 422
+
+        # An id beyond SQLite's integer range is a client error at the schema,
+        # never a driver OverflowError surfacing as a 500.
+        beyond = str(1 << 63)
+        assert client.get(f"/run-controls/{beyond}", headers=H1).status_code == 422
+        assert (
+            client.post(
+                f"/run-controls/{beyond}/acknowledge", headers=bearer
+            ).status_code
+            == 422
+        )
 
 
 def test_handoff_bounds_and_closed_envelope(tmp_path):
@@ -1370,6 +1507,24 @@ def test_run_page_panel_records_requests_with_truthful_wording(tmp_path):
         )
         assert no_csrf.status_code == 403
 
+        # A ttl the operator typed but Athena cannot read is refused with an
+        # error, never silently replaced by the default lifetime (the API 422s
+        # the same input — the two surfaces must agree).
+        bad_ttl = client.post(
+            "/aegis/activity/runs/web-run/controls",
+            data={
+                "csrf_token": csrf,
+                "idempotency_key": "bad-ttl-key",
+                "kind": "request_fresh_context",
+                "payload": "",
+                "ttl_seconds": "2h",
+            },
+            follow_redirects=False,
+        )
+        assert bad_ttl.status_code == 303
+        assert "whole+number" in bad_ttl.headers["location"]
+        assert len(client.get("/run-controls?run_id=web-run", headers=H1).json()) == 1
+
 
 def test_run_page_hides_controls_from_non_admin_viewers(tmp_path):
     """A signed-in viewer who is neither an admin nor the bound agent sees no
@@ -1399,24 +1554,25 @@ def test_run_page_hides_controls_from_non_admin_viewers(tmp_path):
         assert "secret guidance" not in page.text
 
         # The command, not the missing form, is the enforcement: a hand-built
-        # POST from a non-admin session is refused and changes nothing.
-        home = viewer.get("/aegis/activity/runs/web-run-2/lineage")
+        # POST from a non-admin session is refused and changes nothing. The
+        # viewer's CSRF token comes from the record-learning form, which the
+        # lineage page renders for every signed-in viewer of this run.
         import re
 
-        csrf = re.search(r'name="csrf_token" value="([^"]*)"', home.text)
-        if csrf:
-            refused = viewer.post(
-                "/aegis/activity/runs/web-run-2/controls",
-                data={
-                    "csrf_token": csrf.group(1),
-                    "idempotency_key": "hand-built",
-                    "kind": "steer",
-                    "payload": "sneaky",
-                },
-                follow_redirects=False,
-            )
-            assert refused.status_code == 303
-            assert "error=" in refused.headers["location"]
+        csrf = re.search(r'name="csrf_token" value="([^"]*)"', page.text)
+        assert csrf is not None, "expected a CSRF-bearing form for a signed-in viewer"
+        refused = viewer.post(
+            "/aegis/activity/runs/web-run-2/controls",
+            data={
+                "csrf_token": csrf.group(1),
+                "idempotency_key": "hand-built",
+                "kind": "steer",
+                "payload": "sneaky",
+            },
+            follow_redirects=False,
+        )
+        assert refused.status_code == 303
+        assert "error=" in refused.headers["location"]
 
     with TestClient(app) as check:
         listed = check.get("/run-controls?run_id=web-run-2", headers=H1).json()

@@ -330,4 +330,10 @@ def projection(row: dict, *, now: datetime | None = None) -> dict:
 
 
 def default_ttl_seconds() -> int:
-    return config.RUN_CONTROL_TTL_SECONDS
+    """The configured default lifetime, clamped into the protocol window.
+
+    `_int_env` already enforces the floor; the ceiling is clamped here so a
+    deployment that sets an enormous ATHENA_RUN_CONTROL_TTL_SECONDS cannot mint
+    controls that outlive the documented 60–86400 bound every explicit caller
+    is held to."""
+    return min(max(config.RUN_CONTROL_TTL_SECONDS, MIN_TTL_SECONDS), MAX_TTL_SECONDS)

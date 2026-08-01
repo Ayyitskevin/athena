@@ -59,11 +59,13 @@ in v1; choose `ttl_seconds` to bound how long an ask stands.
 
 - **Create**: an admin (role plus, for bearer tokens, the `admin` scope) — the
   same authority that can ask a worker to stop.
-- **Read and settle**: only the agent the control is bound to, holding a live
-  bearer token with a write scope; credentials, pause state, and run ownership
-  are re-checked inside the settlement transaction. Admins can read everything.
-  Everyone else sees an empty list and 404s, the same answers a missing control
-  gives.
+- **Read**: admins, and the agent a control is addressed to — with any of that
+  agent's live credentials. Everyone else sees an empty list and 404s, the same
+  answers a missing control gives.
+- **Settle**: only the bound agent, and only with a live bearer token carrying a
+  write scope — a browser session cannot answer as the agent. Credentials,
+  pause state, and run ownership are re-checked inside the settlement
+  transaction.
 - A **paused** agent can do nothing — including reading the control asking it to
   stop — so creation against a paused agent's run is refused (`409`) rather than
   recording a request nobody can receive.

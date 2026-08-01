@@ -327,12 +327,26 @@ def _control_matches_request(
     kind: str,
     payload: str,
     worker_id: int | None,
+    ttl_seconds: int,
 ) -> bool:
+    """Whether an existing control IS the request being retried, field for field.
+
+    The stored row keeps timestamps rather than the requested lifetime, so the
+    TTL is compared as the exact created→expires span — a retry asking for a
+    different lifetime is a different request and must refuse, not silently
+    return a control that dies at the original deadline."""
+    stored_ttl = int(
+        (
+            datetime.strptime(existing["expires_at"], "%Y-%m-%d %H:%M:%S")
+            - datetime.strptime(existing["created_at"], "%Y-%m-%d %H:%M:%S")
+        ).total_seconds()
+    )
     return (
         existing["run_id"] == run_id
         and existing["kind"] == kind
         and existing["payload"] == payload
         and existing["worker_id"] == worker_id
+        and stored_ttl == ttl_seconds
     )
 
 
@@ -397,6 +411,7 @@ def create_control(
                 kind=str(kind),
                 payload=normalized_payload,
                 worker_id=worker_id,
+                ttl_seconds=ttl,
             ):
                 replay = run_controls.projection(existing, now=now)
                 replay["replayed"] = True
@@ -451,6 +466,21 @@ def create_control(
         run_controls.set_requested_event(
             conn, control_id=control_id, event_id=event["id"]
         )
+        # The audit event above stamps the OPERATOR's ambient run context, and
+        # for an UNBOUND (check-in-only) target run whose id the operator's own
+        # request happens to carry in X-Athena-Run, that record would claim the
+        # run binding FOR THE OPERATOR — one transaction writing two ownership
+        # stories, an unsettleable control, and an agent locked out of its own
+        # run id. Re-reading the binding here catches that (and any other way a
+        # conflicting binding could appear mid-transaction) and unwinds the
+        # whole admission, binding included.
+        binding_now = activity.run_binding_actor(conn, normalized_run_id)
+        if binding_now is not None and binding_now != agent_id:
+            raise RunControlCommandError(
+                "invalid",
+                "this request is tagged with the target run id and would bind "
+                "the run to you; retry without X-Athena-Run set to it",
+            )
         created = run_controls.get_control(conn, control_id)
         assert created is not None
         result = run_controls.projection(created, now=now)
