@@ -1,0 +1,539 @@
+"""Stage Q — planning: the project timeline and live parent rollups.
+
+Two read models with one shared discipline: compute at read time, gate by the
+viewer, and say out loud what was left out. Each layer can fail differently, so
+each is exercised where it lives — geometry against a real database, visibility
+over real HTTP, and the embed through the same resolver a page uses.
+
+The bug this suite exists to keep dead: the rollup's GROUP BY once bound to the
+LEFT JOINed ``project_statuses.category`` column instead of its own aliased
+expression, which collapsed every backlog child into a single group and reported
+one child's category for all of them — a parent with one done child out of two
+read "2/2 done".
+"""
+
+from fastapi.testclient import TestClient
+import pytest
+
+from athena.aegis import dependencies, issues, projects, rollups, sprints, timeline
+from athena.core import db
+from athena.main import create_app
+
+H1 = {"X-Athena-Actor": "1"}
+PASSWORD = "pw-long-enough"
+
+
+def _conn(tmp_path, name="q.db"):
+    conn = db.connect(tmp_path / name)
+    db.migrate(conn)
+    conn.execute(
+        "INSERT INTO users (name, email, password_hash, role) "
+        "VALUES ('Op', 'op@e.com', 'x', 'admin')"
+    )
+    conn.commit()
+    return conn
+
+
+def _issue(conn, title, *, project_id=None, status="open"):
+    made = issues.create_issue(
+        conn, title=title, body="", created_by=1, project_id=project_id
+    )
+    if status != "open":
+        issues.update_issue(conn, made["id"], status=status)
+    return made["id"]
+
+
+def _admin(client):
+    client.post(
+        "/users", json={"email": "a@e.com", "name": "Ann", "password": PASSWORD}
+    )
+
+
+def _login(client, email="a@e.com"):
+    client.post("/login", data={"email": email, "password": PASSWORD})
+    return client
+
+
+# ---------------------------------------------------------------------------
+# Q-1 — the timeline's geometry and honesty.
+# ---------------------------------------------------------------------------
+
+
+def test_lanes_run_in_date_order_with_undated_then_backlog_last(tmp_path):
+    """Lane ORDER is the only claim the timeline makes about time. Dated sprints
+    lead in date order, undated ones follow in creation order rather than being
+    given a fabricated date, and the backlog sits last because it is where work
+    waits when it is not scheduled at all."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    later = sprints.create_sprint(
+        conn, project_id=pid, name="March", start_date="2026-03-01"
+    )
+    earlier = sprints.create_sprint(
+        conn, project_id=pid, name="January", start_date="2026-01-01"
+    )
+    undated = sprints.create_sprint(conn, project_id=pid, name="Someday")
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    assert [lane["label"] for lane in drawn["lanes"]] == [
+        "January",
+        "March",
+        "Someday",
+        "Backlog",
+    ]
+    # Lanes are evenly spaced: width is not a duration, so equal columns are the
+    # honest rendering of "these came in this order".
+    xs = [lane["x"] for lane in drawn["lanes"]]
+    gaps = {round(b - a, 2) for a, b in zip(xs, xs[1:])}
+    assert len(gaps) == 1
+    assert {earlier["id"], later["id"], undated["id"]}  # ids exist, unused further
+
+
+def test_issues_land_in_their_sprint_lane_and_the_backlog_holds_the_rest(tmp_path):
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    cycle = sprints.create_sprint(
+        conn, project_id=pid, name="C1", start_date="2026-01-01"
+    )
+    scheduled = _issue(conn, "scheduled", project_id=pid)
+    unscheduled = _issue(conn, "unscheduled", project_id=pid)
+    issues.set_sprint(conn, scheduled, cycle["id"])
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    placement = {card["id"]: card["lane"] for card in drawn["cards"]}
+    assert placement[scheduled] == str(cycle["id"])
+    assert placement[unscheduled] == timeline.BACKLOG_LANE
+    assert drawn["shown"] == drawn["total"] == 2
+    assert drawn["truncated"] is False
+
+
+def test_archived_issues_are_left_off_the_timeline(tmp_path):
+    """Archived work is soft-deleted everywhere else; a roadmap that still drew
+    it would show a plan nobody is working."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    live = _issue(conn, "live", project_id=pid)
+    gone = _issue(conn, "abandoned", project_id=pid)
+    conn.execute(
+        "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (gone,)
+    )
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    assert [card["id"] for card in drawn["cards"]] == [live]
+
+
+def test_edges_are_drawn_between_drawn_cards_and_directed_for_blocks(tmp_path):
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    blocker = _issue(conn, "blocker", project_id=pid)
+    blocked = _issue(conn, "blocked", project_id=pid)
+    cousin = _issue(conn, "cousin", project_id=pid)
+    dependencies.add_link(
+        conn, from_id=blocker, to_id=blocked, relation="blocks", created_by=1
+    )
+    dependencies.add_link(
+        conn, from_id=blocked, to_id=cousin, relation="relates", created_by=1
+    )
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    kinds = {(edge["from_id"], edge["to_id"]): edge["kind"] for edge in drawn["edges"]}
+    assert kinds[(blocker, blocked)] == "blocks"
+    # 'relates' is stored once with the lower id first, so it draws exactly one
+    # line regardless of which end the reader thinks of as the source.
+    assert kinds[(min(blocked, cousin), max(blocked, cousin))] == "relates"
+    assert len(drawn["edges"]) == 2
+    assert drawn["edges_outside"] == 0
+
+
+def test_a_dependency_leaving_the_view_is_counted_not_drawn(tmp_path):
+    """An arrow to something off the picture reads as a rendering bug; no arrow
+    at all reads as "nothing blocks this". The count is the third option."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    inside = _issue(conn, "inside", project_id=pid)
+    outside = _issue(conn, "outside")  # backlog: not in this project
+    dependencies.add_link(
+        conn, from_id=inside, to_id=outside, relation="blocks", created_by=1
+    )
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    assert drawn["edges"] == []
+    assert drawn["edges_outside"] == 1
+
+
+def test_a_dependency_cycle_lays_out_without_hanging(tmp_path):
+    """Only the direct two-cycle is refused at write time, so A→B→C→A is real
+    data. Placement comes from sprint membership alone — nothing here sorts
+    topologically, so a cycle can only change the arrows."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    a = _issue(conn, "a", project_id=pid)
+    b = _issue(conn, "b", project_id=pid)
+    c = _issue(conn, "c", project_id=pid)
+    for source, target in ((a, b), (b, c), (c, a)):
+        dependencies.add_link(
+            conn, from_id=source, to_id=target, relation="blocks", created_by=1
+        )
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid)
+    assert len(drawn["edges"]) == 3
+    assert drawn["shown"] == 3
+
+
+def test_the_timeline_reports_what_each_lane_and_the_page_left_out(tmp_path):
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    cycle = sprints.create_sprint(
+        conn, project_id=pid, name="C1", start_date="2026-01-01"
+    )
+    for index in range(9):
+        made = _issue(conn, f"issue {index}", project_id=pid)
+        issues.set_sprint(conn, made, cycle["id"])
+    conn.commit()
+
+    drawn = timeline.project_timeline(conn, project_id=pid, max_per_lane=4)
+    lane = next(item for item in drawn["lanes"] if item["label"] == "C1")
+    assert (lane["shown"], lane["total"], lane["truncated"]) == (4, 9, True)
+    assert (drawn["shown"], drawn["total"], drawn["truncated"]) == (4, 9, True)
+
+    # The whole-picture ceiling bites independently of the per-lane one.
+    capped = timeline.project_timeline(conn, project_id=pid, max_items=2)
+    assert capped["shown"] == 2
+    assert capped["truncated"] is True
+
+
+def test_timeline_bounds_are_clamped_not_trusted(tmp_path):
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    conn.commit()
+    absurd = timeline.project_timeline(
+        conn, project_id=pid, max_per_lane=10_000, max_items=10_000
+    )
+    assert absurd["lanes"]  # renders rather than refusing
+    nonsense = timeline.project_timeline(
+        conn,
+        project_id=pid,
+        max_per_lane="all",  # type: ignore[arg-type]
+        max_items=None,  # type: ignore[arg-type]
+    )
+    assert nonsense["lanes"]
+
+
+def test_timeline_hides_issues_the_viewer_cannot_see(tmp_path):
+    """The gate is on the ISSUES: a cross-project child of this project's work
+    could sit in a private project, and an ungated lane would leak its title."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    _issue(conn, "public work", project_id=pid)
+    conn.commit()
+
+    ungated = timeline.project_timeline(conn, project_id=pid)
+    assert ungated["shown"] == 1
+    # A viewer with no visible projects sees only backlog issues — none here.
+    gated = timeline.project_timeline(conn, project_id=pid, visible_project_ids=set())
+    assert gated["shown"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Q-2 — rollups: the numbers, and the bug that made them lie.
+# ---------------------------------------------------------------------------
+
+
+def test_backlog_children_are_bucketed_individually(tmp_path):
+    """The regression test for the GROUP BY alias collision. Backlog children
+    have NO project_statuses rows, so the joined category column is NULL for
+    every one of them — grouping on that column instead of the resolved
+    expression silently merged them into a single bucket."""
+    conn = _conn(tmp_path)
+    parent = _issue(conn, "epic")
+    _issue(conn, "shipped", status="done")
+    _issue(conn, "underway", status="in_progress")
+    _issue(conn, "waiting")
+    for child in (2, 3, 4):
+        issues.set_parent(conn, child, parent)
+    conn.commit()
+
+    rolled = rollups.child_rollup(conn, parent)
+    assert rolled["counts"] == {"todo": 1, "doing": 1, "done": 1}
+    assert rolled["total"] == 3
+    assert rolled["done"] == 1
+    assert rolled["percent_done"] == 33
+
+
+def test_done_ness_follows_the_project_category_not_the_status_name(tmp_path):
+    """A project whose finished state is called `shipped` must roll up exactly
+    like one that calls it `done` — the promise QUERY.md and WORKFLOW_GATES.md
+    already make about closed-ness."""
+    conn = _conn(tmp_path)
+    from athena.aegis import statuses
+
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    statuses.add_status(conn, pid, "shipped", "done")
+    conn.commit()
+    parent = _issue(conn, "epic", project_id=pid)
+    child = _issue(conn, "custom done", project_id=pid)
+    issues.update_issue(conn, child, status="shipped")
+    issues.set_parent(conn, child, parent)
+    conn.commit()
+
+    rolled = rollups.child_rollup(conn, parent)
+    assert rolled["counts"]["done"] == 1
+    assert rolled["percent_done"] == 100
+
+
+def test_archived_children_are_excluded_and_said_out_loud(tmp_path):
+    """Abandoned work must not sit in a denominator forever, but a bar that
+    quietly drops rows is the same lie an unlabelled partial picture would be."""
+    conn = _conn(tmp_path)
+    parent = _issue(conn, "epic")
+    live = _issue(conn, "live")
+    gone = _issue(conn, "abandoned")
+    issues.set_parent(conn, live, parent)
+    issues.set_parent(conn, gone, parent)
+    conn.execute(
+        "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (gone,)
+    )
+    conn.commit()
+
+    rolled = rollups.child_rollup(conn, parent)
+    assert rolled["total"] == 1
+    assert rolled["archived_excluded"] == 1
+    assert rolled["has_children"] is True
+
+
+def test_a_parent_with_no_children_reports_no_progress(tmp_path):
+    """Zero children is not "finished" — 0% with no bar, never 100%."""
+    conn = _conn(tmp_path)
+    lonely = _issue(conn, "no kids")
+    conn.commit()
+    rolled = rollups.child_rollup(conn, lonely)
+    assert rolled == {
+        "counts": {"todo": 0, "doing": 0, "done": 0},
+        "total": 0,
+        "done": 0,
+        "percent_done": 0,
+        "archived_excluded": 0,
+        "has_children": False,
+    }
+
+
+def test_rollup_counts_only_children_the_viewer_can_see(tmp_path):
+    """A child may live in a private project under a visible parent. Counting it
+    would turn the progress bar into an existence oracle for that work."""
+    conn = _conn(tmp_path)
+    private = projects.create_project(conn, key="SEC", name="Secret", created_by=1)[
+        "id"
+    ]
+    conn.execute("UPDATE projects SET visibility = 'private' WHERE id = ?", (private,))
+    parent = _issue(conn, "epic")
+    hidden = _issue(conn, "hidden child", project_id=private, status="done")
+    open_child = _issue(conn, "open child")
+    issues.set_parent(conn, hidden, parent)
+    issues.set_parent(conn, open_child, parent)
+    conn.commit()
+
+    everything = rollups.child_rollup(conn, parent)
+    assert everything["total"] == 2
+
+    outsider = rollups.child_rollup(conn, parent, visible_project_ids=set())
+    assert outsider["total"] == 1
+    assert outsider["counts"]["done"] == 0
+    # The hidden child is absent from the count and NOT reported as excluded:
+    # naming it would be the leak this gate exists to prevent.
+    assert outsider["archived_excluded"] == 0
+
+
+# ---------------------------------------------------------------------------
+# The surfaces: web, REST, MCP, and the embed.
+# ---------------------------------------------------------------------------
+
+
+def test_timeline_page_draws_and_states_its_bounds(tmp_path):
+    with TestClient(create_app(tmp_path / "web.db")) as client:
+        _admin(client)
+        _login(client)
+        project = client.post(
+            "/projects", json={"key": "ATH", "name": "Athena"}, headers=H1
+        ).json()
+        client.post(
+            f"/projects/{project['id']}/sprints",
+            json={"name": "C1", "start_date": "2026-01-01"},
+            headers=H1,
+        )
+        client.post(
+            "/issues", json={"title": "work", "project_id": project["id"]}, headers=H1
+        )
+
+        page = client.get(f"/aegis/projects/{project['id']}/timeline")
+        assert page.status_code == 200
+        assert "<svg" in page.text
+        # Every card is a real link, so the picture works without JavaScript.
+        assert "/aegis/issues/" in page.text
+        assert "Archived issues are left out" in page.text
+        assert "not a duration" in page.text
+
+
+def test_timeline_hides_a_project_the_viewer_cannot_see(tmp_path):
+    app = create_app(tmp_path / "vis.db")
+    with TestClient(app) as owner:
+        _admin(owner)
+        _login(owner)
+        project = owner.post(
+            "/projects", json={"key": "SEC", "name": "Secret"}, headers=H1
+        ).json()
+        owner.put(
+            f"/projects/{project['id']}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+        owner.post(
+            "/issues",
+            json={"title": "classified", "project_id": project["id"]},
+            headers=H1,
+        )
+        assert owner.get(f"/aegis/projects/{project['id']}/timeline").status_code == 200
+
+        anonymous = TestClient(app)
+        hidden = anonymous.get(f"/aegis/projects/{project['id']}/timeline")
+        # A hidden project answers exactly like a missing one.
+        assert hidden.status_code == 404
+        assert "classified" not in hidden.text
+        assert (
+            anonymous.get("/aegis/projects/99999/timeline").status_code
+            == hidden.status_code
+        )
+
+
+def test_timeline_rest_returns_the_same_structure_the_browser_draws(tmp_path):
+    with TestClient(create_app(tmp_path / "rest.db")) as client:
+        _admin(client)
+        project = client.post(
+            "/projects", json={"key": "ATH", "name": "Athena"}, headers=H1
+        ).json()
+        client.post(
+            "/issues", json={"title": "work", "project_id": project["id"]}, headers=H1
+        )
+
+        payload = client.get(f"/projects/{project['id']}/timeline", headers=H1)
+        assert payload.status_code == 200
+        body = payload.json()
+        assert {"lanes", "cards", "edges", "shown", "total", "truncated"} <= set(body)
+        assert body["shown"] == 1
+        assert client.get("/projects/99999/timeline", headers=H1).status_code == 404
+
+
+def test_issue_page_shows_a_live_progress_bar(tmp_path):
+    with TestClient(create_app(tmp_path / "bar.db")) as client:
+        _admin(client)
+        _login(client)
+        parent = client.post("/issues", json={"title": "epic"}, headers=H1).json()
+        first = client.post("/issues", json={"title": "one"}, headers=H1).json()
+        second = client.post("/issues", json={"title": "two"}, headers=H1).json()
+        for child in (first, second):
+            client.put(
+                f"/issues/{child['id']}/parent",
+                json={"parent_id": parent["id"]},
+                headers=H1,
+            )
+        client.patch(f"/issues/{first['id']}", json={"status": "done"}, headers=H1)
+
+        page = client.get(f"/aegis/issues/{parent['id']}").text
+        assert "(1/2 done)" in page
+        assert "rollup-bar" in page
+        assert "50% done" in page
+
+        # Live: closing the second child moves the bar with no stored column.
+        client.patch(f"/issues/{second['id']}", json={"status": "done"}, headers=H1)
+        assert "100% done" in client.get(f"/aegis/issues/{parent['id']}").text
+
+
+def test_rollup_embed_resolves_through_the_same_computation(tmp_path):
+    with TestClient(create_app(tmp_path / "embed.db")) as client:
+        _admin(client)
+        parent = client.post("/issues", json={"title": "epic"}, headers=H1).json()
+        child = client.post("/issues", json={"title": "one"}, headers=H1).json()
+        client.put(
+            f"/issues/{child['id']}/parent",
+            json={"parent_id": parent["id"]},
+            headers=H1,
+        )
+
+        resolved = client.post(
+            "/embeds/resolve",
+            json={"text": f"```athena\nkind: rollup\nissue: {parent['id']}\n```"},
+            headers=H1,
+        ).json()[0]
+        assert resolved["kind"] == "rollup"
+        assert resolved["error"] is None
+        assert resolved["rollup"]["total"] == 1
+        assert resolved["item"]["id"] == parent["id"]
+
+        # The vocabulary is emitted, not restated, so help learns the kind free.
+        assert "rollup" in client.get("/embeds/help", headers=H1).json()["kinds"]
+
+
+@pytest.mark.parametrize(
+    ("directive", "fragment"),
+    [
+        ("kind: rollup", "needs an 'issue:'"),
+        ("kind: rollup\nissue: 1\nq: is:open", "takes an 'issue:'"),
+        ("kind: rollup\nissue: 99999", "no issue matches"),
+        ("kind: count\nissue: 1", "'kind: issue' or 'kind: rollup'"),
+    ],
+)
+def test_rollup_directive_refusals_name_the_problem(tmp_path, directive, fragment):
+    """A refused embed renders a message naming what was wrong — never a blank
+    space that reads as "nothing to show"."""
+    with TestClient(create_app(tmp_path / "refuse.db")) as client:
+        _admin(client)
+        client.post("/issues", json={"title": "an issue"}, headers=H1)
+        resolved = client.post(
+            "/embeds/resolve",
+            json={"text": f"```athena\n{directive}\n```"},
+            headers=H1,
+        ).json()[0]
+        assert fragment in resolved["error"]
+
+
+def test_rollup_embed_counts_only_what_the_reader_may_see(tmp_path):
+    """Two readers, one directive, different numbers — the embed resolves per
+    request against the viewer, and a private child never reaches an outsider."""
+    app = create_app(tmp_path / "embedvis.db")
+    with TestClient(app) as owner:
+        _admin(owner)
+        _login(owner)
+        private = owner.post(
+            "/projects", json={"key": "SEC", "name": "Secret"}, headers=H1
+        ).json()
+        owner.put(
+            f"/projects/{private['id']}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+        parent = owner.post("/issues", json={"title": "epic"}, headers=H1).json()
+        hidden = owner.post(
+            "/issues",
+            json={"title": "classified", "project_id": private["id"]},
+            headers=H1,
+        ).json()
+        plain = owner.post("/issues", json={"title": "open"}, headers=H1).json()
+        for child in (hidden, plain):
+            owner.put(
+                f"/issues/{child['id']}/parent",
+                json={"parent_id": parent["id"]},
+                headers=H1,
+            )
+
+        text = f"```athena\nkind: rollup\nissue: {parent['id']}\n```"
+        mine = owner.post("/embeds/resolve", json={"text": text}, headers=H1).json()[0]
+        assert mine["rollup"]["total"] == 2
+
+        anonymous = TestClient(app)
+        theirs = anonymous.post("/embeds/resolve", json={"text": text}).json()[0]
+        assert theirs["rollup"]["total"] == 1
