@@ -7,7 +7,10 @@
     <div>
         <a href="/aegis/projects" class="muted">← Projects</a>
         <h1>Sprints</h1>
-        <p class="subtitle">{{ project.name }} <code>{{ project.key }}</code></p>
+        <p class="subtitle">
+            {{ project.name }} <code>{{ project.key }}</code> ·
+            <a href="/aegis/projects/{{ project.id }}/timeline">Timeline</a>
+        </p>
     </div>
 </div>
 
