@@ -268,6 +268,28 @@ admin create via admin-scoped bearer, agent inbox (`state=open`), acknowledge,
 complete, double-settle surfaced as AthenaError 409 "control is already
 settled", admin read-back, and `build_server` tool enumeration confirming all
 six tools registered (113 total).
+
+### Phase 5 — Run Controls web panel: COMPLETE
+
+Delivered: a "Run controls" dashboard-card on the existing run lineage page
+(`aegis/run_lineage.html`) — controls table with truthful state wording
+("receipt only — no outcome yet", "expired means the clock ran out"), settled
+answers incl. the structured handoff rendered field-by-field, and an admin-only
+create form (plain PRG form + CSRF + a per-render minted idempotency key so a
+double submit records one control). `web/activity.py` gained the panel context
+in `activity_run_lineage` (defensive around legacy lenient run ids) and the
+browser-twin POST `/aegis/activity/runs/{run_id}/controls` through the same
+command. No new page, no JS, no build system.
+
+Validation: scripted browser-session smoke — admin login, panel + form render,
+CSRF-gated create 303 with recorded-request notice, control row visible,
+double-submit dedupe (one control after form resubmit), agent settlement via API
+visible on reload, non-admin signed-in user sees no panel and no payload text,
+CSRF-less POST refused 403.
+
+Limitation (recorded): heartbeat-only runs are steerable over REST/MCP but have
+no lineage page (the page requires visible activity events), so their controls
+are managed via API/MCP only.
 - Phase 2 (domain/command layer + migration): pending
 - Phase 3 (REST): pending
 - Phase 4 (MCP): pending

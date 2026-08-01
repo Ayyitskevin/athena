@@ -76,6 +76,20 @@ _HANDOFF_LIST_FIELDS = {
 MIN_TTL_SECONDS = run_controls.MIN_TTL_SECONDS
 MAX_TTL_SECONDS = run_controls.MAX_TTL_SECONDS
 
+#: (kind, operator-facing label) pairs for the web form — the labels promise
+#: only what a control actually is: a recorded request.
+CONTROL_KIND_CHOICES = (
+    (run_controls.KIND_STEER, "Steer — hand the agent bounded guidance"),
+    (
+        run_controls.KIND_REQUEST_CANCEL,
+        "Request cancel — ask the agent to wind this run down",
+    ),
+    (
+        run_controls.KIND_REQUEST_FRESH_CONTEXT,
+        "Request fresh context — ask for a structured handoff",
+    ),
+)
+
 _WRITE_SCOPES = frozenset(
     {tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE, tokens.ADMIN_SCOPE}
 )
