@@ -57,10 +57,156 @@ facts, plus direct reads of `AGENTS.md`, `worker_commands.py`,
   a CI-mirroring Python 3.12 venv (`.venv312`, via uv, `-c constraints/ci-py312.txt`)
   is used for the full gate. Both are gitignored (verified).
 
+---
+
+## Phase 1 — Design (recorded before implementation)
+
+Status: **COMPLETE**. Everything below maps a prompt requirement onto a repo-native
+mechanism; deviations from the prompt's literal wording are flagged inline.
+
+### Naming
+
+Feature name: **Run Controls** (the "Fleet Room" is the derived view of these plus
+existing run/worker/check-in projections — no new source of truth). Table
+`run_controls`, data module `core/run_controls.py`, command module
+`core/run_control_commands.py`, REST root `/run-controls`, verbs
+`run_control_requested|acknowledged|declined|completed`. Control kinds keep the
+prompt's closed vocabulary: `steer`, `request_cancel`, `request_fresh_context`
+(no stronger repo convention exists — Phase 0 confirmed the roadmap does not name
+this feature).
+
+### Data model (migration `0070_run_controls.sql`)
+
+One row per control; lifecycle facts as separate nullable timestamp columns
+(0065 doctrine), settlement as a CHECK-constrained pair, expiry **derived at read
+time** from `expires_at` vs the server clock — never stored, so a silent agent
+reads as "requested (expired)" and Athena never claims an outcome nobody reported:
+
+- Identity/binding: `id` INTEGER PK; `schema_version` (=1 CHECK); `run_id` (house
+  1–200 trimmed CHECK); `agent_id` → users (owner resolved at admission);
+  `worker_id` → agent_workers (optional targeting metadata — workers hold no
+  credential of their own, so it cannot be credential-enforced; documented);
+  `kind` CHECK-closed; `payload` ≤4000; `requested_by` → users;
+  `idempotency_key` (1–255, UNIQUE per requester via index, minted
+  `secrets.token_hex(16)` when omitted — icarus precedent); `created_at`;
+  `expires_at` (CHECK > created_at).
+- Lifecycle facts: `acknowledged_at`; `settled_at` + `settled_by` + `settlement`
+  CHECK IN ('completed','declined') (all-or-none CHECKs); `result_summary` ≤2000;
+  `result_payload` JSON object ≤8000 (fresh-context handoff only, `json_valid` +
+  shape CHECKs); activity correlation `requested_event_id` /
+  `acknowledged_event_id` / `settled_event_id` → activity.
+- DB-enforced invariants (0058 idiom): transition-only BEFORE UPDATE triggers
+  (immutable identity columns; ack set once; settled row frozen; event ids bind
+  only to native unrestricted activity rows); BEFORE DELETE abort; UNIQUE
+  `(requested_by, idempotency_key)`; partial index for the agent-inbox hot query
+  `(agent_id, id DESC) WHERE settled_at IS NULL`; run-history index
+  `(run_id, id DESC)`.
+- At-most-one **live** control per (run_id, kind) is enforced in the create
+  command under `BEGIN IMMEDIATE` (the repo's documented answer to
+  check-then-write races) because "live" includes `expires_at > now`, which a
+  partial index cannot express. The settlement CAS is a state-predicated UPDATE
+  (dispatch `record_terminal` pattern), rowcount-checked, with the triggers as a
+  DB-level backstop against non-CAS writes.
+
+### Admission (create) — fail-closed rules
+
+Operator = `identity.is_admin` + `token_has_scope(ADMIN_SCOPE)` (worker-kill
+precedent; browser admin sessions pass). Inside one immediate transaction:
+1. `strict_run_id`; reserved namespaces (`automation:`, `icarus:`) refused —
+   server-minted runs have no polling principal (design decision).
+2. Owner resolution: `run_bindings.actor_id` if bound; else the run's check-in
+   agent when exactly ONE agent has checked in; no binding and no check-in →
+   `not_found`; multiple check-in agents, unbound → `conflict` (ambiguous);
+   resolved owner not `is_agent` → `invalid`.
+3. Owner paused → `conflict` (a paused agent cannot even read the control —
+   Phase 0: pause 403s everything — so admitting one would be a request nobody
+   can receive). "Terminal runs" have no stored equivalent (runs are
+   projections); the nearest real facts are enforced instead: paused owner,
+   stopped worker (below), and expiry.
+4. `worker_id` given → must exist, belong to the owner (`invalid`), and not have
+   `stopped_at` set (`conflict`).
+5. Idempotency: existing (requester, key) row with identical binding
+   (run_id, kind, payload, worker_id) → returned as a replay; different binding →
+   `conflict`. DB UNIQUE index backstops the race.
+6. Duplicate: a live (unsettled, unexpired) control of the same (run, kind) →
+   `conflict`.
+7. INSERT + `activity.record(verb=run_control_requested, target_kind='run_control',
+   target_id=id, commit=False)` + backfill `requested_event_id`, one transaction.
+   The operator's event carries the OPERATOR's ambient run context (never the
+   target run's — writing under the agent's run id would violate the run binding);
+   the linkage to the target run is the control row itself.
+
+### Settlement (acknowledge / decline / complete) — bound-agent only
+
+Agent credentials exactly as `worker_commands`: bearer `_token_id`, `is_agent`,
+write scope, then in-transaction recheck of users.is_agent + token liveness +
+**paused_at** (issue_commands defense-in-depth precedent). Then:
+- Control must exist AND `agent_id == actor.id` — anything else is the same
+  `not_found` a missing id gives (cross-tenant probe collapse).
+- Ownership drift recheck: the run's CURRENT resolved owner must still equal the
+  control's admitted `agent_id`; a binding that appeared under a different actor
+  since admission → `conflict` ("run ownership changed").
+- Expired (server clock) → `conflict`; settled → `conflict`; late ack → same.
+- `acknowledge`: CAS `SET acknowledged_at WHERE id=? AND settled_at IS NULL AND
+  acknowledged_at IS NULL AND expires_at > :now`; already-acknowledged is an
+  idempotent no-op returning current state (request_kill precedent, no event).
+- `decline`: requires bounded reason; CAS settle `settlement='declined'`.
+- `complete`: steer/request_cancel require bounded `summary`; request_fresh_context
+  requires the structured handoff {summary ≤2000; unresolved_questions ≤10×500;
+  athena_refs ≤20×200; evidence_refs ≤10×500} stored as canonical JSON ≤8000 —
+  never transcripts, never chain-of-thought (validated field-by-field).
+- Completion/decline/ack are recorded as the AGENT'S CLAIMS (epistemics doctrine);
+  acknowledgement proves receipt only; completion proves nothing about OS effects.
+  Settlement events inherit the agent's ambient run context, so an agent that
+  stamps `X-Athena-Run: <run>` joins its own run's replay legitimately.
+- Expiry emits NO event and no state write — it is a derivation, exactly like
+  worker staleness ("stale, never terminated").
+
+### Reads / derived state
+
+`state` is derived per read (injectable `now` for tests, workers.py pattern):
+`completed`/`declined` when settled; else `expired` when `expires_at <= now`;
+else `acknowledged`/`requested`. Visibility: admins and the bound agent; everyone
+else gets `not_found`/empty (worker registry precedent). Activity events for
+controls are authenticated-visible like worker/dispatch events; the bounded
+`detail` string never contains payloads.
+
+### Surfaces
+
+- REST (`core/run_controls_api.py`, prefix `/run-controls`, opted into
+  `_IDEMPOTENCY_API_ROOTS`): POST `` (create, 201; domain replay 200);
+  GET `` (?run_id=&state=&limit=, bare bounded list); GET `/{id}`;
+  POST `/{id}/acknowledge`; POST `/{id}/decline` {reason};
+  POST `/{id}/complete` {summary | handoff}. `_refuse` + module STATUS_BY_KIND
+  {401,403,404,422, conflict:409, capacity:429}.
+- MCP (`client.py` + `server.py`): `create_run_control`, `list_run_controls`,
+  `get_run_control`, `acknowledge_run_control`, `decline_run_control`,
+  `complete_run_control` — one-line delegations to client methods hitting REST.
+- Web: Run Controls panel on the existing run lineage page
+  (`/aegis/activity/runs/{run_id}/lineage`) — visible to admins and the bound
+  agent; create form (admin only, plain PRG form + CSRF, minted idempotency key
+  hidden field); truthful wording ("recorded request", "the agent reported...").
+  No new page, no JS build, no second feed.
+- Docs: new `docs/RUN_CONTROLS.md` (house structure incl. explicit
+  what-this-does-NOT-claim section); pointers from RUNS.md and WORKERS.md;
+  ROADMAP "Where the loop stands" Intervene bullet; VISION loop preamble link.
+
+### Config
+
+`ATHENA_RUN_CONTROL_TTL_SECONDS` (default 3600) — default TTL when the operator
+does not pass one; bounds 60..86400 as module constants.
+
+### Explicitly out of scope (v1)
+
+Operator withdrawal of a control (not in the prompt's closed lifecycle; short
+TTLs are the mitigation — noted as a follow-up), fleet-attention rollup card,
+automation triggers on control verbs, ETag/If-Match concurrency (CAS makes it
+unnecessary), steering server-reserved runs.
+
 ### Phase status log
 
-- Phase 0 (architecture verification): **COMPLETE** (this section)
-- Phase 1 (design): pending
+- Phase 0 (architecture verification): **COMPLETE**
+- Phase 1 (design): **COMPLETE** (this section)
 - Phase 2 (domain/command layer + migration): pending
 - Phase 3 (REST): pending
 - Phase 4 (MCP): pending
