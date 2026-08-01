@@ -23,6 +23,41 @@
     {% endfor %}
 </div>
 
+<div class="dashboard-card">
+    <h2>Trail integrity</h2>
+    {% if chain.head %}
+    <p>
+        Chain head <code>{{ chain.head.entry_hash[:16] }}…</code> at event
+        #{{ chain.head.event_id }} — {{ chain.chained_count }} entries since
+        anchor event #{{ chain.anchor_event_id }}{% if chain.unchained_count %},
+        {{ chain.unchained_count }} rows predate the chain{% endif %}.
+    </p>
+    {% if chain_tail.mismatch %}
+    <p class="form-error">
+        Verification found a break at event #{{ chain_tail.mismatch.event_id }}:
+        {{ chain_tail.mismatch.reason.replace("_", " ") }} —
+        {{ chain_tail.mismatch.detail }}. The trail after that point can no
+        longer vouch for itself; investigate before trusting it.
+    </p>
+    {% else %}
+    <p class="muted">
+        The newest {{ chain_tail.checked }} entries re-verified on this render.
+        That checks the tail, not the whole trail — run
+        <code>athena-doctor</code> (or walk <code>GET /activity/chain/verify</code>)
+        for the full claim. Note the head hash somewhere Athena does not control
+        and even a rebuilt chain becomes detectable.
+    </p>
+    {% endif %}
+    {% else %}
+    <p class="muted">
+        No entries yet — the chain covers rows recorded after its adoption
+        {% if chain.unchained_count %}({{ chain.unchained_count }} earlier rows
+        are readable as ever, but outside what verification can vouch for)
+        {% endif %}.
+    </p>
+    {% endif %}
+</div>
+
 <form method="get" action="/admin/security" class="activity-filters">
     <label>
         Kind

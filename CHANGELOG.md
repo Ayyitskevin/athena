@@ -66,6 +66,45 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The trail can prove itself.** Every activity row recorded after migration
+  0072 gets a same-transaction hash-chain entry (`activity_chain`): SHA-256
+  over the row's stored facts plus the previous entry's hash, genesis-anchored,
+  with DB triggers making the chain itself immutable and side branches
+  unappendable, and the entry's foreign key making chained rows undeletable
+  (edits are detected by verification, deliberately not trigger-blocked —
+  prevention would be theater against a writer holding the file). Bounded,
+  resumable verification reports the FIRST broken link — `GET /activity/chain`
+  and `/activity/chain/verify` (admin), MCP `activity_chain_status` /
+  `verify_activity_chain`, a full walk in `athena-doctor`, and a tail check on
+  `/admin/security`. Imported history is chained *as* imported history
+  (`imported_at` is hashed). Rows recorded before adoption sit below the anchor
+  and are reported as such, never claimed. Adapted from Buzz's signed event
+  log, deliberately without signatures — the honest boundary (rebuild and tip
+  truncation detectable only against an externally noted head hash) is
+  documented in [`docs/TRAIL_INTEGRITY.md`](docs/TRAIL_INTEGRITY.md).
+
+- **Run controls joined the exception surfaces.** The dashboard's
+  fleet-attention rollup now counts **Run controls awaiting an agent** —
+  standing, never window-bounded, using the identical `open` predicate the new
+  admin-only `/admin/run-controls` page lists by, so the count cannot disagree
+  with the page it links to. The page shows every recorded control fleet-wide
+  with its truthful state wording, each row linking back to the run's lineage
+  panel that owns creation and settlement detail. Closes the "controls live
+  only on lineage pages an operator must already know about" limitation
+  recorded when Run Controls v1 shipped.
+
+- **Answerability: asks and answers per agent, never a score.** A derived,
+  admin-only ledger (`core/answerability.py`, zero tables) lays each agent's
+  recorded asks beside their answers: run controls (open / expired-unanswered /
+  completed / declined, by the controls page's own predicates), worker kill
+  requests (told-to-stop vs confirmed — a worker acknowledging while still
+  reporting running stays *unconfirmed*), approvals its gated actions raised,
+  and how many of its events an undo reversed. `GET /fleet/answerability`
+  (+ `agent_id` filter), MCP `agent_answerability`, and an Answerability
+  section on `/admin/agents`. Adapted from Buzz's web-of-trust idea minus the
+  reputation scalar, on purpose; the non-claims are in
+  [`docs/ANSWERABILITY.md`](docs/ANSWERABILITY.md).
+
 - **Editing that keeps its promises, and a way out that needs no Athena.** Page
   and issue editors gained a live side-by-side preview rendered by the same
   function the view itself uses (`render_page_body` / `render_issue_body`), so a

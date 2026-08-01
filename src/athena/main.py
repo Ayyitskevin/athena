@@ -42,6 +42,7 @@ from athena.core import (
     activity_api,
     approvals,
     approvals_api,
+    answerability_api,
     attachments_api,
     budgets,
     db,
@@ -1553,6 +1554,7 @@ def create_app(
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
     app.include_router(run_controls_api.router)
+    app.include_router(answerability_api.router)
     app.include_router(search_api.router)
     app.include_router(activity_api.router)
     app.include_router(events_api.router)

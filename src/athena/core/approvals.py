@@ -328,6 +328,30 @@ def list_requests(
     return [_row(row) for row in rows]
 
 
+def request_counts_by_requester(
+    conn: sqlite3.Connection,
+) -> dict[int, dict[str, int]]:
+    """Per-requester approval tallies for the answerability projection.
+
+    Counts what was ASKED and how the operator ANSWERED, grouped by the actor
+    whose gated action raised the ask. One pass; the caller zero-fills."""
+    rows = conn.execute(
+        "SELECT requested_by, "
+        "SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END) AS pending, "
+        "SUM(CASE WHEN state = 'approved' THEN 1 ELSE 0 END) AS approved, "
+        "SUM(CASE WHEN state = 'rejected' THEN 1 ELSE 0 END) AS rejected "
+        "FROM approval_requests GROUP BY requested_by"
+    ).fetchall()
+    return {
+        int(row["requested_by"]): {
+            "pending": int(row["pending"]),
+            "approved": int(row["approved"]),
+            "rejected": int(row["rejected"]),
+        }
+        for row in rows
+    }
+
+
 class ApprovalDecisionError(Exception):
     """A decision could not be applied. ``status_code`` lets adapters map it."""
 

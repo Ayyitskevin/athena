@@ -5,7 +5,15 @@ import json
 from athena import ops
 from athena.aegis import comments as issue_comments
 from athena.aegis import issues, projects, sprints
-from athena.core import access, activity, db, labels, portability, search
+from athena.core import (
+    access,
+    activity,
+    activity_chain,
+    db,
+    labels,
+    portability,
+    search,
+)
 from athena.mentor import page_comments, pages, spaces
 
 
@@ -300,6 +308,15 @@ def test_project_import_rebuilds_links_activity_and_search(tmp_path):
         (activity_map[source_triaged["id"]],),
     ).fetchone()
     hits = search.search(target, "Parent")
+    # Imported rows join the hash chain like every native write (0072): the
+    # chain attests the trail INCLUDING that foreign history is labeled foreign
+    # (imported_at is hashed), and an import opens no unchained gap.
+    chain_counts = target.execute(
+        "SELECT (SELECT COUNT(*) FROM activity) AS a, "
+        "(SELECT COUNT(*) FROM activity_chain) AS c"
+    ).fetchone()
+    assert chain_counts["a"] == chain_counts["c"]
+    assert activity_chain.verify_all(target)["ok"] is True
     target.close()
 
     assert [dict(row) for row in links_rows] == [

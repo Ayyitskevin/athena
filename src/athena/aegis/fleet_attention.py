@@ -24,7 +24,14 @@ from datetime import UTC, datetime, timedelta
 import sqlite3
 
 from athena.aegis import automation, fleet_work
-from athena.core import approvals, budgets, security_events, webhooks, workers
+from athena.core import (
+    approvals,
+    budgets,
+    run_controls,
+    security_events,
+    webhooks,
+    workers,
+)
 
 SCHEMA = "athena.fleet_attention.v1"
 
@@ -76,6 +83,10 @@ def build_attention(
         for worker in workers.list_workers(conn, limit=workers.MAX_LIST_LIMIT)
         if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
     ]
+    # Live run controls: asked, not yet answered, clock still running. Standing
+    # like the kill count — a week-old unanswered steer is still unanswered —
+    # and derived with the same predicate the controls page lists by.
+    open_controls = run_controls.count_open(conn, now_stamp=run_controls.stamp(now))
     refusals = security_events.failure_counts(conn, since=since)
     # Native rows only, like the refusal counts above: a hostile import bundle
     # could back-date this verb into the window and inflate the card.
@@ -114,6 +125,13 @@ def build_attention(
             "count": len(unanswered_kills),
             "href": "/admin/agents",
             "scope": "asked, not yet confirmed",
+        },
+        {
+            "key": "open_run_controls",
+            "label": "Run controls awaiting an agent",
+            "count": open_controls,
+            "href": "/admin/run-controls",
+            "scope": "asked, not yet answered",
         },
         {
             "key": "failing_automation_rules",

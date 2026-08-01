@@ -48,7 +48,9 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   (see [`RUN_CONTROLS.md`](RUN_CONTROLS.md)).
 - **Intervene** finally has one place to look: an admin-only fleet-attention
   rollup on the dashboard counts claims needing attention, waiting approvals,
-  unanswered kill requests, failing automation rules and webhooks, budget ceilings
+  unanswered kill requests, run controls awaiting an agent (with a fleet-wide
+  `/admin/run-controls` page owning that number), failing automation rules and
+  webhooks, budget ceilings
   hit, and boundary refusals — each linking to the surface that owns it. Refused
   logins, revoked tokens, scope denials, and paused refusals were always recorded;
   they now have a page and an API instead of requiring an operator to know the verb
@@ -70,6 +72,16 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   already recorded), and its assignee (from the 0068 assignee facts) — each
   scalar refusing when a newer change has superseded it. Everything else is
   refused with its reversibility class. That is not general undo.
+- **Trust / Learn** gained a trail that can prove itself: every activity row
+  recorded after migration 0072 is hash-chained in the same transaction, chained
+  rows are undeletable, and bounded resumable verification (REST, MCP,
+  `athena-doctor`, a tail check on `/admin/security`) points at the first broken
+  link. The chain makes tampering evident, not impossible — the boundary is
+  documented in [`TRAIL_INTEGRITY.md`](TRAIL_INTEGRITY.md).
+- **Trust / Learn** also gained the answerability ledger: per agent, every
+  recorded ask (controls, kill requests, approvals) beside its recorded answer,
+  plus reversals — derived at read time, zero-filled, deliberately never a
+  score (see [`ANSWERABILITY.md`](ANSWERABILITY.md)).
 - **Intervene** finally has no unaudited durable writes left in the Aegis project
   surface: configuring a project's statuses — which is configuring what "closed"
   means for its issues — is a command with an actor and an audit event, and every

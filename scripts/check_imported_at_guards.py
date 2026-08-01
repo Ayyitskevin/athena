@@ -140,6 +140,14 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "reset the clock on work it never touched (the schedule twin of the "
         "event scan's native_only guard)",
     ),
+    (
+        "core/activity.py",
+        "reversed_counts_by_actor",
+        r"original\.imported_at IS NULL",
+        "the answerability ledger counts corrections to NATIVE work: undo "
+        "itself refuses imported events, so a reversed-imported row cannot "
+        "exist — the guard keeps the count honest even if that ever changed",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is
@@ -184,6 +192,20 @@ EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
         "_SELECT backs the general audit readers (list_activity, the event "
         "stream); the native-only consumer applies the guard in list_events' "
         "native_only branch, asserted in MECHANISMS",
+    ),
+    (
+        "core/activity_chain.py",
+        "<module>",
+        "_ROW_SQL feeds the hash recipe: the chain attests the WHOLE trail as "
+        "stored, and imported_at is one of the hashed facts — excluding "
+        "foreign rows would open unchained gaps an importer could hide in",
+    ),
+    (
+        "core/activity_chain.py",
+        "status",
+        "coverage counting must see every row, imported included: "
+        "unchained_count exists precisely to report what the chain does not "
+        "claim, so filtering here would misstate the chain's own boundary",
     ),
     (
         "core/activity.py",
