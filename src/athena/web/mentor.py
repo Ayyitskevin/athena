@@ -913,6 +913,11 @@ def edit_page_form(
             and request.query_params.get("restore") == "1",
             "draft_is_stale": draft is not None
             and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
+            # The baseline this editing session starts FROM. The form carries it
+            # through every autosave, so a draft records the page the author
+            # actually saw — not whatever the page had become by the time the
+            # autosave timer fired (which would defeat the stale-draft warning).
+            "page_etag": page_etags.current_etag(conn, page),
             "notice": (request.query_params.get("notice") or "").strip(),
         },
     )
@@ -949,6 +954,7 @@ def autosave_page_draft(
     page_id: int,
     title: str = Form(""),
     body: str = Form(""),
+    based_on: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Record where this author has got to, without touching the page.
@@ -977,7 +983,13 @@ def autosave_page_draft(
             owner_id=user["id"],
             title=title,
             body=body,
-            based_on=page_etags.current_etag(conn, page),
+            # The etag the EDITOR RENDERED WITH, carried by the form — never
+            # re-read here. Stamping the current etag at autosave time would
+            # mark a draft fresh the moment someone else saved, which is the
+            # exact moment the stale warning exists for. Blank only for a
+            # cached pre-upgrade form; falling back to the current etag there
+            # restores the old (weaker) behavior instead of refusing the save.
+            based_on=based_on.strip() or page_etags.current_etag(conn, page),
         )
     except page_drafts.DraftTooLarge as exc:
         return HTMLResponse(f'<div class="error">{escape(str(exc))}</div>', 413)

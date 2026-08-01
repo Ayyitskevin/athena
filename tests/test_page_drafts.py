@@ -401,3 +401,77 @@ def test_purging_a_page_takes_its_drafts_with_it(tmp_path):
         )
     finally:
         conn.close()
+
+
+def test_autosave_after_someone_elses_save_still_flags_stale(tmp_path):
+    # WHY: the draft's baseline is the page the author actually SAW — the form
+    # carries it through every autosave. The first implementation re-read the
+    # CURRENT etag at autosave time, so the moment someone else saved, the very
+    # next autosave marked the draft fresh and the stale warning could never
+    # fire again for that session (review finding: silent clobber re-enabled).
+    import html as html_lib
+    import re
+
+    app, page, _ = _setup(tmp_path)
+    author = _client(app)
+    form = author.get(f"/mentor/pages/{page['id']}/edit").text
+    baseline = html_lib.unescape(
+        re.search(r'name="based_on" value="([^"]*)"', form).group(1)
+    )
+    assert baseline
+
+    # Someone else saves FIRST; the author's autosave timer fires after.
+    with TestClient(app) as api:
+        api.patch(f"/pages/{page['id']}", json={"body": "their change"}, headers=H1)
+    author.post(
+        f"/mentor/pages/{page['id']}/draft",
+        data={
+            "title": "Page",
+            "body": "my edit, started before theirs",
+            "based_on": baseline,
+            "csrf_token": author.headers["X-CSRF-Token"],
+        },
+    )
+
+    reloaded = author.get(f"/mentor/pages/{page['id']}/edit").text
+    assert "saved by someone else" in reloaded
+    assert "their changes will be lost" in reloaded
+
+
+def test_restoring_carries_the_drafts_own_baseline_forward(tmp_path):
+    # WHY: restoring continues the editing session that produced the draft, so
+    # the re-rendered form must carry the DRAFT's baseline — stamping today's
+    # etag there would quietly mark stale work fresh on the next autosave.
+    import html as html_lib
+    import re
+
+    app, page, db_path = _setup(tmp_path)
+    author = _client(app)
+    form = author.get(f"/mentor/pages/{page['id']}/edit").text
+    baseline = html_lib.unescape(
+        re.search(r'name="based_on" value="([^"]*)"', form).group(1)
+    )
+    author.post(
+        f"/mentor/pages/{page['id']}/draft",
+        data={
+            "title": "Page",
+            "body": "session work",
+            "based_on": baseline,
+            "csrf_token": author.headers["X-CSRF-Token"],
+        },
+    )
+    with TestClient(app) as api:
+        api.patch(f"/pages/{page['id']}", json={"body": "their change"}, headers=H1)
+
+    restored = author.get(f"/mentor/pages/{page['id']}/edit?restore=1").text
+    carried = html_lib.unescape(
+        re.search(r'name="based_on" value="([^"]*)"', restored).group(1)
+    )
+    assert carried == baseline
+
+    conn = db.connect(db_path)
+    try:
+        draft = page_drafts.get_draft(conn, page_id=page["id"], owner_id=1)
+        assert draft is not None and draft["based_on"] == baseline
+    finally:
+        conn.close()

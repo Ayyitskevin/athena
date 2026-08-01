@@ -282,6 +282,11 @@ def count_edges_touching(
     a number that reacts to private work is an existence oracle no less than a
     title would be. What the viewer cannot see does not exist here — not as a
     row, and not as an increment.
+
+    An ARCHIVED far end does not count either: the picture this number sits
+    beside shows live work only, so "N dependencies reach beyond it" must mean
+    edges to work that could be drawn somewhere — a link onto archived history
+    is not an outside dependency of the live picture (review finding).
     """
     if not issue_ids:
         return 0
@@ -289,7 +294,10 @@ def count_edges_touching(
     ids = sorted(issue_ids)
     # The far end of the edge — whichever side is NOT in the drawn set.
     far_end = f"CASE WHEN l.from_id IN ({placeholders}) THEN l.to_id ELSE l.from_id END"
-    clauses = [f"(l.from_id IN ({placeholders})) != (l.to_id IN ({placeholders}))"]
+    clauses = [
+        f"(l.from_id IN ({placeholders})) != (l.to_id IN ({placeholders}))",
+        "o.archived_at IS NULL",
+    ]
     params: list = [*ids, *ids, *ids]
     if visible_project_ids is not None:
         if visible_project_ids:

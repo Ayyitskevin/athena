@@ -166,6 +166,28 @@ def test_a_dependency_leaving_the_view_is_counted_not_drawn(tmp_path):
     assert drawn["edges_outside"] == 1
 
 
+def test_a_dependency_onto_archived_work_is_not_an_outside_edge(tmp_path):
+    """The picture shows live work only, so its "N reach beyond" number must
+    mean edges to work that could be drawn somewhere. A link onto archived
+    history counted here would read as a live outside dependency that does not
+    exist (review finding)."""
+    conn = _conn(tmp_path)
+    pid = projects.create_project(conn, key="ATH", name="A", created_by=1)["id"]
+    inside = _issue(conn, "inside", project_id=pid)
+    outside = _issue(conn, "outside")  # backlog: off the picture
+    dependencies.add_link(
+        conn, from_id=inside, to_id=outside, relation="blocks", created_by=1
+    )
+    conn.commit()
+    assert timeline.project_timeline(conn, project_id=pid)["edges_outside"] == 1
+
+    conn.execute(
+        "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (outside,)
+    )
+    conn.commit()
+    assert timeline.project_timeline(conn, project_id=pid)["edges_outside"] == 0
+
+
 def test_a_dependency_cycle_lays_out_without_hanging(tmp_path):
     """Only the direct two-cycle is refused at write time, so A→B→C→A is real
     data. Placement comes from sprint membership alone — nothing here sorts
@@ -695,3 +717,54 @@ def test_rollup_embed_counts_only_what_the_reader_may_see(tmp_path):
         anonymous = TestClient(app)
         theirs = anonymous.post("/embeds/resolve", json={"text": text}).json()[0]
         assert theirs["rollup"]["total"] == 1
+
+
+def test_mcp_client_reads_the_timeline_and_bounds_ride_through(tmp_path):
+    """Steering rule 1: the timeline must be reachable over MCP, and the
+    client's bound parameters must reach the service — both previously
+    untested (review finding)."""
+    from athena.mcp.client import AthenaClient
+
+    with TestClient(create_app(tmp_path / "mcp_timeline.db")) as tc:
+        _admin(tc)
+        project = tc.post(
+            "/projects", json={"key": "ATH", "name": "Athena"}, headers=H1
+        ).json()
+        for title in ("one", "two", "three"):
+            tc.post(
+                "/issues",
+                json={"title": title, "project_id": project["id"]},
+                headers=H1,
+            )
+        raw = tc.post(
+            "/tokens", json={"name": "mcp", "scopes": ["admin"]}, headers=H1
+        ).json()["token"]
+        tc.headers.update({"Authorization": f"Bearer {raw}"})
+        api = AthenaClient(client=tc)
+
+        drawn = api.project_timeline(project["id"])
+        assert drawn["shown"] == 3
+        assert drawn["lanes"][-1]["label"] == "Backlog"
+
+        clamped = api.project_timeline(project["id"], max_per_lane=1, max_items=1)
+        assert clamped["shown"] == 1
+        assert clamped["truncated"] is True
+        assert clamped["total"] == 3
+
+
+def test_an_undrawable_timeline_says_so_without_claiming_no_issues_exist(tmp_path):
+    """The empty state must state what is TRUE — nothing drawable for this
+    viewer — not "no issues", which would be false for a project whose work is
+    all archived or all hidden (review finding: empty state untested)."""
+    with TestClient(create_app(tmp_path / "empty_timeline.db")) as client:
+        _admin(client)
+        _login(client)
+        project = client.post(
+            "/projects", json={"key": "EMP", "name": "Empty"}, headers=H1
+        ).json()
+        page = client.get(f"/aegis/projects/{project['id']}/timeline")
+        assert page.status_code == 200
+        assert "Nothing to draw yet" in page.text
+        assert "and no live issues you can" in page.text
+        assert "Plan a sprint" in page.text
+        assert "<svg" not in page.text
