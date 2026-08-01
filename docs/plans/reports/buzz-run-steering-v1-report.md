@@ -207,6 +207,34 @@ unnecessary), steering server-reserved runs.
 
 - Phase 0 (architecture verification): **COMPLETE**
 - Phase 1 (design): **COMPLETE** (this section)
+
+### Phase 2 — Domain/command layer + migration: COMPLETE
+
+Delivered: migration `0070_run_controls.sql` (table, three indexes incl. domain
+idempotency UNIQUE, nine CHECK invariants, eight triggers: birth-shape, request
+immutability, claims write-once, settled-frozen, three native-event bindings,
+no-delete); `core/run_controls.py` (all table SQL, CAS transitions, derived-state
+projection with injectable clock); `core/run_control_commands.py` (create/
+acknowledge/decline/complete/visible/readable, worker_commands-shaped auth with
+in-transaction recheck incl. paused, fail-closed admission and settlement);
+two read helpers added to the table-owning modules (`activity.run_binding_actor`,
+`agent_run_checkins.checkin_agent_ids`); `config.RUN_CONTROL_TTL_SECONDS`.
+
+Validation at this phase boundary (all green, `.venv312` = CI-mirror Python 3.12.13):
+- `ruff check` + `ruff format --check` on changed files
+- `mypy src/athena` — no issues in 152 modules
+- `python scripts/check_import_contracts.py` / `check_write_ownership.py` /
+  `check_imported_at_guards.py`
+- `pytest tests/test_migration_integrity.py tests/test_migrations_atomic.py -q` — 20 passed
+- `pytest tests/test_activity.py tests/test_activity_runs.py
+  tests/test_agent_run_checkins.py tests/test_workers.py -q` — 72 passed (no regressions)
+- End-to-end scratch exercise of every command path (create, replay, conflicting
+  key, live duplicate, ack, complete, double-settle, handoff, derived expiry,
+  late ack, SQL tamper/delete blocked by triggers, list filters, unknown/
+  reserved/non-admin refusals) — all behaved as designed.
+
+Deviation from design: none. One addition — `idempotency_key` is included in the
+read projection (operator metadata needed for retry ergonomics).
 - Phase 2 (domain/command layer + migration): pending
 - Phase 3 (REST): pending
 - Phase 4 (MCP): pending

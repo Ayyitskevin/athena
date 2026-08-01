@@ -168,6 +168,12 @@ AGENT_RUN_MAX_CHECKINS_PER_AGENT = _int_env(
 # Athena cannot observe and never claims.
 WORKER_STALE_SECONDS = _int_env("ATHENA_WORKER_STALE_SECONDS", 90, minimum=1)
 
+# How long a run control waits for the bound agent before it reads as expired,
+# when the operator does not choose a lifetime explicitly. Expiry is derived at
+# read time from the stored expires_at against the server clock — nothing sweeps,
+# nothing is written, and an expired control never claims the agent did anything.
+RUN_CONTROL_TTL_SECONDS = _int_env("ATHENA_RUN_CONTROL_TTL_SECONDS", 3600, minimum=60)
+
 # The external execution fleet Athena may hand work to. BOTH must be set for
 # dispatch to be available: a URL without a secret would mean sending unsigned work
 # to an unauthenticated endpoint, and a secret without a URL means nothing. Unset is
