@@ -102,6 +102,18 @@ def _bind_run(conn: sqlite3.Connection, run_id: str, actor_id: int) -> None:
         raise RunBindingError(run_id)
 
 
+def run_binding_actor(conn: sqlite3.Connection, run_id: str) -> int | None:
+    """The actor a run id is bound to, or None for a run nobody has written under.
+
+    The public read over run_bindings for callers that must resolve run ownership
+    (run controls bind their target agent from this). Binding itself stays the
+    exclusive job of :func:`record` via ``_bind_run``."""
+    row = conn.execute(
+        "SELECT actor_id FROM run_bindings WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    return None if row is None else int(row["actor_id"])
+
+
 def _validated_lineage(
     conn: sqlite3.Connection,
     parent_run_id: str | None,
