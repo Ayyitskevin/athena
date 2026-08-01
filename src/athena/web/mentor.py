@@ -37,6 +37,8 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.mentor import (
     page_commands,
+    page_drafts,
+    page_etags,
     page_templates,
     page_comment_commands,
     page_comments,
@@ -44,6 +46,8 @@ from athena.mentor import (
     space_commands,
     spaces,
 )
+from markupsafe import escape
+
 from athena.web.csrf import verify_csrf
 from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.router import _readonly_response, get_templates
@@ -844,12 +848,18 @@ def edit_page_form(
     err = _write_required(user, "edit pages")
     if err is not None:
         return err
+    assert user is not None  # _write_required refused a missing user above
 
     page = pages.get_page(conn, page_id)
     # Can't edit (or even see the form for) a page in a space you can't read — 404,
     # same as a missing page, so the form never leaks a hidden page's content.
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    draft = page_drafts.get_draft(conn, page_id=page_id, owner_id=user["id"])
+    if draft is not None and not page_drafts.differs_from(draft, page):
+        # Identical to the saved page: not unsaved work, so offering to restore
+        # it would just make an author wonder what they had forgotten.
+        draft = None
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_edit.html",
@@ -859,6 +869,17 @@ def edit_page_form(
             # The preview starts populated rather than blank: an author opening
             # an existing page sees it as readers do before touching a key.
             "body_html": render_page_body(conn, page["body"], actor=user),
+            # An unsaved draft is OFFERED, never applied: the form still shows
+            # the saved page, and restoring is a decision the author makes. A
+            # draft that merely matches the page is not offered at all.
+            "draft": draft,
+            # Restoring is a read: the form renders the draft's text instead of
+            # the page's. Nothing is written until the author presses Save.
+            "restored": draft is not None
+            and request.query_params.get("restore") == "1",
+            "draft_is_stale": draft is not None
+            and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
+            "notice": (request.query_params.get("notice") or "").strip(),
         },
     )
 
@@ -886,6 +907,67 @@ def preview_page_body(
             '<div class="error">Too long to preview.</div>', status_code=413
         )
     return HTMLResponse(str(render_page_body(conn, body, actor=user)))
+
+
+@router.post("/mentor/pages/{page_id}/draft", dependencies=[Depends(verify_csrf)])
+def autosave_page_draft(
+    request: Request,
+    page_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Record where this author has got to, without touching the page.
+
+    Nothing here writes to ``pages``: no version is cut, no activity event is
+    recorded, no watcher is notified. That is the entire point — a crashed
+    browser should cost nothing, and the trail should still say nothing happened
+    until a human decides something did.
+
+    Answers a small fragment the editor swaps in, so the author can see their
+    work is held without the page moving under them.
+    """
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
+    assert user is not None
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    assert page is not None
+    try:
+        saved = page_drafts.save_draft(
+            conn,
+            page_id=page_id,
+            owner_id=user["id"],
+            title=title,
+            body=body,
+            based_on=page_etags.current_etag(conn, page),
+        )
+    except page_drafts.DraftTooLarge as exc:
+        return HTMLResponse(f'<div class="error">{escape(str(exc))}</div>', 413)
+    return HTMLResponse(
+        f'<span class="draft-saved">Draft held {escape(saved["updated_at"])}</span>'
+    )
+
+
+@router.post(
+    "/mentor/pages/{page_id}/draft/discard", dependencies=[Depends(verify_csrf)]
+)
+def discard_page_draft(
+    request: Request, page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Throw away this author's draft of this page. Affects nobody else."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
+    assert user is not None
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
+    return RedirectResponse(
+        f"/mentor/pages/{page_id}/edit?notice=Draft+discarded.", status_code=303
+    )
 
 
 @router.post("/mentor/pages/{page_id}/edit", dependencies=[Depends(verify_csrf)])
@@ -924,6 +1006,10 @@ def edit_page(
         )
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    # The text IS the page now, so the author's draft of it is a stale copy of
+    # something that finally has a real home and a version row. Dropping it is
+    # what makes "you have unsaved work" mean it the next time it appears.
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 

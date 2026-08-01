@@ -11,11 +11,51 @@
 </div>
 
 <div class="form-container">
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
+{% if draft %}
+{# An unsaved draft is OFFERED, never applied. The form below still shows the
+   SAVED page, so nothing an author sees here is a surprise — restoring is a
+   button they press, and discarding throws away only their own copy. #}
+<div class="warning">
+    <strong>You have unsaved work on this page</strong>
+    <span class="muted">held {{ draft.updated_at }}</span>
+    {% if draft_is_stale %}
+    <p class="note-small">
+        The page has been saved by someone else since you last typed. Restoring
+        replaces what is in the form with your draft — read both before saving,
+        or their changes will be lost when you save.
+    </p>
+    {% endif %}
+    <div class="form-actions">
+        <form method="post" action="/mentor/pages/{{ page.id }}/draft/discard"
+              data-confirm="Discard your unsaved draft of this page?" style="display:inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small">Discard draft</button>
+        </form>
+        {# Restoring is a READ: it re-renders this form with the draft's text in
+           the fields. Nothing is written until the author presses Save, so it
+           needs no JavaScript and cannot lose anything by being clicked. #}
+        {% if not restored %}
+        <a href="/mentor/pages/{{ page.id }}/edit?restore=1" class="button small">Restore draft</a>
+        {% else %}
+        <a href="/mentor/pages/{{ page.id }}/edit" class="button secondary small">Show saved page</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if restored %}
+<div class="success">
+    The form below holds your draft, not the saved page. Save to make it the page.
+</div>
+{% endif %}
+
     <form method="post" action="/mentor/pages/{{ page.id }}/edit" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
             <label for="title">Title</label>
-            <input type="text" id="title" name="title" required value="{{ page.title }}">
+            <input type="text" id="title" name="title" required value="{{ draft.title if restored else page.title }}">
         </div>
         <div class="form-group">
             <label for="body">Body</label>
@@ -29,7 +69,7 @@
                           hx-trigger="keyup changed delay:300ms"
                           hx-target="#body-preview"
                           hx-include="closest form"
-                          hx-sync="this:replace">{{ page.body }}</textarea>
+                          hx-sync="this:replace">{{ draft.body if restored else page.body }}</textarea>
                 <div class="editor-preview">
                     <div class="editor-preview-label">Preview</div>
                     <div id="body-preview" class="body-text">{{ body_html }}</div>
@@ -39,6 +79,15 @@
         <div class="form-actions">
             <button type="submit" class="button">Save Changes</button>
             <a href="/mentor/pages/{{ page.id }}" class="button secondary">Cancel</a>
+            {# Autosave reports itself here. It writes to the author's own draft
+               row and never to the page, so this line is the only thing on the
+               screen that changes while typing. #}
+            <span id="draft-status" class="note-small"
+                  hx-post="/mentor/pages/{{ page.id }}/draft"
+                  hx-trigger="keyup changed delay:2s from:closest form"
+                  hx-include="closest form"
+                  hx-swap="innerHTML"
+                  hx-sync="this:replace"></span>
         </div>
     </form>
     <p class="note-small">Saving snapshots the current version into this page's history.</p>
