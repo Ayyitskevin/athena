@@ -46,6 +46,14 @@
                 {%- if lane.start_date or lane.end_date %} · {{ lane.start_date or "?" }} → {{ lane.end_date or "?" }}{% endif -%}
                 {%- if not lane.state and not lane.start_date and not lane.end_date %}unscheduled{% endif -%}
             </text>
+            {% if lane.hidden %}
+            {# The omission is named in the lane it happened in. The overall
+               ceiling is spent left to right, so a later lane can be drained to
+               nothing — a lane that just looked empty would be a lie. #}
+            <text x="{{ lane.x + 12 }}" y="{{ timeline.height - 8 }}" font-size="11" fill="#b45309">
+                +{{ lane.hidden }} not drawn{% if not lane.shown %} (page limit reached){% endif %}
+            </text>
+            {% endif %}
         </g>
         {% endfor %}
 
@@ -61,15 +69,15 @@
         {% for item in timeline.cards %}
         <a href="/aegis/issues/{{ item.id }}">
             <title>{{ item.key or "#" ~ item.id }} {{ item.title }} ({{ item.status }})</title>
-            <rect x="{{ item.x + 8 }}" y="{{ item.y }}" width="{{ timeline.lanes[0].width - 16 }}" height="34"
+            <rect x="{{ item.x }}" y="{{ item.y }}" width="{{ item.width }}" height="{{ item.height }}"
                   rx="5" fill="#ffffff" stroke="#d1d5db" stroke-width="1" />
-            <rect x="{{ item.x + 8 }}" y="{{ item.y }}" width="4" height="34"
+            <rect x="{{ item.x }}" y="{{ item.y }}" width="4" height="{{ item.height }}"
                   rx="2"
                   fill="{% if item.category == 'done' %}#059669{% elif item.category == 'doing' %}#2563eb{% else %}#9ca3af{% endif %}" />
-            <text x="{{ item.x + 20 }}" y="{{ item.y + 15 }}" font-size="10" fill="#6b7280">
+            <text x="{{ item.x + 12 }}" y="{{ item.y + 15 }}" font-size="10" fill="#6b7280">
                 {{ item.key or "#" ~ item.id }}
             </text>
-            <text x="{{ item.x + 20 }}" y="{{ item.y + 27 }}" font-size="11" fill="#111827">
+            <text x="{{ item.x + 12 }}" y="{{ item.y + 27 }}" font-size="11" fill="#111827">
                 {{ item.title[:20] }}{% if item.title | length > 20 %}…{% endif %}
             </text>
         </a>
@@ -81,7 +89,10 @@
     {# Say what was NOT drawn. A partial picture that doesn't admit it reads as
        the whole plan, which is the quiet lie this line exists to prevent. #}
     {% if timeline.truncated %}
-    Showing {{ timeline.shown }} of {{ timeline.total }} issues — each lane draws its first few.
+    Showing {{ timeline.shown }} of {{ timeline.total }} issues. Each lane draws a
+    limited number, and the picture as a whole stops at a ceiling — so a lane may
+    be cut short or, once the ceiling is reached, drawn empty. Each lane states
+    how many of its own issues are missing.
     {% else %}
     {{ timeline.shown }} {{ "issue" if timeline.shown == 1 else "issues" }} across
     {{ timeline.lanes | length }} {{ "lane" if timeline.lanes | length == 1 else "lanes" }}.
@@ -101,8 +112,12 @@
 </p>
 {% else %}
 <p class="empty-state">
-    This project has no sprints and no issues yet, so there is no timeline to draw.
-    <a href="/aegis/projects/{{ project.id }}/sprints">Plan a sprint</a> to start one.
+    {# "No issues yet" would be false for a project whose issues are all archived
+       or all invisible to this viewer — say what is true instead: nothing is
+       drawable here. #}
+    Nothing to draw yet: this project has no sprints, and no live issues you can
+    see. <a href="/aegis/projects/{{ project.id }}/sprints">Plan a sprint</a> to
+    start a timeline.
 </p>
 {% endif %}
 {% endblock %}

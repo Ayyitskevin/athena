@@ -263,21 +263,45 @@ def edges_among(conn: sqlite3.Connection, issue_ids: list[int]) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def count_edges_touching(conn: sqlite3.Connection, issue_ids: list[int]) -> int:
-    """How many declared dependencies have EXACTLY ONE end in the given set.
+def count_edges_touching(
+    conn: sqlite3.Connection,
+    issue_ids: list[int],
+    *,
+    visible_project_ids: set[int] | None = None,
+) -> int:
+    """How many declared dependencies have EXACTLY ONE end in the given set, and
+    an off-picture end this viewer may see.
 
     These are the edges a bounded picture cannot draw — the other end is outside
-    the view, or invisible to this viewer. A view that drops them silently is
-    telling the operator this work has no outside dependencies, so the number
-    exists to be said out loud beside the drawing.
+    the view. A view that drops them silently is telling the operator this work
+    has no outside dependencies, so the number exists to be said out loud beside
+    the drawing.
+
+    The off-picture end is visibility-gated for the same reason the drawn set is:
+    an ungated count moves when a hidden issue gains a link to a visible one, and
+    a number that reacts to private work is an existence oracle no less than a
+    title would be. What the viewer cannot see does not exist here — not as a
+    row, and not as an increment.
     """
     if not issue_ids:
         return 0
     placeholders = ",".join("?" for _ in issue_ids)
     ids = sorted(issue_ids)
+    # The far end of the edge — whichever side is NOT in the drawn set.
+    far_end = f"CASE WHEN l.from_id IN ({placeholders}) THEN l.to_id ELSE l.from_id END"
+    clauses = [f"(l.from_id IN ({placeholders})) != (l.to_id IN ({placeholders}))"]
+    params: list = [*ids, *ids, *ids]
+    if visible_project_ids is not None:
+        if visible_project_ids:
+            vis = ",".join("?" for _ in visible_project_ids)
+            clauses.append(f"(o.project_id IS NULL OR o.project_id IN ({vis}))")
+            params.extend(sorted(visible_project_ids))
+        else:
+            clauses.append("o.project_id IS NULL")
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM issue_links"
-        f" WHERE (from_id IN ({placeholders})) != (to_id IN ({placeholders}))",
-        [*ids, *ids],
+        f"SELECT COUNT(*) AS n FROM issue_links l"
+        f" JOIN issues o ON o.id = ({far_end})"
+        f" WHERE {' AND '.join(clauses)}",
+        params,
     ).fetchone()
     return int(row["n"])

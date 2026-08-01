@@ -46,6 +46,10 @@ MAX_MAX_ITEMS = 400
 # coordinate space, which the template scales to the viewport.
 LANE_WIDTH = 190.0
 LANE_GAP = 26.0
+#: How far a card sits inside its lane on each side. The card's own x/width are
+#: emitted with this already applied, so the template places what it is given and
+#: edge endpoints cannot drift from the boxes they connect.
+CARD_INSET = 8.0
 CARD_HEIGHT = 34.0
 CARD_GAP = 10.0
 HEADER_HEIGHT = 64.0
@@ -147,10 +151,12 @@ def project_timeline(
         lane_key = (
             BACKLOG_LANE if issue["sprint_id"] is None else str(issue["sprint_id"])
         )
-        # A sprint the lane list does not know about cannot happen (sprints belong
-        # to one project and moving projects clears the sprint), but if it ever
-        # did, the issue belongs on the picture rather than silently missing.
-        by_lane.setdefault(lane_key, []).append(issue)
+        # A sprint outside this project's lane list cannot happen today (sprints
+        # belong to one project, and moving projects clears the sprint). If it
+        # ever did, the issue lands in the backlog lane rather than in an orphan
+        # bucket nothing iterates — which would drop it from the drawing AND from
+        # the totals, making the picture quietly incomplete.
+        by_lane.setdefault(lane_key, by_lane[BACKLOG_LANE]).append(issue)
 
     status_menus: dict[int | None, list[dict]] = {}
     lanes: list[dict] = []
@@ -183,12 +189,14 @@ def project_timeline(
             cards.append(
                 {
                     "id": issue["id"],
+                    "width": round(LANE_WIDTH - 2 * CARD_INSET, 2),
+                    "height": CARD_HEIGHT,
                     "key": issue["key"],
                     "title": issue["title"],
                     "status": issue["status"],
                     "category": category,
                     "lane": spec["key"],
-                    "x": round(lane_x, 2),
+                    "x": round(lane_x + CARD_INSET, 2),
                     "y": round(HEADER_HEIGHT + row_index * (CARD_HEIGHT + CARD_GAP), 2),
                 }
             )
@@ -199,6 +207,7 @@ def project_timeline(
                 "width": LANE_WIDTH,
                 "shown": len(drawn),
                 "total": len(rows),
+                "hidden": len(rows) - len(drawn),
                 "truncated": len(drawn) < len(rows),
             }
         )
@@ -214,9 +223,10 @@ def project_timeline(
                 "kind": edge["kind"],
                 "from_id": edge["from_id"],
                 "to_id": edge["to_id"],
-                # Endpoints are the card's right and left mid-edges, which makes
-                # a left-to-right dependency read as a flow between lanes.
-                "x1": round(source["x"] + LANE_WIDTH, 2),
+                # Endpoints are the cards' right and left mid-edges — computed
+                # from the same x/width the cards are drawn with, so an edge can
+                # never land beside the box it points at.
+                "x1": round(source["x"] + source["width"], 2),
                 "y1": round(source["y"] + CARD_HEIGHT / 2, 2),
                 "x2": round(target["x"], 2),
                 "y2": round(target["y"] + CARD_HEIGHT / 2, 2),
@@ -240,7 +250,9 @@ def project_timeline(
         # Dependencies with one end off the picture. Counted, never drawn: an
         # arrow to nowhere reads as a bug, and no arrow at all reads as "nothing
         # blocks this".
-        "edges_outside": dependencies.count_edges_touching(conn, drawn_ids),
+        "edges_outside": dependencies.count_edges_touching(
+            conn, drawn_ids, visible_project_ids=visible_project_ids
+        ),
         "width": round(width, 2),
         "height": round(height, 2),
     }

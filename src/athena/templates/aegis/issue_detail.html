@@ -258,29 +258,38 @@
                 <span class="count">({{ rollup.done }}/{{ rollup.total }} done)</span>
                 {% endif %}
             </h3>
-            {% if rollup.total %}
+            {% if rollup.has_children %}
             {# Live rollup: computed from the children on every read, never stored.
                Buckets come from each child's own project status categories, so a
                project whose finished state is called "shipped" fills the bar the
-               same way one calling it "done" does. #}
+               same way one calling it "done" does. Segment widths arrive already
+               computed — this template places them, it does not do arithmetic. #}
             <div class="rollup" role="group"
                  aria-label="Sub-issue progress: {{ rollup.done }} of {{ rollup.total }} done">
+                {% if rollup.total %}
                 <div class="rollup-bar">
-                    {% for bucket in ["done", "doing", "todo"] %}
-                    {% if rollup.counts[bucket] %}
-                    <span class="rollup-seg rollup-{{ bucket }}"
-                          style="width: {{ (rollup.counts[bucket] * 100 / rollup.total) | round(2) }}%"
-                          title="{{ rollup.counts[bucket] }} {{ bucket }}"></span>
-                    {% endif %}
+                    {% for segment in rollup.segments %}
+                    <span class="rollup-seg rollup-{{ segment.bucket }}"
+                          style="width: {{ segment.percent }}%"
+                          title="{{ segment.count }} {{ segment.bucket }}"></span>
                     {% endfor %}
                 </div>
+                {% endif %}
                 <p class="note-small">
+                    {% if rollup.total %}
                     {{ rollup.percent_done }}% done ·
                     {{ rollup.counts.done }} done, {{ rollup.counts.doing }} in progress,
                     {{ rollup.counts.todo }} to do{% if rollup.archived_excluded %} ·
                     {{ rollup.archived_excluded }} archived
                     {{ "child is" if rollup.archived_excluded == 1 else "children are" }}
                     not counted{% endif %}.
+                    {% else %}
+                    {# Not "no sub-issues": there are some, and every one is archived.
+                       Reporting 0% with no explanation would read as untouched work. #}
+                    Every sub-issue is archived
+                    ({{ rollup.archived_excluded }}), so there is no live progress
+                    to report.
+                    {% endif %}
                 </p>
             </div>
             {% endif %}
@@ -290,6 +299,10 @@
                 <li>
                     <span class="status {{ c.status }}">{{ c.status.replace("_", " ").title() }}</span>
                     <a href="/aegis/issues/{{ c.id }}">{{ c.key or "#" ~ c.id }} {{ c.title }}</a>
+                    {# Archived children are listed but not counted above, so say
+                       which ones they are — otherwise the header's total and the
+                       length of this list disagree with nothing to explain it. #}
+                    {% if c.archived_at %}<span class="muted">archived</span>{% endif %}
                 </li>
                 {% endfor %}
             </ul>

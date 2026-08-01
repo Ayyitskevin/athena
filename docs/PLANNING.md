@@ -19,9 +19,9 @@ placed in the lane their sprint puts them in, and the declared dependencies
 between those issues drawn as edges. A solid arrow means *blocks*, pointing at
 the blocked issue; a dashed line means *relates* and has no direction.
 
-Lanes run in date order: sprints with a start date first, in that order, then
-sprints with only an end date, then undated ones in creation order, and the
-**backlog last** — where work sits when it is not scheduled at all. The backlog
+Lanes run in date order: every sprint that has a date sorts by it (its start
+date, or its end date when that is all it has), then undated sprints in creation
+order, and the **backlog last** — where work sits when it is not scheduled at all. The backlog
 lane is always drawn, because "nothing is unscheduled" is a fact worth seeing
 and a missing lane would read as a rendering gap.
 
@@ -74,8 +74,16 @@ Two exclusions, both deliberate:
 | Archived children | **Yes** — "1 archived child is not counted" | Abandoned work must not sit in a denominator forever, but a bar that quietly drops rows is a lie |
 | Children the viewer cannot see | **No** | Reporting them would make the bar an existence oracle for private work |
 
+The timeline applies the same rule to its off-picture dependency count: only
+edges whose far end the viewer may see are counted, so the number cannot move
+when hidden work gains a link to something visible.
+
 A parent with no live children reports 0%, not 100%: having nothing to do is
-not the same as being finished.
+not the same as being finished. For the same reason **100% is reserved for
+everything being done and 0% for nothing being done** — 199 of 200 children
+rounds to 99%, not to a triumphant 100. And a parent whose children are *all*
+archived says exactly that, rather than reporting 0% as though the work were
+untouched.
 
 ## The rollup embed
 
@@ -119,9 +127,11 @@ but 0069 and 0070 are long since applied — the next free number is 0071.
 ## Limits, stated
 
 - Each lane draws its first **12** issues and the whole picture stops at **120**
-  (`max_per_lane` / `max_items`, clamped at 40 and 400). The per-lane and
-  overall counts both report `shown` against `total`, so a clipped roadmap
-  never reads as the whole plan.
+  (`max_per_lane` / `max_items`, clamped at 40 and 400). The overall ceiling is
+  spent left to right, so a late lane can be cut short or even drawn empty —
+  each lane prints how many of its own issues are missing, and the line beneath
+  the drawing says the ceiling exists. A clipped roadmap never reads as the
+  whole plan.
 - **Dependencies with one end off the picture are counted, not drawn.** An
   arrow into empty space reads as a rendering bug; no arrow at all reads as
   "nothing blocks this". The line beneath the drawing gives the number.
