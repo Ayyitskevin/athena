@@ -21,6 +21,14 @@ from athena.core.identity import admin_actor
 
 router = APIRouter(prefix="/webhooks", tags=["core"])
 
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
+
 
 class WebhookCreate(BaseModel):
     url: str
@@ -109,7 +117,9 @@ def update(
             conn, actor_id=actor["id"], webhook_id=webhook_id, active=payload.active
         )
     except webhook_commands.WebhookCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/{webhook_id}", status_code=204)

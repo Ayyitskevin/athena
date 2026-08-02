@@ -28,12 +28,14 @@ VERB_DELETED = "deleted_webhook"
 
 
 class WebhookCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (404
-    for an unknown webhook) without the command having to know about HTTP."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND``, so the
+    command layer states what went wrong and the transport decides how to say
+    it — the same shape every command module written since uses."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _detail(url: str, event_kind: str | None) -> str:
@@ -98,10 +100,10 @@ def set_webhook_active(
     with db.transaction(conn, immediate=True):
         before = webhooks.get_webhook(conn, webhook_id)
         if before is None:
-            raise WebhookCommandError("no such webhook", status_code=404)
+            raise WebhookCommandError("not_found", "no such webhook")
         updated = webhooks.set_webhook_active(conn, webhook_id, active, commit=False)
         if updated is None:
-            raise WebhookCommandError("no such webhook", status_code=404)
+            raise WebhookCommandError("not_found", "no such webhook")
         if bool(before["active"]) != bool(updated["active"]):
             activity.record(
                 conn,

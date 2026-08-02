@@ -62,6 +62,14 @@ from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
+
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
 # so they get their own router. Attaching a label TO an issue is a sub-resource
 # of /issues and lives on `router` below.
@@ -1229,7 +1237,9 @@ def edit_comment(
             body=body,
         )
     except comment_commands.CommentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/{issue_id}/comments/{comment_id}", status_code=204)

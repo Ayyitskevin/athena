@@ -25,12 +25,14 @@ from athena.core import db, search
 
 
 class CommentCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (404 for
-    a comment that vanished between the boundary's author check and the write)."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND``, so the
+    command layer states what went wrong and the transport decides how to say
+    it — the same shape every command module written since uses."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def create_comment(
@@ -71,7 +73,7 @@ def edit_comment(
     with db.transaction(conn, immediate=True):
         updated = comments.update_comment(conn, comment_id, body=body, commit=False)
         if updated is None:
-            raise CommentCommandError("no such comment", status_code=404)
+            raise CommentCommandError("not_found", "no such comment")
         # Re-index the rewritten body so search reflects the current text, not the old.
         search.index_document(
             conn, kind="issue_comment", source_id=comment_id, commit=False

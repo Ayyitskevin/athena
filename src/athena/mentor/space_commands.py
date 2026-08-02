@@ -26,12 +26,14 @@ from athena.mentor import space_activity, spaces
 
 
 class SpaceCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (404 for
-    a space that vanished between the boundary's checks and the write)."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND``, so the
+    command layer states what went wrong and the transport decides how to say
+    it — the same shape every command module written since uses."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def create_space(
@@ -80,12 +82,12 @@ def edit_space(
     with db.transaction(conn, immediate=True):
         before = spaces.get_space(conn, space_id)
         if before is None:
-            raise SpaceCommandError("no such space", status_code=404)
+            raise SpaceCommandError("not_found", "no such space")
         after = spaces.update_space(
             conn, space_id, key=key, name=name, description=description, commit=False
         )
         if after is None:
-            raise SpaceCommandError("no such space", status_code=404)
+            raise SpaceCommandError("not_found", "no such space")
         space_activity.record_space_edited(
             conn, actor_id=actor_id, before=before, after=after, commit=False
         )
@@ -122,10 +124,10 @@ def set_space_visibility(
     with db.transaction(conn, immediate=True):
         before = spaces.get_space(conn, space_id)
         if before is None:
-            raise SpaceCommandError("no such space", status_code=404)
+            raise SpaceCommandError("not_found", "no such space")
         updated = spaces.set_visibility(conn, space_id, visibility, commit=False)
         if updated is None:
-            raise SpaceCommandError("no such space", status_code=404)
+            raise SpaceCommandError("not_found", "no such space")
         if visibility == "private":
             access.add_space_member(
                 conn, space_id, before["created_by"], added_by=actor_id, commit=False
