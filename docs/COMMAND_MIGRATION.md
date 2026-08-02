@@ -71,6 +71,34 @@ command rule above:
 Anything that fails these rules is not personal state — it needs a command
 owner like every other write.
 
+## The `capacity` kind maps to 429 — and the two exceptions, by name
+
+New command modules use the transport-neutral **error-kind dialect**
+(`not_found`, `invalid`, `conflict`, `forbidden`, `unauthorized`, `capacity`)
+with a `STATUS_BY_KIND` map in the route module. Every kind but one has an
+obvious status. `capacity` did not, and it was re-argued in more than one review,
+so the convention is recorded here rather than rediscovered:
+
+> **`capacity` → 429 in new modules.** It means *you asked for more than this
+> surface will do right now* — a bound was hit, the request was well-formed, and
+> the same request may succeed later or smaller. That is what 429 says. A 409
+> would claim a conflict with existing state, which a bound is not.
+
+Two shipped surfaces answer differently, and they stay that way:
+
+| Surface | Status | Why it is not being changed |
+|---|---|---|
+| `POST /agent-runs/check-ins` (`agent_run_commands`) | **409** | Its capacity is "too many distinct run ids", which really is a conflict with existing state — the caller's fix is to reuse a run it already has, not to wait. The message says so (`refresh an existing run_id`), and the status is a shipped wire contract |
+| `POST /pages/{id}/start-playbook` (`playbook_commands`) | **429** | The convention above: more than 50 steps is a bound on the surface |
+
+So the rule for a new module is: **429 unless the bound is genuinely a conflict
+with state the caller already owns** — and if you believe yours is the second
+case, say why in the module docstring, because the next reader will otherwise
+read it as a mistake.
+
+This paragraph exists to end the per-PR relitigating. Changing either shipped
+status is a wire-contract change and needs its own decision, not a drive-by.
+
 ## Rules for migration slices
 
 A migration is complete only when:
