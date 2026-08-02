@@ -807,6 +807,35 @@ def build_server(client: AthenaClient) -> FastMCP:
         HH:MM:SS'). Requires an admin token."""
         return client.list_security_events(verb=verb, since=since, limit=limit)
 
+    @mutation_tool
+    def start_playbook(
+        page_id: int,
+        project_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Turn a playbook page's checklist into REAL WORK: one parent issue
+        plus one child per unchecked `- [ ]` step.
+
+        The page must carry the `playbook` label. Checked (`- [x]`) steps are
+        counted and skipped, never created — ticking a box before starting is
+        the author saying it is already done.
+
+        Every created issue cites the page with a `[[page:N]]` wikilink, so the
+        page's backlinks show the work it started and a `rollup` embed there
+        counts its progress, with no extra step from you.
+
+        A TEMPLATE IS NOT A LIVE MIRROR: this snapshots the page. Editing it
+        afterwards changes nothing already created, and starting it again makes
+        a second independent instantiation (which is what templates are for).
+        Pass idempotency_key if you need a retry to be safe."""
+        return client.start_playbook(
+            page_id,
+            project_id=project_id,
+            title=title,
+            idempotency_key=idempotency_key,
+        )
+
     @tool
     def my_desk() -> dict:
         """START HERE. Your desk: who you are, what is asked of you, what you

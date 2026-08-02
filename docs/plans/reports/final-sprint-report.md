@@ -179,3 +179,55 @@ gives F-4 (workspace search, another cross-module read) a legal home.
 | icarus mints `secrets.token_hex(16)` | CONFIRMED — but unused here, per the correction above |
 | Space create accepts `visibility` | **CORRECTED** — it does not; tests set it with raw SQL (`test_access_mentor_reads.py:65`) |
 | Backlinks rows carry `source_id` | **CORRECTED** — they resolve to `{kind, id, title}` |
+
+---
+
+## Stage F-2 — Playbooks: UNBLOCKED (option A) and shipped
+
+The owner chose **option A**: a `workflows/` composition layer. Implemented,
+and the parked artifacts are restored and deleted from the parking bay.
+
+### The layer
+
+`scripts/check_import_contracts.py` is now
+`LAYERS = (("web",), ("workflows",), ("aegis", "mentor"), ("core",))`, with the
+reason recorded beside it. Workflows may import both modules and core; nothing
+below may import workflows. `AGENTS.md`'s ownership table gained the row.
+
+**One correction found while wiring it:** the REST route could not stay in
+`mentor/api.py` either — `mentor` may not import `workflows` (it sits below).
+The transport for a workflow command belongs at the workflows layer, so
+`workflows/playbook_api.py` owns the route. It keeps the
+`/pages/{page_id}/start-playbook` path deliberately: the resource an operator
+names is still the page, and the URL follows the noun rather than the package.
+
+### Design (as built)
+
+- Marker: the `playbook` label, exactly as `page_templates.py` uses `template`.
+  No new table, no new concept owner.
+- Parser: `- [ ]` / `* [ ]` / `+ [ ]`, indented forms included; `- [x]` counted
+  and skipped; empty boxes skipped. The regex uses disjoint adjacent terms so a
+  long indent run cannot backtrack polynomially (`core/links.py` discipline),
+  pinned by a timing test.
+- Writes go through `issue_commands.create_issue` / `set_issue_parent`, in one
+  transaction, so a refusal partway leaves nothing behind (test asserts it).
+- Idempotency: **no domain table** — `/pages` is already an idempotency root,
+  proven by a test (same key → same parent, four issues not eight).
+- Error kinds: `not_found` (missing or unseen page — same answer),
+  `invalid` (unlabeled, archived, no unchecked steps, blank override title),
+  `capacity` → 429 (> 50 steps), `unauthorized` → 401.
+
+### Validation (Stage F-2)
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` | passed |
+| `mypy src/athena` | no issues, 168 source files |
+| `check_import_contracts.py` | passed, 168 modules (with the new layer) |
+| `check_write_ownership.py` / `check_imported_at_guards.py` | passed |
+| `pytest tests/test_playbooks.py` | **17 passed** |
+| `pytest tests/test_desk.py tests/test_mcp_client.py` | 265 passed (F-1 intact; `start_playbook` added to both MCP mutation-contract registries) |
+| Real-HTTP proof | `athena-serve`: desk → cursor advance → rewind 409 → create space/page → label → start-playbook 201 (2 children, 1 skipped) → backlinks on the page show all three issues → re-run makes a NEW instantiation → unlabeled page refused 422 → `athena-doctor` verified 18 chained events |
+
+Stages F-3 through F-7 remain. F-4 (workspace search) now has the layer it
+needs, which was the second reason to prefer option A.

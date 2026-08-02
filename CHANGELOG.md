@@ -66,6 +66,35 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Playbooks: docs that start work (Stage F-2).** A Mentor page carrying the
+  `playbook` label turns its markdown checklist into real work —
+  `POST /pages/{id}/start-playbook` (MCP `start_playbook`) creates one parent
+  issue plus one child per unchecked `- [ ]` step. Ticked steps are counted and
+  skipped, never created: a tick is the author saying it is already done.
+
+  This completes the loop between the modules. Embeds already let docs SHOW
+  work and run learnings let work WRITE BACK to docs; playbooks let docs START
+  work — and the tie-together costs no new machinery, because every created
+  issue cites the page with an ordinary `[[page:N]]` wikilink. The existing
+  indexer builds the backlinks, so the page shows the work it started and a
+  `kind: rollup` embed there counts its progress, with nothing in the playbook
+  command knowing what a link or an embed is.
+
+  A template is not a live mirror: instantiation SNAPSHOTS the page, later
+  edits change nothing already created, and starting again makes a second
+  independent instantiation. Retry-safety reuses the `Idempotency-Key` contract
+  `/pages` already honors rather than inventing a second replay mechanism.
+  Bounded at 50 steps (429 above), one transaction, and every write goes
+  through `issue_commands` so a playbook is not a second way to create an
+  issue. See [`docs/PLAYBOOKS.md`](docs/PLAYBOOKS.md).
+
+- **A `workflows/` layer, for commands that span both modules.** Aegis and
+  Mentor are peers — neither may import the other — and `web/` may not own
+  authorization, so a command that must read a page and write issues had no
+  legal home. `src/athena/workflows/` is that home, enforced by
+  `check_import_contracts.py`: workflows may import both modules and core, and
+  nothing below may import workflows. Playbooks are its first inhabitant.
+
 - **The Desk — one call, full orientation (Stage F-1).** An agent starting a
   session had to discover its own situation through five or six reads, none of
   which said what changed while it was away. `GET /desk` (MCP `my_desk()`) now

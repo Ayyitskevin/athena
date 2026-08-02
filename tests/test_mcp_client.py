@@ -87,6 +87,12 @@ class _RecordingClient:
 
 MUTATION_CASES = [
     (
+        "start_playbook",
+        "POST",
+        "/pages/5/start-playbook",
+        lambda c, k: c.start_playbook(5, idempotency_key=k),
+    ),
+    (
         "create_issue",
         "POST",
         "/issues",
@@ -430,6 +436,7 @@ OPTIONAL_IF_MATCH_TOOL_NAMES = {
 }
 IF_MATCH_TOOL_NAMES = REQUIRED_IF_MATCH_TOOL_NAMES | OPTIONAL_IF_MATCH_TOOL_NAMES
 MCP_MUTATION_CASES = [
+    ("start_playbook", {"page_id": 5}),
     ("create_issue", {"title": "x"}),
     ("update_issue", {"issue_id": 7}),
     (
