@@ -766,3 +766,39 @@ def test_the_issue_trail_renders_a_forge_event_as_a_link(tmp_path):
         # "reported" — the trail says this is something Athena was told.
         assert "reported" in html
         assert '<a href="https://github.com/o/r/commit/abc"' in html
+
+
+def test_forge_detail_url_matching_is_linear_and_keeps_punctuation_out(tmp_path):
+    """WHY: the URL regex ended with a character class that was a SUBSET of the
+    repeated one, so every character could be matched by either part and a long
+    run backtracked quadratically — a polynomial-ReDoS shape on text an outside
+    system supplied (a forge detail is stranger-controlled). One unambiguous
+    quantifier plus an explicit tail trim renders identically in linear time."""
+    import time
+
+    from athena.web.render import _URL_RE, render_forge_detail
+
+    hosts = ["forge.example"]
+    # Sentence punctuation stays OUT of the href but stays ON the page.
+    rendered = str(render_forge_detail("see https://forge.example/a/b.", hosts))
+    assert 'href="https://forge.example/a/b"' in rendered
+    assert rendered.endswith(".")
+    assert "/a/b." not in rendered.split('href="')[1].split('"')[0]
+    # A registered host inside parens links without swallowing the bracket.
+    wrapped = str(render_forge_detail("(https://forge.example/x)", hosts))
+    assert 'href="https://forge.example/x"' in wrapped and wrapped.endswith(")")
+    # An unregistered host is still inert text.
+    assert "<a" not in str(render_forge_detail("https://other.example/y", hosts))
+
+    # Linear, not quadratic: quadrupling the input must not square the time.
+    def scan(size: int) -> float:
+        payload = "https://" + "a" * size + " "
+        start = time.perf_counter()
+        _URL_RE.findall(payload)
+        return time.perf_counter() - start
+
+    scan(4000)  # warm up the pattern cache
+    small, large = scan(4000), scan(16000)
+    # 4x the input; quadratic would be ~16x. Generous bound so a loaded CI box
+    # cannot flake it, while still failing loudly on a re-introduced blowup.
+    assert large < max(small * 8, 0.05), (small, large)

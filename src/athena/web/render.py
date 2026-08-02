@@ -94,10 +94,18 @@ def render_plaintext(text: str | None) -> Markup:
     return Markup(str(escape(text)).replace("\n", "<br>"))
 
 
-#: A bare http(s) URL inside an activity detail. Kept narrow on purpose: the
-#: trailing character class excludes the punctuation that usually ends a sentence,
-#: so "see https://x/y." does not swallow the full stop into the href.
-_URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:)]")
+#: A bare http(s) URL inside an activity detail. ONE unambiguous quantifier on
+#: purpose: the earlier form ended with a second character class that was a
+#: SUBSET of the repeated one (`[^\s<>"']+[^\s<>"'.,;:)]`), so every character
+#: could be matched by either part and a long run backtracked quadratically —
+#: a polynomial-ReDoS shape on text an outside system supplied (forge details
+#: are stranger-controlled bytes; see FORGE.md). Sentence punctuation is now
+#: trimmed AFTER matching, which is the same rendering with linear scanning.
+_URL_RE = re.compile(r"https?://[^\s<>\"']+")
+
+#: Punctuation that ends a sentence rather than a URL, stripped from the tail of
+#: a match so "see https://x/y." does not put the full stop inside the href.
+_URL_TRAILING_PUNCTUATION = ".,;:)"
 
 
 def render_forge_detail(text: str | None, hosts: Collection[str]) -> Markup:
@@ -122,18 +130,24 @@ def render_forge_detail(text: str | None, hosts: Collection[str]) -> Markup:
         return Markup(escaped.replace("\n", "<br>"))
 
     def _link(match: re.Match[str]) -> str:
-        url = match.group(0)
+        matched = match.group(0)
+        url = matched.rstrip(_URL_TRAILING_PUNCTUATION)
+        # The trimmed tail is returned verbatim beside the link, so trimming can
+        # only ever move characters OUT of the href, never drop them from the page.
+        tail = matched[len(url) :]
+        if not url.partition("://")[2]:  # nothing left but the scheme
+            return matched
         try:
             host = urlparse(url).hostname
         except ValueError:  # a malformed authority is not a link
-            return url
+            return matched
         if not host or host.lower() not in allowed:
-            return url
+            return matched
         # noopener/noreferrer: the trail must not hand a third-party page a
         # window handle or the URL of the issue someone was reading.
         return (
             f'<a href="{url}" class="xref" rel="noopener noreferrer nofollow" '
-            f'target="_blank">{url}</a>'
+            f'target="_blank">{url}</a>{tail}'
         )
 
     return Markup(_URL_RE.sub(_link, escaped).replace("\n", "<br>"))
