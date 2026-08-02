@@ -8,6 +8,7 @@ closed laptop, images that display, and a way out that needs no Athena.
 
 - [Preview](#preview)
 - [Drafts](#drafts)
+- [Two people, one page](#two-people-one-page)
 - [Inline images](#inline-images)
 - [HTML export](#html-export)
 - [Limits, stated](#limits-stated)
@@ -62,6 +63,45 @@ means a draft can fall behind: if someone else saved while you were typing, the
 editor says so and warns that restoring will drop their changes when you save.
 Athena will not resolve that for you — it will not let it happen silently
 either.
+
+## Two people, one page
+
+Two browsers can open the same page. Until recently the second save simply won,
+and the first author's work vanished with no notice and no trace.
+
+The edit form now carries the page's ETag as it was **rendered**, and the save
+compares it inside the same write lock the edit runs in — so two editors holding
+the same tag cannot both pass. The loser's save is refused with a `409`, and the
+refusal is where the design actually lives:
+
+- **Nothing is overwritten.** That is what the refusal means.
+- **Nothing is merged.** Athena will not claim to have resolved something a
+  person has to read to resolve. There is no three-way merge, no conflict
+  markers, and no "we combined these for you".
+- **Nothing you typed is thrown away.** Your text is written to your own draft.
+  A bare `412` page would leave your work living only in a browser buffer, and
+  "it is still in the form" stops being true the moment you navigate.
+
+The form then re-renders showing **their** version — the page as it now stands —
+with **your** version displayed beside it, and one click (`Restore draft`) to put
+yours back in the fields. You reconcile; the tool reports.
+
+Your draft is recorded against the baseline you were editing *from*, not the
+page's new tag, so it stays marked stale and the warning survives you closing the
+tab. And it is *your* draft: drafts are owner-scoped personal state, so a
+conflict never publishes one editor's unsaved text into another's editor.
+
+Two deliberate softenings, both because the hidden field is a concurrency aid and
+not an authorization check:
+
+- a form rendered **before this field existed** (a tab left open across the
+  upgrade) sends no tag, and keeps the old last-write-wins behavior rather than
+  being refused over something its author cannot see or fix;
+- a **malformed** tag is treated as no precondition at all, rather than becoming a
+  wall between an author and their own page.
+
+REST and MCP are unchanged: they have always supported `If-Match`, and an agent
+that omits it has always been able to overwrite. This closes the browser gap.
 
 ## Inline images
 

@@ -1429,6 +1429,21 @@ footer {
     margin-bottom: 1rem;
 }
 
+/* The losing editor's own text, shown beside the version that won. Scrolls
+   rather than stretching the page: it is a document, and it may be long. */
+.conflict-text {
+    background: #fffdf5;
+    border: 1px solid #ffe69c;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0 0;
+    max-height: 18rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.875rem;
+}
+
 .blocked-warning .confirm-done {
     display: inline;
     margin-left: 0.5rem;

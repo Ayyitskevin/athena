@@ -64,6 +64,35 @@ the newest one and for what tagging still requires.
   local administrator bootstrap completes, preventing a default-role SSO member
   from consuming the only bootstrap opening.
 
+### Fixed
+
+- **A browser could silently overwrite another browser's page edit (Stage F-6).**
+  The Mentor edit form carried no precondition, so when two people edited one
+  page the second save simply won and the first author's work vanished with no
+  notice and no trace. The form now carries the page's ETag as rendered, and
+  `page_commands.edit_page` compares it inside the same write lock the edit runs
+  in — the optimistic lock REST and MCP have always had.
+
+  The refusal is where the design lives. **Nothing is overwritten** (that is what
+  the refusal means), **nothing is merged** (Athena will not claim to have
+  resolved something a person has to read to resolve), and **nothing the author
+  typed is thrown away** — their text is written to their own draft, because a
+  bare 412 leaves work living only in a browser buffer and "it is still in the
+  form" stops being true the moment they navigate. The form re-renders with
+  *their* version in the fields, *yours* displayed beside it, and one click to
+  put yours back.
+
+  The draft is recorded against the baseline the author was editing **from**, not
+  the page's new tag, so it stays marked stale and the warning survives a closed
+  tab — and it is theirs alone, since drafts are owner-scoped personal state.
+
+  Two deliberate softenings, both because the hidden field is a concurrency aid
+  rather than an authorization check: a form rendered before the field existed
+  sends no tag and keeps the old behavior instead of being refused over something
+  its author cannot see, and a malformed tag is treated as no precondition rather
+  than becoming a wall between an author and their own page. See
+  [`docs/EDITING.md`](docs/EDITING.md#two-people-one-page).
+
 ### Added
 
 - **The Field Guide: the workspace documents itself (Stage F-5).**
