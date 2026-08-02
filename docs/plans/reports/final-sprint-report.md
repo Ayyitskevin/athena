@@ -325,5 +325,13 @@ is not a defensible reading of "the watch dies with the page".
 | `check_import_contracts.py` / `check_write_ownership.py` / `check_imported_at_guards.py` | passed |
 | `pytest tests/test_space_subscriptions.py` | **17 passed** |
 | `pytest` on the impacted suites (notifications, page delete/move, mentor web, MCP client, access) | 313 passed |
-| Full coverage-gated suite | run before the push (see the stage commit message for the counts) |
+| Full coverage-gated suite | **3,275 passed**, line 93.07 / branch 83.57 / combined 90.91 — all three floors cleared, excluded lines still exactly 2 |
 | Real-HTTP proof | two identities, two bearer tokens, one `athena-serve`: watch space 204 → admin creates a page → subscriber unread 1 → edit + comment → inbox `{page_created, page_edited, page_commented}` → page in ANOTHER space changes nothing → subscriber's OWN write changes nothing → delete in the other space changes nothing → delete the watched page: member's inbox goes empty (gate fails closed), a watching admin renders `page_deleted` → unwatch holds the count while a new page is created → `GET /desk` reports the same unread count → garbage kind 422 → `athena-doctor` verified 16 chained events |
+
+**A process note worth keeping:** the first full-suite run reported 175 failures
+and was a false alarm — `scripts/coverage.sh` defaults to `.venv/bin/python`,
+which does not have the `mcp` extra installed, so every MCP test failed on
+`ModuleNotFoundError`. The real gate is
+`ATHENA_PYTHON=.venv312/bin/python scripts/coverage.sh`. Recorded here because
+"the suite is red" and "the suite cannot import an optional extra" look
+identical in a summary line, and only one of them is a defect.
