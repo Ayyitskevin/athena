@@ -90,6 +90,19 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
             f"a space with key {GUIDE_SPACE_KEY} already exists — "
             "delete it first if you want a fresh field guide"
         )
+    # Read every page BEFORE creating anything.
+    #
+    # Seeding is nine separate committed writes, and the refusal above is what
+    # makes re-running safe — but together they had a bad interaction: a failure
+    # on page five left a four-page space that the retry then refused, so a
+    # missing content file wedged the operator into deleting a space by hand to
+    # recover. Loading first moves the one realistic failure (package data that
+    # did not ship) to before the first write, where it costs nothing.
+    #
+    # This is not a transaction. A database failure partway through still leaves
+    # a partial guide; the claim is only that the failure this code can actually
+    # cause no longer does.
+    bodies = {filename: page_body(filename) for filename, _, _ in PAGES}
     space = space_commands.create_space(
         conn,
         actor_id=author_id,
@@ -110,7 +123,7 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
             actor_id=author_id,
             space_id=space["id"],
             title=title,
-            body=page_body(filename),
+            body=bodies[filename],
         )
         if is_playbook:
             page_commands.attach_page_label(

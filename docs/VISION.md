@@ -14,6 +14,12 @@ which one human safely **delegates** work to agents, **watches** them, **steps i
 when needed, and **trusts** the result — because everything an agent does is
 attributable and reversible.
 
+The agent's side of that loop now has a front door and a way back: the **desk**
+answers "who am I, what is asked of me, and what changed since I looked" in one
+bounded read, and **playbooks** let a document start the work it describes — so
+the two modules feed each other in both directions rather than sitting beside
+one another.
+
 ## Who is at the helm
 
 The **solo operator** (or a 2–5 person team), running agents *alongside* themselves.

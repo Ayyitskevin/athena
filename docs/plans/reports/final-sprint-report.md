@@ -629,3 +629,112 @@ proving nothing: extracting the ETag from the form without unescaping entities
 posted a mangled tag, which quietly took the malformed-precondition path and
 "succeeded"; and asserting notice wording against raw HTML failed on an
 apostrophe and a line wrap. Both now normalize the way a browser does.
+
+---
+
+## Stage F-7 — Adversarial review, composed proof, ship
+
+### The composed ecosystem proof (the sprint's actual claim)
+
+One script, one agent's working session, each stage's output feeding the next.
+If the stages were really separate features, it could not have been written:
+
+```
+ 1. operator seeds the field guide OFFLINE, before the server is running
+ 2. agent orients with one call: cursor=None, since=None, unread=0
+ 3. agent acknowledges where it starts: cursor -> #2
+ 4. agent finds the guide as an ordinary space: 9 pages in GUIDE
+ 5. agent watches the space as shared memory
+ 6. operator edits the handbook -> agent's inbox: ['page_edited']
+ 7. agent starts the guide's OWN playbook: parent #1, 4 children, 1 skipped
+ 8. the page now shows the work it started: 5 issues link back to it
+ 9. workspace search 'is:open test suite' -> finds those very children
+10. the desk reports the session's own work: 20 events since the cursor
+11. agent drains the cursor (rewind refused 409) -> since=0
+12. two browsers on the handbook: second save refused 409, nothing lost
+13. activity chain: ok (26 entries verified)
+```
+
+Step 9 is the one worth staring at: the search that finds the work is asked in
+the *work query grammar*, against issues that a *document* created, discovered
+through a space the agent *subscribed* to, and the desk then reports those very
+events as what changed. Five stages, one sentence.
+
+**Two of my own assertions were wrong before the code was**, both cases of the
+contract being more careful than I was: `desk["cursor"]` is `null` when unset —
+not a dict with a null field — and `events_since_cursor` is `null` until a
+cursor exists, because "never looked" is not "nothing new". The proof had to
+adopt the loop's real shape (acknowledge where you start, work, then ask what
+changed) before it could assert anything.
+
+### Findings
+
+**CONFIRMED and FIXED — a partial seed wedged the operator.** Seeding the field
+guide is nine committed writes, and re-running refuses if the space exists. Each
+rule is right; together they were not. A failure on page five (missing package
+data) left a four-page space that the retry then refused, so recovery required
+deleting a space by hand. Verified by injecting the failure, observing the
+four-page space and the refused retry. Fixed by reading all content **before**
+the first write, so the one failure this code can actually cause creates nothing.
+Regression test: `test_missing_content_wedges_nothing`. The comment states the
+honest bound — this is not a transaction, and a database failure partway through
+still leaves a partial guide.
+
+**REFUTED, each verified against the tree rather than argued:**
+
+| Suspicion | Verdict |
+|---|---|
+| A losing editor is **charged budget** for a save that never happened (`edit_page` charges before checking the precondition) | Refuted — the charge rolls back with the refusal. Measured: `action_used` 1 before, 1 after a `precondition_failed` |
+| A **private-space watcher** sees page titles in their inbox | Refuted — notifications are written ungated and the inbox gates at read; a member watching a private space reads `[]` |
+| **Workspace search** leaks a private space's pages or comments to an outsider | Refuted — all three groups empty for a non-member, on both the text and grammar paths |
+| The **atom echo** in the search response discloses what exists | Refuted — it echoes only what the caller typed |
+| `limit_per_kind` is only bounded at the route | Refuted — the command refuses 0 and 26 itself |
+| A watch on a **nonexistent space** breaks the fan-out | Refuted — delivers nothing, raises nothing |
+| **Drafts dangle** after a page is deleted | Refuted — `page_drafts` is `ON DELETE CASCADE` (0071) |
+
+### Residual risks, named rather than resolved
+
+1. **The issue edit form still has no If-Match.** The plan said "pages first,
+   issues second"; only pages shipped. Two people editing one *issue* body in
+   browsers can still overwrite each other. The pattern is now established and
+   the second application is mechanical — but it is not done, and this is the
+   honest place to say so.
+2. **A deleted page's notification renders only for an admin** (F-3). The
+   access model proves a page event's visibility by looking the page up, and a
+   purged row cannot prove it. Fixing it needs an event-time visibility envelope
+   for page targets, which is an access-model change.
+3. **Seeding the guide is not transactional.** A database failure mid-seed still
+   leaves a partial guide requiring manual cleanup.
+4. **The review's scope is bounded.** This was a focused adversarial pass over
+   the surfaces this sprint added — visibility, bounds, transactionality, and the
+   new concurrency path — not an exhaustive six-lens sweep of the full diff. Nine
+   probes were run and recorded; one found a real defect. Claiming more coverage
+   than that would be the exact failure this repository's doctrine exists to
+   prevent.
+
+### Final gate
+
+| Check | Result |
+|---|---|
+| `scripts/smoke_app.py` | passed — installed launcher bootstrapped, stopped, restarted without bootstrap or actor-header trust, served packaged assets, authenticated by browser session, stopped cleanly |
+| Composed real-HTTP ecosystem proof | **passed**, 13 steps, `athena-doctor` verified 26 chained events |
+| Full coverage-gated suite | **3,319 passed**, line 92.97 / branch 83.46 / combined 90.82 — all floors cleared, excluded lines still exactly 2 |
+
+### The sprint, closed
+
+F-1 through F-7 are shipped. Four PRs, each gated and each merged: #327 (F-1,
+F-2 + the `workflows` layer), #328 (F-3, F-4), #329 (F-5, F-6), and this one
+(F-7). Two items are explicitly **not** closed and are recorded above as
+residual risks, not as omissions: If-Match on the *issue* edit form, and the
+event-time visibility envelope that would let a non-admin read a deleted page's
+notification.
+
+**The lesson this sprint kept teaching, stated once:** every defect that
+mattered was found by *running* something, never by reading it. The real-HTTP
+proof refuted a claim already written into the docs; the full suite caught a
+one-line import that broke offline recovery; CodeQL caught two places where new
+code differed subtly from the code beside it; a failing test caught wikilinks
+that silently pointed nowhere; and the F-7 probes found a wedge that two
+individually-correct rules created together. In every case the targeted tests
+were thorough and told me nothing — because a change's blast radius is rarely
+where its diff is.
