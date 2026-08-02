@@ -64,6 +64,25 @@ the newest one and for what tagging still requires.
   local administrator bootstrap completes, preventing a default-role SSO member
   from consuming the only bootstrap opening.
 
+### Added
+
+- **`athena-field-guide --check` reports whether a seeded guide has drifted.**
+  The guide ships as package data and is seeded once, and re-seeding refuses so
+  an operator's edits are never overwritten — which meant an upgraded install
+  silently kept a guide describing an older product, with no signal and no path.
+
+  The check keeps **two facts apart**: whether *Athena's* guide changed since you
+  seeded (shipped text vs the seeded text) and whether *you* edited a page
+  (current text vs the seeded text). Collapsing them would let the tool call an
+  operator's own writing stale. A page that is both is reported as both — the
+  case where an automatic update would destroy work.
+
+  Both are **derived at read time with no new table and no migration**:
+  `update_page` snapshots the superseded revision into `page_versions` and numbers
+  them from 1 without pruning, so version 1 is the seeded text, and a page with no
+  versions has never been edited. It reports only — it never rewrites a page, and
+  exits 0 even when drifted, because drift is information rather than a failure.
+
 ### Fixed
 
 - **A browser could silently overwrite another browser's ISSUE edit.** The page

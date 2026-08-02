@@ -20,7 +20,7 @@ import pytest
 from athena import guide
 from athena.core import db, links
 from athena.main import create_app
-from athena.mentor import pages, spaces
+from athena.mentor import page_commands, pages, spaces
 
 H1 = {"X-Athena-Actor": "1"}
 
@@ -248,3 +248,121 @@ def test_the_example_playbook_actually_starts_work(client):
     linked = {row["id"] for row in backlinks if row["kind"] == "issue"}
     assert body["parent"]["id"] in linked
     assert all(child["id"] in linked for child in body["children"])
+
+
+# --- staleness: reported, never repaired -------------------------------------
+
+
+def _shipped_elsewhere(monkeypatch, tmp_path, *, changed: dict[str, str]):
+    """Point the guide at a copy of its content with some files rewritten — the
+    stand-in for 'this install ships a newer guide than the one you seeded'."""
+    root = tmp_path / "shipped"
+    root.mkdir()
+    for filename, _, _ in guide.PAGES:
+        (root / filename).write_text(
+            changed.get(filename, guide.page_body(filename)), encoding="utf-8"
+        )
+    monkeypatch.setattr(guide, "CONTENT_DIR", root)
+
+
+def test_a_fresh_seed_reports_every_page_current(tmp_path):
+    conn = _conn(tmp_path / "fresh.db")
+    guide.seed_field_guide(conn, author_id=1)
+    status = guide.guide_status(conn)
+    assert status["counts"] == {guide.STATUS_CURRENT: len(guide.PAGES)}
+    assert status["in_sync"] is True
+
+
+def test_an_operator_edit_is_reported_as_theirs_not_as_staleness(tmp_path):
+    # WHY: the distinction the whole report exists to make. Calling someone's own
+    # writing "outdated" would be the tool misreading its user.
+    conn = _conn(tmp_path / "edited.db")
+    result = guide.seed_field_guide(conn, author_id=1)
+    target = result["pages"][0]
+    page_commands.edit_page(conn, actor_id=1, page_id=target["id"], body="my own notes")
+    status = guide.guide_status(conn)
+    assert status["counts"][guide.STATUS_EDITED] == 1
+    assert status["counts"][guide.STATUS_CURRENT] == len(guide.PAGES) - 1
+    # Athena's content did not change, so the guide is still in sync with the wheel.
+    assert status["in_sync"] is True
+
+
+def test_shipped_content_moving_on_is_reported_as_outdated(tmp_path, monkeypatch):
+    conn = _conn(tmp_path / "outdated.db")
+    guide.seed_field_guide(conn, author_id=1)
+    _shipped_elsewhere(
+        monkeypatch,
+        tmp_path,
+        changed={guide.PAGES[2][0]: "# Rewritten upstream\n\nnew guidance.\n"},
+    )
+    status = guide.guide_status(conn)
+    assert status["counts"][guide.STATUS_OUTDATED] == 1
+    assert status["in_sync"] is False
+    outdated = [p for p in status["pages"] if p["status"] == guide.STATUS_OUTDATED]
+    assert outdated[0]["title"] == guide.PAGES[2][1]
+
+
+def test_outdated_and_edited_are_reported_together_not_merged(tmp_path, monkeypatch):
+    # WHY: the case where an auto-update would destroy work. It has to be visible
+    # as BOTH facts, not collapsed into whichever one the tool prefers.
+    conn = _conn(tmp_path / "both.db")
+    result = guide.seed_field_guide(conn, author_id=1)
+    target = next(p for p in result["pages"] if p["title"] == guide.PAGES[2][1])
+    page_commands.edit_page(
+        conn, actor_id=1, page_id=target["id"], body="my own version"
+    )
+    _shipped_elsewhere(
+        monkeypatch,
+        tmp_path,
+        changed={guide.PAGES[2][0]: "# Rewritten upstream\n\nnew guidance.\n"},
+    )
+    status = guide.guide_status(conn)
+    assert status["counts"][guide.STATUS_OUTDATED_AND_EDITED] == 1
+    assert guide.STATUS_OUTDATED not in status["counts"]
+    assert guide.STATUS_EDITED not in status["counts"]
+
+
+def test_a_deleted_page_reads_as_missing(tmp_path):
+    conn = _conn(tmp_path / "gone.db")
+    result = guide.seed_field_guide(conn, author_id=1)
+    target = result["pages"][1]
+    page_commands.delete_page(
+        conn, actor_id=1, page_id=target["id"], title=target["title"]
+    )
+    status = guide.guide_status(conn)
+    assert status["counts"][guide.STATUS_MISSING] == 1
+    assert status["in_sync"] is False
+
+
+def test_checking_an_unseeded_database_is_a_named_refusal(tmp_path):
+    conn = _conn(tmp_path / "none.db")
+    with pytest.raises(guide.FieldGuideError) as caught:
+        guide.guide_status(conn)
+    assert "nothing has been seeded" in str(caught.value)
+
+
+def test_the_report_changes_nothing(tmp_path, monkeypatch):
+    # WHY: "report, do not repair" is the contract. Asserted against the rows, not
+    # inferred from the absence of a write call.
+    conn = _conn(tmp_path / "readonly.db")
+    result = guide.seed_field_guide(conn, author_id=1)
+    page_commands.edit_page(
+        conn, actor_id=1, page_id=result["pages"][0]["id"], body="mine"
+    )
+    _shipped_elsewhere(
+        monkeypatch,
+        tmp_path,
+        changed={guide.PAGES[1][0]: "# Rewritten upstream\n"},
+    )
+    space = spaces.get_space_by_key(conn, guide.GUIDE_SPACE_KEY)
+    before = {p["id"]: p["body"] for p in pages.list_pages_in_space(conn, space["id"])}
+    events_before = conn.execute("SELECT COUNT(*) AS n FROM activity").fetchone()["n"]
+
+    guide.guide_status(conn)
+
+    after = {p["id"]: p["body"] for p in pages.list_pages_in_space(conn, space["id"])}
+    assert after == before
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM activity").fetchone()["n"]
+        == events_before
+    )

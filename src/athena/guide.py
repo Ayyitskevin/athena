@@ -20,8 +20,9 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
+from athena import __version__
 from athena.core import labels, links
-from athena.mentor import page_commands, space_commands, spaces
+from athena.mentor import page_commands, pages, space_commands, spaces
 
 CONTENT_DIR = Path(__file__).parent / "field_guide"
 
@@ -157,4 +158,93 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
         "pages": created,
         "page_count": len(created),
         "author_id": author_id,
+    }
+
+
+#: What a seeded page can be, relative to the content this install ships.
+#: Derived at read time from the page's own history — no stored claim, no new
+#: table, and nothing that can drift out of agreement with the pages themselves.
+STATUS_CURRENT = "current"
+STATUS_OUTDATED = "outdated"
+STATUS_EDITED = "edited"
+STATUS_OUTDATED_AND_EDITED = "outdated_and_edited"
+STATUS_MISSING = "missing"
+
+
+def _seeded_body(conn: sqlite3.Connection, page: dict) -> str:
+    """The text this page held when the guide was seeded.
+
+    Derived, not stored. ``update_page`` snapshots the SUPERSEDED revision into
+    ``page_versions`` on every edit and numbers them from 1 without pruning, so
+    version 1 is the original. A page with no versions has never been edited, so
+    its current body is still the seeded one.
+    """
+    versions = pages.list_page_versions(conn, page["id"])
+    if not versions:
+        return page["body"] or ""
+    first = min(versions, key=lambda row: row["version"])
+    return first["body"] or ""
+
+
+def guide_status(conn: sqlite3.Connection) -> dict:
+    """Report how this install's seeded guide compares to the content it ships.
+
+    Answers two questions per page, and keeps them apart — which is the whole
+    point, because conflating them would let a report call an operator's own
+    writing "stale":
+
+      * did **Athena's** guide change since this was seeded? (shipped text vs the
+        seeded text)
+      * did **the operator** change the page? (current text vs the seeded text)
+
+    Reports only. Nothing here writes, and nothing offers to overwrite: an
+    operator who has edited these pages owns them, and a guide that silently
+    reseeded itself would be a tool arguing with its user.
+    """
+    space = spaces.get_space_by_key(conn, GUIDE_SPACE_KEY)
+    if space is None:
+        raise FieldGuideError(
+            f"no {GUIDE_SPACE_KEY} space in this database — nothing has been seeded"
+        )
+    live = {
+        page["title"]: page
+        for page in pages.list_pages_in_space(conn, space["id"], include_archived=True)
+    }
+    rows: list[dict] = []
+    for filename, title, _ in PAGES:
+        page = live.get(title)
+        if page is None:
+            # Either deleted, or added to the guide after this install seeded.
+            rows.append({"title": title, "file": filename, "status": STATUS_MISSING})
+            continue
+        shipped = page_body(filename)
+        seeded = _seeded_body(conn, page)
+        current = page["body"] or ""
+        outdated = shipped != seeded
+        edited = current != seeded
+        if outdated and edited:
+            status = STATUS_OUTDATED_AND_EDITED
+        elif outdated:
+            status = STATUS_OUTDATED
+        elif edited:
+            status = STATUS_EDITED
+        else:
+            status = STATUS_CURRENT
+        rows.append(
+            {"title": title, "file": filename, "status": status, "page_id": page["id"]}
+        )
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    return {
+        "space": space,
+        "athena_version": __version__,
+        "pages": rows,
+        "counts": counts,
+        # True when nothing this install ships differs from what was seeded.
+        "in_sync": not any(
+            row["status"]
+            in (STATUS_OUTDATED, STATUS_OUTDATED_AND_EDITED, STATUS_MISSING)
+            for row in rows
+        ),
     }

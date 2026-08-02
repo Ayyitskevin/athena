@@ -1200,6 +1200,14 @@ def field_guide_main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "report how the seeded guide compares to the content this install "
+            "ships, and change nothing"
+        ),
+    )
+    parser.add_argument(
         "--as",
         dest="author_email",
         help=(
@@ -1215,6 +1223,8 @@ def field_guide_main(argv: list[str] | None = None) -> int:
 
     conn = db.connect(args.db_path)
     try:
+        if args.check:
+            return _print_field_guide_status(guide.guide_status(conn))
         author = _field_guide_author(conn, args.author_email)
         seeded = guide.seed_field_guide(conn, author_id=author["id"])
     except (guide.FieldGuideError, sqlite3.Error, ValueError) as exc:
@@ -1229,6 +1239,54 @@ def field_guide_main(argv: list[str] | None = None) -> int:
     print(f"  Space:    {seeded['space']['key']} — {seeded['space']['name']}")
     print(f"  Pages:    {seeded['page_count']}")
     print(f"  Authored: {author['email']} (user {author['id']})")
+    return 0
+
+
+#: How each status reads to an operator. The wording carries the distinction the
+#: report exists to make: "outdated" is about Athena's content, "edited" is about
+#: theirs, and the two are never merged into one number.
+_GUIDE_STATUS_LABELS = {
+    "current": "current",
+    "outdated": "outdated — Athena's guide changed since you seeded",
+    "edited": "edited by you — left alone",
+    "outdated_and_edited": "outdated AND edited by you — read both before changing",
+    "missing": "not present — deleted, or added to the guide after you seeded",
+}
+
+
+def _print_field_guide_status(status: dict) -> int:
+    """Render the comparison. Reports only: this command never rewrites a page.
+
+    Returns 0 whether or not the guide is current — drift is information, not a
+    failure, and an operator scripting this should not have to treat "your guide
+    is a version behind" as an error.
+    """
+    space = status["space"]
+    print(f"Field guide: {space['key']} — {space['name']}")
+    print(f"  Athena version: {status['athena_version']}")
+    for key, label in _GUIDE_STATUS_LABELS.items():
+        count = status["counts"].get(key, 0)
+        if count:
+            print(f"  {count:>2}  {label}")
+    drifted = [
+        row
+        for row in status["pages"]
+        if row["status"] in ("outdated", "outdated_and_edited", "missing")
+    ]
+    if drifted:
+        print()
+        print("Pages where this install ships something different:")
+        for row in drifted:
+            print(f"  - {row['title']}  [{row['status']}]")
+        print()
+        print(
+            "Nothing was changed. To take the shipped text for a page, read it in "
+            "the wheel and edit the page yourself — these pages are yours now, and "
+            "reseeding would overwrite work this command cannot see the value of."
+        )
+    else:
+        print()
+        print("Every page matches the content this install ships.")
     return 0
 
 

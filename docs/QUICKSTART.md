@@ -101,6 +101,18 @@ Re-running refuses rather than overwriting: once you have edited these, they are
 yours. Pass `--as you@example.com` to choose the author; otherwise the earliest
 administrator is used, and the command prints who it attributed the pages to.
 
+Later, when you upgrade Athena, ask whether the guide it ships has moved on:
+
+```bash
+athena-field-guide ~/athena-data/athena.db --check
+```
+
+It reports and changes nothing. It keeps two facts apart on purpose — whether
+**Athena's** guide changed since you seeded, and whether **you** edited a page —
+because collapsing them would let a tool call your own writing stale. A page that
+is both outdated and edited is named as both, since that is exactly the case
+where an automatic update would destroy work.
+
 (`athena-demo --field-guide` seeds the same content into a throwaway demo.)
 
 ### 4. Onboard your first agent
