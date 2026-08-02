@@ -36,7 +36,9 @@ tracking, cross-links, and an append-only activity trail in one app.
 - **Space subscriptions** — watch a space and hear every page event inside it, so
   a fleet can share memory without polling a page tree.
 - **The Field Guide** — `athena-field-guide <db>` seeds nine pages addressed to
-  agents, as ordinary pages in an ordinary space.
+  agents, as ordinary pages in an ordinary space. `--check` later reports whether
+  the guide this install ships has moved on, keeping "Athena changed it" and "you
+  edited it" apart, and repairs nothing.
 
 ### For the operator
 
@@ -48,9 +50,11 @@ tracking, cross-links, and an append-only activity trail in one app.
 - **Run controls** — steer, request cancel, or request a fresh-context handoff
   against one live run; the agent acknowledges and settles, and an unanswered
   control reads as expired.
-- **Two people can edit one page safely** — a browser save carries the page's
-  ETag, and the second save is refused rather than silently winning. Nothing is
-  overwritten, nothing is merged, and the loser's text is kept as their draft.
+- **Two people can edit one page — or one issue — safely.** A browser save
+  carries the record's ETag, and the second save is refused rather than silently
+  winning. Nothing is overwritten and nothing is merged. On a page the loser's
+  text is kept as their draft; on an issue it stays in the form, and the notice
+  says so plainly, because issues have no draft store to keep it in.
 
 ### What this release does not claim
 
@@ -82,7 +86,7 @@ Full changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 | Check | Result |
 |---|---|
-| Full coverage-gated suite | 3,319 passed; line 92.97 / branch 83.46 / combined 90.82; excluded lines exactly 2 |
+| Full coverage-gated suite | 3,343 passed; line 92.89 / branch 83.36 / combined 90.73; excluded lines exactly 2 |
 | `ruff check` / `ruff format --check` / `mypy` (171 modules) | clean |
 | `check_import_contracts` / `check_write_ownership` / `check_imported_at_guards` | passed |
 | `scripts/smoke_app.py` | passed |
@@ -116,9 +120,11 @@ from scratch — edit it, or discard it and write your own.
 >    accepts stranger-controlled bytes, has deliberately no replay window, and
 >    stores event-source secrets in plaintext because HMAC needs the shared
 >    value.
-> 4. **Authorization still in some transports** — mentor page and page-comment,
->    issue-comment, and event-source commands take a bare actor id and trust the
->    route's guards (tracked in `COMMAND_MIGRATION.md`).
+> 4. **Authorization still in some transports** — mentor page, mentor
+>    page-comment, and event-source commands take a bare actor id and trust the
+>    route's guards (tracked in `COMMAND_MIGRATION.md`). Issue-comment commands
+>    no longer do: they take a resolved actor and check visibility and ownership
+>    inside their own write transaction.
 > 5. **One executor implementation** — the dispatch contract has exactly one
 >    counterparty, written alongside it.
 > 6. **Attachment recovery detects but does not repair** divergence; recovery
@@ -130,12 +136,14 @@ from scratch — edit it, or discard it and write your own.
 > claims already match this list, and any of it changing is a new evidence run,
 > not an amendment to this comment.
 
-**Two risks added since #324 was written**, from the Final Sprint's own review —
-include them or not, but do not let them go unrecorded:
+**One risk added since #324 was written**, from the Final Sprint's own review —
+include it or not, but do not let it go unrecorded:
 
-> 8. **The issue edit form has no If-Match.** Two people editing one issue body
->    in browsers can still overwrite each other. Page editing was fixed; issues
->    were not.
-> 9. **A deleted page's notification renders only for an admin.** The access
+> 8. **A deleted page's notification renders only for an admin.** The access
 >    model proves a page event's visibility by looking the page up, and a purged
 >    row cannot prove it, so the gate fails closed for everyone else.
+
+*(An earlier version of this draft also listed "the issue edit form has no
+If-Match". That was fixed before tagging, so it is gone rather than accepted — a
+risk acceptance that lists repaired risks overstates the danger as surely as
+omitting a live one understates it.)*
