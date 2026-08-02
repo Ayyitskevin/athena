@@ -15,6 +15,7 @@ row, the command owns the policy + event).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import secrets
 import sqlite3
 from typing import TypeGuard
@@ -57,6 +58,49 @@ def get_lease(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     still present until the next claim overwrites it, but no longer holding the issue."""
     row = conn.execute(f"{_SELECT} WHERE l.issue_id = ?", (issue_id,)).fetchone()
     return _row_to_lease(row) if row is not None else None
+
+
+def leases_held_by(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    limit: int = 20,
+    now: datetime | None = None,
+) -> list[dict]:
+    """One holder's leases, most recently claimed first — "what am I holding?".
+
+    The self-read twin of ``get_lease``: that answers "who holds this issue",
+    this answers "which issues do I hold". Both derive ``active`` from
+    ``expires_at`` against the clock rather than a stored flag, so an expired
+    lease reads as expired the instant it lapses without anything having run.
+    ``now`` is injectable for the same reason the worker staleness clock is.
+
+    EXPIRED ROWS ARE INCLUDED on purpose. A holder whose lease just lapsed
+    still needs to see it — that is the fact they must act on (renew, or accept
+    it is gone) — and hiding it would make a silent loss look like work that
+    never existed. The ``active`` flag is the caller's to read.
+    """
+    bounded = max(1, min(int(limit), 100))
+    stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
+    rows = conn.execute(
+        "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
+        "l.claimed_at, l.expires_at, l.generation, "
+        "(l.expires_at > ?) AS active "
+        "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
+        "WHERE l.holder_id = ? ORDER BY l.claimed_at DESC, l.issue_id DESC LIMIT ?",
+        (stamp, holder_id, bounded),
+    ).fetchall()
+    return [_row_to_lease(row) for row in rows]
+
+
+def count_leases_held_by(conn: sqlite3.Connection, *, holder_id: int) -> int:
+    """How many leases this holder has rows for, so a clipped list can say so."""
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM issue_leases WHERE holder_id = ?",
+            (holder_id,),
+        ).fetchone()["n"]
+    )
 
 
 def upsert_lease(

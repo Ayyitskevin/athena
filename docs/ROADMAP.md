@@ -22,6 +22,10 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   possession-generation fencing, and typed blocker handoffs. The current holder
   can complete, yield, or decline work without a human performing every final
   transition.
+- **Work** begins with one call: the Desk (`GET /desk`, MCP `my_desk()`) hands
+  an agent its identity, the asks addressed to it, the work it holds, and what
+  changed since its durable cursor — composed from the surfaces that own each
+  lane, never a second source of truth (see [`DESK.md`](DESK.md)).
 - **Work** over MCP carries run and parent/fork identity on writes. Agents can
   inspect effective identity and scopes, delegation context, replay artifacts,
   active-work supervision, and visibility-safe fleet metrics through MCP.

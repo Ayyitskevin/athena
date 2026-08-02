@@ -808,6 +808,42 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.list_security_events(verb=verb, since=since, limit=limit)
 
     @tool
+    def my_desk() -> dict:
+        """START HERE. Your desk: who you are, what is asked of you, what you
+        are holding, and what changed since you last looked.
+
+        Replaces the whoami + delegations + controls + notifications + budget
+        round trip with one bounded read. Lanes: `identity` (role, scopes,
+        budget, action kinds needing approval), `asks` (open run controls
+        addressed to you, kill requests on your workers, claim handoffs you
+        have not acknowledged), `work` (your delegation inbox, the leases you
+        hold — `active` is the clock's verdict at THIS read, not a stored
+        state), `signals` (unread notifications, and how many visible events
+        sit past your cursor).
+
+        The loop: `my_desk()` -> act -> drain `list_events(after=...)` from
+        your cursor -> `advance_desk_cursor(after_id=<last id you handled>)`.
+
+        The desk RESERVES NOTHING. It is a snapshot, not a lock, a lease, or a
+        queue: seeing work here does not claim it, and two agents can read the
+        same contents at once. Claim work through the delegation/lease tools."""
+        return client.my_desk()
+
+    @mutation_tool
+    def advance_desk_cursor(after_id: int) -> dict:
+        """Record that you have handled every visible event up to `after_id`.
+
+        Your cursor is personal bookkeeping — it emits no activity event and
+        tells nobody else anything. It moves FORWARD only: acknowledging the
+        same id twice is a harmless no-op, and a lower id is refused (409),
+        because unsaying an acknowledgement would be a claim about history.
+
+        Pass the id of the last event you actually processed, not the newest
+        one you saw — the desk's `signals.latest_visible_event_id` is what a
+        fully drained reader would use."""
+        return client.advance_desk_cursor(after_id=after_id)
+
+    @tool
     def activity_chain_status() -> dict:
         """Where the audit trail's hash chain stands (admin only).
 

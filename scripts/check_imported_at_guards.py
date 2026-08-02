@@ -201,6 +201,22 @@ EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
         "foreign rows would open unchained gaps an importer could hide in",
     ),
     (
+        "aegis/desk.py",
+        "_events_since",
+        "the desk's 'what changed since you looked' count must equal what "
+        "GET /events would hand the same reader, and that feed serves the "
+        "trail as-is (imported rows included, labeled); excluding foreign "
+        "history here would make the count disagree with the drain it exists "
+        "to size",
+    ),
+    (
+        "aegis/desk.py",
+        "_latest_event_id",
+        "the value a fully-drained reader would acknowledge, so it must span "
+        "exactly the rows that reader can drain — the same general-feed "
+        "population as _events_since above",
+    ),
+    (
         "core/activity_chain.py",
         "status",
         "coverage counting must see every row, imported included: "
