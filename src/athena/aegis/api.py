@@ -1172,7 +1172,7 @@ def add_comment(
     # The command owns the insert AND its atomic 'commented' event (with the auto-watch
     # and any mentions), so a comment and its activity footprint land together.
     return comment_commands.create_comment(
-        conn, actor_id=actor["id"], issue_id=issue_id, body=body
+        conn, actor=actor, issue_id=issue_id, body=body
     )
 
 
@@ -1231,7 +1231,7 @@ def edit_comment(
     try:
         return comment_commands.edit_comment(
             conn,
-            actor_id=actor["id"],
+            actor=actor,
             issue_id=issue_id,
             comment_id=comment_id,
             body=body,
@@ -1254,7 +1254,7 @@ def delete_comment(
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
     # vanished in a race records nothing and 404s.
     if not comment_commands.delete_comment(
-        conn, actor_id=actor["id"], issue_id=issue_id, comment_id=comment_id
+        conn, actor=actor, issue_id=issue_id, comment_id=comment_id
     ):
         raise HTTPException(status_code=404, detail="no such comment")
 

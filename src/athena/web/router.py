@@ -1794,9 +1794,7 @@ def add_issue_comment(
         )
 
     # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
-    comment_commands.create_comment(
-        conn, actor_id=user["id"], issue_id=issue_id, body=body
-    )
+    comment_commands.create_comment(conn, actor=user, issue_id=issue_id, body=body)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1858,7 +1856,7 @@ def edit_issue_comment(
     try:
         comment_commands.edit_comment(
             conn,
-            actor_id=user["id"],
+            actor=user,
             issue_id=issue_id,
             comment_id=comment_id,
             body=body,
@@ -1903,7 +1901,7 @@ def delete_issue_comment(
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
     # vanished in a race records nothing and 404s.
     if not comment_commands.delete_comment(
-        conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id
+        conn, actor=user, issue_id=issue_id, comment_id=comment_id
     ):
         return HTMLResponse(
             '<div class="error">Comment not found.</div>', status_code=404

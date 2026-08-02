@@ -176,8 +176,15 @@ def test_command_edit_vanished_comment_rejects_and_records_nothing(tmp_path):
         iid = _issue(c)
     conn = db.connect(db_file)
     try:
+        # The command now takes the resolved actor and authorizes itself, so this
+        # reaches the same refusal without a transport in front of it — which is
+        # the whole point of the migration.
         comment_commands.edit_comment(
-            conn, actor_id=1, issue_id=iid, comment_id=999, body="x"
+            conn,
+            actor={"id": 1, "role": "admin"},
+            issue_id=iid,
+            comment_id=999,
+            body="x",
         )
         raise AssertionError("expected CommentCommandError")
     except comment_commands.CommentCommandError as exc:

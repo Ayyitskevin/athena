@@ -763,7 +763,7 @@ def _perform_action(
         # Atomic add + audit (one transaction), so the firing's activity event and
         # its comment row land together — a crash can't leave a comment with no
         # trail entry, which is what makes the run-id idempotency guard reliable.
-        comment_commands.create_comment(
+        comment_commands.create_comment_as_automation(
             conn, actor_id=actor_id, issue_id=issue["id"], body=body
         )
         return True
