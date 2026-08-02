@@ -120,6 +120,31 @@ def test_a_second_seed_refuses_and_changes_nothing(tmp_path):
     assert pages.get_page(conn, before[0]["id"])["body"] == "operator edit"
 
 
+def test_missing_content_wedges_nothing(tmp_path, monkeypatch):
+    # WHY: found in the F-7 adversarial pass. Seeding is nine committed writes and
+    # re-running refuses — correct on its own, but together a failure on page five
+    # left a four-page space the retry then refused, so a missing content file
+    # wedged the operator into deleting a space by hand. Content is now read
+    # before the first write, so the failure this code can actually cause creates
+    # nothing at all.
+    conn = _conn(tmp_path / "partial.db")
+    real = guide.page_body
+
+    def fail_on_fifth(filename):
+        if filename == guide.PAGES[4][0]:
+            raise guide.FieldGuideError("simulated: package data missing")
+        return real(filename)
+
+    monkeypatch.setattr(guide, "page_body", fail_on_fifth)
+    with pytest.raises(guide.FieldGuideError):
+        guide.seed_field_guide(conn, author_id=1)
+    assert spaces.get_space_by_key(conn, guide.GUIDE_SPACE_KEY) is None
+
+    # ...and once the content is back, seeding just works — no manual cleanup.
+    monkeypatch.setattr(guide, "page_body", real)
+    assert guide.seed_field_guide(conn, author_id=1)["page_count"] == len(guide.PAGES)
+
+
 def test_the_example_page_carries_the_playbook_label(tmp_path):
     conn = _conn(tmp_path / "label.db")
     result = guide.seed_field_guide(conn, author_id=1)

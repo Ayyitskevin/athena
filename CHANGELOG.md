@@ -66,6 +66,14 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
+- **Seeding the Field Guide could wedge on a partial run.** Found in the sprint's
+  adversarial pass: seeding is nine committed writes and re-running refuses if the
+  space exists — each rule right, but together a failure partway through left a
+  partial space that the retry then refused, so recovery meant deleting a space by
+  hand. Content is now read before the first write, so the one failure this code
+  can cause (package data that did not ship) creates nothing at all. It is still
+  not a transaction: a database failure mid-seed can still leave a partial guide.
+
 - **A browser could silently overwrite another browser's page edit (Stage F-6).**
   The Mentor edit form carried no precondition, so when two people edited one
   page the second save simply won and the first author's work vanished with no

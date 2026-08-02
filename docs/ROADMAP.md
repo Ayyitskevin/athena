@@ -31,6 +31,10 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   every page change inside it reaches the fleet's inboxes without anyone polling
   the tree — loud on purpose, with `unwatch` the only volume control and no
   digest to become a second story (see [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
+- **Editing is safe for two people.** A browser page save carries the page's ETag
+  as rendered, so a second editor cannot silently overwrite the first: the save is
+  refused, nothing is merged, and the loser's text is kept as their own draft with
+  both versions shown (see [`EDITING.md`](EDITING.md#two-people-one-page)).
 - **Onboarding** is part of the workspace: `athena-field-guide` seeds an agent's
   manual as ordinary pages, so the instructions live in the same layer, under the
   same search and links, as everything else an agent reads.
