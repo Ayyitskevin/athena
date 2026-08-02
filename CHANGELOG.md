@@ -66,6 +66,42 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Space subscriptions: shared memory that says when it moved (Stage F-3).**
+  `space` joins `issue` and `page` as a watchable kind, and a space watch is a
+  subscription to the whole container: the space's own lifecycle events *and*
+  every event on every page inside it — created, edited, archived, restored,
+  labelled, moved, commented, deleted. A fleet can now treat one space as
+  shared memory and hear it change without polling its page tree. REST is the
+  existing `POST /watches` / `DELETE /watches/{kind}/{id}`; MCP gains `watch`
+  and `unwatch` (there were none before); the space page gains a Watch toggle;
+  the Desk already reports the unread count, so the loop closes with no new
+  read.
+
+  **No migration** — `watches` has been polymorphic since 0023 and the
+  vocabulary was always code-level. The indirect fan-out lives inside
+  `notifications.notify_watchers`, the single place an event becomes inbox
+  rows, so there is no second call site to drift: one indexed lookup per page
+  event, and `UNIQUE (user_id, event_id)` means watching both a page and its
+  space delivers one notification, not two. Your own action still never
+  notifies you, on either path.
+
+  It is deliberately loud, and `unwatch` is the only volume control: no digest
+  and no rollup, because a quieter second summary of what happened is a second
+  source of truth. Notifications stay written ungated and gated at read, so a
+  watcher who cannot see the space renders nothing from it.
+
+  **Fixed on the way:** deleting a page notified *nobody* — not even an admin.
+  `purge_page` dropped the page row and its watches before `page_deleted` was
+  recorded, so both routes to a watcher were gone by the time the event existed.
+  The event is now recorded first, inside the same transaction; the ordering is
+  invisible from outside. What *renders* is bounded by the existing access
+  model: the inbox proves a page event's visibility by looking the page up, so
+  once the row is gone the gate fails closed and only an admin's ungated read
+  shows the deletion. Documented as a limit, not papered over — making it
+  legible to non-admins needs an event-time visibility envelope for page
+  targets, which pages do not have and this change does not invent. See
+  [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+
 - **Playbooks: docs that start work (Stage F-2).** A Mentor page carrying the
   `playbook` label turns its markdown checklist into real work —
   `POST /pages/{id}/start-playbook` (MCP `start_playbook`) creates one parent

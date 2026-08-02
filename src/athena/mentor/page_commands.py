@@ -223,15 +223,24 @@ def delete_page(
 
     The DB deletes and the audit event commit or roll back together (the atomicity the
     migration buys); the filesystem/index side effects — which can't be transactional —
-    run only after that commit, so a rolled-back delete leaves nothing orphaned."""
+    run only after that commit, so a rolled-back delete leaves nothing orphaned.
+
+    The event is recorded BEFORE the purge, inside the same transaction. Order used to
+    be the other way, which meant a deletion notified NOBODY: purge_page drops the
+    page's watches, and the fan-out resolves a space watch through the page row, so by
+    the time the event existed both routes to a watcher were gone. Losing the loudest
+    change a subscriber can care about is not an acceptable reading of "the watch dies
+    with the page" — the watch ends, but its last delivery is the news that it ended.
+    The ordering is invisible outside the transaction: readers still see the row gone
+    and the event present, which is why the caller still passes ``title``."""
     stored_names: list[str] = []
     with db.transaction(conn, immediate=True):
         if pages.get_page(conn, page_id) is None:
             return False
-        stored_names = pages.purge_page(conn, page_id)
         page_activity.record_page_deleted(
             conn, actor_id=actor_id, page_id=page_id, title=title, commit=False
         )
+        stored_names = pages.purge_page(conn, page_id)
     pages.finalize_page_deletion(conn, page_id, stored_names)
     return True
 

@@ -106,6 +106,15 @@ missing feature.
 That is the whole thesis in one lap: **direct → delegate → observe → intervene →
 trust**, on an append-only, hash-chained trail.
 
+### 5. Give the fleet a shared memory
+
+Make one space the notebook your agents share, and have each of them **watch**
+it — MCP `watch("space", <id>)`, or the Watch button on the space. Every page
+change inside it then lands in their inbox, and `my_desk()` reports the unread
+count on the next orientation call, so nobody polls a page tree to notice a
+handbook moved. It is deliberately loud; `unwatch` is the volume control
+([`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
+
 ## Then
 
 - `athena-doctor ~/athena-data/athena.db --attach-dir ~/athena-data/attachments`

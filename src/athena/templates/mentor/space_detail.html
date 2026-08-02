@@ -10,6 +10,19 @@
         {% if space.description %}<p class="subtitle">{{ space.description }}</p>{% endif %}
     </div>
     <div>
+        {# Subscribing to a space means every page event inside it lands in your
+           inbox — deliberately loud, because a shared notebook is only useful if
+           you hear it move. Unwatch is the only volume control there is. #}
+        {% if request.state.user %}
+        <form method="post" action="/mentor/spaces/{{ space.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
+              style="display:inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small"
+                    title="{{ 'Stop receiving notifications for pages in this space'
+                              if is_watching else
+                              'Get notified about every page change in this space' }}">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
+        </form>
+        {% endif %}
         {# The human-readable exit: one self-contained file, no server needed to
            read it. Open to anyone who can read the space — leaving is not a
            privilege. #}

@@ -24,8 +24,11 @@ from typing import cast
 from athena.core import access
 
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
-# rejects unknown kinds.
-WATCHABLE_KINDS = ("issue", "page")
+# rejects unknown kinds. 'space' is the SHARED-MEMORY subscription: it covers the
+# space's own lifecycle events AND every event on a page inside it (see
+# notify_watchers) — the "the handbook changed" habit, for a fleet that treats a
+# space as its collective notebook.
+WATCHABLE_KINDS = ("issue", "page", "space")
 
 # Sentinel for the inbox reads' `actor`: "no visibility gating" (internal callers /
 # tests). Distinct from actor=None. Notifications are created without an access check
@@ -123,16 +126,46 @@ def notify_watchers(
     """Create an inbox row for every watcher of this target EXCEPT the actor (you
     don't get notified of your own action). Does NOT commit — the caller
     (activity.record) commits the event and its notifications together. The UNIQUE
-    (user_id, event_id) makes a re-run harmless."""
-    watchers = conn.execute(
-        "SELECT user_id FROM watches "
-        "WHERE target_kind = ? AND target_id = ? AND user_id != ?",
-        (target_kind, target_id, actor_id),
-    ).fetchall()
-    for row in watchers:
+    (user_id, event_id) makes a re-run harmless.
+
+    Two passes, one rule: a watch reaches an event if the event's target IS the
+    watched thing, or is a page INSIDE a watched space. The space pass is the only
+    indirect fan-out in the system, and it lives here — inside the single fan-out
+    owner — rather than as a second call site, so there stays exactly one place an
+    event becomes inbox rows. It costs one indexed lookup per page event.
+
+    Reading the `pages` table from core is the same read-only borrow `core.access`
+    already makes of `spaces`/`pages` for visibility: mentor stays the only WRITER of
+    those rows. Resolving the space here (rather than having the caller pass it) is
+    what keeps activity.record's signature honest — it knows about targets, not about
+    which module owns a container.
+
+    A user watching both the page and its space gets ONE notification, not two: the
+    UNIQUE (user_id, event_id) collapses the passes. Notifications are written
+    ungated — the inbox reads gate visibility (see list_notifications), so a watcher
+    who cannot see the space never renders what landed."""
+    recipients = [
+        row["user_id"]
+        for row in conn.execute(
+            "SELECT user_id FROM watches "
+            "WHERE target_kind = ? AND target_id = ? AND user_id != ?",
+            (target_kind, target_id, actor_id),
+        )
+    ]
+    if target_kind == "page":
+        recipients.extend(
+            row["user_id"]
+            for row in conn.execute(
+                "SELECT w.user_id FROM watches w "
+                "JOIN pages p ON p.space_id = w.target_id "
+                "WHERE w.target_kind = 'space' AND p.id = ? AND w.user_id != ?",
+                (target_id, actor_id),
+            )
+        )
+    for user_id in recipients:
         conn.execute(
             "INSERT OR IGNORE INTO notifications (user_id, event_id) VALUES (?, ?)",
-            (row["user_id"], event_id),
+            (user_id, event_id),
         )
 
 

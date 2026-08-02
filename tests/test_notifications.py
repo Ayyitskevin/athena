@@ -140,9 +140,17 @@ def test_watch_validation_and_unwatch(tmp_path):
         _bootstrap(client)
         assert (
             client.post(
-                "/watches", json={"target_kind": "space", "target_id": 1}, headers=H1
+                "/watches", json={"target_kind": "project", "target_id": 1}, headers=H1
             ).status_code
             == 422  # not a watchable kind
+        )
+        # 'space' IS one, since space subscriptions landed — the vocabulary is
+        # closed, not frozen, and this asserts which side of it 'space' is on.
+        assert (
+            client.post(
+                "/watches", json={"target_kind": "space", "target_id": 1}, headers=H1
+            ).status_code
+            == 204
         )
         assert (
             client.delete("/watches/issue/9", headers=H1).status_code == 404

@@ -1027,6 +1027,18 @@ class AthenaClient:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")
 
+    def watch(self, target_kind: str, target_id: int) -> Any:
+        """Subscribe the authenticated actor's inbox to a target (idempotent)."""
+        return self._mutate(
+            self._client.post,
+            "/watches",
+            json={"target_kind": target_kind, "target_id": target_id},
+        )
+
+    def unwatch(self, target_kind: str, target_id: int) -> Any:
+        """Unsubscribe the actor's inbox. 404 if they were not watching it."""
+        return self._mutate(self._client.delete, f"/watches/{target_kind}/{target_id}")
+
     def list_run_events(
         self, run_id: str, *, before_id: int | None = None, limit: int = 100
     ) -> Any:
