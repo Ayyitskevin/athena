@@ -1,0 +1,145 @@
+diff --git a/src/athena/mcp/client.py b/src/athena/mcp/client.py
+index b7f9285..bf06c20 100644
+--- a/src/athena/mcp/client.py
++++ b/src/athena/mcp/client.py
+@@ -1227,6 +1227,22 @@ class AthenaClient:
+             )
+         )
+ 
++    def start_playbook(
++        self,
++        page_id: int,
++        *,
++        project_id: int | None = None,
++        title: str | None = None,
++        idempotency_key: str | None = None,
++    ) -> Any:
++        """Turn a playbook page's checklist into a parent issue and children."""
++        return self._mutate(
++            self._client.post,
++            f"/pages/{page_id}/start-playbook",
++            idempotency_key=idempotency_key,
++            json=self._params(project_id=project_id, title=title),
++        )
++
+     def my_desk(self) -> Any:
+         """Your desk: identity, what is asked of you, what you hold, and what
+         changed since your cursor."""
+diff --git a/src/athena/mcp/server.py b/src/athena/mcp/server.py
+index f85e3af..7aedf28 100644
+--- a/src/athena/mcp/server.py
++++ b/src/athena/mcp/server.py
+@@ -807,6 +807,35 @@ def build_server(client: AthenaClient) -> FastMCP:
+         HH:MM:SS'). Requires an admin token."""
+         return client.list_security_events(verb=verb, since=since, limit=limit)
+ 
++    @mutation_tool
++    def start_playbook(
++        page_id: int,
++        project_id: int | None = None,
++        title: str | None = None,
++        idempotency_key: IdempotencyKey | None = None,
++    ) -> dict:
++        """Turn a playbook page's checklist into REAL WORK: one parent issue
++        plus one child per unchecked `- [ ]` step.
++
++        The page must carry the `playbook` label. Checked (`- [x]`) steps are
++        counted and skipped, never created — ticking a box before starting is
++        the author saying it is already done.
++
++        Every created issue cites the page with a `[[page:N]]` wikilink, so the
++        page's backlinks show the work it started and a `rollup` embed there
++        counts its progress, with no extra step from you.
++
++        A TEMPLATE IS NOT A LIVE MIRROR: this snapshots the page. Editing it
++        afterwards changes nothing already created, and starting it again makes
++        a second independent instantiation (which is what templates are for).
++        Pass idempotency_key if you need a retry to be safe."""
++        return client.start_playbook(
++            page_id,
++            project_id=project_id,
++            title=title,
++            idempotency_key=idempotency_key,
++        )
++
+     @tool
+     def my_desk() -> dict:
+         """START HERE. Your desk: who you are, what is asked of you, what you
+diff --git a/src/athena/mentor/api.py b/src/athena/mentor/api.py
+index 2cb02e0..509588d 100644
+--- a/src/athena/mentor/api.py
++++ b/src/athena/mentor/api.py
+@@ -19,7 +19,7 @@ from fastapi import (
+     UploadFile,
+ )
+ from fastapi.responses import JSONResponse
+-from pydantic import BaseModel
++from pydantic import BaseModel, ConfigDict, Field
+ 
+ from athena import config
+ from athena.core import (
+@@ -32,13 +32,19 @@ from athena.core import (
+     mentions,
+     users,
+ )
+-from athena.core.ids import RowIdPath
++from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
+ from athena.core.attachments_api import AttachmentOut
+ from athena.core.deps import get_conn
+-from athena.core.identity import docs_write_actor, is_admin, optional_actor
++from athena.core.identity import (
++    current_actor,
++    docs_write_actor,
++    is_admin,
++    optional_actor,
++)
+ from athena.mentor import (
+     page_commands,
+     page_templates,
++    playbook_commands,
+     page_comment_commands,
+     page_comments,
+     page_etags,
+@@ -1175,3 +1181,42 @@ def detach_label(
+     except page_commands.PageCommandError as exc:
+         return _page_command_error_response(exc)
+     return _with_labels(conn, page)
++
++
++class StartPlaybookIn(BaseModel):
++    model_config = ConfigDict(extra="forbid")
++
++    # Where the created issues land. Omitted means the backlog, matching plain
++    # issue creation rather than inventing a different default.
++    project_id: int | None = Field(None, ge=1, le=MAX_SQLITE_INTEGER)
++    # Overrides the parent's title; the children always take their step text.
++    title: str | None = None
++
++
++@pages_router.post("/{page_id}/start-playbook", status_code=201)
++def start_playbook(
++    page_id: RowIdPath,
++    payload: StartPlaybookIn | None = None,
++    actor: dict = Depends(current_actor),
++    conn: sqlite3.Connection = Depends(get_conn),
++) -> dict:
++    """Turn a playbook page's checklist into a parent issue and its children.
++
++    Retry-safe through the ordinary `Idempotency-Key` contract this API root
++    already honors — there is no playbook-specific replay mechanism, because a
++    second one would be a second thing to keep in sync with the first.
++    """
++    body = payload or StartPlaybookIn()
++    try:
++        return playbook_commands.start_playbook(
++            conn,
++            actor=actor,
++            page_id=page_id,
++            project_id=body.project_id,
++            title=body.title,
++        )
++    except playbook_commands.PlaybookCommandError as exc:
++        raise HTTPException(
++            status_code=playbook_commands.STATUS_BY_KIND.get(exc.kind, 400),
++            detail=exc.detail,
++        ) from exc
