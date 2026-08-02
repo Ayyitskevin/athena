@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from athena.core import db
 from athena.main import create_app
 from athena.mcp.client import AthenaClient, AthenaError
-from athena.mentor import playbook_commands
+from athena.workflows import playbook_commands
 
 H1 = {"X-Athena-Actor": "1"}
 PASSWORD = "pw-long-enough"

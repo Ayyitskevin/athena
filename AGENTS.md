@@ -110,6 +110,7 @@ Therefore:
 | **aegis** | `src/athena/aegis/` | issues/projects/statuses/boards — data access + REST API |
 | **mentor** | `src/athena/mentor/` | spaces, pages, versions — knowledge module |
 | **web** | `src/athena/web/` | Jinja templates + HTMX — **thin client over the API only** |
+| **workflows** | `src/athena/workflows/` | commands that span BOTH modules (read one, write the other) — the only place that may import `aegis` and `mentor` together |
 
 Touch your assigned area. Don't refactor a neighbor's module to make your change
 fit — flag the friction instead. If two agents must change the same file (e.g.

@@ -1227,6 +1227,22 @@ class AthenaClient:
             )
         )
 
+    def start_playbook(
+        self,
+        page_id: int,
+        *,
+        project_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Turn a playbook page's checklist into a parent issue and children."""
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/start-playbook",
+            idempotency_key=idempotency_key,
+            json=self._params(project_id=project_id, title=title),
+        )
+
     def my_desk(self) -> Any:
         """Your desk: identity, what is asked of you, what you hold, and what
         changed since your cursor."""

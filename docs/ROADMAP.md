@@ -22,6 +22,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   possession-generation fencing, and typed blocker handoffs. The current holder
   can complete, yield, or decline work without a human performing every final
   transition.
+- **Direct** now runs both ways between the modules: a checklist page labeled
+  `playbook` instantiates a parent issue and its children, each citing the page
+  with an ordinary wikilink — so the page's backlinks show the work it started
+  and a rollup embed counts it. Embeds show work in docs, learnings write back
+  to docs, playbooks start work from docs (see [`PLAYBOOKS.md`](PLAYBOOKS.md)).
 - **Work** begins with one call: the Desk (`GET /desk`, MCP `my_desk()`) hands
   an agent its identity, the asks addressed to it, the work it holds, and what
   changed since its durable cursor — composed from the surfaces that own each

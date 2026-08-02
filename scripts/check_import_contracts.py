@@ -46,7 +46,16 @@ MACHINERY_IMPORT_NAMES = MACHINERY_MODULE_ROOTS | {
 
 # Earlier entries are outer layers and may depend on later entries. Containers
 # sharing one entry are independent peers, not mutually importable siblings.
-LAYERS = (("web",), ("aegis", "mentor"), ("core",))
+#
+# `workflows` sits between the transports and the modules for exactly one job:
+# a command that must READ one module and WRITE another. Aegis and Mentor are
+# peers by design — neither may import the other — and `web` cannot own that
+# work because the cardinal rule bars transports from owning authorization. A
+# playbook (a checklist page that creates issues) is the first such command;
+# without this layer it had no legal home at all. The rules are unchanged
+# otherwise: workflows may import both modules and core, and NOTHING may import
+# workflows except the transports above it.
+LAYERS = (("web",), ("workflows",), ("aegis", "mentor"), ("core",))
 _LAYER_BY_AREA = {
     area: layer_index for layer_index, layer in enumerate(LAYERS) for area in layer
 }
