@@ -66,6 +66,34 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Workspace search: one ask, everything you may see (Stage F-4).**
+  `GET /search/workspace?q=&limit_per_kind=` (MCP `search_workspace`) answers
+  across issues, pages, and comments in one call, so an agent no longer has to
+  know which module holds the answer before it can ask.
+
+  **The work query grammar works here.** Atoms (`is:open label:infra`) filter
+  issues through the issue query compiler; bare words in the same query go to
+  full-text search across all three kinds — so `is:open zebra` filters the work
+  *and* finds the page that says zebra. Which path applies is decided by the
+  parser the issue list already uses (`work_query.parse`), never a second notion
+  of "grammar-shaped". An unknown atom is still an error naming the atom, not an
+  empty result set.
+
+  Two honesty rules in the shape: results are **grouped by kind, never globally
+  ranked** (two engines with two orders cannot be interleaved without inventing
+  a score, and the payload says so), and **every group discloses its bound** —
+  `clipped` is measured by fetching one row past the limit rather than inferred.
+  A pure-grammar query leaves the page and comment groups empty and echoes
+  `query.text` so the silence reads as "nothing was text-searched", not "nothing
+  matched". Every group is gated by the caller's own visibility.
+
+  It composes the two searches that already exist and adds no third: no new
+  index, no ranking invention, no migration. It lives in `workflows/` because it
+  reads Aegis's grammar and core's full-text search together, and neither module
+  may import the other — the layer added in F-2 is what made this stage possible
+  at all. `QUERY.md` records what this deliberately is *not*: the grammar is
+  still issue-only, so `label:infra` will not find a labelled page.
+
 - **Space subscriptions: shared memory that says when it moved (Stage F-3).**
   `space` joins `issue` and `page` as a watchable kind, and a space watch is a
   subscription to the whole container: the space's own lifecycle events *and*

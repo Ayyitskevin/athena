@@ -101,6 +101,43 @@ silently preferring one would ignore what the caller asked for.
 Over MCP: `search_work(q)`, `count_work(q)`, `query_help()` — all through REST,
 so there is no second implementation to drift.
 
+### One ask across the workspace
+
+```
+GET /search/workspace?q=<query>&limit_per_kind=1..25   # issues + pages + comments
+```
+
+Over MCP: `search_workspace(query, limit_per_kind)`. For an agent that does not
+yet know which module holds the answer, this is the first call — the Office
+search box, not a second search engine.
+
+It **composes the two searches that already exist and invents no third**:
+
+| Part of `q` | Where it goes |
+|---|---|
+| grammar atoms (`is:open`, `label:infra`, …) | the issue query compiler — issues only |
+| bare words and quoted phrases | full-text search, across issues, pages, and comments |
+
+Which one applies is decided by **this parser**, not a second notion of
+"grammar-shaped": if `parse()` produced terms, issues come from the compiler;
+if it produced only text, issues come from full-text search like everything
+else. `is:open zebra` filters issues structurally *and* finds the page that says
+zebra. A pure-grammar query has no free text, so the page and comment groups are
+empty — and the response echoes `query.text` so that silence reads as "nothing
+was text-searched" rather than "nothing matched".
+
+Two honesty rules in the response shape:
+
+- **Grouped by kind, never globally ranked.** Two engines with two orders cannot
+  be interleaved into one relevance score without inventing it, so the payload
+  says `grouped_by_kind: true` and asks you to compare within a group.
+- **Every group discloses its bound.** `clipped` is measured — one row past the
+  limit is fetched — not inferred from a full page.
+
+An unknown atom is still an error naming the atom, and every group is gated by
+the caller's own visibility, so this can never show more than the module
+surfaces would.
+
 Saved filters accept a `query` key in their criteria, mutually exclusive with the
 structured dimensions for the same reason. A query is validated **when saved**, so
 a filter that could never run cannot be stored — otherwise it would fail closed to
@@ -121,7 +158,11 @@ from what the parser actually accepts.
   already does this correctly in Python, and reproducing it in the compiler would be
   a second implementation of blocked-ness. `has:blockers` is exact about what it
   means, and the docs say which one this is.
-- **Cross-kind queries** over pages and comments. `/search` already spans kinds
-  via full-text; unifying that with this grammar is its own stage.
+- **A cross-kind grammar.** `/search/workspace` (above) now answers one ask
+  across issues, pages, and comments — but by *composition*, not by extending
+  this language: the atoms still filter issues only, and pages and comments are
+  still reached by full text. `label:infra` will not find a labelled page,
+  because a page's labels are not this grammar's vocabulary. Making them so is a
+  larger change than a search surface, and it is not this one.
 - **Date atoms** (`created:>2026-01-01`). Ranges need a comparison syntax, which
   is the first step toward the operator grammar this deliberately avoids.

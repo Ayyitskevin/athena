@@ -36,6 +36,7 @@ from athena.aegis import (
 )
 from athena.core import dispatch, run_context, run_control_commands, run_controls
 from athena.mcp.client import AthenaClient, AthenaError
+from athena.workflows import workspace_search
 
 
 IdempotencyKey = Annotated[
@@ -163,6 +164,14 @@ RunControlListLimit = Annotated[
 # Literal must be static for the type checker. test_mcp_client asserts the two are
 # the same set, so adding a watchable kind without exposing it here fails CI — the
 # drift guard is a test, not a runtime import.
+WorkspaceSearchLimit = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=workspace_search.MIN_LIMIT_PER_KIND,
+        le=workspace_search.MAX_LIMIT_PER_KIND,
+    ),
+]
 WatchKind = Literal["issue", "page", "space"]
 WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 
@@ -215,6 +224,27 @@ def build_server(client: AthenaClient) -> FastMCP:
         """Full-text search across Aegis issues and Mentor pages. Optionally narrow
         to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
         return client.search(query, kind=kind)
+
+    @tool
+    def search_workspace(
+        query: str, limit_per_kind: WorkspaceSearchLimit | None = None
+    ) -> dict:
+        """One ask across issues, pages, AND comments — use this when you do not
+        already know which module holds the answer.
+
+        The work query grammar works here: `is:open label:infra project:ATH`
+        filters issues structurally, and any bare words in the same query are
+        full-text searched across pages and comments. Plain words alone
+        full-text search all three. An unknown atom (`labl:infra`) is an ERROR
+        naming the atom, never an empty result — so a typo cannot read as "no
+        such work".
+
+        Results are GROUPED BY KIND, not globally ranked: two engines with two
+        orders cannot be interleaved into one honest relevance score, so compare
+        within a group, not across them. Each group reports `clipped` when its
+        bound cut the list. A pure-grammar query leaves the page and comment
+        groups empty — `query.text` shows exactly what was text-searched."""
+        return client.search_workspace(query, limit_per_kind=limit_per_kind)
 
     @tool
     def list_issues(

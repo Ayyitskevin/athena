@@ -1027,6 +1027,15 @@ class AthenaClient:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")
 
+    def search_workspace(self, query: str, *, limit_per_kind: int | None = None) -> Any:
+        """One search across issues, pages, and comments, grouped by kind."""
+        return self._result(
+            self._client.get(
+                "/search/workspace",
+                params=self._params(q=query, limit_per_kind=limit_per_kind),
+            )
+        )
+
     def watch(self, target_kind: str, target_id: int) -> Any:
         """Subscribe the authenticated actor's inbox to a target (idempotent)."""
         return self._mutate(

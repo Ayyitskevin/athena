@@ -335,3 +335,92 @@ which does not have the `mcp` extra installed, so every MCP test failed on
 `ATHENA_PYTHON=.venv312/bin/python scripts/coverage.sh`. Recorded here because
 "the suite is red" and "the suite cannot import an optional extra" look
 identical in a summary line, and only one of them is a defect.
+
+---
+
+## Stage F-4 — Workspace search: one ask, everything you may see
+
+### Phase 0 — claims verified
+
+| Guide claim | Verdict |
+|---|---|
+| `search.search` spans kinds with visibility gating | CONFIRMED — and it already covers **four** kinds (`issue`, `page`, `issue_comment`, `page_comment`), gated in SQL before LIMIT/OFFSET so paging stays correct |
+| A query parser exists whose own classification can decide "grammar-shaped" | CONFIRMED — `core/work_query.parse` returns `Query(terms, text, sort, raw)`. `bool(terms)` is the classification; **no second parser needed**, exactly as the guide insisted |
+| `issue_query` is the issue-side entry point | CONFIRMED — `run_query(conn, query, *, actor, visible_project_ids, limit, offset)`, with `access.visible_project_filter` supplying the gate |
+| Unknown atoms already error rather than return empty | CONFIRMED — `work_query.QueryError` carries `.atom`, and `aegis/api.py::_query_refusal` is the 422 shape of record (`{error, code: "invalid_query", atom}`) |
+| `GET /search` requires an authenticated actor | CONFIRMED — `current_actor`; the new route matches that bar |
+| Put it in `core/workspace_search.py` | **CORRECTED** — impossible. It reads `aegis.issue_query` *and* `core.search`, and `core` may not import `aegis`. It belongs at **`workflows/`**, the layer F-2 added. This stage is the second inhabitant, and the first one that could not have existed before that layer |
+| `PATCH /projects` accepts `visibility` | **CORRECTED** (found by a failing test) — visibility is its own endpoint, `PUT /{container}/{id}/visibility`. A PATCH carrying it answers "no fields to update" |
+
+### Design (as built)
+
+- **Routing.** Atoms → the issue compiler; bare words → full-text search across
+  all three groups. `is:open zebra` filters the work *and* finds the page that
+  says zebra. Pages and comments are searched with `parsed.text` only —
+  feeding `is:open` to FTS would match the literal token and produce confident
+  nonsense.
+- **One item shape per group, whichever engine found it.** An issue hit is
+  `{id, key, title, status, snippet}` from either path; `snippet` is `null` on
+  the grammar path, because a structural match has no text excerpt and an empty
+  string would read like "matched nothing".
+- **Grouped, not ranked.** `grouped_by_kind: true` is in the payload. Two
+  engines with two orders cannot be interleaved into one relevance score
+  without inventing it.
+- **Bounds disclose themselves.** Every group fetches `limit+1`, so `clipped`
+  is a measured fact. `limit_per_kind` is 1..25, enforced at the route *and*
+  inside the command so a non-HTTP caller cannot slip past.
+- **`query.text` is echoed.** A pure-grammar query leaves the doc groups empty;
+  saying what was text-searched is what stops that reading as "no matches".
+- Error kinds: `invalid` only (empty query, out-of-range limit, or a query the
+  grammar refuses). The route re-emits the grammar's own 422 body so a bad
+  query reads identically whether asked of `/issues` or of here.
+
+### Deviations
+
+- **D-11** — module placement corrected from `core/` to `workflows/` (see the
+  claims table). The guide could not have known: it was written before the
+  layer existed.
+- **D-12** — the guide left "pages still searched with the raw text — decide and
+  pin" open. Decided: pages and comments see `parsed.text`, never the raw query.
+  Pinned by `test_grammar_routes_issues_and_still_text_searches_the_docs` and by
+  `test_pure_grammar_leaves_the_doc_groups_empty_and_says_why`.
+- **D-13** — `QUERY.md` listed "cross-kind queries" under *Deliberately not in
+  v1*. That bullet is now rewritten rather than deleted: this stage composes,
+  it does not extend the language, so `label:infra` still will not find a
+  labelled page. Removing the bullet would have quietly overclaimed.
+
+### Validation (Stage F-4)
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` | passed |
+| `mypy src/athena` | no issues, **170** source files |
+| `check_import_contracts.py` | passed, 170 modules — the new module sits at `workflows/`, which is what makes it legal |
+| `check_write_ownership.py` / `check_imported_at_guards.py` | passed |
+| `pytest tests/test_workspace_search.py` | **11 passed** |
+| `pytest` on the neighbours (search, MCP client, playbooks, space subscriptions) | 313 passed |
+| Full coverage-gated suite | **3,286 passed**, line 93.08 / branch 83.60 / combined 90.93 — all floors cleared, excluded lines still exactly 2 |
+| Real-HTTP proof | `athena-serve`, two identities: plain `zebra` reaches all three groups (2 comments, each naming its parent) → `is:open zebra` routes issues to the grammar (`atoms: ['is:open']`, `text: 'zebra'`) while the page is still found → closing the issue empties `is:open zebra` and `is:closed zebra` finds it → pure grammar leaves the doc groups empty with `text: ''` → `labl:infra` 422 naming the atom → empty q / limit 0 / limit 26 all 422 → `limit_per_kind=2` returns 2 with `clipped: true` → both containers set private: the second identity gets `[]` in all three groups on both the text and grammar paths while the owner still sees 5 pages → anonymous 401 → `athena-doctor` verified 17 chained events |
+
+### CodeQL, mid-stage
+
+While F-4 was in flight, CodeQL reported three new alerts against the F-3 web
+routes — one high (reflected XSS in the 404 body) and two medium (untrusted URL
+redirection in the two redirects). Neither was reachable: FastAPI coerces
+`space_id: int` before the handler runs, so a non-integer path segment 422s. But
+both were **deviations from patterns already in that file**, which is why they
+alerted at all:
+
+- `_page_visible_or_response` builds its 404 from a **fixed string**; I had
+  interpolated the requested id. Now fixed — and better for it, since naming the
+  id confirms which id was asked about, the one thing a not-found should stay
+  quiet about.
+- The space *create* route at `web/mentor.py:282` redirects to `space['id']`
+  — the id off the **database row** — which is why that line has never alerted.
+  My routes redirected to the path parameter. They now use the row, and stop
+  discarding a read they had already paid for.
+
+Fixed and pushed within the same session (`81cbac4`); CodeQL green on the
+following run. Recorded because the lesson generalizes: when a scanner flags new
+code that sits beside older code doing "the same thing", check whether the older
+code is actually doing the same thing. Twice here, it was not.
