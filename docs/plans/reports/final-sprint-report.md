@@ -138,3 +138,44 @@ Limitations recorded: the desk has no web surface by design (agent-facing; the
 operator's dashboard already exists); `asks.worker_kill_requests` scans the
 caller's newest 50 workers rather than paging, which is a bound worth revisiting
 only if a single agent ever registers more than 50 processes.
+
+---
+
+## Stage F-2 — Playbooks: BLOCKED on an architecture decision
+
+Implemented in full and passing **17/17 tests** — including the end-to-end loop
+proof (page → parent + children → backlinks on the page → a `rollup` embed
+counting them) — then parked, because it hit a CI-enforced rule it cannot
+legally satisfy.
+
+### The blocker
+
+`scripts/check_import_contracts.py` declares
+`LAYERS = (("web",), ("aegis", "mentor"), ("core",))` with the comment
+*"Containers sharing one entry are independent peers, not mutually importable
+siblings."* A playbook command must **read Mentor** (page, label, body) and
+**write Aegis through `issue_commands`** (so the writes keep their audit
+events, budget metering, and authorization). That edge is forbidden in both
+directions, and `web/` — the only layer that may import both — is barred by the
+cardinal rule from owning logic or authorization.
+
+This is friction between the feature and the module contract, which AGENTS.md
+says to flag rather than absorb, and the guide's rule 10 says to stop on. The
+complete implementation, its tests, and the surface patch are preserved in
+[`docs/plans/parked/f2-playbooks/`](../parked/f2-playbooks/README.md) with three
+options; the recommendation is a new `workflows/` composition layer, which also
+gives F-4 (workspace search, another cross-module read) a legal home.
+
+**Awaiting the owner's decision. Stages F-3 through F-7 are not started.**
+
+### Verified during F-2 (kept for whoever resumes)
+
+| Guide claim | Verdict |
+|---|---|
+| `playbook` label marks the page, no new table | CONFIRMED — `page_templates.py` is the exact precedent (`template` label, `labels.page_ids_for_label`) |
+| `/pages` needs adding to `_IDEMPOTENCY_API_ROOTS` | **CORRECTED** — it is already opted in (`main.py:371`), so retry-safety needs **no domain table and no migration**; the guide's proposed `playbook_starts` table is unnecessary. Proven by a passing test: same `Idempotency-Key` replays to the same parent, four issues not eight |
+| `issue_commands` uses the kind dialect | CONFIRMED — `IssueCommandError.kind` |
+| `set_issue_parent(conn, *, actor, issue_id, parent_id)` | CONFIRMED |
+| icarus mints `secrets.token_hex(16)` | CONFIRMED — but unused here, per the correction above |
+| Space create accepts `visibility` | **CORRECTED** — it does not; tests set it with raw SQL (`test_access_mentor_reads.py:65`) |
+| Backlinks rows carry `source_id` | **CORRECTED** — they resolve to `{kind, id, title}` |
