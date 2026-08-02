@@ -569,3 +569,63 @@ finished.
 | `pytest tests/test_command_error_dialect.py` | **12 passed** (6 structural, 5 map-parity, 1 wire-contract sweep) |
 | the four migrated audit suites | 29 passed |
 | Full coverage-gated suite | **3,308 passed**, line 92.97 / branch 83.48 / combined 90.82 — all floors cleared, excluded lines still exactly 2 |
+
+---
+
+## Stage F-6 item 1 — If-Match on browser edit forms (the item I had deferred)
+
+Deferred once for session length, then built when the owner asked why it could
+not just be done. It could; the deferral was about capacity, not blockers.
+
+**Design decision taken (option A of three offered):** both texts visible,
+theirs winning the form fields, yours preserved as your draft. Rejected: a bare
+`412` (loses work — a browser buffer is not a store) and auto-merge (Athena does
+not claim to have resolved what a person must read to resolve).
+
+### Phase 0 — what already existed
+
+Almost all of it. `page_commands.edit_page` already accepted `if_match` and
+compared it **inside the write lock**; `page_etags.current_etag` already existed;
+the drafts table already stored an owner-scoped baseline. The browser form simply
+never sent a precondition — and `web/mentor.py` said so in a comment: *"the
+browser form carries no If-Match, so this stays last-write-wins."* The work was
+wiring plus the refusal path, not new machinery.
+
+### The one real design trap
+
+`based_on` (drafts) and `if_match` (the save) look like the same value and must
+not be the same field. `based_on` follows the editing **session** — a restored
+draft keeps its own baseline, which is what keeps stale work marked stale. The
+precondition must be the page **as this form was rendered**. Sharing one field
+would mean a restored draft could never be saved at all. Two hidden fields, with
+the reason written between them, and a test (`test_restoring_a_draft_can_still_be_saved`)
+that fails if anyone merges them.
+
+Second subtlety, same family: the conflict path records the loser's draft against
+the tag they **submitted**, never the page's new one. Stamping the new tag would
+mark stale work fresh and silence the warning at the one moment it exists for.
+Asserted at the row, not through the rendering.
+
+### Deliberate softenings
+
+The hidden field is a concurrency aid, not an authorization check, so: an absent
+tag (a tab open across the upgrade) keeps the old behavior rather than refusing
+an author over a field they cannot see, and a malformed tag is treated as no
+precondition rather than becoming a wall between an author and their own page.
+
+### Validation
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` / `mypy src/athena` (171 files) | passed |
+| all three contract scripts | passed |
+| `pytest tests/test_page_edit_conflict.py` | **10 passed** |
+| `pytest` on the edit path (drafts, etags, versions, mentor web, lifecycle) | 68 passed |
+| Full coverage-gated suite | **3,318 passed**, line 92.97 / branch 83.46 / combined 90.82 — all floors cleared, excluded lines still exactly 2 |
+| Real-HTTP proof | two real browser sessions against `athena-serve`: both editors open on the same tag → Ann saves (303) → Bob saves (**409**) → the refusal shows both texts and says nothing was overwritten or merged → the page is still Ann's → Bob navigates away entirely and still has unsaved work, still marked stale → Bob restores and deliberately saves over Ann (303) → Ann's editor never shows Bob's unsaved text → `athena-doctor` verified 7 chained events |
+
+**Two test-harness bugs worth recording**, both cases of a test passing while
+proving nothing: extracting the ETag from the form without unescaping entities
+posted a mangled tag, which quietly took the malformed-precondition path and
+"succeeded"; and asserting notice wording against raw HTML failed on an
+apostrophe and a line wrap. Both now normalize the way a browser does.

@@ -891,38 +891,123 @@ def edit_page_form(
     # same as a missing page, so the form never leaks a hidden page's content.
     if page is None or not access.can_see_space(conn, user, page["space_id"]):
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
-    draft = page_drafts.get_draft(conn, page_id=page_id, owner_id=user["id"])
+    return templates.TemplateResponse(
+        request=request,
+        name="mentor/page_edit.html",
+        context=_edit_form_context(
+            conn,
+            request,
+            page,
+            user,
+            restored=request.query_params.get("restore") == "1",
+            notice=(request.query_params.get("notice") or "").strip(),
+        ),
+    )
+
+
+def _conflict_response(
+    conn: sqlite3.Connection,
+    request: Request,
+    page_id: int,
+    user: dict,
+    *,
+    title: str,
+    body: str,
+    based_on: str,
+) -> HTMLResponse:
+    """The losing editor's answer: refused, nothing lost, both texts in front of you.
+
+    Three things this deliberately does NOT do. It does not overwrite — that is the
+    refusal that brought us here. It does not merge, because Athena does not claim
+    to have resolved something a person has to read to resolve. And it does not
+    throw the author's text away, which is the failure mode of a bare 412 page:
+    the browser's back button is not a durable store, and telling someone their
+    work is "still in the form" is only true until they navigate.
+
+    So the submitted text is written to the author's own draft — the store that
+    already exists for exactly this, owner-scoped and offered-never-applied — and
+    the form re-renders showing THEIR version, with yours beside it and one click
+    ('Restore draft') to put yours back in the fields. The author reconciles; the
+    tool reports.
+
+    409, because it is a conflict with state the caller already had a view of.
+    """
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        # It was deleted, not edited, between the precondition and this read.
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    # Keep their work under the baseline they were editing FROM — the tag the form
+    # submitted — never the page's new one. Stamping today's tag would mark stale
+    # work fresh and silence the stale-draft warning the next time they open the
+    # form, which is the one moment that warning exists for.
+    page_drafts.save_draft(
+        conn,
+        page_id=page_id,
+        owner_id=user["id"],
+        title=title,
+        body=body,
+        based_on=based_on,
+    )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="mentor/page_edit.html",
+        context=_edit_form_context(
+            conn,
+            request,
+            page,
+            user,
+            conflict={"title": title, "body": body},
+        ),
+        status_code=409,
+    )
+
+
+def _edit_form_context(
+    conn: sqlite3.Connection,
+    request: Request,
+    page: dict,
+    user: dict,
+    *,
+    restored: bool = False,
+    notice: str = "",
+    conflict: dict | None = None,
+) -> dict:
+    """The edit form's context, built in one place.
+
+    Two routes render this form: opening it, and the losing side of a concurrent
+    save. They must agree about what the author is looking at — especially the
+    baseline, since a conflict re-render that stamped a stale tag would refuse the
+    author's next save too, forever."""
+    draft = page_drafts.get_draft(conn, page_id=page["id"], owner_id=user["id"])
     if draft is not None and not page_drafts.differs_from(draft, page):
         # Identical to the saved page: not unsaved work, so offering to restore
         # it would just make an author wonder what they had forgotten.
         draft = None
-    return templates.TemplateResponse(
-        request=request,
-        name="mentor/page_edit.html",
-        context={
-            "page": page,
-            "space": spaces.get_space(conn, page["space_id"]),
-            # The preview starts populated rather than blank: an author opening
-            # an existing page sees it as readers do before touching a key.
-            "body_html": render_page_body(conn, page["body"], actor=user),
-            # An unsaved draft is OFFERED, never applied: the form still shows
-            # the saved page, and restoring is a decision the author makes. A
-            # draft that merely matches the page is not offered at all.
-            "draft": draft,
-            # Restoring is a read: the form renders the draft's text instead of
-            # the page's. Nothing is written until the author presses Save.
-            "restored": draft is not None
-            and request.query_params.get("restore") == "1",
-            "draft_is_stale": draft is not None
-            and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
-            # The baseline this editing session starts FROM. The form carries it
-            # through every autosave, so a draft records the page the author
-            # actually saw — not whatever the page had become by the time the
-            # autosave timer fired (which would defeat the stale-draft warning).
-            "page_etag": page_etags.current_etag(conn, page),
-            "notice": (request.query_params.get("notice") or "").strip(),
-        },
-    )
+    return {
+        "page": page,
+        "space": spaces.get_space(conn, page["space_id"]),
+        # The preview starts populated rather than blank: an author opening
+        # an existing page sees it as readers do before touching a key.
+        "body_html": render_page_body(conn, page["body"], actor=user),
+        # An unsaved draft is OFFERED, never applied: the form still shows
+        # the saved page, and restoring is a decision the author makes. A
+        # draft that merely matches the page is not offered at all.
+        "draft": draft,
+        # Restoring is a read: the form renders the draft's text instead of
+        # the page's. Nothing is written until the author presses Save.
+        "restored": restored and draft is not None,
+        "draft_is_stale": draft is not None
+        and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
+        # The baseline this editing session starts FROM. The form carries it
+        # through every autosave, so a draft records the page the author
+        # actually saw — not whatever the page had become by the time the
+        # autosave timer fired (which would defeat the stale-draft warning).
+        "page_etag": page_etags.current_etag(conn, page),
+        "notice": notice,
+        # The text the author just tried to save, when someone else got there
+        # first. Shown beside theirs; never merged into it.
+        "conflict": conflict,
+    }
 
 
 @router.post("/mentor/pages/preview", dependencies=[Depends(verify_csrf)])
@@ -1024,11 +1109,17 @@ def edit_page(
     page_id: int,
     title: str = Form(""),
     body: str = Form(""),
+    if_match: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Save edits to a page's title/body. Gated on the session user; empty title is
     rejected. update_page snapshots the prior revision into history before
-    overwriting (see mentor/pages.py), then we 303 back to the page."""
+    overwriting (see mentor/pages.py), then we 303 back to the page.
+
+    The form carries the page's ETag as it was RENDERED, so a save that would land
+    on top of someone else's is refused instead of silently winning. What happens
+    next is the whole point of this route (see ``_conflict_response``): nothing is
+    overwritten, nothing is merged, and nothing the author typed is thrown away."""
     user = getattr(request.state, "user", None)
     err = _write_required(user, "edit pages")
     if err is not None:
@@ -1044,16 +1135,49 @@ def edit_page(
             '<div class="error">Title is required.</div>', status_code=400
         )
 
-    # The command owns the atomic snapshot+overwrite and its 'page_edited' event; the
-    # browser form carries no If-Match, so this stays last-write-wins (the optimistic
-    # lock is a REST/MCP concern for concurrent agents). A page that vanished between
-    # the visibility check and the write (a race) 404s rather than 500s.
+    # The command owns the atomic snapshot+overwrite, its 'page_edited' event, and
+    # the precondition — compared inside the same write lock, so two browsers
+    # holding the same tag cannot both pass it. A page that vanished between the
+    # visibility check and the write (a race) 404s rather than 500s.
+    #
+    # An empty if_match means a form rendered before this field existed (a tab left
+    # open across the upgrade). Those keep the old last-write-wins behavior rather
+    # than being refused on a technicality the author cannot see or fix.
     try:
         page_commands.edit_page(
-            conn, actor_id=user["id"], page_id=page_id, title=title, body=body.strip()
+            conn,
+            actor_id=user["id"],
+            page_id=page_id,
+            title=title,
+            body=body.strip(),
+            if_match=[if_match] if if_match.strip() else None,
         )
-    except page_commands.PageCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    except page_commands.PageCommandError as exc:
+        if exc.kind == "precondition_failed":
+            return _conflict_response(
+                conn,
+                request,
+                page_id,
+                user,
+                title=title,
+                body=body.strip(),
+                based_on=if_match,
+            )
+        if exc.kind in ("invalid_precondition", "precondition_too_large"):
+            # A tampered or malformed hidden field. Treat it as no precondition at
+            # all rather than blocking the author out of their own page: the field
+            # is a concurrency aid, not an authorization check.
+            page_commands.edit_page(
+                conn,
+                actor_id=user["id"],
+                page_id=page_id,
+                title=title,
+                body=body.strip(),
+            )
+        else:
+            return HTMLResponse(
+                '<div class="error">Page not found.</div>', status_code=404
+            )
     # The text IS the page now, so the author's draft of it is a stale copy of
     # something that finally has a real home and a version row. Dropping it is
     # what makes "you have unsaved work" mean it the next time it appears.

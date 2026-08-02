@@ -13,6 +13,27 @@
 <div class="form-container">
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
+{% if conflict %}
+{# The losing editor. Every sentence here has to be true: nothing of theirs was
+   overwritten, nothing was merged, and their text still exists. Saying "your
+   changes were lost" would be false; saying "we merged them" would be worse. #}
+<div class="warning">
+    <strong>Someone else saved this page while you were editing</strong>
+    <p class="note-small">
+        Your save was refused, so <strong>nothing was overwritten and nothing was
+        merged</strong>. The form below now holds <strong>their</strong> version —
+        the page as it stands. Your text was kept as your draft: read both, then
+        either edit the form directly or press <strong>Restore draft</strong> to
+        put your version back in the fields and save it over theirs.
+    </p>
+    <details open>
+        <summary>Your version — not saved</summary>
+        <p class="muted">Title: {{ conflict.title }}</p>
+        <pre class="conflict-text">{{ conflict.body }}</pre>
+    </details>
+</div>
+{% endif %}
+
 {% if draft %}
 {# An unsaved draft is OFFERED, never applied. The form below still shows the
    SAVED page, so nothing an author sees here is a surprise — restoring is a
@@ -59,6 +80,13 @@
            draft's own baseline rides along — not today's etag, which would
            quietly mark stale work fresh. #}
         <input type="hidden" name="based_on" value="{{ draft.based_on if restored else page_etag }}">
+        {# The save precondition, and deliberately NOT the same value as based_on
+           above. based_on follows the editing SESSION (a restored draft keeps its
+           own baseline, so stale work stays marked stale); this one is always the
+           page as this form was rendered, because that is what the save is being
+           checked against. Sharing one field would make restoring a draft refuse
+           every subsequent save. #}
+        <input type="hidden" name="if_match" value="{{ page_etag }}">
         <div class="form-group">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required value="{{ draft.title if restored else page.title }}">
