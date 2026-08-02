@@ -62,6 +62,7 @@ athena-backup = "athena.ops:backup_main"
 athena-doctor = "athena.ops:doctor_main"
 athena-export = "athena.ops:export_main"
 athena-export-run = "athena.ops:export_run_main"
+athena-field-guide = "athena.ops:field_guide_main"
 athena-import = "athena.ops:import_main"
 athena-import-dry-run = "athena.ops:import_dry_run_main"
 athena-import-manifest = "athena.ops:import_manifest_main"
@@ -87,6 +88,7 @@ where = ["src"]
 # Runtime-owned files must travel with both wheels and source distributions.
 athena = [
     "core/migrations/*.sql",
+    "field_guide/*.md",
     "static/*",
     "static/**/*",
     "templates/*.html",

@@ -17,6 +17,7 @@ _SPEC.loader.exec_module(verify_wheel)
 def _source_tree(root: Path) -> set[str]:
     files = {
         "core/migrations/0001_initial.sql",
+        "field_guide/01_your_desk.md",
         "static/styles.css",
         "templates/home.html",
         "templates/aegis/issues.html",
@@ -58,6 +59,7 @@ def test_verify_runtime_manifest_accepts_an_exact_wheel(tmp_path):
         wheel_path, package_root=package_root
     ) == {
         "core/migrations": 1,
+        "field_guide": 1,
         "static": 1,
         "templates": 2,
     }

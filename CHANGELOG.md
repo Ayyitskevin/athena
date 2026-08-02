@@ -66,6 +66,32 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The Field Guide: the workspace documents itself (Stage F-5).**
+  `athena-field-guide <db>` seeds nine pages into a `GUIDE` space, addressed to
+  the agents who work here: your desk, claiming and yielding work, recording
+  learnings, answering a run control, playbooks, searching the workspace,
+  watching shared memory, what the trail proves — plus a real playbook you can
+  instantiate, so F-2 is demonstrable out of the box rather than described.
+
+  They are **ordinary pages**. Readable through the same MCP tools, findable
+  through the same search, linkable from issues, exportable as HTML, editable.
+  The guide is a space, not a special surface, so everything true of a space is
+  true of it. The content ships as package data (`field_guide/*.md`, the same
+  shape `core/migrations` uses) and the existing wheel-manifest gate pins it, so
+  a build that drops a page fails rather than seeding a manual with a hole.
+
+  Seeding goes through the real commands as a real author, so every page carries
+  genuine provenance and lands on the activity chain. It is **idempotent by
+  refusal**: a second run refuses rather than overwriting, because once an
+  operator has edited these they are theirs. `--as EMAIL` names the author;
+  otherwise the earliest administrator is used, and the command prints who it
+  attributed the pages to — an attribution is somebody's name, so it is never
+  silent.
+
+  `athena-demo --field-guide` seeds the same content into a throwaway workspace.
+  One seeding implementation, two entry points: the demo tool's contract is a
+  NEW database, and every other operator command works on one you already have.
+
 - **Workspace search: one ask, everything you may see (Stage F-4).**
   `GET /search/workspace?q=&limit_per_kind=` (MCP `search_workspace`) answers
   across issues, pages, and comments in one call, so an agent no longer has to

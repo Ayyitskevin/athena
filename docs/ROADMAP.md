@@ -31,6 +31,9 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   every page change inside it reaches the fleet's inboxes without anyone polling
   the tree — loud on purpose, with `unwatch` the only volume control and no
   digest to become a second story (see [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
+- **Onboarding** is part of the workspace: `athena-field-guide` seeds an agent's
+  manual as ordinary pages, so the instructions live in the same layer, under the
+  same search and links, as everything else an agent reads.
 - **Work** starts from one ask: `GET /search/workspace` (MCP `search_workspace`)
   spans issues, pages, and comments, and the work query grammar passes through
   to the issue side — so an agent does not need to know which module holds the
