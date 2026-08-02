@@ -31,6 +31,11 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   every page change inside it reaches the fleet's inboxes without anyone polling
   the tree — loud on purpose, with `unwatch` the only volume control and no
   digest to become a second story (see [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
+- **Work** starts from one ask: `GET /search/workspace` (MCP `search_workspace`)
+  spans issues, pages, and comments, and the work query grammar passes through
+  to the issue side — so an agent does not need to know which module holds the
+  answer. Grouped by kind, never globally ranked, and every group says when its
+  bound cut the list (see [`QUERY.md`](QUERY.md)).
 - **Work** begins with one call: the Desk (`GET /desk`, MCP `my_desk()`) hands
   an agent its identity, the asks addressed to it, the work it holds, and what
   changed since its durable cursor — composed from the surfaces that own each
