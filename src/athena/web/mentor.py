@@ -610,6 +610,8 @@ def space_detail(
             and can_write
             and user["id"] == space["created_by"],
             "page_count": len(page_rows),
+            "is_watching": user is not None
+            and notifications.is_watching(conn, user["id"], "space", space_id),
             "include_archived": include_archived,
             "activity": activity.list_activity(
                 conn, target_kind="space", target_id=space_id
@@ -1276,6 +1278,53 @@ def remove_page_attachment(
             status_code=exc.status_code,
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
+
+
+def _space_visible_or_response(conn, space_id: int, user):
+    """(space, None) when this user may read the space, (None, 404 response) otherwise —
+    the space twin of _page_visible_or_response, so "private" and "missing" stay
+    indistinguishable to someone who may not see it."""
+    space = spaces.get_space(conn, space_id)
+    if space is None or not access.can_see_space(conn, user, space_id):
+        return None, HTMLResponse(
+            f'<div class="error">Space #{space_id} not found.</div>', status_code=404
+        )
+    return space, None
+
+
+@router.post("/mentor/spaces/{space_id}/watch", dependencies=[Depends(verify_csrf)])
+def watch_space(request: Request, space_id: int, conn=Depends(get_conn)):
+    """Subscribe to a space: every page event inside it lands in your inbox (any
+    signed-in user — a personal subscription, like watching a page)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
+            status_code=401,
+        )
+    # You can't watch what you can't see — a hidden space is "not found", exactly as
+    # for pages, so a subscription can never become a side channel for its existence.
+    _, err = _space_visible_or_response(conn, space_id, user)
+    if err is not None:
+        return err
+    notifications.watch(conn, user["id"], "space", space_id)
+    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+
+
+@router.post("/mentor/spaces/{space_id}/unwatch", dependencies=[Depends(verify_csrf)])
+def unwatch_space(request: Request, space_id: int, conn=Depends(get_conn)):
+    """Stop watching a space."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    _, err = _space_visible_or_response(conn, space_id, user)
+    if err is not None:
+        return err
+    notifications.unwatch(conn, user["id"], "space", space_id)
+    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/watch", dependencies=[Depends(verify_csrf)])

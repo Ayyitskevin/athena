@@ -231,3 +231,99 @@ names is still the page, and the URL follows the noun rather than the package.
 
 Stages F-3 through F-7 remain. F-4 (workspace search) now has the layer it
 needs, which was the second reason to prefer option A.
+
+---
+
+## Stage F-3 — Space subscriptions: shared memory that says when it moved
+
+Branch note: PR #327 (F-1 + F-2) merged to `main`. Per the merged-PR rule this
+branch was restarted from the new `main` (`37e210c`) rather than stacked on
+already-merged history, keeping the same branch name.
+
+### Phase 0 — claims verified
+
+| Guide claim | Verdict |
+|---|---|
+| `watches` (0023) has no `target_kind` CHECK | CONFIRMED — polymorphic, PK `(user_id, target_kind, target_id)`, index on the target end. **No migration needed** |
+| The vocabulary is code-level | CONFIRMED — `notifications.WATCHABLE_KINDS`, enforced once at `notifications_api._validate_kind` |
+| `notify_watchers` is the single fan-out site | CONFIRMED — one call, `core/activity.py:336`, inside the event's transaction |
+| Watch writes are personal state (no audit event) | CONFIRMED — `watch`/`unwatch` record nothing; the REST routes use `personal_write_actor` |
+| REST is `PUT/DELETE /watches/{kind}/{id}` | **CORRECTED** — it is `POST /watches` with a JSON body, plus `DELETE /watches/{kind}/{id}` |
+| An MCP watch tool exists to extend | **CORRECTED** — there is **no** MCP watch tool at all. F-3 adds both `watch` and `unwatch`, or agents could not subscribe |
+| Pages can move between spaces (so cross-space transfer needs thought) | **CORRECTED** — `pages.space_id` is never updated anywhere; `page_moved` is re-parenting *within* a space. Nothing to reason about |
+| Space events need inventing | **CORRECTED (in our favour)** — `space_created/edited/deleted/member_added/member_removed` already record with `target_kind='space'`, so the existing direct pass covers a space's own lifecycle for free |
+| Page watches handle "watcher cannot see it" somehow — match it | CONFIRMED and matched — notifications are written **ungated**; `list_notifications`/`unread_count` gate at read via `access.event_visibility_clause` |
+
+**Gap found in Phase 0, not in the guide:** `delete_page` called `purge_page`
+*before* `record_page_deleted`. The purge drops the page row **and** its watches,
+so at the moment the event existed both routes to a watcher were gone —
+deleting a page notified **nobody**, and a space lookup through the page id
+would have returned nothing. Silence about the loudest change in a shared space
+is not a defensible reading of "the watch dies with the page".
+
+### Design (as built)
+
+- `WATCHABLE_KINDS = ("issue", "page", "space")`. One vocabulary; REST, MCP, and
+  web all read it. The MCP `Literal` must be static, so a test asserts the two
+  are the same set — the drift guard is CI, not a comment.
+- Two passes in `notify_watchers`, one rule: an event reaches you if its target
+  **is** the watched thing, or **is a page inside** a watched space. The indirect
+  pass lives in the single fan-out owner, never a second call site. Cost: one
+  indexed lookup per page event.
+- Reading `pages` from `core` is the same read-only borrow `core.access` already
+  makes of `spaces`/`pages`; mentor stays the only writer of those rows.
+  Resolving the space here is what keeps `activity.record`'s signature honest —
+  it knows about targets, not about which module owns a container.
+- `UNIQUE (user_id, event_id)` collapses the passes: watching a page **and** its
+  space is one notification, not two. Actor exclusion holds on both paths.
+- **Ordering fix:** the `page_deleted` event is now recorded before the purge,
+  inside the same transaction. Invisible from outside; both the page's watchers
+  and its space's watchers get the final delivery, then the page watches are
+  purged with the page.
+- Refused, on purpose: digest, rollup, per-watcher delivery. `unwatch` is the
+  volume control, and the doc says so instead of the code pretending it is quiet.
+
+### Deviations
+
+- **D-8** — MCP `watch`/`unwatch` are new tools, not an extension of an existing
+  one (the guide assumed one existed). They carry no `idempotency_key`: the REST
+  routes do not consume one, and a watch is idempotent by construction. Precedent:
+  `mark_notifications_read`, the other personal-state mutation tool.
+- **D-9** — the delete-ordering fix is outside the literal stage scope. Flagged
+  rather than absorbed silently: without it, deleting a page notified *nobody*,
+  not even an admin. Two tests pin the fix.
+
+  **The real-HTTP proof then refuted the stronger claim I had written**, and
+  that correction is the most useful thing in this stage. Over the wire, the
+  subscriber's inbox went *empty* after the delete — because
+  `access.event_visibility_clause` proves a page event's visibility with
+  `EXISTS (SELECT 1 FROM pages …)`, and once the row is purged there is nothing
+  left to prove it with, so the gate fails **closed**. Verified directly: the
+  ungated row exists, an admin's read renders `page_deleted`, a member's does
+  not — and every *earlier* notification about that page stops rendering too.
+
+  So the shipped claim is the narrow one: the event is now **delivered**, and it
+  **renders for an admin**. Making it legible to non-admins needs an event-time
+  visibility envelope for page targets — the thing issue events carry via
+  `activity_visibility_projects` and pages have never had. That is an
+  access-model change; flagged here, not smuggled in behind a subscription
+  feature. A third test pins the limit so nobody re-reads the docs as a promise.
+
+  This is the second time this sprint that the real-HTTP gate caught something
+  no unit test did — the unit tests used the ungated internal read, which is
+  exactly the read a real client never makes.
+- **D-10** — an existing test (`test_watch_validation_and_unwatch`) asserted
+  `space` was **not** watchable. Updated to assert which side of the closed
+  vocabulary `space` is now on, and to keep a genuine refusal case (`project`).
+
+### Validation (Stage F-3)
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` | passed |
+| `mypy src/athena` | no issues, 168 source files |
+| `check_import_contracts.py` / `check_write_ownership.py` / `check_imported_at_guards.py` | passed |
+| `pytest tests/test_space_subscriptions.py` | **17 passed** |
+| `pytest` on the impacted suites (notifications, page delete/move, mentor web, MCP client, access) | 313 passed |
+| Full coverage-gated suite | run before the push (see the stage commit message for the counts) |
+| Real-HTTP proof | two identities, two bearer tokens, one `athena-serve`: watch space 204 → admin creates a page → subscriber unread 1 → edit + comment → inbox `{page_created, page_edited, page_commented}` → page in ANOTHER space changes nothing → subscriber's OWN write changes nothing → delete in the other space changes nothing → delete the watched page: member's inbox goes empty (gate fails closed), a watching admin renders `page_deleted` → unwatch holds the count while a new page is created → `GET /desk` reports the same unread count → garbage kind 422 → `athena-doctor` verified 16 chained events |

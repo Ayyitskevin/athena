@@ -159,6 +159,12 @@ RunControlTtl = Annotated[
 RunControlListLimit = Annotated[
     int, Field(strict=True, ge=1, le=run_controls.MAX_LIST_LIMIT)
 ]
+# Spelled out rather than derived from notifications.WATCHABLE_KINDS because a
+# Literal must be static for the type checker. test_mcp_client asserts the two are
+# the same set, so adding a watchable kind without exposing it here fails CI — the
+# drift guard is a test, not a runtime import.
+WatchKind = Literal["issue", "page", "space"]
+WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 
 
 def build_server(client: AthenaClient) -> FastMCP:
@@ -497,6 +503,30 @@ def build_server(client: AthenaClient) -> FastMCP:
         cleared count). Do this after acting on the inbox, so the next read
         surfaces only what is genuinely new."""
         return client.mark_all_notifications_read()
+
+    @mutation_tool
+    def watch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
+        """Subscribe YOUR inbox to a target so you learn it changed without
+        re-reading it.
+
+        'space' is the one to reach for when a space is your fleet's shared
+        memory: it delivers the space's own lifecycle events AND every event on
+        every page inside it — created, edited, archived, commented, deleted.
+        That is a firehose by design, and `unwatch` is the only volume control;
+        Athena has no digest and no daily rollup. 'page' follows one document,
+        'issue' one work item.
+
+        Watching twice is a no-op. Watching something you cannot see subscribes
+        you to nothing you can read: the inbox filters by visibility at read
+        time, so the notifications simply never surface."""
+        return client.watch(target_kind, target_id)
+
+    @mutation_tool
+    def unwatch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
+        """Unsubscribe YOUR inbox from a target you are watching. Errors 404 if
+        you were not watching it — the refusal distinguishes "stopped" from
+        "was never subscribed", which a silent success would blur."""
+        return client.unwatch(target_kind, target_id)
 
     @tool
     def heartbeat_agent_run(run_id: RunId) -> dict:

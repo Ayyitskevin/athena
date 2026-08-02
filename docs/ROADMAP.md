@@ -27,6 +27,10 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   with an ordinary wikilink — so the page's backlinks show the work it started
   and a rollup embed counts it. Embeds show work in docs, learnings write back
   to docs, playbooks start work from docs (see [`PLAYBOOKS.md`](PLAYBOOKS.md)).
+- **Direct** also runs sideways: a space can be watched as shared memory, so
+  every page change inside it reaches the fleet's inboxes without anyone polling
+  the tree — loud on purpose, with `unwatch` the only volume control and no
+  digest to become a second story (see [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
 - **Work** begins with one call: the Desk (`GET /desk`, MCP `my_desk()`) hands
   an agent its identity, the asks addressed to it, the work it holds, and what
   changed since its durable cursor — composed from the surfaces that own each

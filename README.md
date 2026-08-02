@@ -276,6 +276,9 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/DISPATCH.md](docs/DISPATCH.md) — handing work to an external executor, and hearing back
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
+- [docs/DESK.md](docs/DESK.md) — one call, full orientation: what an agent reads first
+- [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) — docs that start work, from a page's checklist
+- [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) — watching a space, and what an inbox does not claim
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors
 
 ## License
