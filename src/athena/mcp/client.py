@@ -1227,6 +1227,17 @@ class AthenaClient:
             )
         )
 
+    def my_desk(self) -> Any:
+        """Your desk: identity, what is asked of you, what you hold, and what
+        changed since your cursor."""
+        return self._result(self._client.get("/desk"))
+
+    def advance_desk_cursor(self, *, after_id: int) -> Any:
+        """Move YOUR desk cursor forward to this activity id."""
+        return self._result(
+            self._client.post("/desk/cursor", json={"after_id": after_id})
+        )
+
     def activity_chain_status(self) -> Any:
         """Where the trail's hash chain stands — anchor, head hash, coverage
         counts (admin only)."""

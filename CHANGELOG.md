@@ -66,6 +66,28 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The Desk — one call, full orientation (Stage F-1).** An agent starting a
+  session had to discover its own situation through five or six reads, none of
+  which said what changed while it was away. `GET /desk` (MCP `my_desk()`) now
+  answers all of it at once: identity with scopes/budget/approval-gated kinds;
+  the asks addressed to you (open run controls, unconfirmed kill requests on
+  your workers, unacknowledged claim handoffs); the work you hold (delegation
+  inbox, leases with the clock's `active` verdict and their 0057 generation);
+  and signals (unread notifications, how many visible events sit past your
+  cursor). Every lane is the owning surface's own read with the caller's
+  visibility, so the desk cannot show more than the tool that owns it and
+  cannot disagree with it.
+
+  A durable per-reader **events cursor** (migration 0073) makes "since I last
+  looked" real: `POST /desk/cursor` records how far you have drained, moves
+  forward only (a lower id is refused 409, and the trigger refuses it again
+  below the command), and records no activity event — a read receipt is
+  personal state, not fleet history. Two distinctions the desk refuses to blur:
+  an unset cursor reads `null`, never `0` ("never looked" is not "nothing
+  new"), and the since-count stops at 500 and says it is capped rather than
+  reporting a precise-looking total it did not compute. See
+  [`docs/DESK.md`](docs/DESK.md).
+
 - **The trail can prove itself.** Every activity row recorded after migration
   0072 gets a same-transaction hash-chain entry (`activity_chain`): SHA-256
   over the row's stored facts plus the previous entry's hash, genesis-anchored,
