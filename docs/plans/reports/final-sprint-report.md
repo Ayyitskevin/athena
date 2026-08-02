@@ -508,3 +508,64 @@ reporting the misconfiguration cleanly. Fixed by importing inside
 legitimately require a loadable app. Third time this sprint the full suite
 found something the targeted suites could not — the pattern is that a change's
 blast radius is rarely where its diff is.
+
+---
+
+## Stage F-6 — The debt tail (two of three items)
+
+### Item 3 — the `capacity` convention, recorded (commit `1723fe0`)
+
+Phase 0 found the ambiguity was real and live: `capacity` maps to **429** in
+`workflows/playbook_commands` and **409** in `core/agent_runs_api`. Both are
+shipped. `COMMAND_MIGRATION.md` now states the convention (429: the request was
+well-formed and hit a bound; it may succeed later or smaller — which is what 429
+says, where 409 would claim a conflict with existing state a bound is not) and
+names the exception with its reason: the agent-run check-in's capacity really
+*is* a conflict with state the caller already owns — too many distinct run ids,
+where the fix is to reuse a run rather than wait — and it is a shipped wire
+contract. Changing either is now explicitly its own decision.
+
+### Item 2 — six command modules onto the kind dialect (commit `864a2d0`)
+
+The guide named five. `page_comment_commands` carried the identical legacy shape
+beside one of them, so it went too rather than leaving the same refactor to be
+done twice. All twelve raise sites collapsed to two kinds (`not_found` ×11,
+`invalid` ×1), which is what made this mechanical rather than a redesign.
+
+Maps live **per route module**, not shared. A single global table would have
+relocated the coupling the refactor exists to remove; a transport that needs a
+different status for a kind must be able to say so locally.
+
+The contract — "the HTTP surface does not change" — is pinned twice:
+
+- **structurally**: a migrated error exposes `kind` and no longer has a
+  `status_code` attribute at all, so a regression fails a test, not a review;
+- **at the wire**: twelve requests over the real app across all six surfaces
+  (vanished comment edit/delete, sprint start/complete/delete, space
+  edit/delete, page-comment edit, webhook pause, unknown token scope) asserting
+  the exact statuses they answered before.
+
+Four audit tests asserted `exc.status_code`; they now assert `exc.kind`, which
+is the fact worth asserting at that layer — the status they cared about is
+pinned at the wire instead.
+
+### Item 1 — If-Match on browser edit forms: NOT DONE, and why
+
+Deliberately left. It is not mechanical: it is new conflict-resolution UI whose
+hard parts are product decisions — what the losing editor sees, whether their
+text survives, and how the notice avoids implying Athena resolved anything. The
+drafts `based_on` machinery is the right precedent and is already in place, so
+the work is well-positioned; it is not started. Attempting it in the tail of a
+long session would have produced exactly the kind of half-considered surface
+this repo's contract exists to prevent. Recorded here rather than left to look
+finished.
+
+### Validation (Stage F-6)
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` / `mypy src/athena` (171 files) | passed |
+| all three contract scripts | passed |
+| `pytest tests/test_command_error_dialect.py` | **12 passed** (6 structural, 5 map-parity, 1 wire-contract sweep) |
+| the four migrated audit suites | 29 passed |
+| Full coverage-gated suite | **3,308 passed**, line 92.97 / branch 83.48 / combined 90.82 — all floors cleared, excluded lines still exactly 2 |
