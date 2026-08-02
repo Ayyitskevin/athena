@@ -25,6 +25,7 @@ from athena.aegis import (
     dependencies,
     fleet_attention,
     issue_commands,
+    issue_etags,
     issue_history,
     issue_search,
     issues,
@@ -749,11 +750,36 @@ def edit_issue_form(
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
-        context={
-            "issue": issue,
-            "body_html": render_issue_body(conn, issue["body"], actor=user),
-        },
+        context=_issue_edit_context(conn, issue, user),
     )
+
+
+def _issue_edit_context(
+    conn: sqlite3.Connection,
+    issue: dict,
+    user: dict,
+    *,
+    form: dict | None = None,
+    conflict: dict | None = None,
+) -> dict:
+    """The issue edit form's context, built in one place so opening the form and
+    the losing side of a concurrent save cannot disagree about the baseline.
+
+    ``issue`` is always the REAL current row, because the ETag is derived from it;
+    ``form`` optionally overrides what the fields display. Keeping those separate
+    is load-bearing: on a conflict the fields show the author's unsaved text, and
+    stamping a tag computed over that text would describe a representation the
+    database has never held — so the refreshed form would be refused again, and
+    again, forever."""
+    shown = {**issue, **(form or {})}
+    return {
+        "issue": shown,
+        "body_html": render_issue_body(conn, shown["body"] or "", actor=user),
+        # Derived from the stored row, never from `shown`.
+        "issue_etag": issue_etags.current_etag(conn, issue),
+        # The version that WON, shown for comparison when this render is a refusal.
+        "conflict": conflict,
+    }
 
 
 @router.post("/aegis/issues/{issue_id}/edit", dependencies=[Depends(verify_csrf)])
@@ -762,11 +788,16 @@ def edit_issue(
     issue_id: int,
     title: str = Form(""),
     body: str = Form(""),
+    if_match: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Save edits to an issue's title and body from the edit form. Gated on the
     session user (same actor rule as every write), rejects an empty title, then
-    303-redirects back to the issue so it reloads with the new content."""
+    303-redirects back to the issue so it reloads with the new content.
+
+    The form carries the issue's ETag as rendered, so a save that would land on
+    top of someone else's is refused rather than silently winning — the browser
+    half of the optimistic lock REST and MCP already had."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -776,13 +807,80 @@ def edit_issue(
     _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
+    # An empty if_match means a form rendered before this field existed (a tab
+    # left open across the upgrade). Those keep the old last-write-wins behavior
+    # rather than being refused over a field their author cannot see or fix.
     try:
         issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, title=title, body=body
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            title=title,
+            body=body,
+            if_match=[if_match] if if_match.strip() else None,
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
+        if exc.kind == "precondition_failed":
+            return _issue_conflict_response(
+                conn, request, issue_id, user, title=title, body=body
+            )
+        if exc.kind in ("invalid_precondition", "precondition_too_large"):
+            # A tampered or malformed hidden field is not an authorization
+            # signal; treat it as no precondition rather than walling an author
+            # out of their own issue.
+            try:
+                issue_commands.update_issue(
+                    conn, actor=user, issue_id=issue_id, title=title, body=body
+                )
+            except issue_commands.IssueCommandError as retry_exc:
+                return _issue_command_response(retry_exc)
+        else:
+            return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+def _issue_conflict_response(
+    conn: sqlite3.Connection,
+    request: Request,
+    issue_id: int,
+    user: dict,
+    *,
+    title: str,
+    body: str,
+) -> HTMLResponse:
+    """The losing editor's answer for an issue — and it deliberately INVERTS the
+    page equivalent.
+
+    On a page, the winner's text goes in the fields because the loser's copy is
+    safe in their draft (``page_drafts``, 0071). Issues have no draft store, so
+    doing the same here would leave the loser's text living only in a ``<pre>``
+    they must hand-copy — lossy, not merely inconsistent. Their text therefore
+    stays in the fields, the winner's is shown beside it, and the notice states
+    the part that is genuinely worse than the page path: this text is not stored
+    anywhere and navigating away loses it.
+
+    The re-rendered form carries the CURRENT tag, so saving again deliberately
+    overwrites instead of looping on the same refusal.
+    """
+    current = issues.get_issue(conn, issue_id)
+    if current is None:
+        return HTMLResponse(
+            '<div class="error">Issue not found.</div>', status_code=404
+        )
+    # The form shows what the author typed; `conflict` carries what won.
+    theirs = {"title": current["title"], "body": current["body"] or ""}
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/issue_edit.html",
+        context=_issue_edit_context(
+            conn,
+            current,
+            user,
+            form={"title": title, "body": body},
+            conflict=theirs,
+        ),
+        status_code=409,
+    )
 
 
 @router.post("/aegis/issues/{issue_id}/status", dependencies=[Depends(verify_csrf)])

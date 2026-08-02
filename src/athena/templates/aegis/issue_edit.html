@@ -11,8 +11,35 @@
 </div>
 
 <div class="form-container">
+{% if conflict %}
+{# The losing editor, on a surface with NO draft store.
+   Pages put the winner's text in the fields, because the loser's copy is safe in
+   their draft. Issues have no page_drafts equivalent, so the only place the
+   loser's text survives at all is this form — which is why it stays in the
+   fields here, and why the notice says plainly that it is not stored anywhere. #}
+<div class="warning">
+    <strong>Someone else saved this issue while you were editing</strong>
+    <p class="note-small">
+        Your save was refused, so <strong>nothing was overwritten and nothing was
+        merged</strong>. The fields below still hold <strong>your</strong> text —
+        and it is <strong>not saved anywhere</strong>: leaving this page loses it.
+        Read their version, fold in what you need, and save again to make yours
+        the issue.
+    </p>
+    <details open>
+        <summary>Their version — the issue as it now stands</summary>
+        <p class="muted">Title: {{ conflict.title }}</p>
+        <pre class="conflict-text">{{ conflict.body }}</pre>
+    </details>
+</div>
+{% endif %}
+
     <form method="post" action="/aegis/issues/{{ issue.id }}/edit" class="issue-form">
         {% include "partials/csrf.html" %}
+        {# The page as this form was rendered. Refreshed on a conflict re-render,
+           so saving again deliberately overwrites rather than looping on the
+           same refusal forever. #}
+        <input type="hidden" name="if_match" value="{{ issue_etag }}">
         <div class="form-group">
             <label for="title">Title</label>
             <input type="text" id="title" name="title" required value="{{ issue.title }}">

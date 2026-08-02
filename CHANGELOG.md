@@ -66,6 +66,24 @@ the newest one and for what tagging still requires.
 
 ### Fixed
 
+- **A browser could silently overwrite another browser's ISSUE edit.** The page
+  editor was fixed first; this closes the same gap on the other half of the
+  product. The issue edit form now carries the issue's ETag as rendered, and a
+  save that would land on someone else's is refused instead of winning.
+
+  The refusal renders the **opposite way round from a page**, because of a
+  missing store rather than a change of mind: a page puts the winner's text in
+  the fields since the loser's copy is safe in `page_drafts`, but issues have no
+  draft store, so doing that would leave the loser hand-copying out of a `<pre>`.
+  On an issue your text stays in the fields, theirs is shown beside it, and the
+  notice states the part that is genuinely worse — it is not saved anywhere, and
+  leaving the page loses it. Giving issues a draft store would let the two match;
+  that is the change this asymmetry waits on.
+
+  Note the collision this actually protects: issue writes are gated to the
+  creator or current assignee, so the realistic pair is those two editing one
+  description. See [`docs/EDITING.md`](docs/EDITING.md#issues-differ-on-purpose).
+
 - **Seeding the Field Guide could wedge on a partial run.** Found in the sprint's
   adversarial pass: seeding is nine committed writes and re-running refuses if the
   space exists — each rule right, but together a failure partway through left a

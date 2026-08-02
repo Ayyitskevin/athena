@@ -100,6 +100,34 @@ not an authorization check:
 - a **malformed** tag is treated as no precondition at all, rather than becoming a
   wall between an author and their own page.
 
+### Issues differ, on purpose
+
+The issue editor carries the same precondition and refuses the same way, but the
+**refusal renders the opposite way round**, and the reason is a missing store
+rather than a change of mind.
+
+| | Page | Issue |
+|---|---|---|
+| Fields hold | **their** version | **your** version |
+| Your text is kept in | your draft (durable) | the form only (**not stored**) |
+| Getting yours back | one click, `Restore draft` | it is already there |
+
+A page has `page_drafts` (0071), so putting the winner's text in the fields is
+safe: yours is one click away and survives a closed laptop. Issues have no draft
+store, so doing the same would leave your text living only in a `<pre>` you had
+to hand-copy — lossy, not merely inconsistent. So on an issue your text stays in
+the fields, theirs is shown beside it, and the notice says the part that is
+genuinely worse: **it is not saved anywhere, and leaving the page loses it.**
+
+Two consequences worth stating:
+
+- Giving issues a draft store would let them match pages exactly. That is the
+  change this asymmetry is waiting on, and it is not a small one — it is a
+  migration plus autosave plus staleness, the whole drafts feature.
+- Issue writes are gated to the **creator or the current assignee**, unlike
+  Mentor's open wiki model, so the realistic collision here is those two people
+  editing one description — not any two users.
+
 REST and MCP are unchanged: they have always supported `If-Match`, and an agent
 that omits it has always been able to overwrite. This closes the browser gap.
 
