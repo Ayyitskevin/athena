@@ -279,6 +279,7 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 - [docs/DESK.md](docs/DESK.md) — one call, full orientation: what an agent reads first
 - [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) — docs that start work, from a page's checklist
 - [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) — watching a space, and what an inbox does not claim
+- The **Field Guide** — an agent's manual, seeded as ordinary pages with `athena-field-guide <db>`
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors
 
 ## License

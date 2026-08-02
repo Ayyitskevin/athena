@@ -424,3 +424,87 @@ Fixed and pushed within the same session (`81cbac4`); CodeQL green on the
 following run. Recorded because the lesson generalizes: when a scanner flags new
 code that sits beside older code doing "the same thing", check whether the older
 code is actually doing the same thing. Twice here, it was not.
+
+---
+
+## Stage F-5 — The Field Guide: the workspace documents itself
+
+Branch note: PR #328 (F-3 + F-4) merged. Branch restarted from the new `main`
+(`110b97c`), same name, per the merged-PR rule.
+
+### Phase 0 — claims verified
+
+| Guide claim | Verdict |
+|---|---|
+| `demo.py` seeds through the real commands as a real user | CONFIRMED — that is the pattern reused |
+| Package data is declared in `pyproject` and pinned by a wheel gate | CONFIRMED — `[tool.setuptools.package-data]` plus `scripts/verify_wheel.py`'s `RUNTIME_DIRS`, compared against the source tree and asserted in `tests/test_verify_wheel.py`. `field_guide` is now one of them |
+| `core/migrations` is the shape to copy for loaded-not-inlined content | CONFIRMED — a data-only directory with **no** `__init__.py`, read via `Path(__file__).parent`. Copied exactly (an `__init__.py` there would put `__pycache__` in the wheel-manifest comparison) |
+| Space key uniqueness gives idempotency | CONFIRMED — `spaces.get_space_by_key`; a second seed refuses |
+| Extend `athena-demo --field-guide`; never a second seeder | CONFIRMED **and extended** — see D-14 |
+| Pages can cross-link by title | CONFIRMED — `[[Title]]` resolves when exactly one live page answers, preferring the source's own space. **But see D-15**: it records nothing when it does not resolve |
+
+### Deviations
+
+- **D-14 — two entry points, one seeder.** `athena-demo` refuses an existing
+  database; that is its entire contract. But "every fresh install gets a
+  non-empty, useful first screen" means seeding into an instance the operator
+  *keeps*, which by definition exists. Putting a writes-into-your-real-database
+  mode inside the tool that promises never to touch one is a footgun. So:
+  `athena.guide` holds the one implementation, `athena-demo --field-guide` seeds
+  it into the disposable workspace, and **`athena-field-guide <db>`** (in
+  `ops.py`, beside the other ten operator commands, every one of which takes an
+  existing database) seeds it into the one you keep. One content
+  implementation, two entry points — the rule being protected is about the
+  content, not about which CLI the operator is holding.
+- **D-15 — a re-index pass after seeding, which the guide did not anticipate.**
+  A `[[Title]]` wikilink resolves only against a page that already exists, and
+  records **nothing** when it does not — unlike a numeric `[[page:N]]` ref,
+  which is stored broken and lights up later. The guide's pages reference each
+  other in both directions, so on the first pass roughly half the references
+  pointed at pages the loop had not created yet. Caught by a failing test, not
+  by review. `seed_field_guide` now re-runs `links.sync_links` over the created
+  pages once they all exist: the same derivation an ordinary edit triggers, on
+  unchanged bodies, writing no page and recording no event.
+- **D-16 — attribution is printed, never silent.** The pages carry somebody's
+  name on the trail. `--as EMAIL` names the author; otherwise the earliest
+  administrator is used, and either way the command prints who it attributed
+  them to. With no administrator at all it refuses rather than inventing one.
+- **D-17 — a naming collision found while wiring the demo.** `seed_demo`
+  already binds a local named `guide` (a demo page), so importing the module as
+  `guide` would have been shadowed inside the one function that needed it. It is
+  imported as `field_guide_content` there.
+
+### Design (as built)
+
+Nine pages, authored as markdown package data and listed in an explicit manifest
+(order and titles are decisions, so they live in code rather than in a heading a
+content edit could move): the desk · claiming and yielding · recording learnings
+· answering a run control · playbooks · searching the workspace · watching
+shared memory · what the trail proves · a real example playbook carrying the
+`playbook` label. An existing `playbook` label is reused rather than duplicated —
+a second label with the same name would split every playbook query in half.
+
+### Validation (Stage F-5)
+
+| Check | Result |
+|---|---|
+| `ruff check .` / `ruff format --check .` / `mypy src/athena` (171 files) | passed |
+| all three contract scripts | passed |
+| `pytest tests/test_field_guide.py` | **10 passed** |
+| `pytest tests/test_verify_wheel.py tests/test_wheel_evidence.py tests/test_demo*.py` | 83 passed |
+| Full coverage-gated suite | **3,296 passed**, line 92.95 / branch 83.48 / combined 90.80 — all floors cleared, excluded lines still exactly 2 |
+| Real-HTTP proof | CLI seeds 9 pages into a real database and prints its attribution → a second run refuses (`already exists`, rc 1) → `athena-serve` reads the space back: 9 pages, `my_desk()` in the body → `/search` and `/search/workspace` both find guide pages → outgoing links from *Your desk* resolve to *Searching the workspace* and *Watching shared memory*, and the backlinks answer in reverse → `export.html` 200 with the space name → the example playbook instantiates over the wire: 4 children, 1 skipped, all five issues visible as backlinks on the page → the rendered page carries a real anchor to a sibling page → `athena-doctor` verified 22 chained events |
+
+**D-18 — the full suite caught a real defect in F-5, and it was mine.** Adding
+`from athena import guide` at `ops.py` module scope broke two config-validation
+tests: importing this module must never reach `athena.config`, because config
+validates at **import** time and offline recovery (`athena-backup`,
+`athena-restore`, `athena-doctor`) has to keep working on an instance whose
+service configuration is broken — which is exactly when an operator needs it.
+`guide` reaches mentor, which reaches config, so a bad `ATHENA_NETWORK_MODE`
+became a traceback from every command in the file, and `athena-serve` stopped
+reporting the misconfiguration cleanly. Fixed by importing inside
+`field_guide_main`: seeding a guide is not a recovery command and may
+legitimately require a loadable app. Third time this sprint the full suite
+found something the targeted suites could not — the pattern is that a change's
+blast radius is rarely where its diff is.

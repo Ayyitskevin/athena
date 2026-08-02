@@ -1172,3 +1172,85 @@ def restore_main(argv: list[str] | None = None) -> int:
 
     print(f"Restored {args.backup_path} to {restored}")
     return 0
+
+
+def field_guide_main(argv: list[str] | None = None) -> int:
+    """Seed the Field Guide into an instance you keep.
+
+    This belongs beside the other operator tools rather than inside
+    ``athena-demo``: every command in this module operates on an EXISTING
+    database, while the demo's whole contract is that it refuses one. Same
+    seeding function underneath (``athena.guide``) — one implementation, two
+    entry points, because "never a second seeder" is about the content, not
+    about which CLI the operator happens to be holding.
+    """
+    # Imported HERE, not at module scope: importing this module must never pull in
+    # athena.config, because config validates at import time and offline recovery
+    # (athena-backup / athena-restore / athena-doctor) has to keep working on an
+    # instance whose service configuration is broken — that is exactly when you
+    # need it. `guide` reaches mentor, which reaches config, so a module-level
+    # import would turn a bad ATHENA_NETWORK_MODE into a traceback from every
+    # command in this file. Seeding the guide is not a recovery command and may
+    # legitimately require a loadable app.
+    from athena import guide
+
+    parser = argparse.ArgumentParser(
+        prog="athena-field-guide",
+        description="Seed the agent Field Guide as pages in an existing workspace.",
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "--as",
+        dest="author_email",
+        help=(
+            "email of the administrator to author the pages as "
+            "(default: the earliest administrator)"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    if not args.db_path.exists():
+        print(f"athena-field-guide: no such database: {args.db_path}", file=sys.stderr)
+        return 1
+
+    conn = db.connect(args.db_path)
+    try:
+        author = _field_guide_author(conn, args.author_email)
+        seeded = guide.seed_field_guide(conn, author_id=author["id"])
+    except (guide.FieldGuideError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-field-guide: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+    # Attribution is printed, never silent: these pages now carry someone's name
+    # on the trail, and the operator running the command should see whose.
+    print(f"Field guide seeded into {args.db_path}")
+    print(f"  Space:    {seeded['space']['key']} — {seeded['space']['name']}")
+    print(f"  Pages:    {seeded['page_count']}")
+    print(f"  Authored: {author['email']} (user {author['id']})")
+    return 0
+
+
+def _field_guide_author(conn: sqlite3.Connection, email: str | None) -> dict:
+    """The administrator the guide's pages are authored as.
+
+    Named explicitly with ``--as``, or the earliest administrator. Refuses rather
+    than guessing when there is nobody to attribute to — an unattributed page is
+    not a thing this workspace can hold, because every write is somebody's.
+    """
+    if email is not None:
+        row = conn.execute(
+            "SELECT id, email, role FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"no such user: {email}")
+        if row["role"] != "admin":
+            raise ValueError(f"{email} is not an administrator")
+        return dict(row)
+    row = conn.execute(
+        "SELECT id, email, role FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+    ).fetchone()
+    if row is None:
+        raise ValueError("this workspace has no administrator to author the guide as")
+    return dict(row)

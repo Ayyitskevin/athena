@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 
 from athena import config
+from athena import guide as field_guide_content
 from athena.aegis import issue_commands, project_commands
 from athena.core import (
     db,
@@ -64,11 +65,22 @@ def _remove_owned_demo_files(db_path: Path, attach_dir: Path) -> None:
         pass
 
 
-def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> dict:
+def seed_demo(
+    db_path: str | Path,
+    *,
+    attach_dir: str | Path | None = None,
+    field_guide: bool = False,
+) -> dict:
     """Create and seed a brand-new synthetic workspace.
 
     The database and attachment directory must not already exist. Returns paths,
     disposable login details, object ids, and counts for the CLI and tests.
+
+    ``field_guide=True`` also seeds the agent Field Guide (``athena.guide``) into
+    the same workspace, authored by the demo operator. It is the same seeding
+    function ``athena-field-guide`` runs against an instance you keep — this
+    tool's contract (a NEW database, never an existing one) is what makes the two
+    entry points different, not the content.
     """
     db_path = Path(db_path).expanduser().resolve()
     attach_path = (
@@ -245,6 +257,12 @@ def seed_demo(db_path: str | Path, *, attach_dir: str | Path | None = None) -> d
             ],
         )
 
+        # Seeded through the same function athena-field-guide runs, authored by the
+        # demo operator — so the guide's pages carry real provenance here too, and
+        # the counts below include them.
+        if field_guide:
+            field_guide_content.seed_field_guide(conn, author_id=operator["id"])
+
         counts = {
             table: conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"]
             for table in ("users", "projects", "issues", "spaces", "pages", "activity")
@@ -301,6 +319,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", type=_port, default=8000)
     parser.add_argument(
+        "--field-guide",
+        action="store_true",
+        help=(
+            "also seed the agent Field Guide as pages in the demo workspace "
+            "(for an instance you keep, use athena-field-guide)"
+        ),
+    )
+    parser.add_argument(
         "--seed-only",
         action="store_true",
         help="create the workspace without starting the web server",
@@ -311,8 +337,10 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        seeded = seed_demo(args.db, attach_dir=args.attach_dir)
-    except DemoSetupError as exc:
+        seeded = seed_demo(
+            args.db, attach_dir=args.attach_dir, field_guide=args.field_guide
+        )
+    except (DemoSetupError, field_guide_content.FieldGuideError) as exc:
         print(f"athena-demo: {exc}", file=sys.stderr)
         return 1
 

@@ -85,13 +85,31 @@ Open <http://127.0.0.1:8000> and sign in. The workspace is **empty** — Athena
 never invents rows to look populated. That is the cardinal rule working, not a
 missing feature.
 
-### 3. Onboard your first agent
+### 3. Seed the Field Guide
+
+```bash
+athena-field-guide ~/athena-data/athena.db
+```
+
+Nine pages in a `GUIDE` space, addressed to the agents who will work here: the
+desk, claiming and yielding, learnings, run controls, playbooks, search,
+watching a shared space, and what the trail does and does not prove. They are
+ordinary pages — searchable, linkable, exportable, editable — and one of them is
+a real playbook you can instantiate.
+
+Re-running refuses rather than overwriting: once you have edited these, they are
+yours. Pass `--as you@example.com` to choose the author; otherwise the earliest
+administrator is used, and the command prints who it attributed the pages to.
+
+(`athena-demo --field-guide` seeds the same content into a throwaway demo.)
+
+### 4. Onboard your first agent
 
 **Admin → Agents → Onboard agent.** Name it, pick scopes (`read` +
 `issue:write` is a good start). Athena mints a scoped bearer token — shown once
 — and renders a ready-to-paste MCP configuration. Paste it into your MCP client.
 
-### 4. Close the loop once
+### 5. Close the loop once
 
 1. Create an issue and **delegate** it to your agent.
 2. Ask the agent to check its delegation inbox and do the work — it can claim,
@@ -106,7 +124,7 @@ missing feature.
 That is the whole thesis in one lap: **direct → delegate → observe → intervene →
 trust**, on an append-only, hash-chained trail.
 
-### 5. Give the fleet a shared memory
+### 6. Give the fleet a shared memory
 
 Make one space the notebook your agents share, and have each of them **watch**
 it — MCP `watch("space", <id>)`, or the Watch button on the space. Every page

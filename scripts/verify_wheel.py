@@ -11,7 +11,7 @@ from zipfile import BadZipFile, ZipFile
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "athena"
-RUNTIME_DIRS = ("core/migrations", "static", "templates")
+RUNTIME_DIRS = ("core/migrations", "field_guide", "static", "templates")
 REQUIRED_CONSOLE_SCRIPTS = {"athena-serve": "athena.ops:serve_main"}
 
 
