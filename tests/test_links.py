@@ -524,3 +524,39 @@ def test_page_detail_renders_backlinks(tmp_path):
         html = client.get(f"/mentor/pages/{pg['id']}").text
         assert "Referenced by" in html
         assert f"/aegis/issues/{issue['id']}" in html
+
+
+def test_ref_grammar_scans_linearly_and_possessive_form_changed_nothing():
+    """WHY: the key-ref term `[A-Za-z][A-Za-z0-9]*-` was an ambiguous quantified
+    run — CodeQL's polynomial-ReDoS query flagged it (high) on body-derived
+    text, and under finditer's sliding starts the greedy form really did
+    re-walk long alnum runs. The possessive `*+` matches the IDENTICAL
+    language (`-` is not in the repeated class, so giving characters back can
+    never rescue a match) with zero backtracking. This pins both halves:
+    grammar unchanged on the boundary cases, and the alert's own adversarial
+    shape ("many repetitions of 'A'") scanning flat."""
+    import time
+
+    from athena.core.links import KEY_REF_RE, _RESERVED_INNER_RE
+
+    # Grammar boundaries the resolvers rely on, unchanged.
+    assert KEY_REF_RE.fullmatch("[[ATH-12]]").groups() == ("ATH", "12")
+    assert KEY_REF_RE.fullmatch("[[a9-000]]").groups() == ("a9", "000")
+    for miss in ("[[ATH-]]", "[[-12]]", "[[ATH12]]", "[[9TH-1]]"):
+        assert KEY_REF_RE.fullmatch(miss) is None, miss
+    for reserved in ("issue:42", "page:7", "user:1", "ATH-12"):
+        assert _RESERVED_INNER_RE.fullmatch(reserved), reserved
+    for title in ("Roadmap: 2026", "ATH-12 review", "Q&A", "ATH-"):
+        assert _RESERVED_INNER_RE.fullmatch(title) is None, title
+
+    # Linear, not polynomial: 4x the input must cost nowhere near 16x.
+    def scan(size: int) -> float:
+        body = "[[" + "A" * size
+        start = time.perf_counter()
+        list(KEY_REF_RE.finditer(body))
+        _RESERVED_INNER_RE.fullmatch("A" * size)
+        return time.perf_counter() - start
+
+    scan(4000)  # warm the pattern cache
+    small, large = scan(4000), scan(16000)
+    assert large < max(small * 8, 0.05), (small, large)

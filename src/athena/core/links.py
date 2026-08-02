@@ -52,7 +52,15 @@ REF_RE = re.compile(r"\[\[(issue|page):(\d+)\]\]")
 # for "the issue with this number in this project"; it resolves to a concrete
 # issue id at index time and is then stored as an ordinary ('issue', id) link, so
 # the links table and backlinks stay numeric and stable.
-KEY_REF_RE = re.compile(r"\[\[([A-Za-z][A-Za-z0-9]*)-(\d+)\]\]")
+#
+# `*+` (possessive, Python ≥3.11) on purpose, here and in _RESERVED_INNER_RE:
+# `-` is not in [A-Za-z0-9], so handing characters back can never turn a failed
+# match into a success — the possessive form matches the IDENTICAL language with
+# zero backtracking. The greedy form was an ambiguous quantified term (its first
+# char class overlaps the starred one), the shape CodeQL's polynomial-ReDoS
+# analysis flags on body-derived text regardless of anchoring; on "[[AAAA…"
+# it re-walked the run once per failed attempt.
+KEY_REF_RE = re.compile(r"\[\[([A-Za-z][A-Za-z0-9]*+)-(\d+)\]\]")
 
 # Matches a bare [[Page Title]] wiki-link (Obsidian/Notion style): double brackets
 # around free text with no brackets, newline, or ANGLE BRACKETS inside. This grammar is
@@ -75,7 +83,11 @@ TITLE_REF_RE = re.compile(r"\[\[([^\[\]\n<>]+)\]\]")
 # with fullmatch so ONLY an exact match is reserved (a title that merely CONTAINS a
 # colon, e.g. "Roadmap: 2026", is still a title). These are exactly the tokens the
 # other resolvers own, so [[Title]] resolution never steals one of them.
-_RESERVED_INNER_RE = re.compile(r"(?:issue|page|user):\d+|[A-Za-z][A-Za-z0-9]*-\d+")
+# Possessive `*+` for the same reason as KEY_REF_RE above: identical language,
+# no backtracking term for a scanner to flag — fullmatch already made this call
+# linear in practice, but CodeQL's query does not model fullmatch anchoring, and
+# a regex that is unambiguous BY CONSTRUCTION beats one that is fast by usage.
+_RESERVED_INNER_RE = re.compile(r"(?:issue|page|user):\d+|[A-Za-z][A-Za-z0-9]*+-\d+")
 
 
 def _is_reserved_ref(inner: str) -> bool:
