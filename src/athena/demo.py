@@ -217,10 +217,27 @@ def seed_demo(
             space_id=space["id"],
             title="Fleet operating guide",
             body=(
+                # The seeded guide predated the trail chain (0072) and run
+                # controls, so a reviewer following it saw neither of the two
+                # things that most distinguish this tool. It names them now, and
+                # names their limits in the same breath — a demo that oversells
+                # is worse than one that is thin.
                 "# Fleet operating guide\n\n"
                 "Start with [[issue:%d]], inspect its activity, then replay run "
-                "`%s`.\n\nThe operator remains accountable for every merge."
-                % (command_issue["id"], DEMO_RUN_ID)
+                "`%s`.\n\nThe operator remains accountable for every merge.\n\n"
+                "## What to look at, and what it proves\n\n"
+                "- **Admin -> Security** shows the activity trail's hash-chain "
+                "head, re-verified on that render. It makes tampering evident, "
+                "not impossible: a removed row is refused, an edited one is "
+                "detected by verification. It cannot make an honest claim out of "
+                "a dishonest one.\n"
+                "- **A run's lineage page** can record a *run control* - steer, "
+                "request cancel, or request a fresh-context handoff. Athena "
+                "records the ask and the agent's reply. It cannot signal a "
+                "process, so an unanswered control reads as expired, never as "
+                "obeyed.\n"
+                "- `athena-doctor <db>` walks the whole chain offline. Run it "
+                "after any restore." % (command_issue["id"], DEMO_RUN_ID)
             ),
         )
 
