@@ -1283,11 +1283,16 @@ def remove_page_attachment(
 def _space_visible_or_response(conn, space_id: int, user):
     """(space, None) when this user may read the space, (None, 404 response) otherwise —
     the space twin of _page_visible_or_response, so "private" and "missing" stay
-    indistinguishable to someone who may not see it."""
+    indistinguishable to someone who may not see it.
+
+    The message is a fixed string, like the page twin's: echoing the requested id back
+    into HTML puts a request-derived value in a response body for no benefit, and the
+    reply is more honest without it — naming the id would confirm which id was asked
+    about, which is the one thing a not-found is supposed to stay quiet about."""
     space = spaces.get_space(conn, space_id)
     if space is None or not access.can_see_space(conn, user, space_id):
         return None, HTMLResponse(
-            f'<div class="error">Space #{space_id} not found.</div>', status_code=404
+            '<div class="error">Space not found.</div>', status_code=404
         )
     return space, None
 
@@ -1304,11 +1309,16 @@ def watch_space(request: Request, space_id: int, conn=Depends(get_conn)):
         )
     # You can't watch what you can't see — a hidden space is "not found", exactly as
     # for pages, so a subscription can never become a side channel for its existence.
-    _, err = _space_visible_or_response(conn, space_id, user)
+    space, err = _space_visible_or_response(conn, space_id, user)
     if err is not None:
         return err
-    notifications.watch(conn, user["id"], "space", space_id)
-    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+    assert space is not None
+    # Redirect to the id off the SPACE ROW, not the path parameter — the same shape
+    # the create route uses. The value is identical; the provenance is not, and a
+    # redirect target that came out of the database cannot carry anything a request
+    # put into it.
+    notifications.watch(conn, user["id"], "space", space["id"])
+    return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
 
 @router.post("/mentor/spaces/{space_id}/unwatch", dependencies=[Depends(verify_csrf)])
@@ -1320,11 +1330,12 @@ def unwatch_space(request: Request, space_id: int, conn=Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    _, err = _space_visible_or_response(conn, space_id, user)
+    space, err = _space_visible_or_response(conn, space_id, user)
     if err is not None:
         return err
-    notifications.unwatch(conn, user["id"], "space", space_id)
-    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+    assert space is not None
+    notifications.unwatch(conn, user["id"], "space", space["id"])
+    return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/watch", dependencies=[Depends(verify_csrf)])
