@@ -36,12 +36,14 @@ VERB_DELETED = "sprint_deleted"
 
 
 class SprintCommandError(Exception):
-    """A transport-neutral sprint rejection. ``status_code`` lets each adapter map
-    it (404 for an unknown sprint)."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND``, so the
+    command layer states what went wrong and the transport decides how to say
+    it — the same shape every command module written since uses."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _record(
@@ -122,10 +124,10 @@ def update_sprint(
     with db.transaction(conn, immediate=True):
         before = sprints.get_sprint(conn, sprint_id)
         if before is None:
-            raise SprintCommandError("no such sprint", status_code=404)
+            raise SprintCommandError("not_found", "no such sprint")
         after = sprints.update_sprint(conn, sprint_id, commit=False, **fields)
         if after is None:
-            raise SprintCommandError("no such sprint", status_code=404)
+            raise SprintCommandError("not_found", "no such sprint")
         summary = _edit_summary(before, after)
         if summary:
             _record(
@@ -147,7 +149,7 @@ def start_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) -> 
     with db.transaction(conn, immediate=True):
         started = sprints.start_sprint(conn, sprint_id, commit=False)
         if started is None:
-            raise SprintCommandError("no such sprint", status_code=404)
+            raise SprintCommandError("not_found", "no such sprint")
         _record(
             conn,
             actor_id=actor_id,
@@ -165,7 +167,7 @@ def complete_sprint(conn: sqlite3.Connection, *, actor_id: int, sprint_id: int) 
     with db.transaction(conn, immediate=True):
         completed = sprints.complete_sprint(conn, sprint_id, commit=False)
         if completed is None:
-            raise SprintCommandError("no such sprint", status_code=404)
+            raise SprintCommandError("not_found", "no such sprint")
         _record(
             conn,
             actor_id=actor_id,

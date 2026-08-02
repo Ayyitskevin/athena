@@ -190,7 +190,7 @@ def test_command_mint_rejects_invalid_scope_atomically(tmp_path):
         token_commands.mint_token(conn, actor_id=1, name="bad", scopes=["wizard"])
         raise AssertionError("expected TokenCommandError")
     except token_commands.TokenCommandError as exc:
-        assert exc.status_code == 422
+        assert exc.kind == "invalid"
     after = conn.execute("SELECT COUNT(*) AS n FROM api_tokens").fetchone()["n"]
     assert after == before  # no token was persisted
     assert [

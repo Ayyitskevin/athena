@@ -181,7 +181,7 @@ def test_command_edit_vanished_comment_rejects_and_records_nothing(tmp_path):
         )
         raise AssertionError("expected CommentCommandError")
     except comment_commands.CommentCommandError as exc:
-        assert exc.status_code == 404
+        assert exc.kind == "not_found"
     assert [
         e
         for e in activity.list_activity(conn, limit=50)

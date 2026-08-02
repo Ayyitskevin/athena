@@ -173,7 +173,7 @@ def test_command_set_active_unknown_webhook_rejects_and_records_nothing(tmp_path
         )
         raise AssertionError("expected WebhookCommandError")
     except webhook_commands.WebhookCommandError as exc:
-        assert exc.status_code == 404
+        assert exc.kind == "not_found"
     assert [
         e
         for e in activity.list_activity(conn, limit=50)

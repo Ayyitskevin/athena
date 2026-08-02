@@ -48,6 +48,14 @@ from athena.mentor import (
 )
 
 spaces_router = APIRouter(prefix="/spaces", tags=["mentor"])
+
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 # A page belongs to a space, so create/list live under /spaces/{id}/pages
 # (a sub-resource, like comments under an issue). A single page is addressable on
 # its own canonical URL via this top-level router, like GET /issues/{id}.
@@ -369,7 +377,9 @@ def edit_space(
             description=payload.description,
         )
     except space_commands.SpaceCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 def _space_for_write(conn: sqlite3.Connection, space_id: int, actor: dict) -> dict:
@@ -470,7 +480,9 @@ def set_space_visibility(
             conn, actor_id=actor["id"], space_id=space_id, visibility=visibility
         )
     except space_commands.SpaceCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @spaces_router.get("/{space_id}/members", response_model=list[MemberOut])
@@ -1017,7 +1029,9 @@ def edit_page_comment(
             body=body,
         )
     except page_comment_commands.PageCommentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @pages_router.delete("/{page_id}/comments/{comment_id}", status_code=204)

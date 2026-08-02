@@ -23,6 +23,14 @@ from athena.core.identity import issue_write_actor, optional_actor
 
 router = APIRouter(tags=["aegis"])
 
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
+
 
 class SprintOut(BaseModel):
     id: int
@@ -160,7 +168,9 @@ def update_sprint(
             conn, actor_id=actor["id"], sprint_id=sprint_id, fields=fields
         )
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/sprints/{sprint_id}/start", response_model=SprintOut)
@@ -177,7 +187,9 @@ def start_sprint(
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/sprints/{sprint_id}/complete", response_model=SprintOut)
@@ -194,7 +206,9 @@ def complete_sprint(
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/sprints/{sprint_id}", status_code=204)
