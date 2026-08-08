@@ -138,7 +138,9 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 1. `ruff check .`, `python scripts/check_import_contracts.py`,
    `python scripts/check_write_ownership.py`,
-   `python scripts/check_imported_at_guards.py`, and `pytest -q`
+   `python scripts/check_imported_at_guards.py`,
+   `python scripts/check_template_styles.py`,
+   `python scripts/check_template_routes.py`, and `pytest -q`
    are **green** — no skipped or mocked-away tests passed off as passing.
 2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
    boots against a real DB, and the feature works over real HTTP. The retained
@@ -179,7 +181,9 @@ docs/        ARCHITECTURE.md — the design of record
 
 Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`,
 `python scripts/check_write_ownership.py`,
-`python scripts/check_imported_at_guards.py`, and `pytest -q -n 4` (plain
+`python scripts/check_imported_at_guards.py`,
+`python scripts/check_template_styles.py`,
+`python scripts/check_template_routes.py`, and `pytest -q -n 4` (plain
 `pytest -q` remains valid).
 Run the app: configure the absolute storage paths and bootstrap/start through
 `athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an

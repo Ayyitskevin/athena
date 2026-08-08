@@ -1007,6 +1007,35 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .rollup-doing { background: var(--info); }
 .rollup-todo  { background: var(--neutral); }
 
+/* --- Embeds (```athena directives, rendered by web/render.py) ------------ */
+/* The markup is emitted from Python, not a template — check_template_styles
+   scans render.py too, which is how these earned rules at all: they had
+   never been styled, in either stylesheet. */
+.embed { margin: var(--sp-3) 0; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.embed-title { font-weight: 700; font-size: var(--fs-md); margin-bottom: var(--sp-2); }
+.embed-message { color: var(--text-3); font-size: var(--fs-md); }
+.embed-error { border-style: dashed; border-color: var(--warning-line); }
+.embed-directive { margin: var(--sp-2) 0 0; padding: var(--sp-2) var(--sp-3); background: var(--surface-3); border-radius: var(--r-sm); font-size: var(--fs-sm); overflow-x: auto; }
+.embed-count { display: flex; align-items: baseline; gap: var(--sp-3); }
+.embed-number { font-family: var(--font-mono); font-size: var(--fs-3xl); font-weight: 600; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.embed-query { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
+.embed-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); padding: 4px 0; font-size: var(--fs-md); }
+.embed-key { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--link); }
+.embed-issue-title { flex: 1 1 auto; min-width: 0; }
+.embed-status, .embed-priority { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-3); }
+.embed-assignee { font-size: var(--fs-sm); color: var(--text-2); }
+.embed-more { margin-top: var(--sp-2); font-size: var(--fs-xs); color: var(--text-3); }
+
+/* Small hooks that render bare browser defaults without these. */
+.actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-4); }
+.blocked { color: var(--danger); font-size: var(--fs-sm); }
+.draft-saved { font-size: var(--fs-xs); color: var(--text-3); }
+.form-error { color: var(--danger); font-size: var(--fs-md); }
+.form-check label { display: flex; align-items: center; gap: var(--sp-2); font-weight: 500; }
+.pagination { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-5) 0; }
+.danger-zone { border-color: var(--danger-line); }
+.label-chip { display: inline-flex; padding: 1px 8px; border-radius: var(--r-pill); background: var(--surface-3); color: var(--text-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
+
 /* --- Board --------------------------------------------------------------- */
 /* Full-bleed, actor swimlanes, cards floating on the page ground. */
 
