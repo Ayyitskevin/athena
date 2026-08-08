@@ -879,6 +879,14 @@ class AthenaClient:
             self._client.get(f"/{base}/{node_id}/graph", params=params or None)
         )
 
+    def related_items(self, kind: str, node_id: int, limit: int | None = None) -> Any:
+        """What cites what this cites, but is not linked to it yet — co-citation."""
+        params = {"limit": limit} if limit is not None else None
+        base = "issues" if kind == "issue" else "pages"
+        return self._result(
+            self._client.get(f"/{base}/{node_id}/related", params=params)
+        )
+
     def project_timeline(
         self,
         project_id: int,

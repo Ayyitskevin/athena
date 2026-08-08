@@ -125,6 +125,31 @@ a real `<a>`, so the graph is keyboard-navigable and works in a text browser.
 
 Defaults: depth 2 (max 3), 40 nodes (max 120).
 
+## Related items
+
+`GET /pages/{id}/related` · `GET /issues/{id}/related` · MCP `related_items` ·
+the `related` section of the issue work-context packet.
+
+**What cites what this cites, but is not linked to it yet.** Co-citation over
+the same `links` rows the graph walks, derived entirely at read time: an item
+is related when it shares at least one link-neighbour with the focus, ranked by
+how many (`shared`), ties broken on `(kind, id)` so the list is deterministic.
+No embeddings, no stored score, no new table — edit a body and the answer moves
+with the links it re-derives. This is the zero-dependency relevance bet stated
+plainly: relatedness you can point at, not a similarity number nobody can audit.
+
+- **Direct neighbours are excluded on purpose.** They already show as backlinks
+  and outgoing links; this list answers only the question those cannot — what
+  belongs to the same cluster with no edge saying so yet. Taking a suggestion
+  is the ordinary act it always was: link it, and it moves from `related` to
+  `references`.
+- **Visibility gates both roles.** An invisible candidate is not a result, and
+  an invisible intermediate does not *conduct* — a hidden page linking two
+  issues must not raise their relatedness, or the score itself becomes an
+  existence oracle.
+- **Bounded, disclosed.** 10 by default (max 25), with `total` and `truncated`
+  saying what the bound cut.
+
 ## Templates
 
 **A template is a page carrying the `template` label.** There is no template

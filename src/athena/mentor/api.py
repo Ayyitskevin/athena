@@ -833,6 +833,24 @@ def page_graph(
     )
 
 
+@pages_router.get("/{page_id}/related")
+def page_related_items(
+    page_id: RowIdPath,
+    limit: int = graph.DEFAULT_RELATED_LIMIT,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # "What cites what this page cites, but is not linked to it yet?" —
+    # co-citation over the same links the graph walks, derived at read time.
+    # Direct neighbours are deliberately absent (they are /backlinks and
+    # /outgoing-links); the payload discloses its bound like the graph does.
+    # Same read gate as the sibling routes: 404 for missing and hidden alike.
+    _page_for_read(conn, page_id, actor)
+    return graph.related_items(
+        conn, kind="page", node_id=page_id, actor=actor, limit=limit
+    )
+
+
 @pages_router.get("/{page_id}/unlinked-mentions")
 def page_unlinked_mentions(
     page_id: RowIdPath,

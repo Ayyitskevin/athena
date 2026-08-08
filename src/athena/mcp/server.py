@@ -217,6 +217,7 @@ TOOL_SCOPES: dict[str, str] = {
     "resolve_embeds": READ_ONLY,
     "embed_help": READ_ONLY,
     "link_graph": READ_ONLY,
+    "related_items": READ_ONLY,
     "project_timeline": READ_ONLY,
     "unlinked_mentions": READ_ONLY,
     "query_help": READ_ONLY,
@@ -581,6 +582,24 @@ def build_server(
         Use it to orient before editing: what already references this runbook, and
         what does it reach."""
         return client.link_graph(kind, id, depth, max_nodes)
+
+    @tool
+    def related_items(kind: str, id: int, limit: int | None = None) -> dict:
+        """What cites what this cites, but is NOT linked to it yet.
+
+        `kind` is "issue" or "page". Co-citation over the same links the graph
+        walks, derived at read time: each item shares at least one
+        link-neighbour with the focus, ranked by how many (`shared`), and
+        everything already linked directly is deliberately absent — backlinks
+        and outgoing links answer that. This answers the question they cannot:
+        what belongs to the same cluster with no edge saying so yet.
+
+        Bounded (10 by default); `truncated`/`total` disclose what the bound
+        cut. Nodes you cannot see are absent AND do not raise anyone's score.
+
+        Use it before starting work an issue describes: the runbook nobody
+        linked, the sibling issue solving the same subsystem."""
+        return client.related_items(kind, id, limit)
 
     @tool
     def project_timeline(

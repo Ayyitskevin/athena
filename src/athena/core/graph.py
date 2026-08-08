@@ -60,6 +60,11 @@ MAX_MAX_NODES = 120
 _RING = 130.0  # radius added per depth level
 _PAD = 70.0  # margin around the outermost ring, leaving room for labels
 
+# Bounds for the related-items read. Ten is a shortlist a human or an agent
+# actually reads; anything longer is the hairball again, one list at a time.
+DEFAULT_RELATED_LIMIT = 10
+MAX_RELATED_LIMIT = 25
+
 
 def _exists_and_visible(
     conn: sqlite3.Connection, actor: dict | None, kind: str, node_id: int
@@ -133,6 +138,100 @@ def _titles(conn: sqlite3.Connection, kind: str, ids: list[int]) -> dict[int, di
     return {
         r["id"]: {"title": r["title"], "key": None, "space_key": r["space_key"]}
         for r in rows
+    }
+
+
+def related_items(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    node_id: int,
+    actor: dict | None,
+    limit: int = DEFAULT_RELATED_LIMIT,
+) -> dict:
+    """What cites what this cites, but is not yet connected to it.
+
+    Co-citation over the existing ``links`` rows, derived entirely at read
+    time: a candidate is related when it shares at least one link-neighbour
+    with the focus, counted over the same undirected adjacency the ego graph
+    walks. **Direct neighbours are excluded on purpose** — they already show
+    as references and backlinks, so this list answers only the question those
+    cannot: what belongs to the same cluster without an edge saying so yet.
+    No embeddings, no stored score, no new table; edit a body and the answer
+    moves with the links it re-derives.
+
+    Ranked by shared-neighbour count (descending), ties on ``(kind, id)`` so
+    the list is deterministic. Bounded, with ``total`` counting every visible
+    candidate the limit cut — the same disclosed-bounds contract as
+    :func:`ego_graph`.
+
+    Visibility follows the ego graph's rule exactly, in both roles: an
+    invisible candidate is not a result, and an invisible intermediate does
+    not CONDUCT — a hidden page linking two issues must not raise their
+    relatedness, or the score itself becomes an existence oracle for things
+    the viewer cannot see.
+
+    A missing or hidden focus returns the same empty payload (``focus: None``),
+    so this read is not a probe either.
+    """
+    limit = max(1, min(limit, MAX_RELATED_LIMIT))
+
+    empty: dict = {
+        "focus": None,
+        "items": [],
+        "shown": 0,
+        "total": 0,
+        "truncated": False,
+        "limit": limit,
+    }
+    if not _exists_and_visible(conn, actor, kind, node_id):
+        return empty
+
+    focus = (kind, node_id)
+    direct = _neighbours(conn, kind, node_id)
+    excluded = {focus, *direct}
+
+    shared: dict[tuple[str, int], int] = {}
+    for neighbour in direct:
+        if not _exists_and_visible(conn, actor, neighbour[0], neighbour[1]):
+            continue  # invisible intermediates do not conduct
+        for candidate in _neighbours(conn, neighbour[0], neighbour[1]):
+            if candidate in excluded:
+                continue
+            shared[candidate] = shared.get(candidate, 0) + 1
+
+    visible = [
+        (node, count)
+        for node, count in shared.items()
+        if _exists_and_visible(conn, actor, node[0], node[1])
+    ]
+    visible.sort(key=lambda pair: (-pair[1], pair[0]))
+    kept = visible[:limit]
+
+    context = {
+        k: _titles(conn, k, [n[1] for n, _ in kept if n[0] == k]) for k in _TABLE
+    }
+    items = []
+    for node, count in kept:
+        ctx = context[node[0]].get(node[1], {})
+        items.append(
+            {
+                "kind": node[0],
+                "id": node[1],
+                "title": ctx.get("title") or "",
+                "key": ctx.get("key"),
+                "status": ctx.get("status"),
+                "space_key": ctx.get("space_key"),
+                "shared": count,
+            }
+        )
+    return {
+        "focus": {"kind": kind, "id": node_id},
+        "items": items,
+        "shown": len(items),
+        "total": len(visible),
+        "truncated": len(items) < len(visible),
+        "limit": limit,
     }
 
 

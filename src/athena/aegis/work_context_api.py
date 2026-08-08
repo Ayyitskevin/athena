@@ -168,6 +168,25 @@ class ReferencesOut(BaseModel):
     backlinks: BacklinkGroupOut
 
 
+class RelatedItemOut(BaseModel):
+    kind: Literal["issue", "page"]
+    id: int
+    title: str
+    key: str | None
+    status: str | None
+    space_key: str | None
+    # How many link-neighbours this item shares with the focus — the rank, and
+    # honest about being a count rather than a similarity claim.
+    shared: int
+
+
+class RelatedGroupOut(BaseModel):
+    items: list[RelatedItemOut]
+    shown: int
+    visible_total: int
+    truncated: bool
+
+
 class ActivityOut(BaseModel):
     id: int
     actor_id: int
@@ -256,6 +275,10 @@ class IssueWorkContextOut(BaseModel):
     attachments: AttachmentGroupOut
     comments: CommentGroupOut
     references: ReferencesOut
+    # Co-citation, not links: what cites what this cites without an edge to it
+    # yet. Direct neighbours are in `references`; this is the cluster they
+    # cannot show.
+    related: RelatedGroupOut
     recent_activity: ActivityGroupOut
     claim_handoffs: ClaimHandoffGroupOut
 
