@@ -105,6 +105,25 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Issues have a draft store, and the conflict asymmetry is gone.**
+  `issue_drafts` (0074) is `page_drafts`' twin down to its bounds: one
+  owner-private row per (issue, author), autosaved by the editor without
+  touching the issue, the trail, or any watcher — a crashed browser costs
+  nothing, and the trail still says nothing happened until a human decides
+  something did. Drafts are offered, never applied; staleness is flagged from
+  the session's own baseline (`based_on` rides separately from the save's
+  `if_match`, so restoring a draft can never refuse every subsequent save);
+  and nothing but its owner or a successful save ever discards one.
+
+  The payoff is the losing editor's screen. An issue conflict used to keep
+  your text in the form and admit it was **not saved anywhere** — the honest
+  wording for a missing store, documented in EDITING.md as the asymmetry this
+  feature was waiting on. Both editors now answer a conflict identically: the
+  fields show the winner's version, your text is kept as your durable draft,
+  and restoring it is one click. Autosave is gated exactly like the edit
+  itself (creator or current assignee) — a draft OF a write belongs only to
+  someone who could perform the write.
+
 - **Related items: zero-dependency relevance from the links you already have.**
   `GET /issues/{ref}/related`, `GET /pages/{id}/related`, MCP `related_items`,
   and a `related` section in the issue work-context packet all answer the same

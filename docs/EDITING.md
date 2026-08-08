@@ -100,33 +100,28 @@ not an authorization check:
 - a **malformed** tag is treated as no precondition at all, rather than becoming a
   wall between an author and their own page.
 
-### Issues differ, on purpose
+### Issues match, now
 
-The issue editor carries the same precondition and refuses the same way, but the
-**refusal renders the opposite way round**, and the reason is a missing store
-rather than a change of mind.
+The issue editor carries the same precondition, refuses the same way, and —
+since `issue_drafts` (0074) — renders the refusal the same way too. For a
+while this section documented a deliberate inversion: with no draft store, the
+loser's text stayed in the fields and the notice admitted it was not saved
+anywhere. The store this asymmetry was waiting on exists, so both editors now
+answer a conflict identically:
 
 | | Page | Issue |
 |---|---|---|
-| Fields hold | **their** version | **your** version |
-| Your text is kept in | your draft (durable) | the form only (**not stored**) |
-| Getting yours back | one click, `Restore draft` | it is already there |
+| Fields hold | **their** version | **their** version |
+| Your text is kept in | your draft (durable) | your draft (durable) |
+| Getting yours back | one click, `Restore draft` | one click, `Restore draft` |
 
-A page has `page_drafts` (0071), so putting the winner's text in the fields is
-safe: yours is one click away and survives a closed laptop. Issues have no draft
-store, so doing the same would leave your text living only in a `<pre>` you had
-to hand-copy — lossy, not merely inconsistent. So on an issue your text stays in
-the fields, theirs is shown beside it, and the notice says the part that is
-genuinely worse: **it is not saved anywhere, and leaving the page loses it.**
-
-Two consequences worth stating:
-
-- Giving issues a draft store would let them match pages exactly. That is the
-  change this asymmetry is waiting on, and it is not a small one — it is a
-  migration plus autosave plus staleness, the whole drafts feature.
-- Issue writes are gated to the **creator or the current assignee**, unlike
-  Mentor's open wiki model, so the realistic collision here is those two people
-  editing one description — not any two users.
+Issue drafts inherit every page-draft rule: owner-private, autosaved without
+touching the issue or the trail, offered but never applied, flagged when stale
+and never discarded by anyone but their owner or a successful save. The one
+real difference that remains is who can collide at all: issue writes are gated
+to the **creator or the current assignee**, unlike Mentor's open wiki model, so
+the realistic collision is those two people editing one description — not any
+two users.
 
 REST and MCP are unchanged: they have always supported `If-Match`, and an agent
 that omits it has always been able to overwrite. This closes the browser gap.
@@ -170,9 +165,9 @@ readers saw. And it is honest about being a snapshot:
 
 - Preview and drafts are bounded at 200,000 characters — the same ceiling the
   embed resolver uses. A body beyond that saves but does not preview or draft.
-- Drafts exist for **pages**, not issues. One row per (page, author); saving
+- Drafts exist for **pages and issues** alike. One row per (record, author); saving
   again overwrites it, so a draft is a position, not a history.
-- Staleness is detected from the page's ETag, and is surfaced rather than
+- Staleness is detected from the record's ETag, and is surfaced rather than
   enforced. A draft is never discarded for being stale — it is your work.
 - An export stops at 500 pages, skips any single image over 2 MB, and stops
   inlining once the file reaches 32 MB. Every one of those is reported in the

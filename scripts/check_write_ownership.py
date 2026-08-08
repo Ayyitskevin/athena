@@ -70,6 +70,9 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     # audited, never content. Migration 0071 carries the full boundary.
     ("*", "athena.mentor.page_drafts", "save_draft"): "personal state",
     ("*", "athena.mentor.page_drafts", "discard_draft"): "personal state",
+    # Issue drafts are the same shape's Aegis twin (migration 0074).
+    ("*", "athena.aegis.issue_drafts", "save_draft"): "personal state",
+    ("*", "athena.aegis.issue_drafts", "discard_draft"): "personal state",
     # --- The login/session flow (COMMAND_MIGRATION.md, "Users and agents" /
     # "OIDC identities"): credential operational state and provider exchange
     # are documented as bounded flows outside the command layer. Scoped to the

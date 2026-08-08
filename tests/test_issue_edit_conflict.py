@@ -1,16 +1,12 @@
 """Two browsers editing one issue — the losing editor's path.
 
-The page equivalent shipped first; this is its twin, and it **deliberately
-differs in one place**. On a page the winner's text goes into the fields, because
-the loser's copy is safe in `page_drafts`. Issues have no draft store, so the
-only place the loser's text survives is the form itself — putting the winner's
-text there would leave the loser hand-copying out of a `<pre>`, which is lossy
-rather than merely inconsistent.
-
-So for issues: the loser's text stays in the fields, the winner's is shown beside
-it, and the notice states the part that is genuinely worse than the page path —
-this text is not stored anywhere, and navigating away loses it. Saying so is the
-contract; a notice that implied durability would be a lie the code cannot back.
+The page equivalent shipped first, and for a while this path deliberately
+INVERTED it: issues had no draft store, so the loser's text stayed in the
+fields and the notice admitted it was not saved anywhere. `issue_drafts`
+(0074) erased that asymmetry, and these tests now pin the parity: the losing
+save writes the loser's text to their own draft, the fields show the winner's
+version — the issue as it stands — and restoring is one click. Nothing is
+overwritten, nothing is merged, and nothing is lost.
 """
 
 import html as html_module
@@ -118,13 +114,15 @@ def test_the_second_save_is_refused_and_the_page_is_not_overwritten(app, issue_i
         assert ann.get(f"/issues/{issue_id}", headers=H1).json()["body"] == "ann's plan"
 
 
-def test_the_losing_text_stays_in_the_form_and_theirs_is_shown_beside_it(app, issue_id):
-    # WHY: the inversion from pages, and the reason for it. With no draft store,
-    # the fields are the only place the loser's text exists.
+def test_the_losing_text_is_kept_as_a_draft_and_the_fields_show_theirs(app, issue_id):
+    # WHY: the parity with pages this path was waiting on. The fields can show
+    # the winner's version because the loser's copy is durable in their draft —
+    # and one click puts it back.
     with TestClient(app) as ann, TestClient(app) as bob:
         _login(ann, "ann@e.com")
         _login(bob, "bob@e.com")
-        stale = _etag_field(bob.get(f"/aegis/issues/{issue_id}/edit").text)
+        bob_form = bob.get(f"/aegis/issues/{issue_id}/edit").text
+        stale = _etag_field(bob_form)
         ann.post(
             f"/aegis/issues/{issue_id}/edit",
             data={
@@ -135,18 +133,30 @@ def test_the_losing_text_stays_in_the_form_and_theirs_is_shown_beside_it(app, is
         )
         lost = bob.post(
             f"/aegis/issues/{issue_id}/edit",
-            data={"title": "Migrate", "body": "bob's plan", "if_match": stale},
+            data={
+                "title": "Migrate",
+                "body": "bob's plan",
+                "if_match": stale,
+                "based_on": stale,
+            },
         )
-        # Bob's text is in the editable field...
-        assert _body_field(lost.text) == "bob's plan"
-        # ...and Ann's is shown for comparison.
+        # The winner's text is in the editable field — the page editor's shape...
+        assert _body_field(lost.text) == "ann's plan"
+        # ...and Bob's is shown for comparison, kept as his draft.
         shown = _rendered(lost)
-        assert "ann's plan" in shown
+        assert "bob's plan" in shown
         assert "Someone else saved this issue while you were editing" in shown
         assert "nothing was overwritten and nothing was merged" in shown
-        # The honest part: it says the text is NOT stored.
-        assert "not saved anywhere" in shown
-        assert "leaving this page loses it" in shown
+        assert "kept as your draft" in shown
+
+        # Restore puts Bob's text back in the fields — a read, nothing written.
+        restored = bob.get(f"/aegis/issues/{issue_id}/edit?restore=1")
+        assert _body_field(restored.text) == "bob's plan"
+        # The draft was taken against the baseline Bob edited FROM, so it is
+        # marked stale — the one moment that warning exists for.
+        assert "saved by someone else since you last typed" in _rendered(restored)
+        # And the issue itself was never touched by any of this.
+        assert ann.get(f"/issues/{issue_id}", headers=H1).json()["body"] == "ann's plan"
 
 
 def test_the_refused_form_can_be_saved_again_deliberately(app, issue_id):
