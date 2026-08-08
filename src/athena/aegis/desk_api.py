@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from athena.aegis import desk_commands
 from athena.core import desk_cursors
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import current_actor, personal_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER
 
 router = APIRouter(tags=["core"])
@@ -58,7 +58,11 @@ def read_desk(
 @router.post("/desk/cursor", response_model=CursorOut)
 def advance_cursor(
     payload: AdvanceCursorIn,
-    actor: dict = Depends(current_actor),
+    # A cursor advance is a personal-state WRITE (the F-1 design says exactly
+    # that), so it takes the personal-state gate watches and read-marks use:
+    # a read-only bearer token must never mutate anything, its own rows
+    # included. Shipped briefly on current_actor; this closes that.
+    actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # No idempotency-key plumbing: advancing to a value you already hold is a

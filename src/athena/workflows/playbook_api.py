@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.core.deps import get_conn
-from athena.core.identity import current_actor
+from athena.core.identity import issue_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.workflows import playbook_commands
 
@@ -36,7 +36,11 @@ class StartPlaybookIn(BaseModel):
 def start_playbook(
     page_id: RowIdPath,
     payload: StartPlaybookIn | None = None,
-    actor: dict = Depends(current_actor),
+    # Creating a parent and children in Aegis is an issue write, so the token
+    # needs the same scope POST /issues itself requires. This route shipped
+    # briefly on current_actor, which let a READ-ONLY token create issues —
+    # the exact boundary the read-vs-write token split exists to hold.
+    actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Turn a playbook page's checklist into a parent issue and its children.

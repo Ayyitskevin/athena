@@ -42,7 +42,8 @@ around:
 5. **Operator Playbook → Fleet operating guide** into its linked issues.
 
 Paste the printed MCP config into Claude Code, Claude Desktop, or any MCP
-client, and the seeded agent can work that database as itself — 115+ tools,
+client, and the seeded agent can work that database as itself — over a hundred
+tools matched to its token's scopes (a narrower token gets a narrower list),
 every write on the trail under its own identity.
 
 `--seed-only` creates the workspace without serving.
