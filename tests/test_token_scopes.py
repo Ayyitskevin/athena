@@ -237,3 +237,80 @@ def test_token_scope_migration_defaults_existing_tokens_to_admin(
 
     assert applied == ["0020_token_scopes.sql"]
     assert row["scopes"] == "admin"
+
+
+def test_read_only_token_cannot_start_a_playbook(tmp_path):
+    # WHY: found by the scope audit for MCP tool filtering. The playbook route
+    # shipped on current_actor, so a READ-ONLY token could create a parent issue
+    # and children — a mutation by the one token class that must never mutate.
+    # Starting a playbook is an Aegis write and takes the same scope POST /issues
+    # itself requires.
+    app = create_app(tmp_path / "scope_playbook.db")
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        space = client.post(
+            "/spaces", json={"key": "ENG", "name": "Eng"}, headers=_AUTH_ADMIN
+        ).json()
+        page = client.post(
+            f"/spaces/{space['id']}/pages",
+            json={"title": "Deploy", "body": "- [ ] step one"},
+            headers=_AUTH_ADMIN,
+        ).json()
+        label = client.post(
+            "/labels", json={"name": "playbook"}, headers=_AUTH_ADMIN
+        ).json()
+        client.post(
+            f"/pages/{page['id']}/labels",
+            json={"label_id": label["id"]},
+            headers=_AUTH_ADMIN,
+        )
+        reader = _bearer(_mint(client, scopes=["read"], name="pb-reader")["token"])
+
+        denied = client.post(
+            f"/pages/{page['id']}/start-playbook", json={}, headers=reader
+        )
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "token scope required: issue:write"
+        # Nothing was created: the refusal happened at the boundary.
+        assert client.get("/issues", headers=_AUTH_ADMIN).json() == []
+
+        # A token with the right scope still starts it — the gate narrows tokens,
+        # not the feature.
+        writer = _bearer(
+            _mint(client, scopes=["read", "issue:write"], name="pb-writer")["token"]
+        )
+        started = client.post(
+            f"/pages/{page['id']}/start-playbook", json={}, headers=writer
+        )
+        assert started.status_code == 201, started.text
+
+
+def test_read_only_token_cannot_advance_the_desk_cursor(tmp_path):
+    # WHY: same audit, same rule. The cursor is personal state, and personal
+    # state is still state — "a read-only bearer token must never mutate
+    # anything" includes an agent's own read receipt.
+    app = create_app(tmp_path / "scope_cursor.db")
+    with TestClient(app) as client:
+        _bootstrap_admin(client)
+        client.post("/issues", json={"title": "one event"}, headers=_AUTH_ADMIN)
+        reader = _bearer(_mint(client, scopes=["read"], name="desk-reader")["token"])
+
+        # The desk itself is a read and stays open to a read token.
+        desk = client.get("/desk", headers=reader)
+        assert desk.status_code == 200
+        latest = desk.json()["signals"]["latest_visible_event_id"]
+
+        denied = client.post("/desk/cursor", json={"after_id": latest}, headers=reader)
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "token scope required: a write scope"
+
+        # Any write scope suffices — the personal-state rule, not a module gate.
+        writer = _bearer(
+            _mint(client, scopes=["read", "docs:write"], name="desk-writer")["token"]
+        )
+        assert (
+            client.post(
+                "/desk/cursor", json={"after_id": latest}, headers=writer
+            ).status_code
+            == 200
+        )

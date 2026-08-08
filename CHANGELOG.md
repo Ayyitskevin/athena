@@ -12,6 +12,18 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **A read-scoped token could reach two writes.** The rule is that a token
+  minted with only the `read` scope must never mutate anything, and two routes
+  had drifted from it: `POST /playbooks/{page_id}/start` ran on plain
+  authentication, letting a read-only token create a parent issue and its
+  children, and `POST /desk/cursor` did the same for the reader's own desk
+  cursor — personal state, but still a durable write. The playbook route now
+  requires `issue:write` (it creates issues; it needs what issue creation
+  needs) and the cursor route requires any write scope, matching every other
+  personal-state write. Regression tests pin both refusals and both grants.
+  Found by auditing every route dependency while building the scope map below —
+  the audit the map now makes permanent.
+
 - **Supported deployments now start through a fail-closed launcher.**
   `athena-serve` preflights absolute storage paths, SQLite and attachment
   integrity, an active administrator's durable recovery credential, direct
@@ -65,6 +77,25 @@ the newest one and for what tagging still requires.
   from consuming the only bootstrap opening.
 
 ### Added
+
+- **The MCP server registers only the tools its token can use.** A session used
+  to carry all ~123 tools regardless of scopes — a read-scoped agent hauled
+  roughly 10k tokens of mutation docstrings whose only possible answer was 403.
+  At startup `athena-mcp` asks `whoami` for the token's scopes and registers
+  the matching surface: a `read` token gets the 57 reads, an `issue:write`
+  token adds Aegis writes and personal state, `docs:write` adds Mentor's, and
+  `admin` sees everything — including the admin-gated reads that are otherwise
+  hidden, because a tool that can only answer 403 is not a capability, it is
+  noise.
+
+  This is **presentation, not authorization** — the REST layer remains the
+  boundary, and a wrong map entry can hide a tool but never permit a call the
+  server would refuse. That is why the probe **fails open**: if Athena is
+  unreachable at MCP startup the full surface is presented, and the tools
+  answer 403 later exactly as before. `ATHENA_MCP_ALL_TOOLS=1` skips the probe
+  for the same full surface on purpose. The map itself is fail-closed at build
+  time — registering a tool with no declared scope raises, so every
+  server-building test doubles as a completeness check.
 
 - **`athena-field-guide --check` reports whether a seeded guide has drifted.**
   The guide ships as package data and is seeded once, and re-seeding refuses so

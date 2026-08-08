@@ -1260,6 +1260,15 @@ Point your MCP client at the `athena-mcp` command with those two environment
 variables. Give the agent the **narrowest token** that fits its job (e.g. a triage
 bot gets `read`, `issue:write`); the MCP server never widens what the token allows.
 
+The narrow token also buys a smaller session: at startup the server asks
+`whoami` for the token's scopes and **registers only the tools that token can
+use**, so a read-scoped agent carries the read surface instead of dozens of
+mutation tools whose only possible answer is 403. This is presentation, not
+authorization — the REST layer stays the boundary — which is why an unreachable
+Athena at startup fails *open* to the full surface rather than guessing.
+`ATHENA_MCP_ALL_TOOLS=1` skips the probe and presents everything, for harnesses
+and for inspecting the catalogue with a narrow token.
+
 It exposes tools for searching, reading and writing issues (create/update/assign/
 comment), reading and writing Mentor pages, listing projects/users/spaces, and
 reading the event feed. Admin-scoped tools also expose fleet run health plus complete
