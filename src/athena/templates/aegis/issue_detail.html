@@ -10,7 +10,7 @@
     </div>
     <div class="header-actions">
         <a href="/aegis/issues/{{ issue.id }}/work-context" class="button secondary small">Agent work context</a>
-        <span class="status {{ issue.status }} large">{{ issue.status }}</span>
+        <span class="chip chip--lg" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
         {% if request.state.user %}
         <form method="post" action="/aegis/issues/{{ issue.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
               style="display:inline">
@@ -55,9 +55,9 @@
         <dt>Reason</dt><dd>{{ open_claim_handoff.reason }}</dd>
         <dt>Yielded by</dt>
         <dd>{{ open_claim_handoff.yielded.actor_name }} at {{ open_claim_handoff.yielded.created_at }}</dd>
-        <dt>Attempted work</dt><dd class="body-text">{{ open_claim_handoff.attempted_work }}</dd>
-        <dt>Blocked question</dt><dd class="body-text">{{ open_claim_handoff.blocking_question }}</dd>
-        <dt>Resume instructions</dt><dd class="body-text">{{ open_claim_handoff.resume_instructions }}</dd>
+        <dt>Attempted work</dt><dd class="prose">{{ open_claim_handoff.attempted_work }}</dd>
+        <dt>Blocked question</dt><dd class="prose">{{ open_claim_handoff.blocking_question }}</dd>
+        <dt>Resume instructions</dt><dd class="prose">{{ open_claim_handoff.resume_instructions }}</dd>
         <dt>Evidence</dt>
         <dd>
             {% if open_claim_handoff.evidence %}
@@ -82,11 +82,11 @@
 <div class="issue-detail">
     <div class="meta-sidebar">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
-        <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+        <div class="meta-item"><strong>Status</strong> <span class="chip chip--lg" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span></div>
         {% if issue.archived_at %}
-        <div class="meta-item"><strong>Archived</strong> <span class="archived-badge" title="{{ issue.archived_at }}">archived</span></div>
+        <div class="meta-item"><strong>Archived</strong> <span class="chip" data-tone="neutral" title="{{ issue.archived_at }}">archived</span></div>
         {% endif %}
-        <div class="meta-item"><strong>Priority</strong> <span class="priority {{ issue.priority }}">{{ issue.priority }}</span></div>
+        <div class="meta-item"><strong>Priority</strong> <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
@@ -115,7 +115,7 @@
             <strong>Labels</strong>
             <div class="label-list">
                 {% for l in issue_labels %}
-                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
+                <span class="label" style="--label-color: {{ l.color }}">
                     <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/labels/{{ l.id }}/delete" class="label-remove">
@@ -144,7 +144,7 @@
             <div class="contributor-list">
                 {% for cb in contributors %}
                 <span class="contributor">
-                    {{ cb.name }}{% if cb.is_agent %} <span class="agent-badge">agent</span>{% endif %}
+                    {{ cb.name }}{% if cb.is_agent %} <span class="chip" data-tone="agent">agent</span>{% endif %}
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/contributors/{{ cb.user_id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}
@@ -177,7 +177,7 @@
                 <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>
             {% endif %}
             </h3>
-            <div class="body-text">{% if issue.body %}{{ body_html }}{% else %}No description provided.{% endif %}</div>
+            <div class="prose">{% if issue.body %}{{ body_html }}{% else %}No description provided.{% endif %}</div>
         </div>
 
         <div class="backlinks">
@@ -221,7 +221,7 @@
                         {% for it in items %}
                         <li>
                             <a href="/aegis/issues/{{ it.id }}" class="xref">{{ it.key or "#" ~ it.id }} {{ it.title }}</a>
-                            <span class="status {{ it.status }}">{{ it.status }}</span>
+                            <span class="chip" data-tone="{{ it.status | status_tone }}">{{ it.status }}</span>
                             {% if can_modify %}
                             <form method="post" action="/aegis/issues/{{ issue.id }}/links/{{ relation }}/{{ it.id }}/delete" class="rel-remove">
                                 {% include "partials/csrf.html" %}
@@ -297,7 +297,7 @@
             <ul class="child-list">
                 {% for c in children %}
                 <li>
-                    <span class="status {{ c.status }}">{{ c.status.replace("_", " ").title() }}</span>
+                    <span class="chip" data-tone="{{ c.status | status_tone }}">{{ c.status.replace("_", " ").title() }}</span>
                     <a href="/aegis/issues/{{ c.id }}">{{ c.key or "#" ~ c.id }} {{ c.title }}</a>
                     {# Archived children are listed but not counted above, so say
                        which ones they are — otherwise the header's total and the

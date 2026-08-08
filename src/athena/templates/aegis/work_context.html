@@ -4,7 +4,7 @@
 
 {% macro excerpt(value, empty_message="No text in this field.") %}
     {% if value.text %}
-    <pre class="body-text">{{ value.text }}</pre>
+    <pre class="prose">{{ value.text }}</pre>
     {% else %}
     <p class="muted">{{ empty_message }}</p>
     {% endif %}
@@ -32,8 +32,8 @@
 <a href="/aegis/issues/{{ item.id }}" class="xref">
     {{ item.key or "#" ~ item.id }} {{ item.title }}
 </a>
-<span class="status {{ item.status }}">{{ item.status }}</span>
-<span class="priority {{ item.priority }}">{{ item.priority }}</span>
+<span class="chip" data-tone="{{ item.status | status_tone }}">{{ item.status }}</span>
+<span class="chip" data-tone="{{ item.priority | priority_tone }}">{{ item.priority }}</span>
 <span class="muted">
     {{ item.status_category }} ·
     {% if item.project_id %}{{ item.project_name }} (project #{{ item.project_id }}){% else %}backlog{% endif %}
@@ -42,8 +42,9 @@
 {% endmacro %}
 
 {% macro related_group(title, group, empty_message) %}
-<section class="card">
-    <h3>{{ title }}</h3>
+<section class="panel">
+    <div class="panel-head"><h3>{{ title }}</h3></div>
+    <div class="panel-body">
     {{ group_summary(group) }}
     {% if group["items"] %}
     <ul class="rel-list">
@@ -54,6 +55,7 @@
     {% else %}
     <p class="muted">{{ empty_message }}</p>
     {% endif %}
+    </div>
 </section>
 {% endmacro %}
 
@@ -86,8 +88,9 @@
     this bounded preview; “truncated” means only part of a text field is shown.
 </p>
 
-<section class="card">
-    <h2>Projection contract</h2>
+<section class="panel">
+    <div class="panel-head"><h2>Projection contract</h2></div>
+    <div class="panel-body">
     <dl class="tt-fields">
         <dt>Schema</dt><dd><code>{{ schema }}</code></dd>
         <dt>Scope</dt><dd><code>{{ scope }}</code></dd>
@@ -100,10 +103,12 @@
         </dd>
         <dt>Issue ETag</dt><dd><code>{{ issue_etag }}</code></dd>
     </dl>
+    </div>
 </section>
 
-<section class="{{ 'warning' if warnings else 'card' }}" aria-labelledby="context-warnings">
-    <h2 id="context-warnings">Projection warnings</h2>
+<section class="{{ 'warning' if warnings else 'panel' }}" aria-labelledby="context-warnings">
+    <div class="panel-head"><h2 id="context-warnings">Projection warnings</h2></div>
+    <div class="panel-body">
     {% if warnings %}
     <ul>
         {% for warning in warnings %}<li>{{ warning }}</li>{% endfor %}
@@ -113,19 +118,21 @@
         No projection warnings were emitted. This is not an execution-readiness signal.
     </p>
     {% endif %}
+    </div>
 </section>
 
-<section class="card">
-    <h2>Issue</h2>
+<section class="panel">
+    <div class="panel-head"><h2>Issue</h2></div>
+    <div class="panel-body">
     <dl class="tt-fields">
         <dt>Reference</dt><dd>{{ issue.key or "#" ~ issue.id }} (id {{ issue.id }})</dd>
         <dt>Title</dt><dd>{{ issue.title }}</dd>
         <dt>Status</dt>
         <dd>
-            <span class="status {{ issue.status }}">{{ issue.status }}</span>
+            <span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
             <span class="muted">category {{ issue.status_category }}</span>
         </dd>
-        <dt>Priority</dt><dd><span class="priority {{ issue.priority }}">{{ issue.priority }}</span></dd>
+        <dt>Priority</dt><dd><span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></dd>
         <dt>Project</dt>
         <dd>
             {% if issue.project_id %}
@@ -150,7 +157,7 @@
             {% if issue.labels %}
             <span class="label-list">
                 {% for label in issue.labels %}
-                <span class="label" style="background: {{ label.color }}1a; color: {{ label.color }};">{{ label.name }}</span>
+                <span class="label" style="--label-color: {{ label.color }}">{{ label.name }}</span>
                 {% endfor %}
             </span>
             {% else %}
@@ -160,17 +167,20 @@
     </dl>
     <h3>Description</h3>
     {{ excerpt(issue.description, "No description.") }}
+    </div>
 </section>
 
 <h2>Hierarchy</h2>
 <div class="aegis-grid">
-    <section class="card">
-        <h3>Parent</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Parent</h3></div>
+        <div class="panel-body">
         {% if hierarchy.parent %}
         <p>{{ related_issue(hierarchy.parent) }}</p>
         {% else %}
         <p class="muted">No visible parent is included.</p>
         {% endif %}
+        </div>
     </section>
     {{ related_group("Children", hierarchy.children, "No visible children are included.") }}
 </div>
@@ -189,15 +199,16 @@
 
 <h2>People and artifacts</h2>
 <div class="aegis-grid">
-    <section class="card">
-        <h3>Contributors</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Contributors</h3></div>
+        <div class="panel-body">
         {{ group_summary(contributors) }}
         {% if contributors["items"] %}
         <ul>
             {% for contributor in contributors["items"] %}
             <li>
                 <strong>{{ contributor.name }}</strong>
-                {% if contributor.is_agent %}<span class="agent-badge">agent</span>{% endif %}
+                {% if contributor.is_agent %}<span class="chip" data-tone="agent">agent</span>{% endif %}
                 <span class="muted">
                     user {{ contributor.user_id }}
                     {% if contributor.added_by %} · added by user {{ contributor.added_by }}{% endif %}
@@ -209,10 +220,12 @@
         {% else %}
         <p class="muted">No visible contributors are included.</p>
         {% endif %}
+        </div>
     </section>
 
-    <section class="card">
-        <h3>Attachments</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Attachments</h3></div>
+        <div class="panel-body">
         {{ group_summary(attachments) }}
         {% if attachments["items"] %}
         <ul class="attachment-list">
@@ -232,11 +245,13 @@
         {% else %}
         <p class="muted">No visible attachments are included.</p>
         {% endif %}
+        </div>
     </section>
 </div>
 
-<section id="claim-handoffs" class="{{ 'warning' if claim_handoffs.open else 'card' }}">
-    <h2>Claim handoffs</h2>
+<section id="claim-handoffs" class="{{ 'warning' if claim_handoffs.open else 'panel' }}">
+    <div class="panel-head"><h2>Claim handoffs</h2></div>
+    <div class="panel-body">
     {{ group_summary(claim_handoffs) }}
     {% if claim_handoffs.open %}
     {% set handoff = claim_handoffs.open %}
@@ -245,9 +260,9 @@
         <dt>Reason</dt><dd>{{ handoff.reason }}</dd>
         <dt>Yielded by</dt>
         <dd>{{ handoff.yielded.actor_name }} at {{ handoff.yielded.created_at }}</dd>
-        <dt>Attempted work</dt><dd class="body-text">{{ handoff.attempted_work }}</dd>
-        <dt>Blocking question</dt><dd class="body-text">{{ handoff.blocking_question }}</dd>
-        <dt>Resume instructions</dt><dd class="body-text">{{ handoff.resume_instructions }}</dd>
+        <dt>Attempted work</dt><dd class="prose">{{ handoff.attempted_work }}</dd>
+        <dt>Blocking question</dt><dd class="prose">{{ handoff.blocking_question }}</dd>
+        <dt>Resume instructions</dt><dd class="prose">{{ handoff.resume_instructions }}</dd>
         <dt>Evidence</dt>
         <dd>
             {% if handoff.evidence %}
@@ -262,10 +277,12 @@
     {% else %}
     <p class="muted">No claim handoff is awaiting acknowledgment.</p>
     {% endif %}
+    </div>
 </section>
 
-<section class="card">
-    <h2>Comments</h2>
+<section class="panel">
+    <div class="panel-head"><h2>Comments</h2></div>
+    <div class="panel-body">
     {{ group_summary(comments) }}
     {% if comments["items"] %}
     <ol class="comment-list">
@@ -282,12 +299,14 @@
     {% else %}
     <p class="muted">No visible comments are included.</p>
     {% endif %}
+    </div>
 </section>
 
 <h2>References</h2>
 <div class="aegis-grid">
-    <section class="card">
-        <h3>Outgoing</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Outgoing</h3></div>
+        <div class="panel-body">
         {{ group_summary(references.outgoing) }}
         {% if references.outgoing["items"] %}
         <ul class="backlink-list">
@@ -311,10 +330,12 @@
         {% else %}
         <p class="muted">No visible outgoing references are included.</p>
         {% endif %}
+        </div>
     </section>
 
-    <section class="card">
-        <h3>Backlinks</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Backlinks</h3></div>
+        <div class="panel-body">
         {{ group_summary(references.backlinks) }}
         {% if references.backlinks["items"] %}
         <ul class="backlink-list">
@@ -328,11 +349,13 @@
         {% else %}
         <p class="muted">No visible backlinks are included.</p>
         {% endif %}
+        </div>
     </section>
 </div>
 
-<section class="card activity">
-    <h2>Recent activity</h2>
+<section class="panel activity">
+    <div class="panel-head"><h2>Recent activity</h2></div>
+    <div class="panel-body">
     {{ group_summary(recent_activity) }}
     {% if recent_activity["items"] %}
     <ol class="activity-list">
@@ -363,6 +386,7 @@
     {% else %}
     <p class="muted">No visible recent activity is included.</p>
     {% endif %}
+    </div>
 </section>
 
 <p class="note">Agent work context from the shared Aegis projection.</p>

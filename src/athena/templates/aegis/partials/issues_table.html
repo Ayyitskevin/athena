@@ -45,14 +45,14 @@
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
                 {% for l in issue.labels %}
-                <a href="/aegis/labels/{{ l.name }}" class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</a>
+                <a href="/aegis/labels/{{ l.name }}" class="label" style="--label-color: {{ l.color }}">{{ l.name }}</a>
                 {% endfor %}
             </td>
             <td>
-                <span class="status {{ issue.status }}">{{ issue.status }}</span>
+                <span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
             </td>
             <td>
-                <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
+                <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span>
             </td>
             <td class="muted">{{ issue.created_by }}</td>
             <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>

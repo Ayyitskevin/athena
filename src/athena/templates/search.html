@@ -56,7 +56,7 @@
                 <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
                 {% if h.kind in ('issue', 'issue_comment') %}
                     {% if h.key %}<span class="issue-id">{{ h.key }}</span>{% endif %}
-                    {% if h.status %}<span class="status {{ h.status }}">{{ h.status }}</span>{% endif %}
+                    {% if h.status %}<span class="chip" data-tone="{{ h.status | status_tone }}">{{ h.status }}</span>{% endif %}
                 {% elif h.kind in ('page', 'page_comment') and h.space_key %}
                     <span class="search-hit-kind">{{ h.space_key }}</span>
                 {% endif %}

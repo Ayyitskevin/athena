@@ -13,11 +13,13 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 {% if created %}
-<div class="form-container">
-    <h3>New token</h3>
+<section class="panel">
+    <div class="panel-head"><h3>New token</h3></div>
+    <div class="panel-body">
     <p class="note-small">This token is shown once.</p>
     <pre class="token-secret">{{ created.token }}</pre>
-</div>
+    </div>
+</section>
 {% endif %}
 
 {% if tokens %}
@@ -56,7 +58,8 @@
 <p class="empty-state">No tokens yet.</p>
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
+    <div class="panel-body">
     {% if can_manage_tokens %}
     <h3>Create token</h3>
     <form method="post" action="/settings/tokens" class="issue-form">
@@ -79,5 +82,6 @@
     {% else %}
     <p class="note-small">Viewer role is read-only.</p>
     {% endif %}
+    </div>
 </div>
 {% endblock %}

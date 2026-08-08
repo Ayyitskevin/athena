@@ -42,7 +42,7 @@
                 </form>
             </td>
             <td>
-                {% if u.is_agent %}<span class="agent-badge">agent</span>{% else %}<span class="muted">human</span>{% endif %}
+                {% if u.is_agent %}<span class="chip" data-tone="agent">agent</span>{% else %}<span class="muted">human</span>{% endif %}
                 <form method="post" action="/admin/users/{{ u.id }}/agent" class="inline-form">
                     {% include "partials/csrf.html" %}
                     <input type="hidden" name="is_agent" value="{{ 0 if u.is_agent else 1 }}">
@@ -64,7 +64,7 @@
     </tbody>
 </table>
 
-<div class="form-container">
+<div class="panel">
     <h3>New User</h3>
     <form method="post" action="/admin/users" class="issue-form">
         {% include "partials/csrf.html" %}

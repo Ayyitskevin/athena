@@ -28,7 +28,7 @@
             <div class="search-hit-head">
                 <a href="{{ h.href }}" class="search-hit-title">{{ h.title }}</a>
                 {% if h.key %}<span class="issue-id">{{ h.key }}</span>{% endif %}
-                {% if h.status %}<span class="status {{ h.status }}">{{ h.status }}</span>{% endif %}
+                {% if h.status %}<span class="chip" data-tone="{{ h.status | status_tone }}">{{ h.status }}</span>{% endif %}
             </div>
             {% if h.snippet_html %}<p class="search-hit-snippet">{{ h.snippet_html }}</p>{% endif %}
         </li>
@@ -57,11 +57,11 @@
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
                 {% for l in issue.labels %}
-                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">{{ l.name }}</span>
+                <span class="label" style="--label-color: {{ l.color }}">{{ l.name }}</span>
                 {% endfor %}
             </td>
-            <td><span class="status {{ issue.status }}">{{ issue.status }}</span></td>
-            <td><span class="priority {{ issue.priority }}">{{ issue.priority }}</span></td>
+            <td><span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span></td>
+            <td><span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></td>
             <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
             <td class="{{ 'muted' if not issue.project_name else '' }}">{{ issue.project_name or "—" }}</td>
         </tr>

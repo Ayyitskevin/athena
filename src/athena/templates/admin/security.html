@@ -19,12 +19,13 @@
 
 <div class="agent-pill-row">
     {% for name, count in counts.items() %}
-    <span class="pill">{{ name.replace("_", " ") }}: {{ count }}</span>
+    <span class="chip" data-tone="neutral">{{ name.replace("_", " ") }}: {{ count }}</span>
     {% endfor %}
 </div>
 
-<div class="dashboard-card">
-    <h2>Trail integrity</h2>
+<section class="panel">
+    <div class="panel-head"><h2>Trail integrity</h2></div>
+    <div class="panel-body">
     {% if chain.head %}
     <p>
         Chain head <code>{{ chain.head.entry_hash[:16] }}…</code> at event
@@ -56,7 +57,8 @@
         {% endif %}.
     </p>
     {% endif %}
-</div>
+    </div>
+</section>
 
 <form method="get" action="/admin/security" class="activity-filters">
     <label>

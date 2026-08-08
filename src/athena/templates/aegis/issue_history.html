@@ -17,10 +17,13 @@
 </p>
 
 <div class="timetravel">
-    <section class="tt-state">
-        <h2>
-            {% if snapshot.is_current %}Current state{% else %}State as of {{ snapshot.as_of }}{% endif %}
-        </h2>
+    <section class="panel">
+        <div class="panel-head">
+            <h2>
+                {% if snapshot.is_current %}Current state{% else %}State as of {{ snapshot.as_of }}{% endif %}
+            </h2>
+        </div>
+        <div class="panel-body">
         {% if not snapshot.is_current %}
         <p><a href="/aegis/issues/{{ issue.id }}/history" class="button secondary small">Jump to now</a></p>
         {% endif %}
@@ -37,6 +40,7 @@
             <dt>Parent</dt><dd>{{ snapshot.state.parent or "—" }}</dd>
             <dt>Archived</dt><dd>{{ "Yes" if snapshot.state.archived else "No" }}</dd>
         </dl>
+        </div>
     </section>
 
     <section class="tt-timeline">

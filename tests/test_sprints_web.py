@@ -72,7 +72,10 @@ def test_start_then_complete_lifecycle(tmp_path):
             ).status_code
             == 303
         )
-        assert "sprint-active" in client.get(f"/aegis/projects/{pid}/sprints").text
+        assert (
+            'data-tone="info">active</span>'
+            in client.get(f"/aegis/projects/{pid}/sprints").text
+        )
         # Starting an active sprint is an illegal move → 409.
         assert (
             client.post(
@@ -87,7 +90,10 @@ def test_start_then_complete_lifecycle(tmp_path):
             ).status_code
             == 303
         )
-        assert "sprint-completed" in client.get(f"/aegis/projects/{pid}/sprints").text
+        assert (
+            'data-tone="success">completed</span>'
+            in client.get(f"/aegis/projects/{pid}/sprints").text
+        )
 
 
 def test_delete_guarded_by_membership(tmp_path):

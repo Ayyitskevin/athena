@@ -16,7 +16,7 @@
         </nav>
         <h1>{{ page.title }}</h1>
         <p class="subtitle muted">Updated {{ page.updated_at }}{% if page.archived_at %}
-            · <span class="badge">Archived</span>{% endif %}</p>
+            · <span class="chip" data-tone="neutral">Archived</span>{% endif %}</p>
     </div>
     <div class="header-actions">
         {% if request.state.user %}
@@ -51,17 +51,18 @@
 
 <div class="page-body">
     {% if page.body %}
-    <div class="doc-body">{{ body_html }}</div>
+    <div class="prose">{{ body_html }}</div>
     {% else %}
     <p class="empty-state">This page has no content yet.</p>
     {% endif %}
 </div>
 
-<div class="form-container label-block">
-    <h3>Labels</h3>
+<section class="panel label-block">
+    <div class="panel-head"><h3>Labels</h3></div>
+    <div class="panel-body">
     <div class="label-list">
         {% for l in page_labels %}
-        <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
+        <span class="label" style="--label-color: {{ l.color }}">
             <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
             {% if can_write %}
             <form method="post" action="/mentor/pages/{{ page.id }}/labels/{{ l.id }}/delete" class="label-remove">
@@ -84,10 +85,12 @@
         {% for l in all_labels %}<option value="{{ l.name }}">{% endfor %}
     </datalist>
     {% endif %}
-</div>
+    </div>
+</section>
 
-<div class="form-container comments">
-    <h3>Comments</h3>
+<section class="panel comments">
+    <div class="panel-head"><h3>Comments</h3></div>
+    <div class="panel-body">
     {% if comments %}
     <ul class="comment-list">
         {% for c in comments %}
@@ -137,10 +140,12 @@
     {% else %}
     <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
     {% endif %}
-</div>
+    </div>
+</section>
 
-<div class="form-container">
-    <h3>Attachments</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Attachments</h3></div>
+    <div class="panel-body">
     {% if attachments %}
     <ul class="attachment-list">
         {% for a in attachments %}
@@ -179,10 +184,12 @@
         <button type="submit" class="button secondary">Upload</button>
     </form>
     {% endif %}
-</div>
+    </div>
+</section>
 
-<div class="form-container">
-    <h3>Referenced by</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Referenced by</h3></div>
+    <div class="panel-body">
     {% if backlinks %}
     <ul class="backlink-list">
         {% for ref in backlinks %}
@@ -203,10 +210,12 @@
         <a href="/mentor/pages/{{ page.id }}/graph">Connections →</a>
         the link graph around this page, and text that names it without linking.
     </p>
-</div>
+    </div>
+</section>
 
-<div class="form-container">
-    <h3>History</h3>
+<section class="panel">
+    <div class="panel-head"><h3>History</h3></div>
+    <div class="panel-body">
     {% if versions %}
     <table class="issues-table">
         <thead>
@@ -234,18 +243,22 @@
     {% else %}
     <p class="note-small">No prior versions — this page hasn't been edited yet.</p>
     {% endif %}
-</div>
+    </div>
+</section>
 
-<div class="form-container">
-    <h3>Activity</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Activity</h3></div>
+    <div class="panel-body">
     {% with events = activity, show_target = False %}
     {% include "aegis/partials/activity_list.html" %}
     {% endwith %}
-</div>
+    </div>
+</section>
 
 {% if can_write %}
-<div class="form-container">
-    <h3>Manage</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Manage</h3></div>
+    <div class="panel-body">
 
     <form method="post" action="/mentor/pages/{{ page.id }}/move" class="issue-form">
         {% include "partials/csrf.html" %}
@@ -295,7 +308,8 @@
         <button type="submit" class="button danger">Delete page</button>
         {% endif %}
     </form>
-</div>
+    </div>
+</section>
 {% endif %}
 
 <p class="note">Data from the Mentor pages API.</p>

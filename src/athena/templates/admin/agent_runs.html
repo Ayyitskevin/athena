@@ -18,20 +18,22 @@
 </div>
 
 {% if automation_failures %}
-<section class="dashboard-card">
-    <h2>Automation failures</h2>
-    <p class="subtitle">Cumulative action failures that need operator inspection.</p>
-    <ul class="compact-list">
-        {% for rule in automation_failures %}
-        <li>
-            <strong>{{ rule.name }}</strong>
-            <span class="badge">⚠ {{ rule.failure_count }} failed</span>
-            {% if rule.last_error_at %}<span class="muted">{{ rule.last_error_at }} UTC</span>{% endif %}
-            {% if rule.last_error %}<div class="muted">{{ rule.last_error }}</div>{% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    <p class="note-small"><a href="/admin/automation">Inspect automation rules →</a></p>
+<section class="panel">
+    <div class="panel-head"><h2>Automation failures</h2></div>
+    <div class="panel-body">
+        <p class="subtitle">Cumulative action failures that need operator inspection.</p>
+        <ul class="compact-list">
+            {% for rule in automation_failures %}
+            <li>
+                <strong>{{ rule.name }}</strong>
+                <span class="chip" data-tone="danger">⚠ {{ rule.failure_count }} failed</span>
+                {% if rule.last_error_at %}<span class="muted">{{ rule.last_error_at }} UTC</span>{% endif %}
+                {% if rule.last_error %}<div class="muted">{{ rule.last_error }}</div>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        <p class="note-small"><a href="/admin/automation">Inspect automation rules →</a></p>
+    </div>
 </section>
 {% endif %}
 
@@ -67,8 +69,9 @@
 
 {% include "admin/partials/fleet_active_work.html" %}
 
-<section class="dashboard-card agent-checkins">
-    <h2>Agent check-ins</h2>
+<section class="panel agent-checkins">
+    <div class="panel-head"><h2>Agent check-ins</h2></div>
+    <div class="panel-body">
     <p class="subtitle">
         Cooperative self-reports show when Athena last accepted a check-in.
         They do not prove that an agent's OS process is alive. Headlines use each
@@ -76,17 +79,23 @@
         may not have replayable activity.
     </p>
     <div class="agent-health-summary">
-        <div class="agent-health-stat">
-            <strong>{{ totals.latest_reporting_recently_count }}</strong>
-            <span>agents reporting recently</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ totals.latest_reporting_recently_count }}</strong>
+                <span>agents reporting recently</span>
+            </div>
         </div>
-        <div class="agent-health-stat">
-            <strong>{{ totals.latest_stale_checkin_count }}</strong>
-            <span>agents whose latest report is stale</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ totals.latest_stale_checkin_count }}</strong>
+                <span>agents whose latest report is stale</span>
+            </div>
         </div>
-        <div class="agent-health-stat">
-            <strong>{{ totals.latest_checkin_count }}</strong>
-            <span>agents with check-ins</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ totals.latest_checkin_count }}</strong>
+                <span>agents with check-ins</span>
+            </div>
         </div>
     </div>
     {% if latest_checkins %}
@@ -110,12 +119,12 @@
             <tr>
                 <td>
                     <strong>{{ checkin.agent_name }}</strong>
-                    <span class="agent-badge">agent</span>
+                    <span class="chip" data-tone="agent">agent</span>
                     <div class="muted">{{ checkin.agent_email }}</div>
                 </td>
                 <td><code class="checkin-run-id">{{ checkin.run_id }}</code></td>
                 <td>
-                    <span class="agent-checkin-state {{ checkin.reporting_state }}">
+                    <span class="chip" data-tone="{{ checkin.reporting_state | checkin_tone }}">
                         {% if checkin.reporting_state == "reporting_recently" %}reporting recently{% else %}stale{% endif %}
                     </span>
                 </td>
@@ -168,27 +177,36 @@
         A stale latest report is an operator signal only. Check-ins do not finish runs, revoke credentials, or transfer work;
         history can include parallel or completed run ids.
     </p>
+    </div>
 </section>
 
 <section class="agent-activity-health" aria-labelledby="activity-replay-heading">
     <h2 id="activity-replay-heading">Activity and replay</h2>
 {% if agents %}
 <div class="agent-health-summary">
-    <div class="agent-health-stat">
-        <strong>{{ totals.agents_with_activity_count }}</strong>
-        <span>agents with activity</span>
+    <div class="panel">
+        <div class="panel-body">
+            <strong>{{ totals.agents_with_activity_count }}</strong>
+            <span>agents with activity</span>
+        </div>
     </div>
-    <div class="agent-health-stat">
-        <strong>{{ totals.replay_ready_count }}</strong>
-        <span>with tagged runs</span>
+    <div class="panel">
+        <div class="panel-body">
+            <strong>{{ totals.replay_ready_count }}</strong>
+            <span>with tagged runs</span>
+        </div>
     </div>
-    <div class="agent-health-stat">
-        <strong>{{ totals.untagged_only_count }}</strong>
-        <span>untagged only</span>
+    <div class="panel">
+        <div class="panel-body">
+            <strong>{{ totals.untagged_only_count }}</strong>
+            <span>untagged only</span>
+        </div>
     </div>
-    <div class="agent-health-stat">
-        <strong>{{ totals.total_recent_runs }}</strong>
-        <span>recent runs</span>
+    <div class="panel">
+        <div class="panel-body">
+            <strong>{{ totals.total_recent_runs }}</strong>
+            <span>recent runs</span>
+        </div>
     </div>
 </div>
 
@@ -209,11 +227,11 @@
         <tr>
             <td>
                 <strong>{{ agent.user.name }}</strong>
-                <span class="agent-badge">agent</span>
+                <span class="chip" data-tone="agent">agent</span>
                 <div class="muted">{{ agent.user.email }}</div>
             </td>
             <td>
-                <span class="agent-health-state {{ agent.health_state }}">{{ agent.health_label }}</span>
+                <span class="chip" data-tone="{{ agent.health_state | health_tone }}">{{ agent.health_label }}</span>
                 <div class="muted">{{ agent.recent_event_count }} recent event{{ "s" if agent.recent_event_count != 1 }}</div>
             </td>
             <td>
@@ -223,7 +241,7 @@
                     {% else %}
                     <span class="muted">heuristic run</span>
                     {% endif %}
-                    {% if agent.latest_run.partial %}<span class="run-partial">partial</span>{% endif %}
+                    {% if agent.latest_run.partial %}<span class="chip chip--sm" data-tone="warning">partial</span>{% endif %}
                     <div class="muted">{{ agent.latest_run.started_at }} - {{ agent.latest_run.ended_at }}</div>
                 {% else %}
                     <span class="muted">No activity yet.</span>
@@ -238,7 +256,7 @@
             </td>
             <td>
                 {% if agent.child_run_count %}
-                <span class="pill">{{ agent.child_run_count }} child run{{ "s" if agent.child_run_count != 1 }}</span>
+                <span class="chip" data-tone="neutral">{{ agent.child_run_count }} child run{{ "s" if agent.child_run_count != 1 }}</span>
                 {% else %}
                 <span class="muted">No child runs</span>
                 {% endif %}
@@ -261,8 +279,8 @@
                         <span class="muted">heuristic run</span>
                         {% endif %}
                         <span class="muted">{{ run.event_count }} event{{ "s" if run.event_count != 1 }}</span>
-                        {% if run.child_run_count %}<span class="pill">{{ run.child_run_count }} child</span>{% endif %}
-                        {% if run.partial %}<span class="run-partial">partial</span>{% endif %}
+                        {% if run.child_run_count %}<span class="chip" data-tone="neutral">{{ run.child_run_count }} child</span>{% endif %}
+                        {% if run.partial %}<span class="chip chip--sm" data-tone="warning">partial</span>{% endif %}
                         <span class="muted">{{ run.started_at }} - {{ run.ended_at }}</span>
                     </li>
                     {% endfor %}

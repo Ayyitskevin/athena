@@ -53,12 +53,12 @@ def test_runs_page_groups_actor_runs(tmp_path):
 
         page = client.get("/aegis/activity/runs?actor=2")
         assert page.status_code == 200
-        assert 'class="run-card"' in page.text
+        assert '<details class="panel"' in page.text
         assert "1 run for" in page.text
         # The run carries its events, linking each to the issue.
         assert f"/aegis/issues/{iss['id']}" in page.text
         # The agent is badged.
-        assert "agent-badge" in page.text
+        assert 'data-tone="agent">agent</span>' in page.text
 
 
 def test_runs_page_unknown_actor_is_empty_not_error(tmp_path):

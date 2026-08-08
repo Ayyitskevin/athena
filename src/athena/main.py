@@ -32,7 +32,7 @@ from athena.workflows import playbook_api as workflows_playbook_api
 from athena.workflows import workspace_search_api as workflows_workspace_search_api
 from athena.aegis import dispatch_api as aegis_dispatch_api
 from athena.aegis import forge_api as aegis_forge_api
-from athena.web import render
+from athena.web import chips, render
 from athena.aegis import embeds_api as aegis_embeds_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
@@ -1532,6 +1532,14 @@ def create_app(
     # passes no hosts renders inert text, so a surface that has not opted in
     # degrades to today's behavior rather than breaking.
     templates.env.filters["forge_detail"] = render.render_forge_detail
+    # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
+    # no database access — see chips.py for which domains are exact vs. best-effort.
+    templates.env.filters["status_tone"] = chips.status_tone
+    templates.env.filters["priority_tone"] = chips.priority_tone
+    templates.env.filters["checkin_tone"] = chips.checkin_tone
+    templates.env.filters["health_tone"] = chips.health_tone
+    templates.env.filters["token_tone"] = chips.token_tone
+    templates.env.filters["sprint_tone"] = chips.sprint_tone
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)

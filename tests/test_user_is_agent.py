@@ -157,7 +157,7 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
         )
         assert marked.status_code == 303, marked.text
         page = client.get("/admin/users")
-        assert 'class="agent-badge"' in page.text
+        assert 'data-tone="agent">agent</span>' in page.text
 
         # And toggling back to human sticks.
         client.post(
@@ -194,5 +194,7 @@ def test_agent_contributor_is_badged_on_issue(tmp_path):
         page = client.get(f"/aegis/issues/{issue['id']}")
         assert page.status_code == 200
         # The agent contributor carries the badge, and the delegate select marks them.
-        assert re.search(r"Botty\s*<span class=\"agent-badge\">agent</span>", page.text)
+        assert re.search(
+            r'Botty\s*<span class="chip" data-tone="agent">agent</span>', page.text
+        )
         assert "Botty (agent)" in page.text
