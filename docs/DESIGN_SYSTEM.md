@@ -138,6 +138,19 @@ needs a database connection a template filter doesn't have. **Follow-up**:
 thread `category` through the aegis issue-query layer so status chips are
 correct for custom project statuses too, not just the seeded defaults.
 
+## §8 Ported Surfaces — why a "legacy-looking" section exists
+
+`styles.css` §8 holds ~116 structural classes ported from the pre-Phosphor
+stylesheet (activity trail, issue-detail layout, search, login, inbox, board
+filter bar, Mission Control tables, lineage/time-travel, fleet metrics, home).
+The design drop-in restyled the four concept screens and deleted everything
+else's structure; §8 is what keeps the rest of the app rendered. Every hex was
+replaced with its token, so both themes work. **Do not delete §8 as cleanup.**
+The intended path is the opposite: redesign a surface properly, move its rules
+into the appropriate section, and shrink §8 one surface at a time. §8 also
+carries the `.htmx-request` busy mirrors — htmx toggles that class, never
+`aria-busy`, so §6's `[aria-busy]` indicators alone are dead code.
+
 ## Deferred to a follow-up PR
 
 This migration intentionally stopped short of two items the design package
