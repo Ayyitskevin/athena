@@ -27,8 +27,10 @@ tracking, cross-links, and an append-only activity trail in one app.
   looked. A durable per-reader cursor makes "since I last looked" a real
   question; it moves forward only, and records no activity event.
 - **Playbooks** — a page labelled `playbook` turns its checklist into one parent
-  issue plus a child per unchecked step, each citing the page. Docs start work;
-  embeds already showed work in docs; learnings already wrote back to docs.
+  issue plus a child per unchecked step, each citing the page — and indented
+  steps nest, so a checklist with sub-steps instantiates as a real issue tree.
+  Docs start work; embeds already showed work in docs; learnings already wrote
+  back to docs.
 - **Workspace search** — `GET /search/workspace` answers across issues, pages,
   and comments in one call, and the work query grammar passes through
   (`is:open label:infra zebra` filters the work *and* finds the page). Grouped by

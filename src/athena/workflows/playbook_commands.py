@@ -9,8 +9,11 @@ work that carries it out.**
 A playbook is an ordinary Mentor page carrying the ``playbook`` label — the
 same "a label marks a kind of page" mechanism templates already use, so there
 is no new concept and no new table. Starting one reads the page's markdown
-checklist and creates one parent issue plus one child per unchecked item,
-every body citing the page with an ordinary ``[[page:N]]`` wikilink. That
+checklist and creates one parent issue plus one child per unchecked item —
+and an INDENTED item nests under the issue its enclosing item became, so a
+checklist with sub-steps instantiates as the same issue hierarchy a hand
+would build (`set_issue_parent` owns that write, as ever). Every body cites
+the page with an ordinary ``[[page:N]]`` wikilink. That
 citation is the whole trick: the existing link indexer turns it into real
 backlinks, so the page immediately shows the work it started, and a ``rollup``
 embed on that page counts the children's progress — with no code here knowing
@@ -44,12 +47,18 @@ from athena.mentor import pages
 #: (The `template` label works the same way — see mentor/page_templates.py.)
 PLAYBOOK_LABEL = "playbook"
 
-#: A markdown task line: optional indent, a bullet, a box, then the text.
+#: A markdown task line: optional indent (captured — it carries the nesting),
+#: a bullet, a box, then the text.
 #: One quantified run per term and no overlap between a term and its successor
 #: (`[ \t]*` then a literal bullet, `[ ]|[xX]` then a literal `]`), so the
 #: pattern cannot backtrack polynomially over a long line of spaces — the
 #: discipline core/links.py documents, applied to body-derived text.
-_TASK_RE = re.compile(r"^[ \t]*[-*+] \[( |x|X)\] ?(.*)$")
+_TASK_RE = re.compile(r"^([ \t]*)[-*+] \[( |x|X)\] ?(.*)$")
+
+#: One tab of indentation reads as four spaces when measuring nesting. A fixed
+#: published equivalence, because "how wide is a tab" must not depend on the
+#: author's editor for the structure of the work it creates.
+_TAB_WIDTH = 4
 
 #: Bounds. A playbook that would create more issues than a human can review in
 #: one sitting is a data-entry accident, not a plan.
@@ -75,30 +84,54 @@ class PlaybookCommandError(Exception):
         self.detail = detail
 
 
-def parse_checklist(body: str | None) -> tuple[list[str], int]:
-    """Split a page body into (unchecked item titles, checked item count).
+def parse_checklist(body: str | None) -> tuple[list[dict], int]:
+    """Split a page body into (unchecked work items, checked item count).
+
+    Each item is ``{"title": str, "parent": int | None}`` where ``parent``
+    indexes an EARLIER item in the returned list — indentation maps to
+    hierarchy, so an indented step nests under the nearest less-indented task
+    line above it. Relative indent is all that matters (two spaces or a full
+    tab both read as "deeper"); a tab measures ``_TAB_WIDTH`` spaces.
 
     Only ``- [ ]`` becomes work. A ``- [x]`` line is someone recording that the
     step is already done, and creating an issue for it would be the tool
     arguing with its author — so those are counted and reported, never silently
-    dropped and never turned into work.
+    dropped and never turned into work. A done step's unchecked children are
+    still real work, though: they promote to the nearest ancestor that IS work
+    (top level when there is none), rather than vanishing with their parent or
+    resurrecting it.
 
     An item's title is trimmed and bounded; an empty box (``- [ ]`` with no
-    text) is skipped rather than creating an issue with no title.
+    text) is skipped rather than creating an issue with no title, and its
+    children promote the same way.
     """
-    unchecked: list[str] = []
+    items: list[dict] = []
     checked = 0
+    # The enclosing task lines, innermost last: (indent, effective_parent) where
+    # effective_parent is the item index descendants should nest under — the
+    # line's own index when it became work, or its inherited parent when it did
+    # not (checked, or an empty box).
+    stack: list[tuple[int, int | None]] = []
     for line in (body or "").splitlines():
         match = _TASK_RE.match(line)
         if match is None:
             continue
-        if match.group(1) in ("x", "X"):
+        indent = len(match.group(1).expandtabs(_TAB_WIDTH))
+        # Keep only STRICT ancestors: a sibling (equal indent) or a dedent pops.
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        inherited = stack[-1][1] if stack else None
+        if match.group(2) in ("x", "X"):
             checked += 1
+            stack.append((indent, inherited))
             continue
-        title = match.group(2).strip()
-        if title:
-            unchecked.append(title[:MAX_TITLE_LENGTH])
-    return unchecked, checked
+        title = match.group(3).strip()
+        if not title:
+            stack.append((indent, inherited))
+            continue
+        items.append({"title": title[:MAX_TITLE_LENGTH], "parent": inherited})
+        stack.append((indent, len(items) - 1))
+    return items, checked
 
 
 def _visible_playbook(conn: sqlite3.Connection, actor: dict, page_id: int) -> dict:
@@ -133,7 +166,11 @@ def start_playbook(
 ) -> dict:
     """Instantiate a playbook page as a parent issue with one child per step.
 
-    Returns ``{"page", "parent", "children", "checked_skipped", "page_version_id"}``.
+    Returns ``{"page", "parent", "children", "checked_skipped", "snapshot"}``.
+    ``children`` is in reading order, and each child's ``parent_id`` is real:
+    an indented step nests under the issue its enclosing step became, so the
+    checklist's shape IS the issue hierarchy — one ``set_issue_parent`` per
+    child, the same command a hand-built tree uses.
 
     Everything lands in one transaction: either the whole instantiation exists
     or none of it does, so a failure halfway through cannot leave an orphaned
@@ -178,17 +215,26 @@ def start_playbook(
             body=f"{citation} — a playbook with {len(steps)} steps.",
             project_id=project_id,
         )
-        children = []
+        children: list[dict] = []
         for step in steps:
             child = issue_commands.create_issue(
                 conn,
                 actor=actor,
-                title=step,
+                title=step["title"],
                 body=citation,
                 project_id=project_id,
             )
-            issue_commands.set_issue_parent(
-                conn, actor=actor, issue_id=child["id"], parent_id=parent["id"]
+            # A top-level step nests under the instantiation's parent issue; an
+            # indented one under the issue its enclosing step just became.
+            # set_issue_parent returns the updated row, so every child reported
+            # back carries its REAL parent_id rather than the pre-nesting None.
+            structural_parent = (
+                parent["id"]
+                if step["parent"] is None
+                else children[step["parent"]]["id"]
+            )
+            child = issue_commands.set_issue_parent(
+                conn, actor=actor, issue_id=child["id"], parent_id=structural_parent
             )
             children.append(child)
 

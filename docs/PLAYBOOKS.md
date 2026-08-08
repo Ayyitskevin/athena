@@ -9,7 +9,10 @@ things.
 
 A **playbook** is an ordinary Mentor page carrying the `playbook` label whose
 markdown checklist can be turned into real work: one parent issue, one child per
-unchecked step.
+unchecked step — and **indentation is structure**, so an indented step nests
+under the issue its enclosing step became. A checklist with sub-steps
+instantiates as the same issue tree a hand would build, one `set_issue_parent`
+per child.
 
 ```text
 POST /pages/{page_id}/start-playbook   {"project_id": 12, "title": "March release"}
@@ -29,14 +32,19 @@ embed is.
 | Line | Result |
 |---|---|
 | `- [ ] Freeze the release branch` | a child issue titled "Freeze the release branch" |
-| `* [ ] …`, `+ [ ] …`, indented variants | the same — the common bullet styles |
+| `* [ ] …`, `+ [ ] …` | the same — the common bullet styles |
+| `  - [ ] Announce the window` (indented) | a child of the issue the enclosing step became |
 | `- [x] Tell the operator` | **counted and skipped**, reported as `checked_skipped` |
 | `- [ ]` with no text | skipped (an issue with no title helps nobody) |
 | `- [] malformed`, prose mentioning `[ ]` | ignored |
 
-A ticked box is the author saying the step is already done. Creating an issue
-for it would be the tool arguing with its author, so those are counted and
-reported rather than silently dropped or silently created.
+Nesting is **relative**: two spaces or a tab (read as four) both mean "deeper
+than the line above", and siblings return to their level. A ticked box is the
+author saying the step is already done. Creating an issue for it would be the
+tool arguing with its author, so those are counted and reported rather than
+silently dropped or silently created — but a ticked step's unchecked sub-steps
+are still real work, and they attach to the nearest ancestor that became work
+(top level when none did) rather than vanishing with their parent.
 
 ## A template is not a live mirror
 
