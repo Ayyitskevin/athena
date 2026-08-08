@@ -105,6 +105,17 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Playbook checklists nest.** An indented `- [ ]` step now instantiates as a
+  child of the issue its enclosing step became, so a checklist with sub-steps
+  produces the same issue tree a hand would build — one `set_issue_parent` per
+  child, through the same command, with its same audit event. Nesting is
+  relative (two spaces or a tab both read as "deeper"), siblings return to
+  their level, and a ticked step's unchecked sub-steps promote to the nearest
+  ancestor that became work instead of vanishing with their parent or
+  resurrecting it. Reported children now carry their real `parent_id` (it was
+  the pre-nesting `None` before). Flat checklists — including the shipped
+  example playbook — instantiate exactly as they always did.
+
 - **The MCP server registers only the tools its token can use.** A session used
   to carry all ~123 tools regardless of scopes — a read-scoped agent hauled
   roughly 10k tokens of mutation docstrings whose only possible answer was 403.

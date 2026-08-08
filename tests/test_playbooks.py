@@ -128,6 +128,49 @@ def test_starting_a_playbook_closes_the_docs_to_work_loop(tmp_path):
         assert "3" in rendered  # three children counted by the embed
 
 
+def test_an_indented_checklist_instantiates_as_a_real_issue_tree(tmp_path):
+    # WHY: indentation is structure, all the way to the wire. The checklist's
+    # shape must come back as issues.parent_id — set through the ordinary
+    # set_issue_parent command — and the reported children must carry their
+    # REAL parent_id, not the pre-nesting None.
+    nested = (
+        "- [ ] Prepare the rollout\n"
+        "  - [ ] Freeze the branch\n"
+        "  - [ ] Announce the window\n"
+        "- [ ] Verify afterwards\n"
+        "  - [ ] Walk the chain\n"
+    )
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        space = _space(client)
+        page = _page(client, space["id"], body=nested)
+
+        result = _start(client, page["id"]).json()
+        by_title = {c["title"]: c for c in result["children"]}
+        root = result["parent"]["id"]
+
+        assert by_title["Prepare the rollout"]["parent_id"] == root
+        assert by_title["Verify afterwards"]["parent_id"] == root
+        assert (
+            by_title["Freeze the branch"]["parent_id"]
+            == by_title["Prepare the rollout"]["id"]
+        )
+        assert (
+            by_title["Announce the window"]["parent_id"]
+            == by_title["Prepare the rollout"]["id"]
+        )
+        assert (
+            by_title["Walk the chain"]["parent_id"]
+            == by_title["Verify afterwards"]["id"]
+        )
+
+        # The stored rows agree with what the command reported.
+        for child in result["children"]:
+            fetched = client.get(f"/issues/{child['id']}", headers=H1).json()
+            assert fetched["parent_id"] == child["parent_id"]
+
+
 def test_the_page_snapshot_does_not_follow_later_edits(tmp_path):
     # WHY: a template is not a live mirror. Editing the page after starting it
     # must not touch work already created, and starting again must produce a
@@ -175,13 +218,42 @@ def test_the_checklist_parser_reads_only_real_task_lines():
         "- regular bullet\n"
         "Just prose about [ ] boxes\n"
     )
-    assert steps == ["dash", "star", "plus", "indented"]
+    assert [s["title"] for s in steps] == ["dash", "star", "plus", "indented"]
     assert checked == 2
+    # "indented" sits under "plus" — indentation is structure now.
+    assert [s["parent"] for s in steps] == [None, None, None, 2]
+
+
+def test_indentation_maps_to_hierarchy_and_promotes_through_non_work():
+    # WHY: the whole feature in one body. Relative indent nests; a sibling
+    # returns to its level; a DONE step's unchecked children are still work and
+    # promote to the nearest ancestor that became work (top level when none),
+    # rather than vanishing with their parent or resurrecting it.
+    steps, checked = playbook_commands.parse_checklist(
+        "- [ ] root a\n"
+        "  - [ ] child of a\n"
+        "    - [ ] grandchild of a\n"
+        "  - [ ] second child of a\n"
+        "- [x] root b, already done\n"
+        "  - [ ] orphan promotes to top level\n"
+        "- [ ] root c\n"
+        "\t- [ ] tab-indented child of c\n"
+    )
+    assert checked == 1
+    assert [(s["title"], s["parent"]) for s in steps] == [
+        ("root a", None),
+        ("child of a", 0),
+        ("grandchild of a", 1),
+        ("second child of a", 0),
+        ("orphan promotes to top level", None),
+        ("root c", None),
+        ("tab-indented child of c", 5),
+    ]
 
 
 def test_a_long_step_title_is_bounded():
     steps, _ = playbook_commands.parse_checklist("- [ ] " + "x" * 500)
-    assert len(steps[0]) == playbook_commands.MAX_TITLE_LENGTH
+    assert len(steps[0]["title"]) == playbook_commands.MAX_TITLE_LENGTH
 
 
 def test_the_parser_scans_long_lines_linearly():

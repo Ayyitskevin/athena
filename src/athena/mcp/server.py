@@ -1108,11 +1108,14 @@ def build_server(
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Turn a playbook page's checklist into REAL WORK: one parent issue
-        plus one child per unchecked `- [ ]` step.
+        plus one child per unchecked `- [ ]` step. Indented steps NEST — the
+        checklist's shape comes back as the issue tree, each indented step a
+        child of the issue its enclosing step became.
 
         The page must carry the `playbook` label. Checked (`- [x]`) steps are
         counted and skipped, never created — ticking a box before starting is
-        the author saying it is already done.
+        the author saying it is already done. A checked step's unchecked
+        sub-steps still become work, attached to the nearest created ancestor.
 
         Every created issue cites the page with a `[[page:N]]` wikilink, so the
         page's backlinks show the work it started and a `rollup` embed there

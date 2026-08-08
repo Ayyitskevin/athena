@@ -6,18 +6,25 @@ start_playbook(page_id, project_id=None, title=None)
 POST /pages/{page_id}/start-playbook
 ```
 
-You get one parent issue and one child per **unchecked** step.
+You get one parent issue and one child per **unchecked** step — and
+**indentation is structure**: an indented step nests under the issue its
+enclosing step became, so a checklist with sub-steps instantiates as the same
+issue tree you would build by hand.
 
 ```markdown
 - [ ] Freeze the release branch
+  - [ ] Announce the freeze window
 - [ ] Rehearse the migration on a copy
 - [x] Tell the operator it is starting
 ```
 
-That page makes two issues, not three. A ticked box is the author saying the
-step is already done, and creating an issue for it would be the tool arguing
-with its author — so ticked steps are counted and reported back to you as
-`checked_skipped`, never silently dropped and never silently created.
+That page makes three issues, not four — "Announce the freeze window" a child
+of "Freeze the release branch", both under the parent. A ticked box is the
+author saying the step is already done, and creating an issue for it would be
+the tool arguing with its author — so ticked steps are counted and reported
+back to you as `checked_skipped`, never silently dropped and never silently
+created. A ticked step's unchecked sub-steps are still real work: they attach
+to the nearest ancestor that became work, top level if none did.
 
 ## A template is not a live mirror
 
