@@ -257,7 +257,7 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Lifecycle | Both background tasks are cancelled and awaited; non-cancellation failures surface | PASS |
 | Egress | SSRF guard (scheme, address class, DNS pin, no redirects) on every outbound POST; private-address egress is opt-in per exact hostname via `ATHENA_EGRESS_PRIVATE_HOSTS`, empty by default | PASS |
 | Forge inbound | Signature verified before the payload is parsed on a route that declares no body model; bad/missing signature and unknown source collapse to one 401 (unknown sources pay the same HMAC work); the anonymous per-IP limiter is charged before any source lookup or body read; a closed three-event vocabulary; landed events are imported history, excluded from undo, lifecycle facts, handoffs, assignee facts, fleet metrics, the attention rollup, security counters, and the automation event scan | PASS |
-| Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt — including transport-side authorization on the mentor page/comment, issue-comment, and event-source commands — is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
+| Command ownership | Every durable write in the Aegis project surface has a command owner, and the once-trusting command families (issue-comment, mentor page/comment, event-source) now authorize inside their own transactions; the remaining debt is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
 | Dependency/security scan | The 32-distribution hash-locked evidence/build toolchain audits itself; `pip-audit` scans the exact 63 CI/build/bootstrap inputs and the verified 29-package base / 41-package MCP third-party runtime closures; no ignores or soft pass | PASS (local draft) |
@@ -317,13 +317,15 @@ resolved by a green test run.
   by execution (an enumeration oracle; automation firing on imported history);
   both are fixed in wave H-0 with regression tests, but public operation has not
   had a supported deployment review.
-- **Authorization still lives in some transports.** The mentor page and
-  page-comment commands, the issue-comment commands, and the event-source
-  commands take a bare actor id and trust the route's guards; the command owns
-  the write and its audit, not the gate (enumerated in
-  [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md)). Every shipped transport applies
-  the checks — the debt is that a *future* caller of those commands inherits no
-  enforcement, and the migration rules say the gate belongs inside.
+- **Authorization moved inside the commands — reviewed once, not hardened.**
+  The issue-comment, mentor page, mentor page-comment, and event-source
+  commands each take a resolved actor and check visibility/ownership (or the
+  admin gate) inside their own write transaction now; a direct caller inherits
+  the enforcement instead of bypassing it (the closed debt is recorded in
+  [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md), and each family carries
+  no-transport authorization tests). The residual honesty note: the moved gates
+  have had one review pass, and wire-status parity rests on the pinned route
+  tests.
 - **Stages M–P landed after the original gate run.** The query grammar, live
   embeds, the knowledge graph, and the forge integration were built after the
   2026-07-26 evidence below was recorded, and the 7/10 adversarial review is the

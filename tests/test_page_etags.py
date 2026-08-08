@@ -166,7 +166,9 @@ def test_edit_command_rolls_back_the_event_when_audit_fails(tmp_path):
     page_activity.record_page_edited = boom
     try:
         try:
-            page_commands.edit_page(conn, actor_id=1, page_id=page["id"], body="doomed")
+            page_commands.edit_page(
+                conn, actor={"id": 1}, page_id=page["id"], body="doomed"
+            )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass

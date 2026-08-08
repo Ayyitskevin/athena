@@ -96,7 +96,9 @@ def test_attach_rolls_back_the_join_when_audit_fails(tmp_path):
     page_activity.record_page_label_added = boom
     try:
         try:
-            page_commands.attach_page_label(conn, actor_id=1, page_id=pid, label_id=lid)
+            page_commands.attach_page_label(
+                conn, actor={"id": 1}, page_id=pid, label_id=lid
+            )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass
@@ -129,7 +131,9 @@ def test_detach_rolls_back_the_join_when_audit_fails(tmp_path):
     page_activity.record_page_label_removed = boom
     try:
         try:
-            page_commands.detach_page_label(conn, actor_id=1, page_id=pid, label_id=lid)
+            page_commands.detach_page_label(
+                conn, actor={"id": 1}, page_id=pid, label_id=lid
+            )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass

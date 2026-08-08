@@ -202,7 +202,7 @@ def link_page_mention(
             status_code=409,
         )
     try:
-        page_commands.edit_page(conn, actor_id=user["id"], page_id=page_id, body=body)
+        page_commands.edit_page(conn, actor=user, page_id=page_id, body=body)
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     back = (
@@ -641,9 +641,14 @@ def open_daily_note(
         return HTMLResponse(
             '<div class="error">Space not found.</div>', status_code=404
         )
-    page, _created = page_commands.ensure_daily_page(
-        conn, actor_id=user["id"], space_id=space_id
-    )
+    try:
+        page, _created = page_commands.ensure_daily_page(
+            conn, actor=user, space_id=space_id
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
@@ -678,7 +683,7 @@ def create_page_from_template(
     try:
         page = page_commands.create_page_from_template(
             conn,
-            actor_id=user["id"],
+            actor=user,
             space_id=space_id,
             template_id=template_id,
             title=title,
@@ -742,14 +747,19 @@ def create_page(
 
     # The command owns the atomic insert AND its 'page_created' event (auto-watch +
     # mentions).
-    page = page_commands.create_page(
-        conn,
-        actor_id=user["id"],
-        space_id=space_id,
-        title=title,
-        body=body.strip() or "",
-        parent_id=parent,
-    )
+    try:
+        page = page_commands.create_page(
+            conn,
+            actor=user,
+            space_id=space_id,
+            title=title,
+            body=body.strip() or "",
+            parent_id=parent,
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
@@ -1146,7 +1156,7 @@ def edit_page(
     try:
         page_commands.edit_page(
             conn,
-            actor_id=user["id"],
+            actor=user,
             page_id=page_id,
             title=title,
             body=body.strip(),
@@ -1169,7 +1179,7 @@ def edit_page(
             # is a concurrency aid, not an authorization check.
             page_commands.edit_page(
                 conn,
-                actor_id=user["id"],
+                actor=user,
                 page_id=page_id,
                 title=title,
                 body=body.strip(),
@@ -1221,7 +1231,7 @@ def move_page(
     # (another space, self, a descendant) comes back as PageCommandError('invalid').
     try:
         page_commands.move_page(
-            conn, actor_id=user["id"], page_id=page_id, new_parent_id=new_parent
+            conn, actor=user, page_id=page_id, new_parent_id=new_parent
         )
     except page_commands.PageCommandError as exc:
         if exc.kind == "not_found":
@@ -1249,21 +1259,19 @@ def delete_page(
         return err
     assert user is not None, "_write_required accepted a missing user"
 
-    page, err = _page_visible_or_response(conn, page_id, user)
-    if err is not None:
-        return err
-    if pages.count_child_pages(conn, page_id) > 0:
-        return HTMLResponse(
-            '<div class="error">Move or delete its child pages first.</div>',
-            status_code=409,
-        )
-    space_id = page["space_id"]
-    # The command owns the atomic delete AND its 'page_deleted' event, then the
-    # post-commit blob unlink + index maintenance.
-    page_commands.delete_page(
-        conn, actor_id=user["id"], page_id=page_id, title=page["title"]
-    )
-    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+    # The command owns the atomic delete, its 'page_deleted' event, the visibility
+    # check, and the no-cascade children rule — then the post-commit blob unlink +
+    # index maintenance. It returns the page as it was, for the redirect home.
+    try:
+        page = page_commands.delete_page(conn, actor=user, page_id=page_id)
+    except page_commands.PageCommandError as exc:
+        if exc.kind == "conflict":
+            return HTMLResponse(
+                '<div class="error">Move or delete its child pages first.</div>',
+                status_code=409,
+            )
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return RedirectResponse(f"/mentor/spaces/{page['space_id']}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/archive", dependencies=[Depends(verify_csrf)])
@@ -1285,7 +1293,7 @@ def archive_page(
         return err
     try:
         page_commands.set_page_archived(
-            conn, actor_id=user["id"], page_id=page_id, archived=True
+            conn, actor=user, page_id=page_id, archived=True
         )
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
@@ -1310,7 +1318,7 @@ def unarchive_page(
         return err
     try:
         page_commands.set_page_archived(
-            conn, actor_id=user["id"], page_id=page_id, archived=False
+            conn, actor=user, page_id=page_id, archived=False
         )
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
@@ -1524,7 +1532,7 @@ def restore_version(
     # page/version comes back as PageCommandError('not_found').
     try:
         page_commands.restore_page_version(
-            conn, actor_id=user["id"], page_id=page_id, version=version
+            conn, actor=user, page_id=page_id, version=version
         )
     except page_commands.PageCommandError:
         return HTMLResponse(
@@ -1559,10 +1567,14 @@ def add_page_comment(
         return HTMLResponse(
             '<div class="error">Comment cannot be empty.</div>', status_code=400
         )
-    # The command owns the insert AND its atomic 'page_commented' event (auto-watch + mentions).
-    page_comment_commands.create_page_comment(
-        conn, actor_id=user["id"], page_id=page_id, body=body
-    )
+    # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
+    # mentions), plus the visibility gate re-checked inside its transaction.
+    try:
+        page_comment_commands.create_page_comment(
+            conn, actor=user, page_id=page_id, body=body
+        )
+    except page_comment_commands.PageCommentCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -1622,7 +1634,7 @@ def edit_page_comment(
     # path previously rewrote the body with NO audit trail at all.
     try:
         page_comment_commands.edit_page_comment(
-            conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id, body=body
+            conn, actor=user, page_id=page_id, comment_id=comment_id, body=body
         )
     except page_comment_commands.PageCommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
@@ -1660,9 +1672,13 @@ def delete_page_comment(
         return err
     # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
     # that vanished in a race records nothing and 404s.
-    if not page_comment_commands.delete_page_comment(
-        conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id
-    ):
+    try:
+        removed = page_comment_commands.delete_page_comment(
+            conn, actor=user, page_id=page_id, comment_id=comment_id
+        )
+    except page_comment_commands.PageCommentCommandError:
+        removed = False
+    if not removed:
         return HTMLResponse(
             '<div class="error">Comment not found.</div>', status_code=404
         )
@@ -1702,7 +1718,7 @@ def add_page_label(
     # route (which 404s) rather than erroring here.
     try:
         page_commands.attach_page_label_by_name(
-            conn, actor_id=user["id"], page_id=page_id, name=name
+            conn, actor=user, page_id=page_id, name=name
         )
     except page_commands.PageCommandError:
         pass
@@ -1735,7 +1751,7 @@ def remove_page_label(
     # rather than 404, the same forgiveness the issue-label form gives.
     try:
         page_commands.detach_page_label(
-            conn, actor_id=user["id"], page_id=page_id, label_id=label_id
+            conn, actor=user, page_id=page_id, label_id=label_id
         )
     except page_commands.PageCommandError:
         pass

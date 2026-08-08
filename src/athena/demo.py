@@ -213,7 +213,7 @@ def seed_demo(
         )
         guide = page_commands.create_page(
             conn,
-            actor_id=operator["id"],
+            actor=operator,
             space_id=space["id"],
             title="Fleet operating guide",
             body=(
@@ -245,7 +245,7 @@ def seed_demo(
         try:
             protocol = page_commands.create_page(
                 conn,
-                actor_id=terra["id"],
+                actor=terra,
                 space_id=space["id"],
                 parent_id=guide["id"],
                 title="Review protocol",

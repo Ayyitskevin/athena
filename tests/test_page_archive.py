@@ -121,7 +121,7 @@ def test_archive_command_rolls_back_the_flip_when_audit_fails(tmp_path):
     try:
         try:
             page_commands.set_page_archived(
-                conn, actor_id=1, page_id=page["id"], archived=True
+                conn, actor={"id": 1}, page_id=page["id"], archived=True
             )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:

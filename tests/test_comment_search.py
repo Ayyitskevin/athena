@@ -67,7 +67,7 @@ def test_page_comment_is_findable_and_borrows_parent(tmp_path):
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Onboarding", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="the zephyr checklist lives here"
+        conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist lives here"
     )
     hits = search.search(conn, "zephyr")
     assert len(hits) == 1
@@ -115,7 +115,7 @@ def test_page_hard_delete_clears_its_comment_index(tmp_path):
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Doc", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="the zephyr checklist"
+        conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist"
     )
     pages.delete_page(conn, pg["id"])
     assert search.search(conn, "zephyr") == []
@@ -135,7 +135,7 @@ def test_page_comment_hidden_from_non_member_of_private_space(tmp_path):
     sp = spaces.create_space(conn, key="SEC", name="Sec", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Secret", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="zephyr rotation steps"
+        conn, actor={"id": 1}, page_id=pg["id"], body="zephyr rotation steps"
     )
     space_commands.set_space_visibility(
         conn, actor_id=1, space_id=sp["id"], visibility="private"
