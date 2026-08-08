@@ -12,6 +12,33 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **`cryptography` pinned up to 50.0.0.** PYSEC-2026-3552 was published against
+  the pinned 49.0.0 after it was frozen, which turned CI's
+  audit-the-pinned-inputs step red — exactly what that gate is for. The only
+  consumer in the graph is `PyJWT[crypto]` (OIDC RS256/ES256 verification,
+  `>=3.4.0`), and the OIDC/JWT suite passes against 50.0.0 unchanged.
+
+- **The last three trusting command families now own their authorization.**
+  Mentor's page commands (eleven entry points), its page-comment commands, and
+  the event-source commands took a bare actor id and relied on checks the routes
+  ran beforehand — so a caller reaching a command directly (undo, a workflow, a
+  script) was trusted, and a transport-side check and the write it guarded could
+  straddle a transaction boundary. Each now takes a resolved actor and checks
+  inside its own write transaction: page/space visibility for every page write
+  (hidden reads as missing, never 403, so a write path confirms nothing);
+  author-ownership for page comments, with the delete-only admin moderation
+  override (rewriting words is not moderation); and the admin role + admin token
+  scope for event sources, exactly as run controls already did. Page delete also
+  owns the no-cascade children rule and takes the audit title from the row under
+  its own lock instead of trusting the caller's copy, and a refused
+  attach-label-by-name now rolls back its find-or-create so a hidden page cannot
+  grow the label vocabulary. Wire statuses are unchanged and pinned; the checks
+  just moved to where a direct caller cannot skip them. `page_undo`'s
+  compensators — which re-applied the boundary's checks precisely because the
+  commands did not — now delegate visibility to the commands and keep only the
+  role/scope half. This erases the "authorization still in some transports" line
+  from the release risk list.
+
 - **A read-scoped token could reach two writes.** The rule is that a token
   minted with only the `read` scope must never mutate anything, and two routes
   had drifted from it: `POST /playbooks/{page_id}/start` ran on plain

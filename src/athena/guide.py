@@ -21,7 +21,7 @@ from pathlib import Path
 import sqlite3
 
 from athena import __version__
-from athena.core import labels, links
+from athena.core import labels, links, users
 from athena.mentor import page_commands, pages, space_commands, spaces
 
 CONTENT_DIR = Path(__file__).parent / "field_guide"
@@ -85,7 +85,13 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
     Every write goes through the mentor commands, so each page lands with its own
     activity event, its links indexed, and its row in the hash chain — the guide
     is part of the workspace's history rather than something injected beneath it.
+    The page commands authorize against a resolved actor now, so the author must
+    be a real user — which the CLI already guarantees, and which keeps a seeded
+    guide attributable to someone who exists.
     """
+    author = users.get_user(conn, author_id)
+    if author is None:
+        raise FieldGuideError(f"no such user: {author_id}")
     if spaces.get_space_by_key(conn, GUIDE_SPACE_KEY) is not None:
         raise FieldGuideError(
             f"a space with key {GUIDE_SPACE_KEY} already exists — "
@@ -121,14 +127,14 @@ def seed_field_guide(conn: sqlite3.Connection, *, author_id: int) -> dict:
     for filename, title, is_playbook in PAGES:
         page = page_commands.create_page(
             conn,
-            actor_id=author_id,
+            actor=author,
             space_id=space["id"],
             title=title,
             body=bodies[filename],
         )
         if is_playbook:
             page_commands.attach_page_label(
-                conn, actor_id=author_id, page_id=page["id"], label_id=label["id"]
+                conn, actor=author, page_id=page["id"], label_id=label["id"]
             )
         created.append(page)
 

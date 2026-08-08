@@ -279,7 +279,9 @@ def test_an_operator_edit_is_reported_as_theirs_not_as_staleness(tmp_path):
     conn = _conn(tmp_path / "edited.db")
     result = guide.seed_field_guide(conn, author_id=1)
     target = result["pages"][0]
-    page_commands.edit_page(conn, actor_id=1, page_id=target["id"], body="my own notes")
+    page_commands.edit_page(
+        conn, actor={"id": 1}, page_id=target["id"], body="my own notes"
+    )
     status = guide.guide_status(conn)
     assert status["counts"][guide.STATUS_EDITED] == 1
     assert status["counts"][guide.STATUS_CURRENT] == len(guide.PAGES) - 1
@@ -309,7 +311,7 @@ def test_outdated_and_edited_are_reported_together_not_merged(tmp_path, monkeypa
     result = guide.seed_field_guide(conn, author_id=1)
     target = next(p for p in result["pages"] if p["title"] == guide.PAGES[2][1])
     page_commands.edit_page(
-        conn, actor_id=1, page_id=target["id"], body="my own version"
+        conn, actor={"id": 1}, page_id=target["id"], body="my own version"
     )
     _shipped_elsewhere(
         monkeypatch,
@@ -326,9 +328,7 @@ def test_a_deleted_page_reads_as_missing(tmp_path):
     conn = _conn(tmp_path / "gone.db")
     result = guide.seed_field_guide(conn, author_id=1)
     target = result["pages"][1]
-    page_commands.delete_page(
-        conn, actor_id=1, page_id=target["id"], title=target["title"]
-    )
+    page_commands.delete_page(conn, actor={"id": 1}, page_id=target["id"])
     status = guide.guide_status(conn)
     assert status["counts"][guide.STATUS_MISSING] == 1
     assert status["in_sync"] is False
@@ -347,7 +347,7 @@ def test_the_report_changes_nothing(tmp_path, monkeypatch):
     conn = _conn(tmp_path / "readonly.db")
     result = guide.seed_field_guide(conn, author_id=1)
     page_commands.edit_page(
-        conn, actor_id=1, page_id=result["pages"][0]["id"], body="mine"
+        conn, actor={"id": 1}, page_id=result["pages"][0]["id"], body="mine"
     )
     _shipped_elsewhere(
         monkeypatch,

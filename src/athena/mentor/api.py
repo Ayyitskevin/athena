@@ -251,6 +251,7 @@ _PAGE_PRECONDITION_HTTP = {
 _PAGE_COMMAND_STATUS = {
     "not_found": 404,
     "invalid": 422,
+    "conflict": 409,
     "invalid_precondition": 400,
     "precondition_too_large": 431,
     "precondition_failed": 412,
@@ -560,12 +561,8 @@ def create_page(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Any authenticated actor may create a page (like creating an issue) — but only in
-    # a space they can see. The space is a path resource: 404 if it doesn't exist OR is
-    # private to the caller (you can't add a page to a space you can't see).
-    if spaces.get_space(conn, space_id) is None or not access.can_see_space(
-        conn, actor, space_id
-    ):
-        raise HTTPException(status_code=404, detail="no such space")
+    # a space they can see; the command re-checks that inside its own transaction
+    # (404 if the space is missing OR private to the caller).
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=422, detail="page title is required")
@@ -580,14 +577,19 @@ def create_page(
             )
     # The command owns the atomic insert AND its 'page_created' event (auto-watch +
     # mentions), so a page and its activity footprint land together.
-    page = page_commands.create_page(
-        conn,
-        actor_id=actor["id"],
-        space_id=space_id,
-        title=title,
-        body=payload.body,
-        parent_id=payload.parent_id,
-    )
+    try:
+        page = page_commands.create_page(
+            conn,
+            actor=actor,
+            space_id=space_id,
+            title=title,
+            body=payload.body,
+            parent_id=payload.parent_id,
+        )
+    except page_commands.PageCommandError as exc:
+        raise HTTPException(
+            status_code=page_command_status(exc), detail=exc.detail
+        ) from exc
     return _with_labels(conn, page)
 
 
@@ -670,8 +672,8 @@ def edit_page(
 ) -> dict | JSONResponse:
     # Editing is open to any authenticated actor, mirroring create (a page has no
     # creator-only lock — Mentor is a shared wiki, and every edit is recorded in
-    # history anyway) — but only on a page they can see. 404 if missing or hidden.
-    _page_for_read(conn, page_id, actor)
+    # history anyway) — but only on a page they can see: the command checks that
+    # inside its own transaction (404 if missing or hidden).
     # Transport-shape validation stays at the boundary (as the page-comment commands
     # do): only the fields the client actually sent are touched, and a sent-but-empty
     # title is rejected before the command runs.
@@ -687,7 +689,7 @@ def edit_page(
     try:
         after = page_commands.edit_page(
             conn,
-            actor_id=actor["id"],
+            actor=actor,
             page_id=page_id,
             title=title,
             body=payload.body,
@@ -708,13 +710,12 @@ def move_page(
     # Re-parent a page within its space. Open to any authenticated actor, like
     # edit (no creator lock) — but only on a page they can see. 404 if the page is
     # missing or hidden; 422 if the new parent is invalid (another space, the page
-    # itself, or its own descendant — a cycle).
-    _page_for_read(conn, page_id, actor)
+    # itself, or its own descendant — a cycle). Visibility is the command's check.
     # The command owns the atomic re-parent (validate + write under the lock) AND its
     # 'page_moved' event; an illegal move is a 422, a vanished page a 404.
     try:
         moved = page_commands.move_page(
-            conn, actor_id=actor["id"], page_id=page_id, new_parent_id=payload.parent_id
+            conn, actor=actor, page_id=page_id, new_parent_id=payload.parent_id
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
@@ -729,17 +730,16 @@ def delete_page(
 ) -> None:
     # Delete a page. Authed like edit/move — only on a page the actor can see. 404 if
     # missing or hidden; 409 if it still has child pages — we refuse rather than
-    # cascade, so a delete can't silently wipe a subtree. 204 (no body) on success.
-    page = _page_for_read(conn, page_id, actor)
-    if pages.count_child_pages(conn, page_id) > 0:
-        raise HTTPException(
-            status_code=409, detail="move or delete its child pages first"
-        )
+    # cascade, so a delete can't silently wipe a subtree. Both checks are the
+    # command's, inside its write transaction. 204 (no body) on success.
     # The command owns the atomic delete AND its 'page_deleted' event, then the
     # post-commit blob unlink + index maintenance.
-    page_commands.delete_page(
-        conn, actor_id=actor["id"], page_id=page_id, title=page["title"]
-    )
+    try:
+        page_commands.delete_page(conn, actor=actor, page_id=page_id)
+    except page_commands.PageCommandError as exc:
+        raise HTTPException(
+            status_code=page_command_status(exc), detail=exc.detail
+        ) from exc
 
 
 @pages_router.post("/{page_id}/archive", response_model=PageOut)
@@ -751,11 +751,11 @@ def archive_page(
     # Soft-delete: hides the page from the tree/nav/search but preserves it (and its
     # history and comments), reversible via unarchive — the non-destructive
     # alternative to DELETE. Open like edit, only on a page the actor can see. 404 if
-    # missing or hidden. Idempotent: re-archiving records no new event.
-    _page_for_read(conn, page_id, actor)
+    # missing or hidden (the command's check). Idempotent: re-archiving records no
+    # new event.
     try:
         page = page_commands.set_page_archived(
-            conn, actor_id=actor["id"], page_id=page_id, archived=True
+            conn, actor=actor, page_id=page_id, archived=True
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
@@ -770,11 +770,10 @@ def unarchive_page(
 ) -> dict | JSONResponse:
     # Restore an archived page to the active tree/nav/search via the same command;
     # records "page_unarchived" only if it was actually archived. 404 if missing or
-    # hidden.
-    _page_for_read(conn, page_id, actor)
+    # hidden (the command's check).
     try:
         page = page_commands.set_page_archived(
-            conn, actor_id=actor["id"], page_id=page_id, archived=False
+            conn, actor=actor, page_id=page_id, archived=False
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
@@ -876,9 +875,7 @@ def link_page_mention(
             status_code=409, detail="that mention is no longer in this page"
         )
     try:
-        return page_commands.edit_page(
-            conn, actor_id=actor["id"], page_id=page_id, body=body
-        )
+        return page_commands.edit_page(conn, actor=actor, page_id=page_id, body=body)
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
 
@@ -905,15 +902,14 @@ def create_page_from_template(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
-    if not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
+    # Space visibility is the command's check, inside its transaction.
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=422, detail="page title is required")
     try:
         return page_commands.create_page_from_template(
             conn,
-            actor_id=actor["id"],
+            actor=actor,
             space_id=space_id,
             template_id=payload.template_id,
             title=title,
@@ -933,11 +929,14 @@ def open_daily_note(
     # Find-or-create today's note. 200 when it already existed, 201 when this call
     # created it — so a caller can tell "opened" from "started" without the
     # endpoint having to lie about having written something.
-    if not access.can_see_space(conn, actor, space_id):
-        raise HTTPException(status_code=404, detail="no such space")
-    page, created = page_commands.ensure_daily_page(
-        conn, actor_id=actor["id"], space_id=space_id
-    )
+    try:
+        page, created = page_commands.ensure_daily_page(
+            conn, actor=actor, space_id=space_id
+        )
+    except page_commands.PageCommandError as exc:
+        raise HTTPException(
+            status_code=page_command_status(exc), detail=exc.detail
+        ) from exc
     response.status_code = 201 if created else 200
     return page
 
@@ -955,17 +954,22 @@ def add_page_comment(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Commenting is an open write like editing a page (Mentor's shared-wiki model) —
-    # but only on a page the actor can see. The author is the authenticated actor,
-    # never a caller-supplied field. 404 if the page is missing or hidden.
-    _page_for_read(conn, page_id, actor)
+    # but only on a page the actor can see: the command's check, inside its
+    # transaction (404 if the page is missing or hidden). The author is the
+    # authenticated actor, never a caller-supplied field.
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
     # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
     # mentions), so a page comment and its activity footprint land together.
-    return page_comment_commands.create_page_comment(
-        conn, actor_id=actor["id"], page_id=page_id, body=body
-    )
+    try:
+        return page_comment_commands.create_page_comment(
+            conn, actor=actor, page_id=page_id, body=body
+        )
+    except page_comment_commands.PageCommentCommandError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @pages_router.get("/{page_id}/comments", response_model=list[PageCommentOut])
@@ -980,31 +984,6 @@ def list_page_comments(
     return page_comments.list_comments(conn, page_id)
 
 
-def _author_page_comment_or_error(
-    conn: sqlite3.Connection,
-    page_id: RowIdPath,
-    comment_id: RowIdPath,
-    actor: dict,
-    *,
-    allow_admin: bool = False,
-) -> dict:
-    """Fetch a comment that belongs to this page, requiring the actor to be its
-    author. 404 if the comment is missing or hangs off another page, 403 if someone
-    other than the author tries to change it — the same author-ownership rule the
-    Aegis issue comments enforce.
-
-    allow_admin lifts the author restriction for admins — a moderation override used
-    ONLY on delete, so an admin can remove another user's comment. Edit stays strictly
-    author-only even for admins (removing words is moderation; rewriting them is not),
-    exactly as Aegis issue comments do. The delete is still audited to the admin."""
-    existing = page_comments.get_comment(conn, comment_id)
-    if existing is None or existing["page_id"] != page_id:
-        raise HTTPException(status_code=404, detail="no such comment")
-    if existing["author_id"] != actor["id"] and not (allow_admin and is_admin(actor)):
-        raise HTTPException(status_code=403, detail="not the comment author")
-    return existing
-
-
 @pages_router.patch("/{page_id}/comments/{comment_id}", response_model=PageCommentOut)
 def edit_page_comment(
     page_id: RowIdPath,
@@ -1013,17 +992,17 @@ def edit_page_comment(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
-    _author_page_comment_or_error(conn, page_id, comment_id, actor)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
-    # The command owns the edit AND its atomic 'page_comment_edited' event — previously
-    # a silent content rewrite.
+    # The command owns the edit, its atomic 'page_comment_edited' event, AND the
+    # gate: page visibility (404 hidden-as-missing) and author-ownership (403,
+    # admins included — rewriting words is not moderation), checked inside its
+    # write transaction.
     try:
         return page_comment_commands.edit_page_comment(
             conn,
-            actor_id=actor["id"],
+            actor=actor,
             page_id=page_id,
             comment_id=comment_id,
             body=body,
@@ -1041,14 +1020,18 @@ def delete_page_comment(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    _page_for_read(conn, page_id, actor)  # 404 if the page is missing or hidden
-    _author_page_comment_or_error(conn, page_id, comment_id, actor, allow_admin=True)
-    # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
-    # that vanished in a race records nothing and 404s.
-    if not page_comment_commands.delete_page_comment(
-        conn, actor_id=actor["id"], page_id=page_id, comment_id=comment_id
-    ):
-        raise HTTPException(status_code=404, detail="no such comment")
+    # The command owns the delete, its atomic 'page_comment_deleted' event, AND the
+    # gate: page visibility, author-ownership with the delete-only admin moderation
+    # override — checked inside its write transaction.
+    try:
+        if not page_comment_commands.delete_page_comment(
+            conn, actor=actor, page_id=page_id, comment_id=comment_id
+        ):
+            raise HTTPException(status_code=404, detail="no such comment")
+    except page_comment_commands.PageCommentCommandError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @pages_router.post(
@@ -1136,12 +1119,12 @@ def restore_version(
     # creator-locked the way delete is — but only on a page the actor can see. 404 if
     # the page is missing/hidden or that version is missing; the snapshot's author
     # stamps nothing, the restoring actor stamps the new live revision.
-    _page_for_read(conn, page_id, actor)
-    # The command owns the atomic restore (snapshot-then-overwrite via update_page) AND
-    # its 'page_restored' event; a missing page/version is a 404.
+    # The command owns the atomic restore (snapshot-then-overwrite via update_page),
+    # its 'page_restored' event, AND the visibility check; a missing page/version
+    # is a 404.
     try:
         restored = page_commands.restore_page_version(
-            conn, actor_id=actor["id"], page_id=page_id, version=version
+            conn, actor=actor, page_id=page_id, version=version
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
@@ -1161,11 +1144,11 @@ def attach_label(
     # Labelling a page is an open write like editing it (Mentor's shared-wiki model) —
     # but only on a page the actor can see. 404 if missing or hidden; 422 if the label
     # id isn't real (rather than letting the FK surface a 500). Idempotent — re-attaching
-    # records nothing. The command owns the atomic attach + 'page_labeled' event.
-    _page_for_read(conn, page_id, actor)
+    # records nothing. The command owns the atomic attach + 'page_labeled' event,
+    # and the visibility check inside it.
     try:
         page = page_commands.attach_page_label(
-            conn, actor_id=actor["id"], page_id=page_id, label_id=payload.label_id
+            conn, actor=actor, page_id=page_id, label_id=payload.label_id
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)
@@ -1179,12 +1162,11 @@ def detach_label(
     actor: dict = Depends(docs_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
-    # 404 if the page is missing or hidden; the command owns the atomic detach +
-    # 'page_unlabeled' event and 404s a label that isn't attached.
-    _page_for_read(conn, page_id, actor)
+    # 404 if the page is missing or hidden (the command's check); the command owns
+    # the atomic detach + 'page_unlabeled' event and 404s a label that isn't attached.
     try:
         page = page_commands.detach_page_label(
-            conn, actor_id=actor["id"], page_id=page_id, label_id=label_id
+            conn, actor=actor, page_id=page_id, label_id=label_id
         )
     except page_commands.PageCommandError as exc:
         return _page_command_error_response(exc)

@@ -189,7 +189,7 @@ def record_learning(
         if existing is None:
             page = page_commands.create_page(
                 conn,
-                actor_id=actor["id"],
+                actor=actor,
                 space_id=int(space_id or 0),
                 title=runbook_title(issue_ref["title"], issue_id),
                 body=(
@@ -207,7 +207,7 @@ def record_learning(
         else:
             page = page_commands.edit_page(
                 conn,
-                actor_id=actor["id"],
+                actor=actor,
                 page_id=int(existing["id"]),
                 body=f"{existing['body'].rstrip()}\n\n{block}",
             )

@@ -54,7 +54,12 @@ class EnabledUpdate(BaseModel):
 
 # The adapter's half of the command-error dialect: the command names WHAT was
 # refused (a closed kind vocabulary), the transport owns which status that means.
+# unauthorized/forbidden exist because the command now owns the admin gate; the
+# admin_actor dependency still refuses first on the wire, so these two fire only
+# for a caller that reached the command some other way.
 _STATUS_BY_KIND = {
+    "unauthorized": 401,
+    "forbidden": 403,
     "invalid": 422,
     "not_found": 404,
     "conflict": 409,
@@ -90,7 +95,7 @@ def create_event_source(
         raise HTTPException(status_code=422, detail="source host is required")
     try:
         return event_source_commands.register_source(
-            conn, actor_id=actor["id"], name=name, kind=payload.kind, host=host
+            conn, actor=actor, name=name, kind=payload.kind, host=host
         )
     except event_source_commands.EventSourceCommandError as exc:
         raise HTTPException(
@@ -108,7 +113,7 @@ def set_event_source_enabled(
     """Pause or resume acceptance without rotating the secret."""
     try:
         return event_source_commands.set_source_enabled(
-            conn, actor_id=actor["id"], source_id=source_id, enabled=payload.enabled
+            conn, actor=actor, source_id=source_id, enabled=payload.enabled
         )
     except event_source_commands.EventSourceCommandError as exc:
         raise HTTPException(
@@ -125,9 +130,7 @@ def delete_event_source(
     """Revoke a source. History it already landed is kept — those events were
     authentic when recorded, and revoking a credential is not a reason to rewrite
     the trail."""
-    if not event_source_commands.delete_source(
-        conn, actor_id=actor["id"], source_id=source_id
-    ):
+    if not event_source_commands.delete_source(conn, actor=actor, source_id=source_id):
         raise HTTPException(status_code=404, detail="no such event source")
 
 

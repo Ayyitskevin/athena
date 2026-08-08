@@ -120,16 +120,11 @@ from scratch — edit it, or discard it and write your own.
 >    accepts stranger-controlled bytes, has deliberately no replay window, and
 >    stores event-source secrets in plaintext because HMAC needs the shared
 >    value.
-> 4. **Authorization still in some transports** — mentor page, mentor
->    page-comment, and event-source commands take a bare actor id and trust the
->    route's guards (tracked in `COMMAND_MIGRATION.md`). Issue-comment commands
->    no longer do: they take a resolved actor and check visibility and ownership
->    inside their own write transaction.
-> 5. **One executor implementation** — the dispatch contract has exactly one
+> 4. **One executor implementation** — the dispatch contract has exactly one
 >    counterparty, written alongside it.
-> 6. **Attachment recovery detects but does not repair** divergence; recovery
+> 5. **Attachment recovery detects but does not repair** divergence; recovery
 >    needs a matched database + directory snapshot.
-> 7. **No production deployment has ever occurred** — all evidence is synthetic
+> 6. **No production deployment has ever occurred** — all evidence is synthetic
 >    databases and loopback processes.
 >
 > I am accepting these as stated rather than waiving them: the alpha's public
@@ -139,11 +134,13 @@ from scratch — edit it, or discard it and write your own.
 **One risk added since #324 was written**, from the Final Sprint's own review —
 include it or not, but do not let it go unrecorded:
 
-> 8. **A deleted page's notification renders only for an admin.** The access
+> 7. **A deleted page's notification renders only for an admin.** The access
 >    model proves a page event's visibility by looking the page up, and a purged
 >    row cannot prove it, so the gate fails closed for everyone else.
 
-*(An earlier version of this draft also listed "the issue edit form has no
-If-Match". That was fixed before tagging, so it is gone rather than accepted — a
-risk acceptance that lists repaired risks overstates the danger as surely as
-omitting a live one understates it.)*
+*(Earlier versions of this draft also listed "the issue edit form has no
+If-Match" and "authorization still in some transports" — mentor page,
+page-comment, and event-source commands trusting their callers. Both were fixed
+before tagging, so they are gone rather than accepted — a risk acceptance that
+lists repaired risks overstates the danger as surely as omitting a live one
+understates it.)*

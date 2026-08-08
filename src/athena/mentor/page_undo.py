@@ -2,24 +2,26 @@
 
 The Aegis twin of this module delegates authorization entirely to the command
 owner, because `aegis.issue_commands` owns its own role/scope/visibility gates.
-**Mentor's page commands deliberately do not**: `page_commands.set_page_archived`
-and the label commands take a bare ``actor_id`` and document that the transport
-boundary owns visibility and scope (`mentor/api.py` calls `_page_for_read` and
-depends on `docs_write_actor`).
+Mentor's page commands now own their VISIBILITY gate the same way — each re-reads
+the page inside its own write transaction and refuses a hidden page as missing —
+so the compensators here delegate that check rather than duplicating it, and a
+hidden page gives the same refusal as a missing one (an event id cannot probe a
+private space).
 
-Undo is a second boundary onto those same commands, so it must apply the same two
-checks itself. Without them, undo would be a privilege escalation: any writer
-could archive or re-label a page in a private space they cannot see, by naming its
-event id. That asymmetry is the reason this module reads the way it does.
+What the page commands deliberately do NOT check is role and token scope: those
+stay at each boundary, and undo is a second boundary onto the same commands, so
+it applies them itself. Without that, undo would be a privilege escalation — a
+viewer, or a write-role actor holding only an issue-scoped token, could archive
+or re-label pages by naming event ids.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from athena.core import access, identity, labels, tokens, undo
+from athena.core import identity, labels, tokens, undo
 from athena.mentor import api as page_api
-from athena.mentor import page_commands, pages
+from athena.mentor import page_commands
 
 
 def _refusal(exc: page_commands.PageCommandError) -> undo.UndoRefused:
@@ -32,24 +34,18 @@ def _refusal(exc: page_commands.PageCommandError) -> undo.UndoRefused:
     )
 
 
-def _writable_page(conn: sqlite3.Connection, actor: dict | None, page_id: int) -> dict:
-    """The transport boundary's gate, re-applied at undo time.
+def _page_writer(actor: dict | None) -> dict:
+    """The boundary's role/scope gate, applied at undo time.
 
-    Role and scope first, then visibility — and a hidden page gives the SAME
-    refusal as a missing one, so an event id cannot be used to probe for pages in
-    a private space."""
+    Visibility is NOT checked here — the command owns it, inside the write
+    transaction (see the module docstring)."""
     if actor is None:
         raise undo.UndoRefused(
             "authentication required", code=undo.NOT_REVERSIBLE_CODE, status_code=401
         )
     identity.require_write_role(actor)
     identity.require_token_scope(actor, tokens.DOCS_WRITE_SCOPE)
-    page = pages.get_page(conn, page_id)
-    if page is None or not access.can_see_space(conn, actor, page["space_id"]):
-        raise undo.UndoRefused(
-            "no such page", code=undo.NOT_FOUND_CODE, status_code=404
-        )
-    return page
+    return actor
 
 
 def _label_id(conn: sqlite3.Connection, event: dict) -> int:
@@ -68,11 +64,10 @@ def _label_id(conn: sqlite3.Connection, event: dict) -> int:
 def _set_archived(
     conn: sqlite3.Connection, actor: dict | None, event: dict, *, archived: bool
 ) -> None:
-    page = _writable_page(conn, actor, event["target_id"])
-    assert actor is not None
+    writer = _page_writer(actor)
     try:
         page_commands.set_page_archived(
-            conn, actor_id=actor["id"], page_id=page["id"], archived=archived
+            conn, actor=writer, page_id=event["target_id"], archived=archived
         )
     except page_commands.PageCommandError as exc:
         raise _refusal(exc) from exc
@@ -89,13 +84,12 @@ def _archive_page(conn: sqlite3.Connection, actor: dict | None, event: dict) -> 
 def _detach_page_label(
     conn: sqlite3.Connection, actor: dict | None, event: dict
 ) -> None:
-    page = _writable_page(conn, actor, event["target_id"])
-    assert actor is not None
+    writer = _page_writer(actor)
     try:
         page_commands.detach_page_label(
             conn,
-            actor_id=actor["id"],
-            page_id=page["id"],
+            actor=writer,
+            page_id=event["target_id"],
             label_id=_label_id(conn, event),
         )
     except page_commands.PageCommandError as exc:
@@ -105,13 +99,12 @@ def _detach_page_label(
 def _attach_page_label(
     conn: sqlite3.Connection, actor: dict | None, event: dict
 ) -> None:
-    page = _writable_page(conn, actor, event["target_id"])
-    assert actor is not None
+    writer = _page_writer(actor)
     try:
         page_commands.attach_page_label(
             conn,
-            actor_id=actor["id"],
-            page_id=page["id"],
+            actor=writer,
+            page_id=event["target_id"],
             label_id=_label_id(conn, event),
         )
     except page_commands.PageCommandError as exc:

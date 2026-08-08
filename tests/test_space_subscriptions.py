@@ -194,10 +194,8 @@ def test_deleting_a_page_notifies_the_space_watcher(tmp_path):
     space, page = _space_with_page(conn)
     notifications.watch(conn, 2, "space", space["id"])
     assert (
-        page_commands.delete_page(
-            conn, actor_id=1, page_id=page["id"], title=page["title"]
-        )
-        is True
+        page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])["id"]
+        == page["id"]
     )
     inbox = notifications.list_notifications(conn, 2)
     assert [n["verb"] for n in inbox] == ["page_deleted"]
@@ -216,7 +214,7 @@ def test_a_deleted_pages_notification_renders_only_for_an_admin(tmp_path):
     conn = _conn(tmp_path / "del-gate.db")
     space, page = _space_with_page(conn)
     notifications.watch(conn, 2, "space", space["id"])
-    page_commands.delete_page(conn, actor_id=1, page_id=page["id"], title=page["title"])
+    page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
     member = {"id": 2, "role": "member"}
     admin = {"id": 3, "role": "admin"}
     assert notifications.list_notifications(conn, 2, actor=member) == []
@@ -232,7 +230,7 @@ def test_deleting_a_page_notifies_its_direct_watcher_too(tmp_path):
     conn = _conn(tmp_path / "del-page.db")
     _, page = _space_with_page(conn)
     notifications.watch(conn, 2, "page", page["id"])
-    page_commands.delete_page(conn, actor_id=1, page_id=page["id"], title=page["title"])
+    page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
     assert notifications.unread_count(conn, 2) == 1
     assert notifications.is_watching(conn, 2, "page", page["id"]) is False
 
