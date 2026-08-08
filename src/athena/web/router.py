@@ -961,8 +961,17 @@ def autosave_issue_draft(
             # restores the old (weaker) behavior instead of refusing the save.
             based_on=based_on.strip() or issue_etags.current_etag(conn, issue),
         )
-    except issue_drafts.DraftTooLarge as exc:
-        return HTMLResponse(f'<div class="error">{html.escape(str(exc))}</div>', 413)
+    except issue_drafts.DraftTooLarge:
+        # Fixed literals from the module's own bounds, not the exception's text:
+        # the message is identical in substance, and nothing exception-derived
+        # reaches the response (CodeQL's stack-trace-exposure rule, honored the
+        # strict way rather than suppressed).
+        return HTMLResponse(
+            '<div class="error">Draft not held — too large. Titles cap at '
+            f"{issue_drafts.MAX_TITLE_CHARS} characters and bodies at "
+            f"{issue_drafts.MAX_BODY_CHARS:,}.</div>",
+            413,
+        )
     return HTMLResponse(
         f'<span class="draft-saved">Draft held {html.escape(saved["updated_at"])}</span>'
     )
@@ -985,8 +994,12 @@ def discard_issue_draft(
     if err is not None:
         return err
     issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
+    # int() is redundant to FastAPI's own path coercion, but that coercion is
+    # invisible to the URL-redirection taint analysis; making it explicit proves
+    # the Location header cannot carry anything but digits.
     return RedirectResponse(
-        f"/aegis/issues/{issue_id}/edit?notice=Draft+discarded.", status_code=303
+        f"/aegis/issues/{int(issue_id)}/edit?notice=Draft+discarded.",
+        status_code=303,
     )
 
 
