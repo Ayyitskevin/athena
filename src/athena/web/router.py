@@ -25,6 +25,7 @@ from athena.aegis import (
     dependencies,
     fleet_attention,
     issue_commands,
+    issue_drafts,
     issue_etags,
     issue_history,
     issue_search,
@@ -750,7 +751,13 @@ def edit_issue_form(
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
-        context=_issue_edit_context(conn, issue, user),
+        context=_issue_edit_context(
+            conn,
+            issue,
+            user,
+            restored=request.query_params.get("restore") == "1",
+            notice=request.query_params.get("notice", ""),
+        ),
     )
 
 
@@ -759,25 +766,34 @@ def _issue_edit_context(
     issue: dict,
     user: dict,
     *,
-    form: dict | None = None,
+    restored: bool = False,
+    notice: str = "",
     conflict: dict | None = None,
 ) -> dict:
     """The issue edit form's context, built in one place so opening the form and
     the losing side of a concurrent save cannot disagree about the baseline.
 
-    ``issue`` is always the REAL current row, because the ETag is derived from it;
-    ``form`` optionally overrides what the fields display. Keeping those separate
-    is load-bearing: on a conflict the fields show the author's unsaved text, and
-    stamping a tag computed over that text would describe a representation the
-    database has never held — so the refreshed form would be refused again, and
-    again, forever."""
-    shown = {**issue, **(form or {})}
+    ``issue`` is always the REAL current row, because the ETag is derived from
+    it — the form now shows the saved issue in every case, exactly as the page
+    editor does, because the author's own text is safe in ``issue_drafts``
+    (0074). An unsaved draft is OFFERED, never applied: ``restored`` re-renders
+    the fields with the draft's text, and nothing is written until Save."""
+    draft = issue_drafts.get_draft(conn, issue_id=issue["id"], owner_id=user["id"])
+    if draft is not None and not issue_drafts.differs_from(draft, issue):
+        # Identical to the saved issue: not unsaved work, so offering to restore
+        # it would just make an author wonder what they had forgotten.
+        draft = None
     return {
-        "issue": shown,
-        "body_html": render_issue_body(conn, shown["body"] or "", actor=user),
-        # Derived from the stored row, never from `shown`.
+        "issue": issue,
+        "body_html": render_issue_body(conn, issue["body"] or "", actor=user),
         "issue_etag": issue_etags.current_etag(conn, issue),
-        # The version that WON, shown for comparison when this render is a refusal.
+        "draft": draft,
+        "restored": restored and draft is not None,
+        "draft_is_stale": draft is not None
+        and issue_drafts.is_stale(draft, issue_etags.current_etag(conn, issue)),
+        "notice": notice,
+        # The author's unsaved text, shown for comparison when this render is a
+        # refusal — the page editor's shape, now that issues have a draft store.
         "conflict": conflict,
     }
 
@@ -789,6 +805,7 @@ def edit_issue(
     title: str = Form(""),
     body: str = Form(""),
     if_match: str = Form(""),
+    based_on: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Save edits to an issue's title and body from the edit form. Gated on the
@@ -822,7 +839,13 @@ def edit_issue(
     except issue_commands.IssueCommandError as exc:
         if exc.kind == "precondition_failed":
             return _issue_conflict_response(
-                conn, request, issue_id, user, title=title, body=body
+                conn,
+                request,
+                issue_id,
+                user,
+                title=title,
+                body=body,
+                based_on=based_on,
             )
         if exc.kind in ("invalid_precondition", "precondition_too_large"):
             # A tampered or malformed hidden field is not an authorization
@@ -836,6 +859,10 @@ def edit_issue(
                 return _issue_command_response(retry_exc)
         else:
             return _issue_command_response(exc)
+    # The text IS the issue now, so the author's draft of it is a stale copy of
+    # something that finally has a real home on the trail. Dropping it is what
+    # makes "you have unsaved work" mean it the next time it appears.
+    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -847,28 +874,38 @@ def _issue_conflict_response(
     *,
     title: str,
     body: str,
+    based_on: str,
 ) -> HTMLResponse:
-    """The losing editor's answer for an issue — and it deliberately INVERTS the
-    page equivalent.
+    """The losing editor's answer for an issue — the PAGE editor's answer now.
 
-    On a page, the winner's text goes in the fields because the loser's copy is
-    safe in their draft (``page_drafts``, 0071). Issues have no draft store, so
-    doing the same here would leave the loser's text living only in a ``<pre>``
-    they must hand-copy — lossy, not merely inconsistent. Their text therefore
-    stays in the fields, the winner's is shown beside it, and the notice states
-    the part that is genuinely worse than the page path: this text is not stored
-    anywhere and navigating away loses it.
+    This path used to invert the page equivalent because issues had no draft
+    store: the loser's text stayed in the fields, admitted to being unstored,
+    and navigating away lost it. ``issue_drafts`` (0074) erases that asymmetry.
+    The loser's text is written to their own draft first, the fields show the
+    winner's version — the issue as it stands — and restoring is one click.
+    Nothing is overwritten, nothing is merged, and nothing is lost.
 
+    The draft keeps the baseline the author was editing FROM (the form's
+    ``based_on``), never the issue's new tag — stamping today's tag would mark
+    stale work fresh and silence the warning at the one moment it exists for.
     The re-rendered form carries the CURRENT tag, so saving again deliberately
     overwrites instead of looping on the same refusal.
     """
     current = issues.get_issue(conn, issue_id)
     if current is None:
+        # It was deleted, not edited, between the precondition and this read.
         return HTMLResponse(
             '<div class="error">Issue not found.</div>', status_code=404
         )
-    # The form shows what the author typed; `conflict` carries what won.
-    theirs = {"title": current["title"], "body": current["body"] or ""}
+    issue_drafts.save_draft(
+        conn,
+        issue_id=issue_id,
+        owner_id=user["id"],
+        title=title,
+        body=body,
+        based_on=based_on,
+    )
+    # The fields show what won; `conflict` carries what the author typed.
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
@@ -876,10 +913,93 @@ def _issue_conflict_response(
             conn,
             current,
             user,
-            form={"title": title, "body": body},
-            conflict=theirs,
+            conflict={"title": title, "body": body},
         ),
         status_code=409,
+    )
+
+
+@router.post("/aegis/issues/{issue_id}/draft", dependencies=[Depends(verify_csrf)])
+def autosave_issue_draft(
+    request: Request,
+    issue_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    based_on: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Record where this author has got to, without touching the issue.
+
+    The mentor autosave's Aegis twin: nothing here writes to ``issues`` — no
+    activity event, no watcher notified, no lifecycle fact. A crashed browser
+    should cost nothing, and the trail should still say nothing happened until
+    a human decides something did. Gated exactly like the edit form itself
+    (creator or current assignee), because a draft OF a write belongs only to
+    someone who could perform the write.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    try:
+        saved = issue_drafts.save_draft(
+            conn,
+            issue_id=issue_id,
+            owner_id=user["id"],
+            title=title,
+            body=body,
+            # The etag the EDITOR RENDERED WITH, carried by the form — never
+            # re-read here. Stamping the current etag at autosave time would
+            # mark a draft fresh the moment someone else saved, which is the
+            # exact moment the stale warning exists for. Blank only for a
+            # cached pre-upgrade form; falling back to the current etag there
+            # restores the old (weaker) behavior instead of refusing the save.
+            based_on=based_on.strip() or issue_etags.current_etag(conn, issue),
+        )
+    except issue_drafts.DraftTooLarge:
+        # Fixed literals from the module's own bounds, not the exception's text:
+        # the message is identical in substance, and nothing exception-derived
+        # reaches the response (CodeQL's stack-trace-exposure rule, honored the
+        # strict way rather than suppressed).
+        return HTMLResponse(
+            '<div class="error">Draft not held — too large. Titles cap at '
+            f"{issue_drafts.MAX_TITLE_CHARS} characters and bodies at "
+            f"{issue_drafts.MAX_BODY_CHARS:,}.</div>",
+            413,
+        )
+    return HTMLResponse(
+        f'<span class="draft-saved">Draft held {html.escape(saved["updated_at"])}</span>'
+    )
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/draft/discard", dependencies=[Depends(verify_csrf)]
+)
+def discard_issue_draft(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Throw away this author's draft of this issue. Affects nobody else."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
+    # int() is redundant to FastAPI's own path coercion, but that coercion is
+    # invisible to the URL-redirection taint analysis; making it explicit proves
+    # the Location header cannot carry anything but digits.
+    return RedirectResponse(
+        f"/aegis/issues/{int(issue_id)}/edit?notice=Draft+discarded.",
+        status_code=303,
     )
 
 

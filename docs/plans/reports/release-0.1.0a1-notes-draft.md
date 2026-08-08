@@ -54,9 +54,9 @@ tracking, cross-links, and an append-only activity trail in one app.
   control reads as expired.
 - **Two people can edit one page — or one issue — safely.** A browser save
   carries the record's ETag, and the second save is refused rather than silently
-  winning. Nothing is overwritten and nothing is merged. On a page the loser's
-  text is kept as their draft; on an issue it stays in the form, and the notice
-  says so plainly, because issues have no draft store to keep it in.
+  winning. Nothing is overwritten and nothing is merged. On both, the loser's
+  text is kept as their own durable draft and restoring it is one click — pages
+  and issues answer a conflict identically now that both have a draft store.
 
 ### What this release does not claim
 

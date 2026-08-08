@@ -1088,8 +1088,16 @@ def autosave_page_draft(
             # restores the old (weaker) behavior instead of refusing the save.
             based_on=based_on.strip() or page_etags.current_etag(conn, page),
         )
-    except page_drafts.DraftTooLarge as exc:
-        return HTMLResponse(f'<div class="error">{escape(str(exc))}</div>', 413)
+    except page_drafts.DraftTooLarge:
+        # Fixed literals from the module's own bounds, not the exception's text
+        # — mirrored from the issue autosave, where CodeQL's
+        # stack-trace-exposure rule flagged the exception-derived variant.
+        return HTMLResponse(
+            '<div class="error">Draft not held — too large. Titles cap at '
+            f"{page_drafts.MAX_TITLE_CHARS} characters and bodies at "
+            f"{page_drafts.MAX_BODY_CHARS:,}.</div>",
+            413,
+        )
     return HTMLResponse(
         f'<span class="draft-saved">Draft held {escape(saved["updated_at"])}</span>'
     )
@@ -1108,8 +1116,11 @@ def discard_page_draft(
         return err
     assert user is not None
     page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
+    # Explicit int() for the URL-redirection taint analysis, mirroring the
+    # issue-side discard; FastAPI's own coercion is invisible to it.
     return RedirectResponse(
-        f"/mentor/pages/{page_id}/edit?notice=Draft+discarded.", status_code=303
+        f"/mentor/pages/{int(page_id)}/edit?notice=Draft+discarded.",
+        status_code=303,
     )
 
 
