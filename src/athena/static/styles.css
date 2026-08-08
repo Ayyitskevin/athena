@@ -1407,6 +1407,214 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .list-row.is-unread .run-id { box-shadow: inset 0 0 0 1px var(--agent-line); }
 
 
+
+
+/* ============================================================================
+   8. PORTED SURFACES
+   The Phosphor Ink drop-in styled the four concept screens and deleted the
+   rest of the old stylesheet — including ~116 structural classes that every
+   OTHER surface (activity trail, issue detail, search, login, inbox, boards
+   filter bar, Mission Control, lineage/time-travel, fleet metrics, home)
+   still uses. These are those rules, ported from the pre-migration stylesheet
+   with every hex value replaced by its token per MIGRATION's own mapping, so
+   they follow both themes. No hex outside :root still holds.
+   Ported wholesale rather than redesigned: restoring function first; any
+   surface-by-surface redesign happens on top of this, not instead of it.
+   ========================================================================== */
+
+.hero { text-align: center; margin-bottom: 2rem; }
+.hero h1 { font-size: 2.5rem; margin: 0 0 0.5rem; font-weight: 700; }
+.hero .tagline { font-size: 1.1rem; color: var(--text-2); margin: 0 0 1rem; }
+.quick-nav { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-4); }
+.aegis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.aegis-grid h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.aegis-grid p { margin: 0 0 0.75rem; color: var(--text-2); font-size: 0.9rem; }
+.quick-actions { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.issues-table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.925rem; }
+.issues-table th, .issues-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+.issues-table th { font-weight: 600; color: var(--text-2); background: var(--surface-2); }
+.issue-id { font-family: ui-monospace, monospace; color: var(--text-3); width: 3.5rem; }
+.issue-title { font-weight: 500; }
+.contributor-list { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.25rem 0; }
+.contributor { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.05rem 0.5rem; font-size: 0.78rem; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.label-add { display: flex; gap: 0.3rem; margin-top: 0.4rem; }
+.label-add input { flex: 1; min-width: 0; }
+.webhook-failing { font-weight: 600; color: var(--danger); cursor: help; }
+.empty-state { padding: 2rem; text-align: center; color: var(--text-3); border: 1px dashed var(--border); border-radius: 6px; }
+.issue-form { display: flex; flex-direction: column; gap: 1rem; }
+.password-reset-form { margin-top: 0.35rem; }
+.password-state { font-size: 0.78rem; color: var(--text-3); }
+.token-secret { margin: 0; padding: 0.75rem; overflow-x: auto; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text); background: var(--surface-3); border: 1px solid var(--border-strong); border-radius: var(--r-md); user-select: all; }
+.agent-admin-list { display: grid; gap: 1rem; }
+.agent-admin-counts { display: flex; align-items: flex-start; gap: 0.35rem; flex-wrap: wrap; }
+.agent-admin-controls { display: flex; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
+.agent-admin-controls form { margin: 0; }
+.agent-admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.agent-admin-section { min-width: 0; }
+.agent-admin-section h3 { margin: 0.35rem 0 0.4rem; font-size: 0.95rem; }
+.compact-list { margin: 0; padding-left: 1.1rem; font-size: 0.9rem; }
+.compact-list li { margin-bottom: 0.35rem; }
+.agent-token-posture { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0 0 0.45rem; }
+.agent-health-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.agent-run-filter { display: flex; align-items: end; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+.agent-run-filter label { font-size: 0.82rem; font-weight: 600; color: var(--text-2); }
+.agent-run-filter select { min-width: 16rem; max-width: 100%; }
+.agent-checkins { margin: 1rem 0; }
+.agent-checkin-table { margin: 0.75rem 0; }
+.agent-checkin-table-region { max-width: 100%; overflow-x: auto; }
+.checkin-run-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; overflow-wrap: anywhere; word-break: break-word; }
+.agent-health-run-row td { padding-top: 0; background: var(--surface-2); }
+.agent-health-runs { display: grid; gap: 0.25rem; padding-left: 0; list-style: none; }
+.agent-health-runs li { display: grid; gap: 0.2rem; }
+.agent-run-main { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.copy-command-button { padding: 0.15rem 0.45rem; font-size: 0.75rem; }
+.run-export-command { display: block; max-width: 100%; overflow-wrap: anywhere; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0.25rem 0.4rem; font-size: 0.78rem; }
+.issue-detail { display: flex; gap: 2rem; background: var(--surface-2); border: 1px solid var(--border); padding: 1.5rem; border-radius: 6px; }
+.issue-detail .meta { display: flex; gap: 2rem; margin-bottom: 1.25rem; font-size: 0.9rem; }
+.issue-detail .body { margin: 1rem 0; }
+.issue-detail .body p { color: var(--text-2); }
+.board-empty { padding: 2rem 1rem; text-align: center; }
+.board-filters { flex-wrap: wrap; justify-content: flex-end; }
+.board-filters .search-input, .board-filters .filter-select { flex: 1 1 10rem; min-width: 0; max-width: 100%; }
+.board-filters .button { flex: 0 0 auto; }
+.board-move-select { flex: 1; min-width: 0; padding: 0.2rem 0.3rem; border: 1px solid var(--border-strong); border-radius: 4px; font: inherit; font-size: 0.8rem; }
+.recent-issues { margin-top: 2rem; }
+.recent-issues ul { list-style: none; padding: 0; }
+.recent-issues li { padding: 0.4rem 0; border-bottom: 1px solid var(--surface-2); }
+.search-input { padding: 0.3rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; width: 160px; }
+.filter-select { padding: 0.3rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; }
+.meta-sidebar { min-width: 180px; flex-shrink: 0; }
+.meta-item { margin-bottom: 0.75rem; font-size: 0.9rem; }
+.main-content { flex: 1; }
+.breadcrumb-current { color: var(--text-3); }
+.attachment-list { list-style: none; padding: 0; margin: 0 0 0.75rem; }
+.attachment-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0; }
+.attachment-form { display: flex; align-items: center; gap: 0.5rem; }
+.status-list { list-style: none; padding: 0; margin: 0 0 0.75rem; }
+.status-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+.status-list .status-name { font-weight: 500; }
+.status-add { display: flex; align-items: center; gap: 0.5rem; }
+.agent-workers { margin: 0.6rem 0 0.2rem; }
+.agent-workers h4 { margin: 0 0 0.15rem; font-size: 0.85rem; }
+.member-list { list-style: none; padding: 0; margin: 0.5rem 0; }
+.member-list li { display: flex; align-items: center; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.member-add { display: flex; gap: 0.5rem; margin-top: 0.6rem; flex-wrap: wrap; }
+.inbox-list { list-style: none; padding: 0; margin: 0; }
+.inbox-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--border); }
+.inbox-list li.unread { background: var(--info-soft); }
+.inbox-list li a { flex: 1; }
+.child-list { list-style: none; padding: 0; margin: 0; }
+.child-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+.backlink-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.backlink-list li { padding: 0.25rem 0; }
+.relationships { margin-top: 1.5rem; }
+.rel-remove { display: inline; margin: 0; }
+.rel-remove button { background: none; border: none; cursor: pointer; color: var(--text-3); font-size: 0.9rem; line-height: 1; padding: 0; }
+.rel-add { display: flex; gap: 0.3rem; margin-top: 0.5rem; }
+.rel-add input { flex: 1; min-width: 0; }
+.conflict-text { background: var(--warning-soft); border: 1px solid var(--warning-line); border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0.5rem 0 0; max-height: 18rem; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 0.875rem; }
+.blocked-warning .confirm-done { display: inline; margin-left: 0.5rem; }
+.quick-actions h4 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+.action-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.htmx-request .issues-table { opacity: 0.6; pointer-events: none; }
+.search-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; align-items: center; }
+.search-filters { display: flex; gap: 0.5rem; flex-wrap: wrap; width: 100%; }
+.search-input-wide { width: 100%; max-width: 480px; font-size: 1rem; padding: 0.5rem 0.75rem; }
+.search-results { list-style: none; padding: 0; margin: 0; }
+.search-hit { padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
+.search-hit-title { color: var(--link); text-decoration: none; font-weight: 600; }
+.search-hit-title:hover { text-decoration: underline; }
+.search-hit-kind { margin-left: 0.5rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); }
+.search-hit-snippet { margin: 0.35rem 0 0; color: var(--text-2); font-size: 0.9rem; }
+.search-hit-snippet mark { background: var(--warning-line); padding: 0 0.1em; border-radius: 2px; }
+.search-scope { display: flex; gap: 0.25rem; margin-bottom: 1rem; }
+.search-scope-tab { padding: 0.3rem 0.75rem; border-radius: 999px; font-size: 0.85rem; color: var(--text-2); text-decoration: none; border: 1px solid var(--border); }
+.search-scope-tab:hover { background: var(--surface-2); }
+.search-scope-tab.active { background: var(--link); border-color: var(--link); color: var(--surface); }
+.search-hit-head { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; }
+.activity { margin-top: 1.5rem; }
+.activity-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.activity-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; padding: 0.3rem 0; border-bottom: 1px solid var(--surface-2); font-size: 0.92rem; }
+.activity-actor { font-weight: 600; }
+.activity-detail { color: var(--text-2); }
+.activity-time { margin-left: auto; font-size: 0.82rem; white-space: nowrap; }
+.activity-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem; margin: 1rem 0; }
+.activity-filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--text-3); }
+.activity-filters input, .activity-filters select { min-width: 8rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font: inherit; }
+.activity-filters input[type="search"] { min-width: 15rem; }
+.activity-pager { margin-top: 1rem; text-align: center; }
+.page-header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.run-span { font-variant-numeric: tabular-nums; color: var(--text-2); }
+.run-count { color: var(--text-3); font-size: 0.8rem; white-space: nowrap; }
+.run-lineage-link { margin: 0; padding: 0.4rem 0.8rem 0; font-size: 0.85rem; }
+.lineage-trail { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0.75rem 0 1rem; }
+.run-id.current { background: var(--agent); color: var(--surface); }
+.lineage-children { list-style: none; margin: 0.25rem 0; padding-left: 1.1rem; border-left: 2px solid var(--agent-soft); }
+.lineage-root { padding-left: 0; border-left: none; }
+.lineage-node { margin: 0.4rem 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; }
+.fork-contracts { display: grid; gap: 0.75rem; margin: 0.75rem 0 1.25rem; }
+.timetravel { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; }
+.tt-timeline { flex: 1 1 20rem; }
+.tt-fields { display: grid; grid-template-columns: auto 1fr; gap: 0.35rem 1rem; margin: 0; }
+.tt-fields dt { font-weight: 600; color: var(--text-3); }
+.tt-fields dd { margin: 0; }
+.tt-events { list-style: none; margin: 0; padding: 0; }
+.tt-event.current { border-left-color: var(--agent); background: var(--agent-soft); }
+.history-timetravel-link { font-size: 0.8rem; font-weight: normal; margin-left: 0.5rem; }
+/* The old 720px page container centered the login card by accident; the
+   full-bleed shell removed it, so the auth column states its measure itself. */
+.auth { max-width: 400px; margin: 8vh auto 0; }
+.auth-form { display: flex; flex-direction: column; gap: var(--sp-4); }
+
+.auth-sso { margin-top: 1rem; }
+.auth-divider { text-align: center; color: var(--text-3); font-size: 0.85rem; margin: 0.75rem 0; }
+.auth-sso-button { display: block; text-align: center; }
+.sprint-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+.filter-check { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--text-2); }
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; align-items: start; }
+.dashboard-list, .dashboard-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.dashboard-list li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.9rem; }
+.dashboard-bars li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; font-size: 0.9rem; }
+.bar-count { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-2); }
+.dashboard-activity { grid-column: 1 / -1; }
+.fleet-metrics-filter { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; align-items: end; }
+.fleet-metrics-filter .form-group { margin: 0; }
+.fleet-metrics-filter .form-actions { align-self: end; }
+.fleet-metrics-breakdown { margin: 0; }
+.fleet-metrics-breakdown div { display: flex; justify-content: space-between; gap: 1rem; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.fleet-metrics-breakdown dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.fleet-metrics-definitions { display: grid; grid-template-columns: minmax(7rem, auto) 1fr; gap: 0.5rem 1rem; }
+.fleet-metrics-definitions dt { font-weight: 600; }
+.fleet-metrics-definitions dd { margin: 0; }
+.issues-table caption { padding: 0.5rem; text-align: left; color: var(--text-3); font-size: 0.85rem; }
+.rollup { margin: 0.35rem 0 0.75rem; }
+.attachment-thumb { max-height: 48px; max-width: 80px; vertical-align: middle; border-radius: 3px; border: 1px solid var(--border); margin-right: 0.4rem; }
+.attachment-embed { font-size: 0.8rem; color: var(--text-3); background: var(--surface-2); padding: 0.05rem 0.3rem; border-radius: 3px; user-select: all; }
+.editor-split { display: flex; gap: 0.75rem; align-items: stretch; }
+.editor-split > textarea { flex: 1 1 50%; }
+
+/* The old stylesheet's known duplicates were resolved to their cascade
+   winners during the port; only the winning declarations exist above. */
+
+/* Muted text on the inbox's unread tint — the exact composite-contrast trap
+   documented in TOKENS.md; same remedy as .list-row.is-unread in §6. */
+.inbox-list li.unread .muted,
+.inbox-list li.unread .meta { color: var(--text-2); }
+
+/* Busy states, wired to reality: §6's indicators key off [aria-busy], but
+   htmx toggles the .htmx-request CLASS and never sets aria-busy — so without
+   these mirrors every loading affordance in the app is dead code. */
+.htmx-request { cursor: progress; }
+.htmx-request .board-card,
+.htmx-request .list-row { opacity: .55; pointer-events: none; }
+
+@media (max-width: 780px) {
+  .editor-split { flex-direction: column; }
+  .issue-detail { flex-direction: column; gap: var(--sp-5); }
+  .meta-sidebar { min-width: 0; }
+}
+
+
 /* ============================================================================
    7. RESPONSIVE
    The board is the hard case: five columns never fit a phone, so it keeps its
