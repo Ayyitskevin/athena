@@ -10,7 +10,8 @@
     </div>
 </div>
 
-<div class="form-container">
+<div class="panel">
+<div class="panel-body">
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
 {% if conflict %}
@@ -104,9 +105,11 @@
                           hx-target="#body-preview"
                           hx-include="closest form"
                           hx-sync="this:replace">{{ draft.body if restored else page.body }}</textarea>
-                <div class="editor-preview">
+                <div class="panel">
+                    <div class="panel-body">
                     <div class="editor-preview-label">Preview</div>
-                    <div id="body-preview" class="body-text">{{ body_html }}</div>
+                    <div id="body-preview" class="prose">{{ body_html }}</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -125,5 +128,6 @@
         </div>
     </form>
     <p class="note-small">Saving snapshots the current version into this page's history.</p>
+</div>
 </div>
 {% endblock %}

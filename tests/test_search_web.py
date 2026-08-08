@@ -132,7 +132,7 @@ def test_find_shows_scope_filter_and_context(tmp_path):
         body = client.get("/find", params={"q": "obelisk"}).text
         assert "search-scope" in body  # the All/Issues/Pages filter is present
         assert "WEB-1" in body  # issue key
-        assert 'class="status done"' in body  # issue status badge
+        assert 'data-tone="success">done</span>' in body  # issue status badge
         assert ">ENG<" in body  # page's space key
 
 

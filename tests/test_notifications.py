@@ -207,7 +207,7 @@ def test_web_inbox_and_nav_badge(tmp_path):
             f"/issues/{issue['id']}/comments", json={"body": "hi"}, headers=H2
         )  # notifies user1
         # The nav badge shows on any page once there's an unread notification.
-        assert 'class="badge"' in client.get("/").text
+        assert 'data-tone="accent"' in client.get("/").text
         # The inbox page lists the event.
         inbox = client.get("/inbox").text
         assert "commented" in inbox and f"/aegis/issues/{issue['id']}" in inbox

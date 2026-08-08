@@ -12,3 +12,7 @@ Claude-Code-specific notes:
 - Branch as `claude/<topic>`. You may merge your own PR here once green (the
   dev-project carve-out documented in AGENTS.md) — but never push `main`
   directly, and the carve-out never extends to live production services.
+- Touching `styles.css` or a template? Read
+  [`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md) first — the token system,
+  chip/panel component contract, and IA groups it documents are load-bearing,
+  not decoration.

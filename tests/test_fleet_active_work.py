@@ -741,7 +741,7 @@ def test_rest_and_web_are_admin_only_and_share_projection(tmp_path):
         )
         active_work_html = page.text.split('<h2 id="fleet-active-work-heading">', 1)[
             1
-        ].split('<section class="dashboard-card agent-checkins">', 1)[0]
+        ].split('<section class="panel agent-checkins">', 1)[0]
         assert "/admin/agents/runs/run/unsafe" not in active_work_html
         assert "SECRET_SHOULD_NOT_BE_IN_THE_FLEET_PROJECTION" not in page.text
         assert seeded["raw_token"] not in page.text

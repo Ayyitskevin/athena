@@ -101,7 +101,7 @@ def test_toggle_visibility_and_manage_members_via_web(tmp_path):
         assert remove_form not in client.get(f"/aegis/projects/{pid}/access").text
 
         # The projects list shows the lock badge to the creator.
-        assert "badge-private" in client.get("/aegis/projects").text
+        assert 'title="Private — members only"' in client.get("/aegis/projects").text
 
 
 def test_access_page_authz(tmp_path):
