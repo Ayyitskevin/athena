@@ -49,7 +49,7 @@
                 {% endfor %}
             </td>
             <td>
-                <span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
+                <span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span>
             </td>
             <td>
                 <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span>

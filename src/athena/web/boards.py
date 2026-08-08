@@ -144,9 +144,18 @@ def _render_board(
         grouped[lane][issue.get("status", "")].append(issue)
 
     cat_rank = {"todo": 0, "doing": 1, "done": 2}
+    # One category lookup per distinct status name; the ordering below and the
+    # column-head tone in the template both read from this map, so they can't
+    # disagree about what a column IS.
+    category_by_name: dict[str, str] = {}
+
+    def _category(name: str) -> str:
+        if name not in category_by_name:
+            category_by_name[name] = statuses.global_category(conn, name)
+        return category_by_name[name]
 
     def _sort_key(name: str) -> tuple[int, str]:
-        return (cat_rank.get(statuses.global_category(conn, name), 1), name)
+        return (cat_rank.get(_category(name), 1), name)
 
     status_names = sorted(
         {status_name for issue in filtered for status_name in issue["status_options"]}
@@ -169,6 +178,7 @@ def _render_board(
                     {
                         "name": name,
                         "label": name.replace("_", " ").title(),
+                        "category": _category(name),
                         "issues": lane_issues[name],
                     }
                     for name in status_names

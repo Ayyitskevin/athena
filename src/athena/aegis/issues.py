@@ -43,12 +43,23 @@ def _like_contains(value: str) -> str:
 # name + key alongside the row (NULL when unassigned / no project), so callers
 # never resolve the ids themselves. LEFT JOINs, not JOINs: an unassigned or
 # project-less issue must still come back.
+#: Every issue row carries its status CATEGORY alongside the status name, via
+#: the same generated expression the fleet views and work queries resolve
+#: "closed" through. Chips color by category, never by name, so a project
+#: whose done state is called "shipped" renders like one calling it "done".
+_CATEGORY_SELECT = statuses.category_sql(
+    status_column="i.status", category_column="ips.category"
+)
+
 _SELECT = (
     "SELECT i.*, u.name AS assignee_name, u.is_agent AS assignee_is_agent, "
-    "p.name AS project_name, p.key AS project_key "
+    "p.name AS project_name, p.key AS project_key, "
+    f"{_CATEGORY_SELECT} AS status_category "
     "FROM issues i "
     "LEFT JOIN users u ON u.id = i.assignee_id "
-    "LEFT JOIN projects p ON p.id = i.project_id"
+    "LEFT JOIN projects p ON p.id = i.project_id "
+    "LEFT JOIN project_statuses ips "
+    "ON ips.project_id = i.project_id AND ips.name = i.status"
 )
 
 

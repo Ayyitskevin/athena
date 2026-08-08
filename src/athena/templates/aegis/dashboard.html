@@ -74,7 +74,7 @@
             {% for i in my_issues %}
             <li>
                 <a href="/aegis/issues/{{ i.id }}">{{ i.key or "#" ~ i.id }} — {{ i.title }}</a>
-                <span class="chip" data-tone="{{ i.status | status_tone }}">{{ i.status }}</span>
+                <span class="chip" data-tone="{{ i.status_category | category_tone }}">{{ i.status }}</span>
             </li>
             {% endfor %}
         </ul>
@@ -125,7 +125,7 @@
                 </div>
                 <div>
                     <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span>
-                    <span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
+                    <span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span>
                 </div>
             </li>
             {% endfor %}

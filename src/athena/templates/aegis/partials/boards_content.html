@@ -24,7 +24,7 @@
         <div class="board-columns">
             {% for col in lane.columns %}
             <div class="board-column" data-status="{{ col.name }}">
-                <div class="board-column-head" data-tone="{{ col.name | status_tone }}">
+                <div class="board-column-head" data-tone="{{ col.category | category_tone }}">
                     <span class="name">{{ col.label }}</span>
                     <span class="count">{{ col.issues | length }}</span>
                 </div>

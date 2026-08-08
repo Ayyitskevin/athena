@@ -2,18 +2,13 @@
    Replaces the flat 15-link nav row with the README's own operator loop:
    Direct → Delegate → Observe → Intervene → Trust.
 
-   No new routes: every href below already exists. Two are deliberately NOT
-   here yet — a theme-switch and a rail-collapse button would each need to
-   POST to a route this migration doesn't add (/settings/theme,
-   /settings/rail — see docs/DESIGN_SYSTEM.md "Deferred to a follow-up PR").
-   Until then the theme follows prefers-color-scheme and the rail always
-   renders open — reading the athena_theme/athena_rail cookies below is
-   forward-compatible dead weight, not a bug: it costs nothing today and
-   nothing else needs to change when that follow-up lands.
-
-   Progressive enhancement contract: each nav group is <details>/<summary> —
-   opens with JavaScript disabled. #}<!DOCTYPE html>
-<html lang="en"{% if request.cookies.get("athena_theme") %} data-theme="{{ request.cookies.get('athena_theme') }}"{% endif %}>
+   The theme cookie (athena_theme) and rail cookie (athena_rail) are written
+   by POST /settings/theme and /settings/rail; with no cookie the theme
+   follows prefers-color-scheme and the rail renders open — the buttons are
+   progressive enhancement over working defaults, and every control below is
+   a plain form. Each nav group is <details>/<summary> — opens with
+   JavaScript disabled. #}<!DOCTYPE html>
+<html lang="en"{% if request.cookies.get("athena_theme") in ("dark", "light") %} data-theme="{{ request.cookies.get('athena_theme') }}"{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,6 +22,14 @@
 <div class="app"{% if request.cookies.get("athena_rail") == "collapsed" %} data-rail="collapsed"{% endif %}>
 
     <header class="app-bar">
+        {% if request.state.user %}
+        <form method="post" action="/settings/rail" class="inline-form">
+            {% include "partials/csrf.html" %}
+            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <input type="hidden" name="state" value="{{ 'open' if request.cookies.get('athena_rail') == 'collapsed' else 'collapsed' }}">
+            <button type="submit" class="button ghost small" aria-label="{{ 'Show' if request.cookies.get('athena_rail') == 'collapsed' else 'Hide' }} navigation rail">&#8801;</button>
+        </form>
+        {% endif %}
         <a href="/" class="brand">
             <span class="brand-mark" aria-hidden="true">A</span>
             <span>Athena</span>
@@ -81,22 +84,26 @@
             </details>
 
             {# ── INTERVENE ── asking for a human right now. The badge is the
-                 inbox unread count (already global, via request.state) — the
-                 full fleet_attention aggregate is computed per-request only on
-                 the dashboard route today; wiring it into every page's nav is
-                 real request-path work (a context processor / middleware hit
-                 to the DB on every render), left for the follow-up this
-                 migration already defers Mentor/theme/rail work to. #}
+                 fleet-attention total plus inbox unread — the number that
+                 decides whether you need to look does not live only on the
+                 dashboard. Attention is computed per-request for admins in
+                 the session middleware (counts only, ~0.1 ms measured) and is
+                 zero with no signals list for everyone else: the aggregate is
+                 admin-scoped and must not leak through a badge. #}
             <details class="nav-group" name="athena-nav">
                 <summary>
                     Intervene
-                    {% if request.state.unread_count %}
-                    <span class="nav-count" aria-label="{{ request.state.unread_count }} unread">{{ request.state.unread_count }}</span>
+                    {% set intervene_total = request.state.unread_count + request.state.attention_total %}
+                    {% if intervene_total %}
+                    <span class="nav-count" aria-label="{{ intervene_total }} things asking for you">{{ intervene_total }}</span>
                     {% endif %}
                 </summary>
                 <div class="nav-menu">
-                    <p>Asking for a human right now.</p>
+                    <p>Asking for a human right now. Counts only — each links to the surface that owns it.</p>
                     <a href="/inbox">Inbox{% if request.state.unread_count %} <span class="chip" data-tone="accent">{{ request.state.unread_count }}</span>{% endif %} <span class="route">/inbox</span></a>
+                    {% for signal in request.state.attention_signals %}{% if signal.count %}
+                    <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span></a>
+                    {% endif %}{% endfor %}
                     {% if request.state.user.role == "admin" %}
                     <a href="/admin/run-controls">Run controls <span class="route">/admin/run-controls</span></a>
                     {% endif %}
@@ -135,6 +142,15 @@
             <div class="nav-menu" style="right: 0; left: auto;">
                 <a href="/settings/password">Password <span class="route">/settings/password</span></a>
                 {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins <span class="route">/settings/identities</span></a>{% endif %}
+                {# Theme cycles system → dark → light → system; the label names
+                   what you are ON, the arrow what you get. #}
+                {% set current_theme = request.cookies.get("athena_theme") if request.cookies.get("athena_theme") in ("dark", "light") else "system" %}
+                <form method="post" action="/settings/theme" class="inline-form" style="padding: 6px 8px;">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="next" value="{{ request.url.path }}">
+                    <input type="hidden" name="theme" value="{{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}">
+                    <button type="submit" class="button ghost small">Theme: {{ current_theme }} &#8594; {{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}</button>
+                </form>
                 <form method="post" action="/logout" class="inline-form" style="padding: 6px 8px;">
                     {% include "partials/csrf.html" %}
                     <button type="submit" class="button ghost small">Sign out</button>
