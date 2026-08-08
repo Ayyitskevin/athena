@@ -133,15 +133,25 @@ def _is_cross_site_post(request: Request) -> bool:
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_form(request: Request):
+def login_form(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     # Already signed in? Skip the form.
     if getattr(request.state, "user", None) is not None:
         return RedirectResponse("/aegis", status_code=303)
+    # A fresh install's login page is a dead end: no account exists and the
+    # page gives no clue how the first one comes to be. One existence check
+    # (not a count) decides whether to point at the bootstrap runbook. On any
+    # instance with users the hint vanishes — it states nothing an anonymous
+    # visitor couldn't learn by failing to sign in anyway.
+    has_users = bool(
+        conn.execute("SELECT EXISTS(SELECT 1 FROM users) AS present").fetchone()[
+            "present"
+        ]
+    )
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"oidc_enabled": config.oidc_enabled()},
+        context={"oidc_enabled": config.oidc_enabled(), "has_users": has_users},
     )
 
 

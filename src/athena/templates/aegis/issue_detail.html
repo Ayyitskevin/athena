@@ -79,8 +79,8 @@
 </div>
 {% endif %}
 
-<div class="issue-detail">
-    <div class="meta-sidebar">
+<div class="issue-layout">
+    <aside class="meta-rail" aria-label="Issue metadata">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
         <div class="meta-item"><strong>Status</strong> <span class="chip chip--lg" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></div>
         {% if issue.archived_at %}
@@ -168,10 +168,51 @@
             <p class="note-small">The assignee stays accountable; contributors (people or agents) are added teammates.</p>
             {% endif %}
         </div>
-    </div>
+    </aside>
 
-    <div class="main-content">
-        <div class="body">
+    <div class="issue-main">
+        {# Supervision before human metadata: who holds this, under which run,
+           and when it last moved. Every figure is scoped to what THIS page
+           already loaded — the bounded activity window — and says so; a
+           fleet-wide claim would belong to Mission Control, not here. #}
+        {% set latest_run = (activity | selectattr("run_id") | list | first) if activity else none %}
+        <div class="supervision">
+            <div>
+                <span class="k">Claim</span>
+                {% if open_claim_handoff %}
+                <span class="v">yielded</span>
+                <div class="sub">handoff open · {{ open_claim_handoff.reason }}</div>
+                {% elif issue.assignee_name %}
+                <span class="v">{{ issue.assignee_name }}</span>
+                <div class="sub">{{ "agent" if issue.assignee_is_agent else "human" }} assignee</div>
+                {% else %}
+                <span class="v">unclaimed</span>
+                <div class="sub">no assignee</div>
+                {% endif %}
+            </div>
+            <div>
+                <span class="k">Run</span>
+                {% if latest_run %}
+                <span class="v"><span class="run-id">{{ latest_run.run_id }}</span></span>
+                <div class="sub"><a href="/aegis/activity/runs/{{ latest_run.run_id }}/lineage">latest tagged event → lineage</a></div>
+                {% else %}
+                <span class="v">—</span>
+                <div class="sub">no tagged run in the loaded window</div>
+                {% endif %}
+            </div>
+            <div>
+                <span class="k">Last event</span>
+                {% if activity %}
+                <span class="v">{{ activity[0].created_at }}</span>
+                <div class="sub">newest of {{ activity | length }} loaded</div>
+                {% else %}
+                <span class="v">—</span>
+                <div class="sub">no visible events</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div>
             <h3>Description
             {% if can_modify %}
                 <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>

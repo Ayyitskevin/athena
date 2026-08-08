@@ -58,7 +58,6 @@ ALLOWLIST: dict[str, str] = {
     "edit-link": "marker beside .muted, which carries the rules",
     "label-block": "marker beside .panel, which carries the rules",
     "member-name": "inline name span",
-    "page-body": "sectioning wrapper; .prose inside carries the rules",
     "parent-form": "quick-action form hook",
     "placement-form": "quick-action form hook",
     "priority-form": "quick-action form hook",

@@ -8,7 +8,9 @@
         <h1>Issues</h1>
         <p class="subtitle">Aegis work items</p>
     </div>
-    <div class="header-actions">
+    {# hx-indicator inherits: every filter control below marks the table busy
+       (#issues-table gains .htmx-request → §8 fades it) during its swap. #}
+    <div class="header-actions" hx-indicator="#issues-table">
         {% if can_write %}<a href="/aegis/issues/new" class="button">+ New Issue</a>{% endif %}
         {% if request.state.user %}
         <a href="/aegis/filters" class="button secondary">Saved filters</a>
