@@ -337,7 +337,7 @@ def test_issues_list_htmx_fragment_vs_full_page(tmp_path):
         # Fragment: has table content but NOT page chrome (search input, header, nav etc.)
         assert "search-input" not in response.text
         assert "page-header" not in response.text.lower()
-        assert '<div id="issues-table">' in response.text
+        assert '<div id="issues-table"' in response.text
 
         # Non-HTMX: full page
         response = client.get("/aegis/issues?search=Searchable")

@@ -130,13 +130,16 @@ they map to a tone by exact value — see the Jinja filters in
 `sprint_tone`, `token_tone`), registered in `main.py`.
 
 Issue **status** is the one open-ended domain — a project can rename or add
-statuses — so `chips.status_tone` is a best-effort map of the default seed set
-(`open`/`in_progress`/`done`) with a `neutral` fallback, not a true
-category lookup. The correct fix is mapping by category
-(`statuses.global_category`, already used for board/sort ordering), which
-needs a database connection a template filter doesn't have. **Follow-up**:
-thread `category` through the aegis issue-query layer so status chips are
-correct for custom project statuses too, not just the seeded defaults.
+statuses — so status chips color by CATEGORY wherever the row carries
+`status_category` (added to the shared issue `_SELECT`, resolved by the same
+`category_sql` expression the work-query language uses): use
+`{{ issue.status_category | category_tone }}`. A project whose done-state is
+named `shipped` colors exactly like one calling it `done`. `status_tone`
+(name-based, seed-set only) remains ONLY for rows that genuinely carry no
+category — search index hits, cross-project by-status rollups (one name can
+map to different categories in different projects), and projections that
+build their own rows. When you add a surface, prefer threading the category
+through its query over reaching for the name-based fallback.
 
 ## §8 Ported Surfaces — why a "legacy-looking" section exists
 
@@ -151,16 +154,22 @@ into the appropriate section, and shrink §8 one surface at a time. §8 also
 carries the `.htmx-request` busy mirrors — htmx toggles that class, never
 `aria-busy`, so §6's `[aria-busy]` indicators alone are dead code.
 
-## Deferred to a follow-up PR
+## Delivered follow-ups (2026-08-08, PRs #342–#344)
 
-This migration intentionally stopped short of two items the design package
-itself flagged as bigger, separable changes:
+Everything the original migration deferred has since shipped:
 
-- **Mentor `page_detail.html` restructure** — turning the seven stacked
-  `.form-container` sections (labels, comments, attachments, referenced by,
-  history, activity, manage) into a rail + `.doc-admin` disclosures. A real
-  layout reorganization, not a class rename.
-- **`/settings/theme` and `/settings/rail` POST routes** — cookie-backed
-  persistence for the user's theme and rail-collapsed preference. Optional:
-  without them the shell still works, it just always renders dark with the
-  rail open.
+- **Two CI contracts** (`scripts/check_template_styles.py`,
+  `scripts/check_template_routes.py`) — every rendered class must have a rule
+  or a justified allowlist entry; every template endpoint must reach a
+  registered route. Both run in CI beside the other contract scripts.
+- **Category-based status chips** (see Chip tone mapping above).
+- **`/settings/theme` + `/settings/rail`** — cookie-backed preferences with
+  their buttons in the shell; system/dark/light cycle, rail collapse.
+- **Fleet attention in the Intervene nav badge** — computed per-request for
+  admins in the session middleware; members get nothing, not zeros.
+- **Issue detail** adopted `.issue-layout` + `.supervision` + `.meta-rail`;
+  **Mentor page detail** adopted `.doc-layout` + `.doc-admin` disclosures.
+  Their §8 shell rules are gone — the shrink-one-surface-at-a-time path in
+  the §8 section above is how the rest of §8 retires too.
+- **Footer version stamp**, **empty-instance login hint**, and working
+  **htmx busy indicators** (inherited `hx-indicator` per surface).

@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette._utils import get_route_path
 
+from athena import __version__ as athena_version
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
@@ -1273,6 +1274,13 @@ def create_app(
                     raise result
 
     app = FastAPI(title="Athena", lifespan=lifespan)
+    # The footer states which build rendered the page. Not decoration: a
+    # long-running process serves old Python under live-reloaded templates
+    # (this exact skew broke every htmx button on 2026-08-08), and a visible
+    # version that disagrees with the checkout is the ten-second diagnosis.
+    # athena.__version__ is the same source guide.py and recovery bundles
+    # stamp, so every surface names one version.
+    app.state.version = athena_version
 
     # Teach the undo engine each layer's inverses. core/undo.py owns the mechanism
     # and may not import aegis/mentor (the import contract), so the composition

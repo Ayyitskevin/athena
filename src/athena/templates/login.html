@@ -30,5 +30,16 @@
         <a href="/login/sso" class="button secondary auth-sso-button">Sign in with SSO</a>
     </div>
     {% endif %}
+
+    {% if has_users is defined and not has_users %}
+    {# Only on an EMPTY instance: no account exists yet, and this form cannot
+       create one — accounts never come from the login page. Point at the
+       bootstrap runbook instead of leaving a dead end. #}
+    <p class="note">
+        No accounts exist yet. Athena has no self-serve signup — create the
+        first administrator with the one-time bootstrap described in
+        <code>docs/QUICKSTART.md</code>, then sign in here.
+    </p>
+    {% endif %}
 </div>
 {% endblock %}

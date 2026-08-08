@@ -1135,6 +1135,16 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 /* --- Issue detail -------------------------------------------------------- */
 
 .issue-layout { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: var(--sp-6); }
+/* Explicit placement, so the rail may come first in SOURCE (screen readers
+   announce the metadata before the long body, matching the old sidebar-first
+   order) while rendering in the right-hand column. */
+.issue-layout > .issue-main { grid-column: 1; grid-row: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6); }
+.issue-layout > .meta-rail { grid-column: 2; grid-row: 1; }
+@media (max-width: 1100px) {
+  /* One column: the rail drops BELOW the work, not above it. */
+  .issue-layout > .issue-main { grid-column: 1; grid-row: 1; }
+  .issue-layout > .meta-rail { grid-column: 1; grid-row: 2; }
+}
 
 /* Supervision comes before human metadata: claim, heartbeat, run, budget. */
 .supervision {
@@ -1233,6 +1243,9 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
   list-style: none;
 }
 .doc-admin summary::-webkit-details-marker { display: none; }
+.doc-admin details > :not(summary) { margin: var(--sp-2) 0 var(--sp-5); }
+/* A page outside any space has no tree column. */
+.doc-layout--no-tree { grid-template-columns: minmax(0, 1fr) 250px; }
 .count-pill {
   display: inline-grid;
   place-items: center;
@@ -1498,10 +1511,6 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .agent-run-main { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
 .copy-command-button { padding: 0.15rem 0.45rem; font-size: 0.75rem; }
 .run-export-command { display: block; max-width: 100%; overflow-wrap: anywhere; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0.25rem 0.4rem; font-size: 0.78rem; }
-.issue-detail { display: flex; gap: 2rem; background: var(--surface-2); border: 1px solid var(--border); padding: 1.5rem; border-radius: 6px; }
-.issue-detail .meta { display: flex; gap: 2rem; margin-bottom: 1.25rem; font-size: 0.9rem; }
-.issue-detail .body { margin: 1rem 0; }
-.issue-detail .body p { color: var(--text-2); }
 .board-empty { padding: 2rem 1rem; text-align: center; }
 .board-filters { flex-wrap: wrap; justify-content: flex-end; }
 .board-filters .search-input, .board-filters .filter-select { flex: 1 1 10rem; min-width: 0; max-width: 100%; }
@@ -1512,9 +1521,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .recent-issues li { padding: 0.4rem 0; border-bottom: 1px solid var(--surface-2); }
 .search-input { padding: 0.3rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; width: 160px; }
 .filter-select { padding: 0.3rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font-size: 0.85rem; }
-.meta-sidebar { min-width: 180px; flex-shrink: 0; }
 .meta-item { margin-bottom: 0.75rem; font-size: 0.9rem; }
-.main-content { flex: 1; }
 .breadcrumb-current { color: var(--text-3); }
 .attachment-list { list-style: none; padding: 0; margin: 0 0 0.75rem; }
 .attachment-list li { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0; }
@@ -1639,8 +1646,6 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 
 @media (max-width: 780px) {
   .editor-split { flex-direction: column; }
-  .issue-detail { flex-direction: column; gap: var(--sp-5); }
-  .meta-sidebar { min-width: 0; }
 }
 
 
