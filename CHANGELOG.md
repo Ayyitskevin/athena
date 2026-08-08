@@ -105,6 +105,17 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Related items: zero-dependency relevance from the links you already have.**
+  `GET /issues/{ref}/related`, `GET /pages/{id}/related`, MCP `related_items`,
+  and a `related` section in the issue work-context packet all answer the same
+  question: *what cites what this cites, but is not linked to it yet?*
+  Co-citation over the existing `links` rows, derived at read time — an item is
+  related when it shares link-neighbours with the focus, ranked by how many,
+  deterministic ties, no embeddings, no stored score, no migration. Direct
+  neighbours are deliberately absent (backlinks already answer them), hidden
+  things neither appear nor conduct (a hidden bridge must not raise anyone's
+  score), and the bound is disclosed like every other bounded read.
+
 - **Playbook checklists nest.** An indented `- [ ]` step now instantiates as a
   child of the issue its enclosing step became, so a checklist with sub-steps
   produces the same issue tree a hand would build — one `set_issue_parent` per

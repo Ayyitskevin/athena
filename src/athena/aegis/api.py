@@ -774,6 +774,23 @@ def issue_graph(
     )
 
 
+@router.get("/{issue_id}/related")
+def issue_related_items(
+    issue_id: RowIdPath,
+    limit: int = graph.DEFAULT_RELATED_LIMIT,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # "What cites what this issue cites, but is not linked to it yet?" — the
+    # Aegis twin of the page route: co-citation over the same links the graph
+    # walks, direct neighbours deliberately absent (they are /backlinks), the
+    # bound disclosed. 404 for missing and hidden alike.
+    _issue_for_read(conn, issue_id, actor)
+    return graph.related_items(
+        conn, kind="issue", node_id=issue_id, actor=actor, limit=limit
+    )
+
+
 @router.get("/{issue_id}/unlinked-mentions")
 def issue_unlinked_mentions(
     issue_id: RowIdPath,
