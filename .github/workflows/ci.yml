@@ -56,6 +56,10 @@ jobs:
         run: .venv/bin/python scripts/check_write_ownership.py
       - name: Check imported_at guards
         run: .venv/bin/python scripts/check_imported_at_guards.py
+      - name: Check template styles
+        run: .venv/bin/python scripts/check_template_styles.py
+      - name: Check template routes
+        run: .venv/bin/python scripts/check_template_routes.py
       - name: Run required tests with full-source branch coverage
         run: scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
       - name: Upload coverage evidence
