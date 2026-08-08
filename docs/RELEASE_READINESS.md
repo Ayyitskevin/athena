@@ -14,15 +14,57 @@ public forge; see [FORGE.md](FORGE.md).
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
 alpha the project actually claims to be.**
 
-Re-affirmed 2026-07-31 after the Stage M–P expansion, the adversarial review of
-the merged tree (grade 7/10 — see OPUS_REMEDIATION_GUIDE_ATHENA.md), the
-H-0/H-1/H-2 remediation waves, and the release-candidate evidence hardening
-described below. The 2026-07-30 full-product gate passes locally at its named
-commit; the candidate evidence section explicitly distinguishes its local draft
-rehearsal from pending hosted verification. The remaining blockers below are
-**not waived by green tests** — they are supply-chain, deployment-shape, and
-repository-settings items, and accepting them is a human release owner's
-decision, not something a test can make.
+Re-affirmed 2026-08-08 after the Final Sprint and depth cycle (the section
+below), and before that 2026-07-31 after the Stage M–P expansion, the
+adversarial review of the merged tree (grade 7/10 — see
+OPUS_REMEDIATION_GUIDE_ATHENA.md), the H-0/H-1/H-2 remediation waves, and the
+release-candidate evidence hardening described below. The 2026-07-30
+full-product gate passes locally at its named commit; the candidate evidence
+section explicitly distinguishes its local draft rehearsal from pending hosted
+verification. The remaining blockers below are **not waived by green tests** —
+they are supply-chain, deployment-shape, and repository-settings items, and
+accepting them is a human release owner's decision, not something a test can
+make.
+
+### 2026-08-08 depth-cycle refresh
+
+Twelve pull requests (#327–#338) merged between the 2026-07-31 baseline and
+this entry: the Final Sprint (the desk orientation read, playbooks, space
+subscriptions, workspace search, the field guide, browser If-Match forms),
+scope-filtered MCP registration, command-owned authorization for the last
+three trusting command families, nested playbook checklists, related-items
+co-citation, and the issue draft store. Two security movements deserve
+naming: a read-scoped token could start a playbook and advance the desk
+cursor (both fixed with regression tests when the scope audit found them),
+and `cryptography` was pinned up to 50.0.0 after PYSEC-2026-3552 turned the
+CI audit job red at `dfa0a25` — exactly what that gate exists to catch. The
+risk-acceptance list shrank by one: "authorization still in some transports"
+is repaired, not accepted.
+
+Evidence commit: `1e06ac393a99270a3a7b05302b85845eea14647d` (the #338 squash
+merge). Environment: Linux, CPython 3.12, exact `constraints/ci-py312.txt`
+graph. Local evidence time: `2026-08-08T07:00Z`.
+
+The exact required gate passed at that commit: Ruff check and format check,
+mypy over all **172** runtime modules, all three architecture checkers (172
+import-contract modules; write ownership including the new
+`issue_drafts`/`page_drafts` personal-state entries; imported_at guards), the
+process smoke, and the full coverage-gated suite — **3,394 passed, 0
+skipped**; line 92.93600% (20,287/21,829), branch 83.47431% (5,329/6,384),
+combined 90.79502% (25,616/28,213), above every configured floor
+(92.6/82.3/90.3), excluded lines exactly 2. The schema is at migration
+**0074**; the MCP server registers **124** tools on an unlimited token and
+**58** on a read-scoped one (scope-filtered registration is presentation —
+the REST layer remains the boundary).
+
+Hosted verification during the cycle: run
+[`31239730553`](https://github.com/Ayyitskevin/athena/actions/runs/31239730553)
+passed both the test and audit jobs at `49fdb90` (the first full run after
+the cryptography pin bump), and the #338 PR head `542bc00` passed all six
+checks including the three CodeQL analyses (run
+[`31241783889`](https://github.com/Ayyitskevin/athena/actions/runs/31241783889)).
+Checklist item B1 — hosted CI green at the exact commit to be tagged — must
+still be re-checked at tag time, not inherited from this entry.
 
 ### 2026-07-31 deployment-hardening baseline
 
