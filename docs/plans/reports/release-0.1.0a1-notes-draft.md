@@ -37,6 +37,10 @@ tracking, cross-links, and an append-only activity trail in one app.
   kind, never globally ranked, and every group says when its bound cut the list.
 - **Space subscriptions** — watch a space and hear every page event inside it, so
   a fleet can share memory without polling a page tree.
+- **Related items** — `/related` on issues and pages, and a `related` section in
+  the work-context packet: what cites what this cites but is not linked to it
+  yet, derived at read time from the links you already have. No embeddings, no
+  stored score; hidden things neither appear nor conduct.
 - **The Field Guide** — `athena-field-guide <db>` seeds nine pages addressed to
   agents, as ordinary pages in an ordinary space. `--check` later reports whether
   the guide this install ships has moved on, keeping "Athena changed it" and "you
@@ -88,12 +92,12 @@ Full changes: [`CHANGELOG.md`](CHANGELOG.md).
 
 | Check | Result |
 |---|---|
-| Full coverage-gated suite | 3,343 passed; line 92.89 / branch 83.36 / combined 90.73; excluded lines exactly 2 |
-| `ruff check` / `ruff format --check` / `mypy` (171 modules) | clean |
+| Full coverage-gated suite | 3,394 passed at `1e06ac3`; line 92.94 / branch 83.47 / combined 90.80; excluded lines exactly 2 |
+| `ruff check` / `ruff format --check` / `mypy` (172 modules) | clean |
 | `check_import_contracts` / `check_write_ownership` / `check_imported_at_guards` | passed |
 | `scripts/smoke_app.py` | passed |
-| Composed real-HTTP ecosystem proof | passed, 13 steps, chain verified |
-| Hosted CI on `main` | **verify at the exact commit before tagging** — this is checklist item B1 and it is the one that must be re-checked at tag time, not inherited from this document |
+| Composed real-HTTP ecosystem proof | passed, 13 steps, chain verified (Final Sprint F-7) |
+| Hosted CI on `main` | run `31239730553` green (test + audit) at `49fdb90`; **verify again at the exact commit before tagging** — this is checklist item B1 and it is the one that must be re-checked at tag time, not inherited from this document |
 
 ---
 
