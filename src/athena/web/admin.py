@@ -135,6 +135,88 @@ def _password_context(*, error: str | None = None, success: str | None = None) -
     return {"error": error, "success": success}
 
 
+# --- Presentation preferences ------------------------------------------------
+#
+# Two cookie writes, no database row: which theme this BROWSER renders and
+# whether its nav rail is collapsed are per-device presentation state, not
+# facts about the operator, so they deliberately live outside the data model
+# the way the session cookie does. base.html reads both and degrades to
+# prefers-color-scheme + an open rail when they are absent, which is also why
+# these are POSTs from plain forms — the buttons are progressive enhancement
+# over working defaults.
+
+
+def _safe_next(next_path: str) -> str:
+    """Only ever redirect back into this app: a one-segment local path.
+
+    The value rides in a hidden form field, so a tampered form must not turn
+    a preference toggle into an open redirect. Anything that is not a plain
+    local path ("//host" is protocol-relative, "https://…" is absolute)
+    falls back to the home page.
+    """
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        return next_path
+    return "/"
+
+
+_THEMES = {"dark", "light", "system"}
+
+
+@router.post("/settings/theme", dependencies=[Depends(verify_csrf)])
+def set_theme(
+    request: Request,
+    theme: str = Form(...),
+    next: str = Form("/"),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("change the theme")
+    if theme not in _THEMES:
+        return HTMLResponse("unknown theme", status_code=400)
+    response = RedirectResponse(_safe_next(next), status_code=303)
+    if theme == "system":
+        # No cookie IS the system setting; deleting beats storing a synonym.
+        response.delete_cookie("athena_theme", path="/")
+    else:
+        response.set_cookie(
+            "athena_theme",
+            theme,
+            max_age=365 * 24 * 3600,
+            httponly=True,
+            samesite="lax",
+            secure=config.COOKIE_SECURE or request.url.scheme == "https",
+            path="/",
+        )
+    return response
+
+
+@router.post("/settings/rail", dependencies=[Depends(verify_csrf)])
+def set_rail(
+    request: Request,
+    state: str = Form(...),
+    next: str = Form("/"),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("collapse the rail")
+    if state not in ("collapsed", "open"):
+        return HTMLResponse("unknown rail state", status_code=400)
+    response = RedirectResponse(_safe_next(next), status_code=303)
+    if state == "open":
+        response.delete_cookie("athena_rail", path="/")
+    else:
+        response.set_cookie(
+            "athena_rail",
+            "collapsed",
+            max_age=365 * 24 * 3600,
+            httponly=True,
+            samesite="lax",
+            secure=config.COOKIE_SECURE or request.url.scheme == "https",
+            path="/",
+        )
+    return response
+
+
 @router.get("/settings/password", response_class=HTMLResponse)
 def password_settings(request: Request, updated: str | None = None):
     templates = get_templates()

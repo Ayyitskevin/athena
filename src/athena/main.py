@@ -25,6 +25,7 @@ from starlette._utils import get_route_path
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
+from athena.aegis import fleet_attention as aegis_fleet_attention
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import desk_api as aegis_desk_api
@@ -1455,6 +1456,11 @@ def create_app(
         request.state.csrf_token = None
         # Unread-inbox count for the nav badge; 0 when logged out.
         request.state.unread_count = 0
+        # Fleet-attention rollup for the Intervene badge. Admin-only below —
+        # every input is an admin-scoped read, so for everyone else these
+        # stay zero/empty and the template renders nothing.
+        request.state.attention_total = 0
+        request.state.attention_signals = []
         # Whether SSO is configured, so the nav can show the linked-identities link
         # only when it's relevant. Evaluated per request so tests/config see it live.
         request.state.oidc_enabled = config.oidc_enabled()
@@ -1484,6 +1490,15 @@ def create_app(
                     request.state.unread_count = notifications.unread_count(
                         conn, request.state.user["id"], actor=request.state.user
                     )
+                    # The number that decides whether you need to look must not
+                    # live only on the dashboard. Counts only (~0.1 ms measured
+                    # on a seeded db), the same build the dashboard card runs,
+                    # so nav and card cannot disagree. Admins only: the rollup
+                    # aggregates admin-scoped reads.
+                    if request.state.user.get("role") == "admin":
+                        attention = aegis_fleet_attention.build_attention(conn)
+                        request.state.attention_total = attention["total"]
+                        request.state.attention_signals = attention["signals"]
             finally:
                 conn.close()
         return await call_next(request)
@@ -1535,6 +1550,7 @@ def create_app(
     # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
     # no database access — see chips.py for which domains are exact vs. best-effort.
     templates.env.filters["status_tone"] = chips.status_tone
+    templates.env.filters["category_tone"] = chips.category_tone
     templates.env.filters["priority_tone"] = chips.priority_tone
     templates.env.filters["checkin_tone"] = chips.checkin_tone
     templates.env.filters["health_tone"] = chips.health_tone

@@ -60,7 +60,7 @@
                 <span class="label" style="--label-color: {{ l.color }}">{{ l.name }}</span>
                 {% endfor %}
             </td>
-            <td><span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span></td>
+            <td><span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></td>
             <td><span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></td>
             <td class="{{ 'muted' if not issue.assignee_name else '' }}">{{ issue.assignee_name or "Unassigned" }}</td>
             <td class="{{ 'muted' if not issue.project_name else '' }}">{{ issue.project_name or "—" }}</td>

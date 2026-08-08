@@ -50,8 +50,20 @@ _TOKEN_TONE = {"critical": "danger", "danger": "danger", "warning": "warning"}
 _SPRINT_TONE = {"planned": "neutral", "active": "info", "completed": "success"}
 
 
+_CATEGORY_TONE = {"todo": "neutral", "doing": "info", "done": "success"}
+
+
 def status_tone(name: str | None) -> str:
     return _STATUS_TONE.get(name or "", "neutral")
+
+
+def category_tone(category: str | None) -> str:
+    """Tone from a status CATEGORY (todo/doing/done) — the correct mapping
+    wherever the row carries ``status_category``, because a project can name
+    its statuses anything. ``status_tone`` remains the name-based fallback
+    for surfaces whose queries don't resolve the category (search snippets,
+    imported snapshots)."""
+    return _CATEGORY_TONE.get(category or "", "neutral")
 
 
 def priority_tone(name: str | None) -> str:

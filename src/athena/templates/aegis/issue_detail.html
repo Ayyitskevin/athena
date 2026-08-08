@@ -10,7 +10,7 @@
     </div>
     <div class="header-actions">
         <a href="/aegis/issues/{{ issue.id }}/work-context" class="button secondary small">Agent work context</a>
-        <span class="chip chip--lg" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
+        <span class="chip chip--lg" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span>
         {% if request.state.user %}
         <form method="post" action="/aegis/issues/{{ issue.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
               style="display:inline">
@@ -82,7 +82,7 @@
 <div class="issue-detail">
     <div class="meta-sidebar">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
-        <div class="meta-item"><strong>Status</strong> <span class="chip chip--lg" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span></div>
+        <div class="meta-item"><strong>Status</strong> <span class="chip chip--lg" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></div>
         {% if issue.archived_at %}
         <div class="meta-item"><strong>Archived</strong> <span class="chip" data-tone="neutral" title="{{ issue.archived_at }}">archived</span></div>
         {% endif %}
@@ -297,7 +297,7 @@
             <ul class="child-list">
                 {% for c in children %}
                 <li>
-                    <span class="chip" data-tone="{{ c.status | status_tone }}">{{ c.status.replace("_", " ").title() }}</span>
+                    <span class="chip" data-tone="{{ c.status_category | category_tone }}">{{ c.status.replace("_", " ").title() }}</span>
                     <a href="/aegis/issues/{{ c.id }}">{{ c.key or "#" ~ c.id }} {{ c.title }}</a>
                     {# Archived children are listed but not counted above, so say
                        which ones they are — otherwise the header's total and the
