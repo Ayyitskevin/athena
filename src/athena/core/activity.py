@@ -411,6 +411,62 @@ def reversed_counts_by_actor(conn: sqlite3.Connection) -> dict[int, int]:
     return {int(row["actor_id"]): int(row["n"]) for row in rows}
 
 
+def _paged_feed_sql(
+    conn: sqlite3.Connection,
+    actor: dict | None | object,
+    *,
+    clauses: list[str],
+    params: list,
+    target_kind: str | None,
+    direction: str,
+    limit: int,
+) -> tuple[str, list] | None:
+    """Build one page of the trail, gated, without asking SQLite to read all of it.
+
+    The naive shape — `WHERE <four-arm OR> ORDER BY a.id DESC LIMIT 50` — cannot be
+    answered incrementally. With no ANALYZE stats (which is every real Athena
+    database: nothing in the product ever runs it) SQLite resolves the OR by
+    MULTI-INDEX OR across the four arms, unions the row ids, evaluates the
+    correlated subqueries, and sorts the whole survivor set through a temp B-tree
+    before it ever reaches LIMIT. The LIMIT is inert: asking for 10 rows costs what
+    asking for 50 costs, and both cost the entire trail.
+
+    So ask each arm separately. The arms are disjoint on `target_kind`, so each one
+    can walk `idx_activity_kind_id` (migration 0076) in id order and stop at `limit`
+    rows; the outer query merges four already-bounded lists and takes the top
+    `limit`. Correctness of the merge: any row in the true top `limit` sits in
+    exactly one arm, and must be within that arm's own top `limit`, so no arm can
+    hide a row the merge needed.
+
+    Returns None when the gate admits nothing for the requested kind — an actor
+    asking for a target kind no arm covers sees an empty feed, not an error.
+    """
+    order = f"a.id {direction}"
+    arms = (
+        None
+        if actor is _UNGATED
+        else access.event_visibility_arms(conn, cast(dict | None, actor), alias="a")
+    )
+    if arms is None:
+        # No gate at all: the internal callers, and admins. One plain read, exactly
+        # as before — a scan the rowid index already answers in id order.
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        return f"{_SELECT}{where} ORDER BY {order} LIMIT ?", [*params, limit]
+
+    if target_kind is not None:
+        arms = [arm for arm in arms if arm[0] == target_kind]
+        if not arms:
+            return None
+    parts: list[str] = []
+    merged: list = []
+    for _kind, arm_clause, arm_params in arms:
+        where = " WHERE " + " AND ".join([f"({arm_clause})", *clauses])
+        parts.append(f"SELECT * FROM ({_SELECT}{where} ORDER BY {order} LIMIT ?)")
+        merged.extend([*arm_params, *params, limit])
+    merged.append(limit)
+    return " UNION ALL ".join(parts) + f" ORDER BY id {direction} LIMIT ?", merged
+
+
 def list_activity(
     conn: sqlite3.Connection,
     *,
@@ -443,13 +499,6 @@ def list_activity(
     actor (a user dict, or None for anonymous) to gate the global feed."""
     clauses: list[str] = []
     params: list = []
-    if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(
-            conn, cast(dict | None, actor), alias="a"
-        )
-        if gate:
-            clauses.append(gate)
-            params.extend(gate_params)
     if target_kind is not None:
         clauses.append("a.target_kind = ?")
         params.append(target_kind)
@@ -489,12 +538,19 @@ def list_activity(
     if before_id is not None:
         clauses.append("a.id < ?")
         params.append(before_id)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    params.append(limit)
-    rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY a.id DESC LIMIT ?", params
-    ).fetchall()
-    return [dict(row) for row in rows]
+    built = _paged_feed_sql(
+        conn,
+        actor,
+        clauses=clauses,
+        params=params,
+        target_kind=target_kind,
+        direction="DESC",
+        limit=limit,
+    )
+    if built is None:
+        return []
+    sql, sql_params = built
+    return [dict(row) for row in conn.execute(sql, sql_params).fetchall()]
 
 
 def list_events(
@@ -537,13 +593,6 @@ def list_events(
     its token's actor so an agent only drains the trail it may see."""
     clauses: list[str] = []
     params: list = []
-    if actor is not _UNGATED:
-        gate, gate_params = access.event_visibility_clause(
-            conn, cast(dict | None, actor), alias="a"
-        )
-        if gate:
-            clauses.append(gate)
-            params.extend(gate_params)
     if after_id is not None:
         clauses.append("a.id > ?")
         params.append(after_id)
@@ -574,12 +623,19 @@ def list_events(
         # Athena was TOLD, not something it did — consumers that ACT on the
         # stream (the automation engine) must not treat it as a trigger.
         clauses.append("a.imported_at IS NULL")
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    params.append(limit)
-    rows = conn.execute(
-        f"{_SELECT}{where} ORDER BY a.id ASC LIMIT ?", params
-    ).fetchall()
-    return [dict(row) for row in rows]
+    built = _paged_feed_sql(
+        conn,
+        actor,
+        clauses=clauses,
+        params=params,
+        target_kind=target_kind,
+        direction="ASC",
+        limit=limit,
+    )
+    if built is None:
+        return []
+    sql, sql_params = built
+    return [dict(row) for row in conn.execute(sql, sql_params).fetchall()]
 
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
