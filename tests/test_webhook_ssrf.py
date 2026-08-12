@@ -71,6 +71,42 @@ def test_address_policy_blocks_internal_targets():
     assert ok
 
 
+def test_address_policy_blocks_cgnat_and_site_local():
+    """CGNAT (100.64.0.0/10) and IPv6 site-local (fec0::/10) are internal, and neither
+    is caught by ipaddress's is_private/is_reserved family — so before this policy
+    named them explicitly, they rode through the guard. CGNAT is the sharper of the
+    two: it is the range Tailscale assigns, so on a tailnet deployment (the supported
+    non-loopback shape) an admin-registered webhook URL resolving to 100.x could reach
+    ANOTHER TAILNET NODE without the ATHENA_EGRESS_PRIVATE_HOSTS opt-in the design
+    requires for every other private target. The embedded-IPv4 cases pin that the
+    v6-decode in _address_blocked runs BEFORE the membership check, so the mapped form
+    cannot smuggle what the bare form refuses."""
+    for bad in (
+        "http://100.64.0.1/",  # first CGNAT address
+        "http://100.127.255.254/",  # last CGNAT address
+        "http://[fec0::1]/",  # deprecated site-local, still routable internally
+        "http://[::ffff:100.64.0.1]/",  # IPv4-mapped CGNAT
+    ):
+        ok, _reason = webhooks.is_safe_url(bad)
+        assert not ok, f"{bad} should be refused"
+    # The fences hold in both directions: the neighbors just outside the CGNAT
+    # range stay deliverable, so the fix cannot silently widen into 100.0.0.0/8.
+    for good in ("http://100.63.255.254/", "http://100.128.0.1/"):
+        ok, _ = webhooks.is_safe_url(good)
+        assert ok, f"{good} is public and should be allowed"
+
+
+def test_poster_refuses_cgnat_at_delivery_time():
+    # Same policy object at delivery: the poster consults _address_blocked through
+    # _safe_connect_target, so a rebind-to-CGNAT answer is refused, not connected.
+    post = webhooks.urllib_poster(2.0)
+    ok, reason = post(
+        "http://100.64.31.5:8080/", b"{}", {"Content-Type": "application/json"}
+    )
+    assert not ok
+    assert "internal" in reason
+
+
 def test_poster_refuses_to_reach_an_internal_address():
     # No monkeypatching: the guard must refuse a loopback/metadata target outright.
     post = webhooks.urllib_poster(2.0)

@@ -84,19 +84,34 @@ def _host_exempt(host: str) -> bool:
     return host.strip().lower() in config.EGRESS_PRIVATE_HOSTS
 
 
+# Two internal ranges the ipaddress properties below do NOT cover (verified against
+# CPython 3.12: both classify as neither private nor reserved). Shared address space
+# (RFC 6598, carrier-grade NAT) matters doubly here because it is the range Tailscale
+# assigns — deployment.py's _TAILSCALE_V4 is this same network — so on Athena's own
+# primary deployment shape it addresses OTHER TAILNET NODES, exactly the peers the
+# egress policy exists to keep behind the ATHENA_EGRESS_PRIVATE_HOSTS opt-in.
+# Site-local IPv6 (RFC 3879) is deprecated, but deprecated means routers still honor
+# it, not that it stopped addressing internal networks.
+_SHARED_ADDRESS_SPACE_V4 = ipaddress.ip_network("100.64.0.0/10")
+_SITE_LOCAL_V6 = ipaddress.ip_network("fec0::/10")
+
+
 def _address_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """Whether an IP is one we refuse to POST to: private, loopback, link-local
     (which includes the 169.254.169.254 cloud-metadata endpoint), reserved,
-    multicast, or unspecified. The single owner of the address policy — both the
-    registration-time is_safe_url and the delivery-time connect consult it, so the
-    two can never disagree about what "internal" means.
+    multicast, unspecified, CGNAT/tailnet shared space, or IPv6 site-local. The
+    single owner of the address policy — both the registration-time is_safe_url
+    and the delivery-time connect consult it, so the two can never disagree about
+    what "internal" means.
 
     IPv6 forms that EMBED an IPv4 address (IPv4-mapped ::ffff:a.b.c.d, 6to4, teredo)
     are decoded to that IPv4 before classifying: the kernel routes them to the v4
     target, so an attacker could otherwise smuggle an internal v4 (e.g.
     ::ffff:169.254.169.254) past the policy. Decoding here also makes the decision
     independent of the interpreter — CPython only began delegating mapped-address
-    classification to the embedded v4 in 3.12.4, and never does so for 6to4."""
+    classification to the embedded v4 in 3.12.4, and never does so for 6to4.
+    Because the decode runs first, an embedded CGNAT address (::ffff:100.64.0.1)
+    lands in the v4 membership check like any other smuggled v4."""
     if ip.version == 6:
         embedded = ip.ipv4_mapped or ip.sixtofour
         if embedded is None and ip.teredo is not None:
@@ -110,6 +125,8 @@ def _address_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or ip.is_reserved
         or ip.is_multicast
         or ip.is_unspecified
+        or (ip.version == 4 and ip in _SHARED_ADDRESS_SPACE_V4)
+        or (ip.version == 6 and ip in _SITE_LOCAL_V6)
     )
 
 

@@ -12,6 +12,62 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **Webhook egress now refuses CGNAT and IPv6 site-local targets.** The address
+  policy behind `is_safe_url` and the delivery-time pinned connect relied on
+  `ipaddress`' `is_private`/`is_reserved` family, and neither covers
+  100.64.0.0/10 (RFC 6598 shared address space) or the deprecated-but-routable
+  fec0::/10 — so a webhook URL resolving there was deliverable without the
+  `ATHENA_EGRESS_PRIVATE_HOSTS` opt-in every other private target requires.
+  CGNAT is the range Tailscale assigns, which made the gap sharpest on the
+  supported tailnet shape: an admin-registered URL could reach another tailnet
+  node directly. Both ranges are now named in the one policy owner
+  (`_address_blocked`), the IPv4-embedded IPv6 decode still runs first so
+  `::ffff:100.64.0.1` cannot smuggle what the bare form refuses, and regression
+  tests pin the range edges so the block cannot silently widen into
+  100.0.0.0/8. Exact-hostname exemptions keep working — the opt-in is the
+  point.
+
+- **The vendored htmx bundle is hash-pinned.** `static/htmx.min.js` was the one
+  executable dependency shipped by content alone — vendored (so no
+  `integrity` attribute exists), excluded from CodeQL's paths, and served to
+  every browser session. Its SHA-256 was verified against the official
+  bigskysoftware/htmx v1.9.12 release artifact and is now asserted by
+  `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
+  build and an htmx upgrade names the new version and digest in the same diff.
+
+### Changed
+
+- **The verb-windowed activity scans are indexed (0075).** The admin attention
+  rollup runs on every authenticated admin request, and two of its inputs —
+  the security refusal counts and the budget-exhaustion count — filter
+  activity by `verb` within a time window. No index led with `verb`, so both
+  walked the whole append-only table on every request (~13 ms at 100k events,
+  growing linearly with the trail). `idx_activity_verb_window (verb,
+  created_at, imported_at)` turns both into bounded index seeks; plan-pinning
+  tests assert the planner actually uses it, mirroring `test_activity_actor_index`.
+
+### Fixed
+
+- **`mcp` is bounded below 2.0 in the project metadata.** MCP SDK 2.0 removed
+  `mcp.server.fastmcp`, which `athena.mcp.server` imports, so any install that
+  skipped `-c constraints/ci-py312.txt` (the README quickstart already uses it;
+  a bare `pip install athena[mcp]` would not) resolved the new major and got an
+  `athena-mcp` that crashed on import. CI never saw the break because it always
+  installs under the constraints file — the bound moves the protection into the
+  metadata every installer reads. The constrained graph is unchanged
+  (`mcp==1.28.1` satisfies `>=1.2,<2`).
+
+- **AGENTS.md's command-error-dialect inventory matches the code again.** Six
+  command modules it listed as `status_code`-carrying migration debt
+  (`space_commands`, `comment_commands`, `sprint_commands`, `token_commands`,
+  `webhook_commands`, `page_comment_commands`) migrated to the kind dialect
+  long ago, and `project_commands` — which does still carry `status_code`
+  errors in its access family — was missing from the list entirely. The
+  contributor contract now names the five modules that actually remain and
+  tells the reader which grep to trust over the sentence.
+
+### Security
+
 - **`cryptography` pinned up to 50.0.0.** PYSEC-2026-3552 was published against
   the pinned 49.0.0 after it was frozen, which turned CI's
   audit-the-pinned-inputs step red — exactly what that gate is for. The only
