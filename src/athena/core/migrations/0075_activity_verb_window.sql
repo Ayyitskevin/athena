@@ -1,0 +1,21 @@
+-- 0075_activity_verb_window: index the verb-keyed window scans.
+-- FORWARD-ONLY: once applied anywhere, never edit this file — add 0076_*.sql.
+--
+-- The admin attention rollup runs on every authenticated admin request (main.py
+-- attaches it to the nav), and two of its inputs read activity by verb inside a
+-- time window: the security refusal counts and listing
+-- (security_events: verb IN (...) AND created_at >= ?) and fleet_attention's
+-- budget-exhaustion count (verb = ? AND created_at >= ?). No existing index
+-- leads with verb — idx_activity_target leads with target_kind,
+-- idx_activity_actor with actor_id, and the 0055 lifecycle window is partial,
+-- fixed to target_kind = 'issue' — so both reads walked the whole append-only
+-- table and the cost of showing the nav grew with the trail itself (measured
+-- ~13 ms per admin request at 100k events, linear).
+--
+-- (verb, created_at) is the seek: one bounded range per verb in the IN list.
+-- imported_at rides along so the native-rows-only exclusion (a hostile import
+-- bundle could back-date security verbs into the window) is answered from the
+-- index without touching the row — the zero-filled GROUP BY count in
+-- failure_counts becomes a covering-index read.
+
+CREATE INDEX idx_activity_verb_window ON activity (verb, created_at, imported_at);
