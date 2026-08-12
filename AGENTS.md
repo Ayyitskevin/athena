@@ -81,16 +81,17 @@ Therefore:
   `"invalid"`, `"conflict"`, ...) plus a human `detail` — never an HTTP status
   code. The adapter owns the kind→status mapping (`_STATUS_BY_KIND` tables in
   the route module), so the same refusal can be a 422 in REST and a 400 in a
-  form without the command knowing a transport exists. `issue_commands`,
-  `page_commands`, `worker_commands`, `agent_run_commands`, and
-  `event_source_commands`, and `user_commands` carry the target shape; command
-  modules that still
-  raise `status_code`-carrying errors (e.g. `space_commands`,
-  `comment_commands`, `sprint_commands`, `agent_commands`,
-  `token_commands`, `webhook_commands`, `automation_commands`,
-  `status_commands`, `attachment_commands`, `page_comment_commands`) are
-  migration debt — migrate them when you touch them, do not copy the shape into
-  anything new.
+  form without the command knowing a transport exists. Most command modules
+  carry the target shape now (`issue_commands`, `page_commands`,
+  `worker_commands`, `agent_run_commands`, `event_source_commands`,
+  `user_commands`, `space_commands`, `comment_commands`, `sprint_commands`,
+  `token_commands`, `webhook_commands`, `page_comment_commands`, and
+  `project_commands`' policy errors); the modules that still raise
+  `status_code`-carrying errors (`automation_commands`, `status_commands`,
+  `agent_commands`, `attachment_commands`, and `project_commands`' access
+  errors) are migration debt — migrate them when you touch them, do not copy
+  the shape into anything new. (This inventory drifts as debt is paid; trust
+  `grep -l status_code src/athena/*/*commands*.py` over this sentence.)
 - If the endpoint you need doesn't exist, that is a **blocker to flag**, not a
   reason to fake it. Stop and say so (see "When scope grows").
 - One concept, one owner. Two code paths that both "create an issue" is a bug,
