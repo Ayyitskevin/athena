@@ -50,12 +50,17 @@ dev = [
     "httpx",
     "httpx2>=2,<3",
     "ruff>=0.8,<1",
-    "mcp>=1.2",
+    "mcp>=1.2,<2",
 ]
 # The MCP server is optional AT RUNTIME — it lets an AI agent drive Athena over MCP.
 # Install with `pip install athena[mcp]`. Kept out of the base runtime install so the
 # core app stays lean; the dev/test group above always pulls it so the wiring is tested.
-mcp = ["mcp>=1.2", "httpx"]
+# The `<2` bound is load-bearing, not caution: MCP SDK 2.0 removed
+# `mcp.server.fastmcp`, which server.py imports, so an unconstrained install (any
+# install that skips `-c constraints/ci-py312.txt`) produced an athena-mcp that
+# crashed on import. CI never saw it because CI always installs under the
+# constraints file; project metadata has to protect everyone else.
+mcp = ["mcp>=1.2,<2", "httpx"]
 
 [project.scripts]
 athena-backup = "athena.ops:backup_main"
