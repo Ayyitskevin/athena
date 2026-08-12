@@ -12,6 +12,14 @@
     </div>
     {% endif %}
     {% if board_total %}
+    {# A board has no next page, so a clipped board must SAY it is clipped rather
+       than quietly presenting a prefix as the whole picture. #}
+    {% if board_clipped %}
+    <p class="muted">
+        Showing {{ board_shown }} of {{ board_total }} matching issues. Narrow the
+        filters above to bring the rest of the board into view.
+    </p>
+    {% endif %}
     {% for lane in board_lanes %}
     <section
         class="board-swimlane"
