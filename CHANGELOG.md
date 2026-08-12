@@ -37,6 +37,50 @@ the newest one and for what tagging still requires.
 
 ### Changed
 
+- **The gated activity feed reads one page instead of the whole trail (0076).**
+  `access.event_visibility_clause` is an OR across four target-kind arms, and a
+  gated feed page asked SQLite that whole OR with `ORDER BY a.id DESC LIMIT 50`
+  on top. With no ANALYZE statistics — which is every real Athena database,
+  since nothing in the product runs ANALYZE — SQLite answered it by MULTI-INDEX
+  OR across the arms, evaluated the correlated membership subqueries, and
+  sorted every survivor through a temp B-tree before the LIMIT applied. The
+  LIMIT was inert: a 10-row page cost what a 50-row page cost, and both cost
+  the entire trail. Measured at 100k events: 233 ms for a 10-row page, 229 ms
+  for a 50-row page, against 0.2 ms for the same read ungated. The predicate is
+  unchanged — it is now also available as its disjoint arms
+  (`access.event_visibility_arms`), and `core/activity.py` asks each arm for its
+  own bounded page and merges four short lists, with
+  `idx_activity_kind_id (target_kind, id)` as the seek that lets an arm walk its
+  own kind in id order and stop when its page is full. After: **0.25 ms (10-row)
+  and 0.71 ms (50-row)**, and `GET /events` backfill 226 ms → 1.17 ms. Admin and
+  internal ungated reads keep the plain single-statement path unchanged. Same
+  rows, same order — pinned against a reference implementation of the previous
+  shape across the actor/filter matrix, plus a full cursor walk that proves per-arm
+  limits cannot drop or duplicate a row at a page boundary.
+
+- **The web issue list and board page in SQL.** The issue-list handler fetched
+  every matching issue, attached labels to all of them, sorted the whole list in
+  Python and sliced twenty rows out of it; `_statuses_in_use` then ran a second
+  unbounded fetch just to collect the status dropdown's options, and the board
+  did the same with no bound at all. Measured at 10k issues: 99 ms for the
+  unbounded fetch and 44 ms for the dropdown. Paging, sorting and counting now
+  happen in the data layer (`issues.count_issues`, `issues.statuses_in_use`, and
+  a `sort`/`order` pair on `list_issues` drawn from a closed vocabulary), so a
+  page view reads a page: **7.0 ms** (1.6 ms count + 5.4 ms sorted page) and
+  **2.9 ms** for the dropdown. The board caps its render at 500 cards and says
+  "Showing N of M" when the cap bites, rather than presenting a prefix as the
+  whole picture. Residual, left as follow-up: the default `created_at` sort has
+  no index, so it still sorts the matched set before the page — the 5.4 ms above.
+
+- **Sorting by priority means most-urgent-first everywhere.** The web issue list
+  sorted priority as text, which reads urgent, medium, low, high; the work-query
+  grammar ranked it properly with a CASE. There were two copies of that ordering
+  and only one was right. The rank now lives once, in the module that owns the
+  issues table (`issues.PRIORITY_RANK_SQL`), and `issue_query` uses it — with a
+  test pinning that `sort:priority-desc` in a query and the web list's priority
+  sort return one identical ordering rather than two that merely agree on the
+  first column.
+
 - **The verb-windowed activity scans are indexed (0075).** The admin attention
   rollup runs on every authenticated admin request, and two of its inputs —
   the security refusal counts and the budget-exhaustion count — filter
@@ -160,6 +204,17 @@ the newest one and for what tagging still requires.
   from consuming the only bootstrap opening.
 
 ### Added
+
+- **A benchmark seeder, so performance claims are reproducible.**
+  `scripts/seed_benchmark.py` builds the data shape the performance work is
+  stated against (10k issues / 100k events, mixed public and private
+  containers), writing through the real recorders so the hash chain, the
+  visibility envelope and the per-event project scope rows are all present.
+  It deliberately does NOT run ANALYZE, and says why at length: no Athena
+  database ever has statistics, and seeding with them makes the gated feed
+  measure 0.4 ms where production measures 229 ms — an earlier throwaway version
+  of this script did exactly that and nearly retired a real ceiling as a
+  non-issue. `--analyze` exists for deliberate comparison and labels itself.
 
 - **Issues have a draft store, and the conflict asymmetry is gone.**
   `issue_drafts` (0074) is `page_drafts`' twin down to its bounds: one

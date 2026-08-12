@@ -8,6 +8,17 @@ seeded 10k-issue / 100k-event database and a full-suite cold-clone run
 was **measured in the review, not estimated**; re-measure before and after each
 fix with the same shape (seeded 10k issues / 100k chained events).
 
+> **Seed with `scripts/seed_benchmark.py`, and never with ANALYZE.** Nothing in
+> the product runs `ANALYZE` or `PRAGMA optimize`, so no Athena database has a
+> `sqlite_stat1` table and SQLite plans from heuristics rather than statistics.
+> That is not a detail: seeding a benchmark with ANALYZE makes the F-0.1 feed
+> read measure **0.4 ms where production measures 229 ms**, because with
+> statistics SQLite walks the rowid index backwards and stops at LIMIT, and
+> without them it resolves the visibility OR by MULTI-INDEX OR and sorts every
+> survivor through a temp B-tree first. The F-0.1 fix below was nearly abandoned
+> as a non-issue on the strength of a benchmark that ran ANALYZE. Measure in the
+> state the product ships.
+
 **Review grades: architecture 8/10, security 8.5/10, tests 9/10.** The quick
 fixes from that review (CGNAT/site-local egress refusal, the 0075 verb-window
 index, the `mcp<2` bound, the vendored-htmx digest pin, the AGENTS.md dialect
@@ -46,7 +57,20 @@ must survive its own success — and the demo must show the differentiator.**
 
 ## Wave F-0 — measured performance ceilings (highest leverage)
 
-### F-0.1 The gated activity feed is O(n) per page
+### F-0.1 The gated activity feed is O(n) per page — **DONE** (0076)
+
+> Landed. The predicate is unchanged and now also available as its disjoint arms
+> (`access.event_visibility_arms`); `core/activity._paged_feed_sql` asks each arm
+> for its own bounded page and merges them, seeking
+> `idx_activity_kind_id (target_kind, id)`. Measured at 100k events, no ANALYZE:
+> 10-row page 233 ms → **0.25 ms**, 50-row page 229 ms → **0.71 ms**, `GET /events`
+> backfill 226 ms → **1.17 ms**; admin and ungated reads unchanged. The review's
+> diagnosis was exactly right, including "the LIMIT is inert" — a 10-row page cost
+> what a 50-row page cost. Equivalence is pinned against a reference implementation
+> of the old shape across the actor/filter matrix, plus a full cursor walk proving
+> per-arm limits cannot drop or duplicate a row at a page boundary.
+> Original finding follows.
+
 
 `access.event_visibility_clause` (`core/access.py:439-510`) is an OR across
 four target-kind arms; SQLite answers it with MULTI-INDEX OR over essentially
@@ -70,7 +94,23 @@ implementation); the `tests/test_access_content_leaks.py` and
 new shape; measure before/after at 100k events in the PR description.
 `GET /events` (`core/events_api.py`) and `/activity` both ride the fix.
 
-### F-0.2 The web issue list and board hydrate everything
+### F-0.2 The web issue list and board hydrate everything — **DONE**
+
+> Landed. Paging, sorting and counting moved into the data layer
+> (`issues.count_issues`, `issues.statuses_in_use`, and a `sort`/`order` pair on
+> `list_issues` from a closed vocabulary); the board caps at 500 cards with a
+> "Showing N of M" line. Measured at 10k issues: unbounded fetch 99 ms → **7.0 ms**
+> for a page (1.6 ms count + 5.4 ms sorted page), status dropdown 44 ms → **2.9 ms**.
+> The priority-sort drift is fixed at the root: the rank CASE now lives once in
+> `issues.PRIORITY_RANK_SQL` and the grammar imports it, with a test pinning that
+> the two surfaces produce one identical ordering.
+>
+> **Follow-up left open:** the default `created_at` sort has no supporting index,
+> so the page still sorts the matched set before slicing it — that is the residual
+> 5.4 ms. An index would need `(created_at, id)` with the tie-break running in the
+> sort's own direction, which changes the observable order of same-timestamp rows;
+> worth doing, worth deciding deliberately.
+
 
 `web/router.py:494-526` fetches every matching issue (no SQL limit), attaches
 labels to all of them, sorts in Python, slices a page — then `_statuses_in_use`
@@ -328,9 +368,15 @@ hand to a fleet in the first place.
 
 ## Suggested order
 
-F-0.1 → F-0.2 (the measured ceilings, highest leverage) → F-2.1 + F-2.2 (the
-demo argument, independent of F-0) → F-1.1/F-1.3/F-1.5 (hardening with no
-design dependency) → F-0.3/F-0.4 → F-2.5 (needs F-0.3's cache) → F-3.1/F-3.2
-→ F-2.3/F-2.4 (release prep) → the three [OPERATOR DECISION] items whenever
-Kevin decides. Waves are parallelizable across agents except where noted; one
-item = one PR = one green gate.
+~~F-0.1 → F-0.2~~ (done) → F-2.1 + F-2.2 (the demo argument, independent of
+F-0) → F-1.1/F-1.3/F-1.5 (hardening with no design dependency) → F-0.3/F-0.4 →
+F-2.5 (needs F-0.3's cache) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
+three [OPERATOR DECISION] items whenever Kevin decides. Waves are
+parallelizable across agents except where noted; one item = one PR = one green
+gate.
+
+Note for whoever takes F-0.3: it is the same disease in a third place, and the
+0075 index already cut its activity half. Re-measure it with
+`scripts/seed_benchmark.py` before building the cache — the rollup's remaining
+cost is projection work, and a cache is the right answer only if the
+measurement still says so.
