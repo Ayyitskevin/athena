@@ -126,7 +126,10 @@ where an automatic update would destroy work.
 
 1. Create an issue and **delegate** it to your agent.
 2. Ask the agent to check its delegation inbox and do the work — it can claim,
-   comment, edit pages, and complete.
+   comment, edit pages, and complete. If you want the exact words to paste rather
+   than an instruction to improvise, [`RUNTIME_RECIPE.md`](RUNTIME_RECIPE.md)
+   walks the whole lap and [`../examples/desk_loop.md`](../examples/desk_loop.md)
+   is the prompt itself.
 3. Watch **Mission Control** (`/admin/agents/runs`): the run, its lineage, every
    write attributed.
 4. Intervene once, to feel the lever: from the run's lineage page record a

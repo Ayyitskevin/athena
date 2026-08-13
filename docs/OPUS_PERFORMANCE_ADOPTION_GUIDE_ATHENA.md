@@ -230,7 +230,19 @@ covers the classes).
 
 ## Wave F-2 — the demo must show the differentiator (adoption)
 
-### F-2.1 Seed supervision state in the demo
+### F-2.1 Seed supervision state in the demo — **DONE**
+
+> Landed. `demo.py` seeds all five states through the real commands as Sol,
+> holding Sol's own bearer token (resolved via `tokens.resolve_token`, the same
+> function the HTTP layer uses — a hand-built actor dict would have skipped the
+> credential checks the worker registry exists to enforce). The fleet-attention
+> card shows three non-zero counts; `/admin/run-controls` and the approvals queue
+> each show one live row; the CLI now prints the two things waiting on the
+> reviewer. One ordering lesson worth keeping: the budget must be set BEFORE the
+> agent's writes, because a budget only meters what happens after it exists —
+> setting it last left the cockpit showing a ceiling with zero consumption, a
+> control the reviewer never sees bite. Original finding follows.
+
 
 `demo.py` seeds tracker/wiki basics but zero supervision state, so every
 Intervene/Trust surface renders its empty state on the five-minute tour — the
@@ -246,7 +258,18 @@ dashboard fleet-attention card shows non-zero counts naming their surfaces;
 `/admin/run-controls` and the approvals queue each show one live row; the
 README's five-minute tour is updated to walk through answering both.
 
-### F-2.2 The desk-loop recipe — the missing 20% that proves the product
+### F-2.2 The desk-loop recipe — **DONE**
+
+> Landed as `docs/RUNTIME_RECIPE.md` + `examples/desk_loop.md`, linked from the
+> README tour and QUICKSTART step 5. `tests/test_runtime_recipe.py` pins it
+> against the build: cited MCP tools must exist in `TOOL_SCOPES`, the config
+> blocks must parse and match `claude_mcp_config`, curled endpoints must be
+> registered routes, and relative links must resolve. That test earned its keep
+> immediately — the first draft cited `/agents/onboard` (the real route is
+> `POST /users/onboard_agent`), an `athena-mcp --print-config` flag that does not
+> exist, and `docs/AGENT_ONBOARDING.md`, which does not exist either. Original
+> finding follows.
+
 
 Athena ships no agent runtime, and the only worked executor is the
 self-authored reference. Write the one document + script pair that closes the
@@ -368,8 +391,8 @@ hand to a fleet in the first place.
 
 ## Suggested order
 
-~~F-0.1 → F-0.2~~ (done) → F-2.1 + F-2.2 (the demo argument, independent of
-F-0) → F-1.1/F-1.3/F-1.5 (hardening with no design dependency) → F-0.3/F-0.4 →
+~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
+F-1.1/F-1.3/F-1.5 (hardening with no design dependency) → F-0.3/F-0.4 →
 F-2.5 (needs F-0.3's cache) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
 three [OPERATOR DECISION] items whenever Kevin decides. Waves are
 parallelizable across agents except where noted; one item = one PR = one green

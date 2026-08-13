@@ -37,12 +37,27 @@ python3.12 -m venv .venv
 .venv/bin/athena-demo --db /tmp/athena-review.db
 ```
 
-Sign in with the printed credentials. Then follow:
+Sign in with the printed credentials. The workspace is seeded mid-flight: Sol is
+holding a claim, working under run `demo-sol-run-001`, and waiting on you for two
+answers. Then follow:
 
-1. the dashboard into the **Athena Review** project;
-2. an assigned issue into its append-only activity;
-3. the agent cockpit and the seeded `demo-sol-run-001` facts; and
-4. **Operator Playbook → Fleet operating guide** into its linked issues.
+1. the dashboard's **fleet attention** card — three non-zero counts, each naming
+   the surface it lives on;
+2. **Approvals waiting on you** → Sol asked to close the issue it just finished,
+   and the gate you set is holding the close. Approve or reject it, then look at
+   the issue's activity: the ask, your answer, and the close are three separate
+   recorded facts;
+3. **Run controls awaiting an agent** → you steered Sol's live run and Sol has
+   not answered. Athena records the ask and the reply; it cannot signal a
+   process, so an unanswered control reads as expired, never as obeyed;
+4. the agent cockpit — Sol's live claim, its worker heartbeat, and its hourly
+   budget with real consumption against it; and
+5. **Operator Playbook → Fleet operating guide** into its linked issues.
+
+Answering (2) and (3) is the whole product in ninety seconds: an agent did real
+work, you kept the authority to let it land, and every step is on a trail you
+can replay. To drive it from the other side — as the agent — follow
+[docs/RUNTIME_RECIPE.md](docs/RUNTIME_RECIPE.md).
 
 The command refuses to overwrite an existing database or attachment path,
 disables webhook delivery and automation, and has no public-bind option. Use

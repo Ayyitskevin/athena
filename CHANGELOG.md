@@ -205,6 +205,33 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The demo seeds supervision state, so the tour shows the differentiator.**
+  `athena-demo` seeded a tracker and a wiki and nothing else, so every Intervene
+  and Trust surface rendered its empty state on the five-minute tour and the
+  product read as a small Notion. The workspace now arrives mid-flight: Sol holds
+  a live claim with a run check-in, a worker heartbeats in the registry, an hourly
+  budget carries real consumption, one `issue.close` approval is pending, and one
+  steer against Sol's live run is unanswered. The dashboard's fleet-attention card
+  shows three non-zero counts, each naming the surface it lives on. Every state is
+  seeded through the real commands as Sol, holding Sol's own bearer token resolved
+  the way the HTTP layer resolves it — the approval is pending because Sol
+  genuinely attempted a gated close and was genuinely refused, so the issue is
+  still open. Nothing is inserted to look populated; `demo.py`'s rule that a demo
+  which oversells is worse than one that is thin still holds.
+
+- **A runtime recipe that closes the operator loop for a real user.**
+  `docs/RUNTIME_RECIPE.md` plus `examples/desk_loop.md`: the operator-side pair
+  that takes a reader from "installed" to "an agent completed a delegated issue
+  and the trail shows it" — onboarding an agent, pasting the MCP config Athena
+  prints, running a desk loop (`my_desk` → claim → work → record a learning →
+  complete the claim), and interrupting it mid-flight with a run control. Athena
+  ships no agent runtime on purpose, and the recipe says so plainly rather than
+  implying one. It is pinned against the code it describes: every MCP tool it
+  names must exist in the server's registry, every config block must parse and
+  match what Athena emits, every curled endpoint must be a registered route, and
+  every relative link must resolve — so drift fails the build instead of the
+  reader.
+
 - **A benchmark seeder, so performance claims are reproducible.**
   `scripts/seed_benchmark.py` builds the data shape the performance work is
   stated against (10k issues / 100k events, mixed public and private
