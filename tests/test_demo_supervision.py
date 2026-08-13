@@ -10,16 +10,19 @@ standing rule is that a demo which oversells is worse than one that is thin).
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import fleet_attention, leases
 from athena.core import activity, approvals, budgets, db, run_controls, workers
+from athena import demo
 from athena.demo import (
     DEMO_EMAIL,
     DEMO_PASSWORD,
     DEMO_RUN_ID,
     DEMO_WORKER_KEY,
     DEMO_WORKER_NODE,
+    DemoSetupError,
     seed_demo,
 )
 from athena.main import create_app
@@ -128,6 +131,26 @@ def test_the_worker_registry_and_budget_are_populated(tmp_path):
         assert budget.remaining > 0
     finally:
         conn.close()
+
+
+def test_a_failed_supervision_seed_refuses_and_leaves_nothing_behind(
+    tmp_path, monkeypatch
+):
+    """The supervision seed runs late, after the database, the project, the issues and
+    the token already exist. If it cannot proceed it must still refuse cleanly and take
+    its own files with it — a half-seeded demo would be worse than none, because the
+    reviewer would tour a workspace whose story does not hold together.
+
+    Driven through the one guard that can be provoked without faking a command: an
+    agent token that will not resolve."""
+    monkeypatch.setattr(demo.tokens, "resolve_token", lambda conn, raw: None)
+    db_path = tmp_path / "doomed.db"
+
+    with pytest.raises(DemoSetupError):
+        seed_demo(db_path)
+
+    assert not db_path.exists()
+    assert not (tmp_path / "doomed-attachments").exists()
 
 
 def test_the_tour_surfaces_render_the_seeded_rows(tmp_path):

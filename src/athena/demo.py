@@ -115,7 +115,7 @@ def _seed_supervision(
     """
     # The agent's own credential, resolved the way the server resolves it.
     sol_agent = tokens.resolve_token(conn, raw_agent_token)
-    if sol_agent is None:  # pragma: no cover - the token was just minted
+    if sol_agent is None:
         raise DemoSetupError("could not resolve the freshly minted agent token")
 
     # 0. The ceiling comes FIRST, because a budget only meters what happens after it
@@ -136,7 +136,7 @@ def _seed_supervision(
     #    The If-Match is not ceremony — claiming is a compare-and-swap, and the demo
     #    takes the same lock a real agent takes.
     claim_target = issues.get_issue(conn, work_issue_id)
-    if claim_target is None:  # pragma: no cover - seeded two steps above
+    if claim_target is None:
         raise DemoSetupError("the issue to claim disappeared during seeding")
     lease = lease_commands.claim_issue(
         conn,
@@ -211,7 +211,7 @@ def _seed_supervision(
         )
     finally:
         run_context.reset_run_id(ask_token)
-    if approval is None:  # pragma: no cover - the policy above guarantees the gate
+    if approval is None:
         raise DemoSetupError("seeded approval gate did not refuse the demo close")
 
     # 5. An open run control: the operator has asked Sol's live run to change
