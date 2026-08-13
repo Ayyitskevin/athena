@@ -586,61 +586,71 @@ def parse_project_filter(project: str | None) -> tuple[int | None, bool] | None:
     return (project_id, False) if project_id is not None else None
 
 
-def list_issues(
-    conn: sqlite3.Connection,
-    *,
-    status: str | None = None,
-    priority: str | None = None,
-    assignee_id: int | None = None,
-    search: str | None = None,
-    project_id: int | None = None,
-    backlog: bool = False,
-    sprint_id: int | None = None,
-    include_archived: bool = False,
-    ids: list[int] | None = None,
-    visible_project_ids: set[int] | None = None,
-    limit: int | None = None,
-    offset: int = 0,
-) -> list[dict]:
-    """List issues, optionally filtered. This is the ONE filtering path the API
-    and the web list both use, so the two never disagree on what matches.
+# Priority is an ordered concept stored as text, so it is ranked explicitly rather
+# than sorted alphabetically (which would read urgent, medium, low, high). The CASE
+# is generated from PRIORITIES so adding one cannot silently sort it to the bottom.
+# It lives HERE, in the module that owns the issues table, because two readers need
+# the same ranking: the work-query grammar (aegis/issue_query.py imports it) and the
+# paged list below. Two copies is how the web list drifted into sorting priority
+# alphabetically in the first place.
+PRIORITY_RANK_SQL = (
+    "CASE i.priority "
+    + " ".join(f"WHEN '{name}' THEN {index}" for index, name in enumerate(PRIORITIES))
+    + f" ELSE {len(PRIORITIES)} END"
+)
 
-    - status: exact status match.
-    - priority: exact priority match (a direct column on the issue).
-    - assignee_id: exact assignee match (a direct column). Restricts to issues
-      assigned to this user; None means "don't filter by assignee at all" (use
-      the dedicated unassigned view via project/backlog semantics if needed).
-    - search: case-insensitive substring in title or body (SQLite LIKE).
-    - project_id: restrict to issues in this project (a direct column on the
-      issue, so unlike labels this module filters it itself).
-    - backlog: restrict to issues in NO project (project_id IS NULL). Distinct
-      from project_id=None, which means "don't filter by project at all". The two
-      are mutually exclusive — the boundary picks one.
-    - sprint_id: restrict to issues in this sprint (a direct column on the issue,
-      like project_id). None means "don't filter by sprint at all".
-    - include_archived: by default (False) archived issues are hidden — the soft-
-      delete semantics every list/board wants. Pass True to include them (an
-      "archived too" view). A single-issue read (get_issue) is never filtered.
-    - ids: restrict to these issue ids. Generic on purpose — the caller resolves
-      *what* the ids mean (e.g. labels.py turns a label name into ids), so this
-      module stays decoupled from labels. An empty list means "match nothing".
-    - visible_project_ids: the project-visibility gate. None (the default) means no
-      gating — every issue is eligible, the historical behaviour, kept for internal
-      and aggregate callers. A set restricts to issues whose project is in it, PLUS
-      backlog issues (no project, so nothing to gate on); an empty set therefore
-      yields only the backlog. Callers get the set from access.visible_project_filter
-      (which hands back None for an admin, skipping the clause entirely).
-    - limit / offset: page the result at the SQL level. limit=None (the default)
-      returns every match — the historical behaviour every internal/aggregate caller
-      relies on (board, dashboard, saved filters, search resolution). The REST list
-      endpoint passes a bounded limit so an anonymous caller can't pull the whole
-      table in one request; offset walks the pages. Ordering is stable (id ASC) so
-      paging is well-defined.
+# The sort keys `list_issues` accepts — a CLOSED set, because the key is
+# interpolated into SQL as a column name. Anything else falls back to id order.
+LIST_SORTS = ("id", "title", "status", "priority", "created_at")
+
+
+def order_by_sql(sort: str | None, order: str = "desc") -> str:
+    """The ORDER BY expression for one (sort, order) pair from the closed set above.
+
+    sort=None is the historical unordered-by-caller default: plain `i.id`, byte-for-
+    byte what every existing caller already gets.
+
+    Every ordering is TOTAL — a tie is broken by id — because the list pages with
+    LIMIT/OFFSET, and a non-total ordering makes SQLite free to return the same row
+    on two pages (or no page at all). The tie-break is `i.id ASC` for the plain
+    columns, which is what the web list's stable Python sort over an id-ASC read
+    already produced. Priority is the exception: it reuses the grammar's exact
+    expression, tie-break included, so `sort:priority-desc` in a work query and the
+    web list's priority sort return one identical ordering rather than two orderings
+    that merely agree on the first column."""
+    direction = "DESC" if order == "desc" else "ASC"
+    if sort == "priority":
+        return f"{PRIORITY_RANK_SQL} {direction}, i.id DESC"
+    if sort == "id":
+        return f"i.id {direction}"
+    if sort in ("title", "status", "created_at"):
+        return f"i.{sort} {direction}, i.id ASC"
+    return "i.id"
+
+
+def _filter_sql(
+    *,
+    status: str | None,
+    priority: str | None,
+    assignee_id: int | None,
+    search: str | None,
+    project_id: int | None,
+    backlog: bool,
+    sprint_id: int | None,
+    include_archived: bool,
+    ids: list[int] | None,
+    visible_project_ids: set[int] | None,
+) -> tuple[str, list] | None:
+    """The one WHERE clause behind every filtered issue read: the page, its total,
+    and the status option set. Sharing it is what keeps a filter from meaning one
+    thing in the list and another in the count above it.
+
+    Returns (where_sql, params), or None when the filter set CANNOT match anything —
+    an unusable id or an empty `ids` list. None is distinct from an empty WHERE
+    (which matches everything), so callers must check it before running the query.
 
     Column names below are hardcoded literals; all values stay parameterized."""
-    if offset < 0 or offset > MAX_OFFSET:
-        raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
-    # This function also serves direct internal callers, outside FastAPI's bounded
+    # These reads also serve direct internal callers, outside FastAPI's bounded
     # query models. Invalid ids are a real filter that matches nothing — never an
     # omitted filter (which would widen the result), and never an oversized value
     # handed to sqlite3 (which would raise OverflowError).
@@ -648,9 +658,9 @@ def list_issues(
         value is not None and not is_filter_id(value)
         for value in (assignee_id, project_id, sprint_id)
     ):
-        return []
+        return None
     if ids is not None and not ids:
-        return []  # an empty id set can't match — and "IN ()" isn't valid SQL
+        return None  # an empty id set can't match — and "IN ()" isn't valid SQL
     clauses: list[str] = []
     params: list = []
     if status:
@@ -690,7 +700,168 @@ def list_issues(
         else:
             clauses.append("i.project_id IS NULL")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    query = f"{_SELECT}{where} ORDER BY i.id"
+    return where, params
+
+
+def count_issues(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_id: int | None = None,
+    search: str | None = None,
+    project_id: int | None = None,
+    backlog: bool = False,
+    sprint_id: int | None = None,
+    include_archived: bool = False,
+    ids: list[int] | None = None,
+    visible_project_ids: set[int] | None = None,
+) -> int:
+    """How many issues `list_issues` would return unpaged, for the same filters.
+
+    A paged surface needs the total to render "page 3 of 9" without fetching the
+    other eight pages. Every filter parameter mirrors list_issues exactly — same
+    shared WHERE — so the count can never disagree with the page it labels. The
+    joins list_issues carries are for display columns only and no filter touches
+    them, so this counts `issues` alone."""
+    built = _filter_sql(
+        status=status,
+        priority=priority,
+        assignee_id=assignee_id,
+        search=search,
+        project_id=project_id,
+        backlog=backlog,
+        sprint_id=sprint_id,
+        include_archived=include_archived,
+        ids=ids,
+        visible_project_ids=visible_project_ids,
+    )
+    if built is None:
+        return 0
+    where, params = built
+    row = conn.execute(f"SELECT COUNT(*) AS n FROM issues i{where}", params).fetchone()
+    return int(row["n"])
+
+
+def statuses_in_use(
+    conn: sqlite3.Connection,
+    *,
+    visible_project_ids: set[int] | None = None,
+    include_archived: bool = False,
+) -> list[str]:
+    """The distinct statuses actually present on issues the viewer may see.
+
+    This is the option set the status filters offer, so it must list a project's
+    CUSTOM statuses too — and must never list a private project's custom status to
+    someone who cannot see that project, which is why it takes the same
+    visible_project_ids gate every other read does. Name order only; the caller
+    decides how to group them (the web list orders todo → doing → done, which is a
+    presentation concern this layer does not own).
+
+    Bounded by construction: SQLite answers DISTINCT from the table, so this costs
+    the same whether the instance holds ten issues or ten thousand — the reason it
+    exists instead of the caller collecting statuses off a full unpaged read."""
+    built = _filter_sql(
+        status=None,
+        priority=None,
+        assignee_id=None,
+        search=None,
+        project_id=None,
+        backlog=False,
+        sprint_id=None,
+        include_archived=include_archived,
+        ids=None,
+        visible_project_ids=visible_project_ids,
+    )
+    if built is None:
+        return []
+    where, params = built
+    return [
+        row["status"]
+        for row in conn.execute(
+            f"SELECT DISTINCT i.status FROM issues i{where} ORDER BY i.status", params
+        )
+    ]
+
+
+def list_issues(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    priority: str | None = None,
+    assignee_id: int | None = None,
+    search: str | None = None,
+    project_id: int | None = None,
+    backlog: bool = False,
+    sprint_id: int | None = None,
+    include_archived: bool = False,
+    ids: list[int] | None = None,
+    visible_project_ids: set[int] | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    sort: str | None = None,
+    order: str = "desc",
+) -> list[dict]:
+    """List issues, optionally filtered. This is the ONE filtering path the API
+    and the web list both use, so the two never disagree on what matches.
+
+    - status: exact status match.
+    - priority: exact priority match (a direct column on the issue).
+    - assignee_id: exact assignee match (a direct column). Restricts to issues
+      assigned to this user; None means "don't filter by assignee at all" (use
+      the dedicated unassigned view via project/backlog semantics if needed).
+    - search: case-insensitive substring in title or body (SQLite LIKE).
+    - project_id: restrict to issues in this project (a direct column on the
+      issue, so unlike labels this module filters it itself).
+    - backlog: restrict to issues in NO project (project_id IS NULL). Distinct
+      from project_id=None, which means "don't filter by project at all". The two
+      are mutually exclusive — the boundary picks one.
+    - sprint_id: restrict to issues in this sprint (a direct column on the issue,
+      like project_id). None means "don't filter by sprint at all".
+    - include_archived: by default (False) archived issues are hidden — the soft-
+      delete semantics every list/board wants. Pass True to include them (an
+      "archived too" view). A single-issue read (get_issue) is never filtered.
+    - ids: restrict to these issue ids. Generic on purpose — the caller resolves
+      *what* the ids mean (e.g. labels.py turns a label name into ids), so this
+      module stays decoupled from labels. An empty list means "match nothing".
+    - visible_project_ids: the project-visibility gate. None (the default) means no
+      gating — every issue is eligible, the historical behaviour, kept for internal
+      and aggregate callers. A set restricts to issues whose project is in it, PLUS
+      backlog issues (no project, so nothing to gate on); an empty set therefore
+      yields only the backlog. Callers get the set from access.visible_project_filter
+      (which hands back None for an admin, skipping the clause entirely).
+    - limit / offset: page the result at the SQL level. limit=None (the default)
+      returns every match — the historical behaviour every internal/aggregate caller
+      relies on (board, dashboard, saved filters, search resolution). The REST list
+      endpoint passes a bounded limit so an anonymous caller can't pull the whole
+      table in one request; offset walks the pages. Ordering is stable (id ASC) so
+      paging is well-defined.
+
+    - sort / order: order the result IN SQL, from the closed vocabulary in
+      LIST_SORTS (see order_by_sql). sort=None (the default) keeps the historical
+      plain `i.id` ordering every existing caller already relies on. A paged caller
+      must pass the sort it wants rather than reordering the page in Python: sorting
+      after LIMIT only reorders the rows that happened to land on the page.
+
+    Column names below are hardcoded literals; all values stay parameterized."""
+    if offset < 0 or offset > MAX_OFFSET:
+        raise ValueError(f"offset must be between 0 and {MAX_OFFSET}")
+    built = _filter_sql(
+        status=status,
+        priority=priority,
+        assignee_id=assignee_id,
+        search=search,
+        project_id=project_id,
+        backlog=backlog,
+        sprint_id=sprint_id,
+        include_archived=include_archived,
+        ids=ids,
+        visible_project_ids=visible_project_ids,
+    )
+    if built is None:
+        return []
+    where, params = built
+    query = f"{_SELECT}{where} ORDER BY {order_by_sql(sort, order)}"
     if limit is not None:
         # Bound the result at the DB, not in Python — an unbounded caller must not be
         # able to make SQLite materialize the whole table. Only appended when a caller

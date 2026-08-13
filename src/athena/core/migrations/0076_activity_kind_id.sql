@@ -1,0 +1,29 @@
+-- 0076_activity_kind_id: let the gated feed read one page instead of the trail.
+-- FORWARD-ONLY: once applied anywhere, never edit this file — add 0077_*.sql.
+--
+-- core/access.event_visibility_clause is an OR across four arms, one per event
+-- target kind (issue, page, space, project). A gated feed page asks
+-- "WHERE <that OR> ORDER BY a.id DESC LIMIT 50", and SQLite cannot answer that
+-- incrementally: with no ANALYZE statistics — which is EVERY real Athena
+-- database, since nothing in the product runs ANALYZE — it resolves the OR by
+-- MULTI-INDEX OR over the four arms, unions the row ids, evaluates the
+-- correlated membership subqueries, and sorts the whole survivor set through a
+-- temp B-tree before reaching LIMIT. The LIMIT is inert: measured 295 ms for a
+-- 50-row page and 302 ms for a 10-row page at 100k events, against 0.2 ms for
+-- the same read ungated, and linear in trail size.
+--
+-- core/activity.py now asks each arm for its own bounded page and merges four
+-- short lists (_paged_feed_sql). That only pays off if an arm can walk its own
+-- kind in id order, and no existing index does: idx_activity_target is
+-- (target_kind, target_id, id), so within one kind it is ordered by TARGET, and
+-- an id-ordered page still needs a sort of the whole partition. This index is
+-- the missing seek — (target_kind, id) — so each arm walks its kind newest-first
+-- (or oldest-first for the forward event stream, the same index read the other
+-- way) and stops as soon as its page is full.
+--
+-- It overlaps idx_activity_target on the leading column deliberately: that index
+-- serves one target's timeline (target_kind, target_id) and stays the better
+-- choice there. This one serves the feed. Measured after: 0.6 ms for the same
+-- 50-row gated page.
+
+CREATE INDEX idx_activity_kind_id ON activity (target_kind, id);
