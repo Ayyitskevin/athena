@@ -89,6 +89,40 @@ the newest one and for what tagging still requires.
 
 ### Changed
 
+- **Packaged assets are browser-cacheable, and fetching one no longer runs the
+  session.** `_apply_private_cache_policy` marked every cookie-carrying response
+  `private, no-store` — including `/static/*` — so a signed-in browser
+  re-fetched the stylesheet, the htmx bundle and the confirm script on every
+  page load. The costly half was the session middleware, which ran for those
+  fetches too: for an **admin** each asset request opened SQLite, resolved the
+  session, and built the entire fleet-attention rollup, so a page with three
+  assets paid the rollup four times, and the no-store policy guaranteed it
+  happened again on the next page. Static requests now return before session
+  resolution and before the private-cache policy, and serve
+  `public, max-age=31536000, immutable`. Correctness under a year-long
+  `immutable` comes from a cache-buster, not revalidation: a sha256 over every
+  static file's path **and** bytes, computed once at startup, truncated to 12
+  characters and appended as `?v=` by the templates — no build chain
+  (`ATHENA` ships no JS toolchain and won't). The path is inside the hash so
+  renaming a file busts the cache even when its bytes are unchanged.
+  Authenticated pages are untouched and keep `private, no-store`.
+
+- **The admin attention badge stays live; it is deliberately not cached.** The
+  planned follow-up to the 0075 index was a short-TTL cache for the nav rollup,
+  on the strength of a 12.9 ms measurement. Re-measured after 0075, on a
+  10k-issue / 100k-event fixture with no ANALYZE: `build_attention` costs
+  **0.11 ms with no fleet, 0.50 ms at 5 agents, 1.21 ms at 25 and 3.81 ms at
+  100** — it scales with the size of the fleet, not the length of the trail,
+  which is what the index bought. For the one-person fleet Athena is for that is
+  half a millisecond, and a cache would trade a live count for it. The number
+  whose whole job is "look at this now" is the wrong place to accept staleness,
+  so there is no cache, and `main.py` now carries the measurements, the fixture
+  and that reasoning in place of a stale `~0.1 ms measured` comment that
+  predated any data. A test pins the property the decision rests on — the
+  rollup's activity inputs seek `idx_activity_verb_window` rather than scanning
+  — since if that regresses the cost grows with the log again and the trade
+  flips.
+
 - **The gated activity feed reads one page instead of the whole trail (0076).**
   `access.event_visibility_clause` is an OR across four target-kind arms, and a
   gated feed page asked SQLite that whole OR with `ORDER BY a.id DESC LIMIT 50`

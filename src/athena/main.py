@@ -1147,8 +1147,46 @@ def _append_vary(response: Response, *dimensions: str) -> None:
         response.headers["Vary"] = ", ".join(existing)
 
 
+# How long a browser may keep a packaged static asset. Long, because the URL
+# carries a build fingerprint (see static_version): a changed file is a changed
+# URL, so a stale copy is unreachable rather than merely old. `immutable` tells the
+# browser not to revalidate even on reload.
+STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+def static_version(static_dir: Path) -> str:
+    """A short fingerprint of the packaged static assets, computed once at startup.
+
+    Appended to every static URL the templates emit, so a released change to
+    styles.css or the vendored htmx bundle reaches browsers that are holding a
+    year-long cached copy of the old one. Content-based rather than a version
+    number, because the version does not change on every asset edit and a wrong
+    answer here is a user staring at a stale stylesheet.
+
+    No build chain (VISION rule 4): this is a hash over the files themselves, taken
+    at startup. Editing a static file while the server runs therefore does not
+    change the fingerprint until it restarts — which is the documented trade for
+    not having a watcher, and is invisible in the deployments Athena supports,
+    where the files change only when the package does.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(static_dir).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def _apply_private_cache_policy(request: Request, response: Response) -> None:
     """Prevent shared or browser caches from retaining sensitive responses."""
+    # Packaged static assets are the same bytes for every caller and disclose
+    # nothing, so they are exempt: marking them `private, no-store` because the
+    # browser happened to send a session cookie made every page load re-fetch the
+    # stylesheet, the htmx bundle and the confirm script. They are cached hard and
+    # busted by URL instead.
+    if _path_matches_root(request.url.path, "/static"):
+        response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
+        return
     request_has_cookie = "cookie" in request.headers
     response_sets_cookie = "set-cookie" in response.headers
     session_path = any(
@@ -1538,6 +1576,21 @@ def create_app(
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
+        # Packaged static assets are identical for everyone and identify nobody, so
+        # they skip session resolution entirely. This is not a micro-optimization:
+        # the cookie a signed-in browser sends on EVERY asset request was opening a
+        # SQLite connection, resolving the session, and — for an admin — building
+        # the whole fleet-attention rollup, once per stylesheet and once per script.
+        # A page load therefore paid for the rollup several times over, and
+        # `private, no-store` (below) guaranteed the browser asked again next time.
+        if _path_matches_root(request.url.path, "/static"):
+            request.state.user = None
+            request.state.csrf_token = None
+            request.state.unread_count = 0
+            request.state.attention_total = 0
+            request.state.attention_signals = []
+            request.state.oidc_enabled = False
+            return await call_next(request)
         # Resolve the browser session once per request onto request.state.user,
         # so every page (and the nav) knows who is logged in without each route
         # re-doing it. The session's CSRF token rides alongside on
@@ -1582,10 +1635,26 @@ def create_app(
                         conn, request.state.user["id"], actor=request.state.user
                     )
                     # The number that decides whether you need to look must not
-                    # live only on the dashboard. Counts only (~0.1 ms measured
-                    # on a seeded db), the same build the dashboard card runs,
-                    # so nav and card cannot disagree. Admins only: the rollup
-                    # aggregates admin-scoped reads.
+                    # live only on the dashboard. The same build the dashboard
+                    # card runs, so nav and card cannot disagree. Admins only:
+                    # the rollup aggregates admin-scoped reads.
+                    #
+                    # Cost, re-measured on a seeded 10k-issue / 100k-event database
+                    # (scripts/seed_benchmark.py, no ANALYZE): 0.11 ms with no
+                    # supervision state, 0.50 ms at 5 agents, 1.21 ms at 25, 3.81 ms
+                    # at 100. It scales with FLEET SIZE, not with trail size — the
+                    # 0075 verb-window index removed the activity scans that used to
+                    # make it grow with the log (12.9 ms at 100k events before that
+                    # index; the "~0.1 ms" this comment used to claim predated the
+                    # measurement). What remains is per-agent work: the active-work
+                    # projection, the worker registry, the approval queue.
+                    #
+                    # There is deliberately NO cache here. A cache would trade
+                    # staleness in an attention badge — the signal whose whole job is
+                    # to be current — for about half a millisecond at the fleet sizes
+                    # this product is for. If a much larger fleet ever makes this
+                    # hurt, the honest fix is a short TTL measured against a
+                    # re-measurement, not a cache added on the strength of this note.
                     if request.state.user.get("role") == "admin":
                         attention = aegis_fleet_attention.build_attention(conn)
                         request.state.attention_total = attention["total"]
@@ -1679,6 +1748,11 @@ def create_app(
     templates.env.filters["health_tone"] = chips.health_tone
     templates.env.filters["token_tone"] = chips.token_tone
     templates.env.filters["sprint_tone"] = chips.sprint_tone
+    # The static fingerprint, computed once here rather than per render. Templates
+    # append it to every /static URL so a released asset change reaches a browser
+    # holding a year-long cached copy (see STATIC_CACHE_CONTROL).
+    app.state.static_version = static_version(package_root / "static")
+    templates.env.globals["static_version"] = app.state.static_version
     init_templates(templates)
     app.include_router(web_router)
     app.include_router(web_projects.router)

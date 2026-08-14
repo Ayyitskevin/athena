@@ -14,9 +14,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
     <title>{% block title %}Athena{% endblock %}</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="/static/htmx.min.js"></script>
-    <script src="/static/confirm.js"></script>
+    <link rel="stylesheet" href="/static/styles.css?v={{ static_version }}">
+    <script src="/static/htmx.min.js?v={{ static_version }}"></script>
+    <script src="/static/confirm.js?v={{ static_version }}"></script>
 </head>
 <body>
 <div class="app"{% if request.cookies.get("athena_rail") == "collapsed" %} data-rail="collapsed"{% endif %}>

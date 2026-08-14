@@ -132,7 +132,30 @@ correct one, reuse it. Acceptance: pinned equal ordering between
 `sort:priority-desc` in the grammar and the web list's priority sort; a page
 of 50 renders with bounded queries at 10k issues (plan test or timing bound).
 
-### F-0.3 The admin nav rollup taxes every request
+### F-0.3 The admin nav rollup taxes every request — **DONE** (no cache, deliberately)
+
+> Landed as a measurement and a comment, not a cache. The note below said to
+> re-measure before building one, and the measurement said don't: on a
+> 10k-issue / 100k-event no-ANALYZE fixture `build_attention` costs **0.11 ms
+> empty, 0.50 ms at 5 agents, 1.21 ms at 25, 3.81 ms at 100** — it scales with
+> **fleet size, not trail size**, which is exactly what the 0075 index bought.
+> The guide's 12.9 ms was pre-0075 and is no longer reachable. At 100 agents the
+> 4.33 ms breaks down as active-work projection 1.73 ms, workers 1.29 ms,
+> approvals 0.48 ms; at the scale the product is actually for (a one-person
+> fleet, single digits of agents) the whole rollup is half a millisecond.
+>
+> A TTL cache would trade a live attention badge for that half millisecond, and
+> staleness in the number whose entire job is "look at this now" is the worse
+> side of that trade — the badge exists to beat human reaction time, so a cache
+> tuned to stay under it saves nothing worth having. So the deliverable is the
+> honest comment: `main.py`'s stale `~0.1 ms measured` is replaced with the real
+> numbers, the fixture they came from, and an explicit "there is deliberately NO
+> cache here" with the reasoning, so the next reader re-opens the question with
+> data instead of re-deriving it. A test pins the property that made this
+> answer possible — the rollup's activity inputs must seek `idx_activity_verb_window`
+> and never `SCAN activity` — because if that regresses the cost starts growing
+> with the log forever and the trade flips. The measurement harness that F-0.4
+> shares is in the same PR. Original finding follows.
 
 `attach_session_user` builds the full fleet-attention rollup on every
 authenticated admin request (`main.py:1502-1509`): active-work projection +
@@ -152,7 +175,26 @@ render performs zero rollup queries within the TTL (assert by query counting,
 the house has `conn.set_trace_callback` precedents); the badge still changes
 within one TTL of a new approval (test with a forced-expiry hook, no sleeps).
 
-### F-0.4 Static assets are never browser-cached for signed-in users
+### F-0.4 Static assets are never browser-cached for signed-in users — **DONE**
+
+> Landed, and it turned out to be the expensive half of F-0.3 rather than a
+> separate bandwidth item. The premise held (`/static/styles.css` really did
+> come back `private, no-store` with a cookie), but the finding underneath was
+> that the session middleware ran for those fetches too — so for a signed-in
+> **admin**, every stylesheet, htmx bundle and confirm-script request opened
+> SQLite, resolved the session, and built the entire fleet-attention rollup.
+> Verified by patching `build_attention`: one rollup per static fetch, and the
+> no-store policy guaranteed the browser asked again on the very next page load.
+> Two lines fix both: `/static` returns before session resolution and before the
+> private-cache policy. Assets now serve `public, max-age=31536000, immutable`,
+> busted by a startup content fingerprint (sha256 over every static file's path
+> **and** bytes, truncated to 12 chars) appended as `?v=` in the templates — no
+> build chain, per VISION rule 4. The path is in the hash on purpose so a rename
+> busts too. Tests pin: public policy with no `Set-Cookie`, pages still
+> `private, no-store`, **zero** rollups per static fetch and still exactly one
+> per page render, and a changed byte or a renamed file changing the
+> fingerprint — that last one is what keeps a year-long `immutable` from
+> becoming a trap. Original finding follows.
 
 `_apply_private_cache_policy` (`main.py:1084-1125`) marks every cookie-carrying
 response `private, no-store`, including `/static/*`, so every page load
@@ -357,9 +399,11 @@ refresh-only UI. SSE fights the one-process model and htmx already ships;
 the Athena-shaped answer is `hx-trigger="every Ns"` partial refresh on
 exactly three surfaces: the fleet-attention card, Mission Control's active-work
 table, and `/admin/run-controls`' open-request list. Bound the interval
-(config, default 10-15s), reuse the F-0.3 cache so polling admins don't
-re-tax the rollup, and render a "last updated HH:MM:SS" line so staleness is
-visible instead of implied away. Acceptance: template contracts still pass
+(config, default 10-15s) and render a "last updated HH:MM:SS" line so staleness
+is visible instead of implied away. This item used to say "reuse the F-0.3
+cache"; there is no F-0.3 cache — the rollup measured at ~0.5 ms for a real
+fleet, so a 10s poll costs ~0.05 ms/s per admin and needs nothing. Re-measure
+if the poll ever gets faster than the interval bound below. Acceptance: template contracts still pass
 (the partials get routes); the poll respects the same visibility gates; a
 paused/anonymous session polls nothing.
 
@@ -437,14 +481,15 @@ hand to a fleet in the first place.
 ## Suggested order
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
-~~F-1.1/F-1.3/F-1.5~~ (done) → F-0.3/F-0.4 →
-F-2.5 (needs F-0.3's cache) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
+~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
+F-2.5 → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
 three [OPERATOR DECISION] items whenever Kevin decides. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.
 
-Note for whoever takes F-0.3: it is the same disease in a third place, and the
-0075 index already cut its activity half. Re-measure it with
-`scripts/seed_benchmark.py` before building the cache — the rollup's remaining
-cost is projection work, and a cache is the right answer only if the
-measurement still says so.
+The note left here for F-0.3 said to re-measure with `scripts/seed_benchmark.py`
+before building the cache, because a cache was the right answer only if the
+measurement still said so. It didn't, and the item shipped without one. Keep
+that habit for the rest of the wave: every remaining performance item in this
+guide carries a number that was measured against some fixture at some commit,
+and three of them have already moved under the fixes that landed since.
