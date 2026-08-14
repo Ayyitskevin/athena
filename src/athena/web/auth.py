@@ -48,6 +48,26 @@ def _record_login_failure(db_path, user_id: int) -> None:
         conn.close()
 
 
+def _record_login_throttled(db_path, user_id: int) -> None:
+    """Record that per-account login throttling refused an attempt, on its own
+    connection and as a response background task — same discipline as the failed
+    login above, and for the same reason: the write happens only when the address
+    names a real account, so an inline write would be a latency oracle for whether
+    it does."""
+    conn = db.connect(db_path)
+    try:
+        security_events.record_failure(
+            conn,
+            actor_id=user_id,
+            verb=security_events.VERB_LOGIN_THROTTLED,
+            target_kind="user",
+            target_id=user_id,
+            detail="per-account login throttle refused an attempt",
+        )
+    finally:
+        conn.close()
+
+
 # Pins an in-flight SSO login to the browser that started it: set at /login/sso,
 # required to match the returned `state` at /auth/callback (login CSRF/fixation
 # defense). HttpOnly + SameSite=Lax (Lax, not Strict — the IdP returns via a
@@ -187,6 +207,42 @@ def login(
                 status_code=429,
                 headers={"Retry-After": str(decision.retry_after_seconds)},
             )
+
+    # The per-IP ceiling above bounds one peer. It does not bound one ACCOUNT, and
+    # credential stuffing is distributed by construction: a thousand hosts guessing
+    # ten passwords each at one email stays under every per-IP limit while making ten
+    # thousand attempts on that account. This is the per-account half, keyed by the
+    # email as submitted.
+    #
+    # It deliberately does NOT resolve the account first. Throttling by user id would
+    # mean a real email is throttled and an unknown one is not, and the difference is
+    # observable — which is the existence oracle dummy_verify and the background-task
+    # failure recording exist to close. Keyed by the submitted string, a locked, an
+    # unknown, and a real address all behave identically, and the only thing a 429
+    # reveals is that this address was hammered recently, which the caller doing the
+    # hammering already knows.
+    account_limiter = getattr(request.app.state, "login_account_rate_limiter", None)
+    if account_limiter is not None:
+        account_decision = account_limiter.check(email)
+        if not account_decision.allowed:
+            throttled = HTMLResponse(
+                '<div class="error">Too many login attempts. Please wait and try again.</div>',
+                status_code=429,
+                headers={"Retry-After": str(account_decision.retry_after_seconds)},
+            )
+            # Sustained guessing at one address is exactly the signal an operator
+            # wants BEFORE a compromise, so the throttle lands on the trail like
+            # every other refusal — attributed to the account whose boundary was
+            # hit, when the address names one. Recorded on a background task for
+            # the same reason the failed-login event is: the write happens only for
+            # a real account, so doing it inline would put the existence oracle
+            # back into the response latency.
+            target = users.get_user_by_email(conn, email)
+            if target is not None:
+                throttled.background = BackgroundTask(
+                    _record_login_throttled, request.app.state.db_path, target["id"]
+                )
+            return throttled
 
     user = users.verify_credentials(conn, email=email, password=password)
     if user is None:

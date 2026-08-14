@@ -234,6 +234,71 @@ LOGIN_RATE_LIMIT_PER_MINUTE = _int_env(
     "ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE", 10, minimum=0
 )
 
+# The per-IP limit above bounds one peer; it does NOT bound one ACCOUNT. Credential
+# stuffing is a distributed attack by construction — a thousand hosts guessing ten
+# passwords each at one email stays under every per-IP ceiling while making ten
+# thousand attempts on that account. This caps attempts per SUBMITTED EMAIL per
+# minute, which is the axis the attacker cannot spread across.
+#
+# Keyed by the email exactly as submitted, NOT by the resolved user id: keying by the
+# account would mean a real email is throttled and an unknown one is not, and the
+# difference is observable — reintroducing the existence oracle that dummy_verify and
+# the background-task failure recording exist to close. Keying by the submitted string
+# makes locked, unknown and real behave identically. (users.email is case-SENSITIVE —
+# no COLLATE NOCASE — so varying the case reaches a different account too, and cannot
+# be used to reset the counter against a given one.)
+#
+# Defaults ON at 5/min: a human who has forgotten their password does not type five
+# attempts in sixty seconds, and the window is short enough that the lockout cannot be
+# used as a durable denial-of-service lever against a known address (see SECURITY.md).
+# Set 0 to disable.
+LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE = _int_env(
+    "ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE", 5, minimum=0
+)
+
+# --- exposure posture ------------------------------------------------------
+#
+# Projects and spaces are PUBLIC by default (core/access.py), which is the right
+# default for a single operator on loopback and the wrong one the moment the box is
+# reachable by anyone else. An accidental tunnel, a Tailscale Funnel left on, a
+# port-forward that outlived its reason — any of them expose every public container
+# to a caller with no credential at all.
+#
+# Two switches, doing different jobs:
+#
+# ATHENA_ANONYMOUS_READS=0 is the FAIL-CLOSED one. It requires an authenticated actor
+# for every read, regardless of any container's own visibility, so exposure stops
+# being a disclosure. It is the switch to reach for when the box might be reachable;
+# everything else here is defense in depth behind it.
+#
+# ATHENA_DEFAULT_VISIBILITY=private is ERGONOMICS. New projects and spaces are born
+# private instead of public, so the safe state is the one you get by not thinking
+# about it. It does nothing for containers that already exist, and nothing at all for
+# an instance whose reads are already closed.
+#
+# Both default to today's behavior — reads open, containers born public — because
+# changing them for existing deployments would silently break the loopback setup the
+# product is documented around.
+ANONYMOUS_READS = _bool_env("ATHENA_ANONYMOUS_READS", True)
+
+_VISIBILITIES = frozenset({"public", "private"})
+
+
+def _visibility_env(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized not in _VISIBILITIES:
+        raise ValueError(
+            f"{name} must be one of: {', '.join(sorted(_VISIBILITIES))} (got {raw!r})"
+        )
+    return normalized
+
+
+DEFAULT_VISIBILITY = _visibility_env("ATHENA_DEFAULT_VISIBILITY", "public")
+
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.

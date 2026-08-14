@@ -17,7 +17,7 @@ import sqlite3
 from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette._utils import get_route_path
@@ -143,6 +143,53 @@ def _is_signed_inbound(method: str, path: str) -> bool:
         or path.startswith("/callbacks/icarus/")
         or path.startswith("/forge/")
     )
+
+
+# The browser paths that must stay reachable when ATHENA_ANONYMOUS_READS=0, because
+# closing them would lock the operator out of the instrument they use to stop being
+# anonymous. Everything here either IS the sign-in path, carries its own credential,
+# or discloses nothing: the login form and its SSO round trip, sign-out, the health
+# probe, and the packaged static assets the login page itself needs to render.
+_ANONYMOUS_ALWAYS_ALLOWED = frozenset(
+    {"/login", "/login/sso", "/auth/callback", "/logout", "/healthz"}
+)
+
+
+def _carries_a_credential(request: Request) -> bool:
+    """Whether the caller presented SOMETHING to authenticate with.
+
+    The middleware refuses only the caller who presented nothing at all. A bearer
+    token (or the actor header, where trusted) is resolved by the routes' own
+    dependencies, which know how to validate it and how to refuse it; second-guessing
+    that here would mean re-implementing token validation in middleware.
+    """
+    authorization = request.headers.get("authorization")
+    if authorization and authorization.lower().startswith("bearer "):
+        return True
+    return (
+        config.TRUST_ACTOR_HEADER
+        and request.headers.get(identity.ACTOR_HEADER) is not None
+    )
+
+
+def _wants_html(request: Request) -> bool:
+    """Whether this looks like a browser navigation rather than an API call."""
+    return "text/html" in request.headers.get("accept", "")
+
+
+def _anonymous_web_read_allowed(method: str, path: str) -> bool:
+    """Whether a signed-out browser request may proceed with reads closed."""
+    if config.ANONYMOUS_READS:
+        return True
+    if path in _ANONYMOUS_ALWAYS_ALLOWED or path.startswith("/static/"):
+        return True
+    # A machine callback authenticates its own body; it never had a session.
+    if _is_signed_inbound(method, path):
+        return True
+    # Creating the FIRST user on an empty database presents the one-time bootstrap
+    # credential instead of a session. Gating it would make a closed instance
+    # impossible to set up — the flag would lock the operator out of their own box.
+    return method == "POST" and path == "/users"
 
 
 class DeploymentBoundaryMiddleware:
@@ -1149,6 +1196,7 @@ def create_app(
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
     login_rate_limit_per_minute: int | None = None,
+    login_account_rate_limit_per_minute: int | None = None,
     idempotency_wait_seconds: float | None = None,
     idempotency_lease_seconds: int | None = None,
     idempotency_ttl_seconds: int | None = None,
@@ -1184,6 +1232,11 @@ def create_app(
         config.LOGIN_RATE_LIMIT_PER_MINUTE
         if login_rate_limit_per_minute is None
         else login_rate_limit_per_minute
+    )
+    login_account_limit = (
+        config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
+        if login_account_rate_limit_per_minute is None
+        else login_account_rate_limit_per_minute
     )
     idempotency_wait = (
         config.IDEMPOTENCY_WAIT_SECONDS
@@ -1438,6 +1491,12 @@ def create_app(
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
     # Throttles POST /login by client IP, before the password hash; see web/auth.py.
     app.state.login_rate_limiter = rate_limits.FixedWindowRateLimiter(login_limit)
+    # ...and by the SUBMITTED EMAIL, which is the axis credential stuffing cannot
+    # spread across: the per-IP limiter above never sees a distributed run converge
+    # on one account. Same limiter, different key.
+    app.state.login_account_rate_limiter = rate_limits.FixedWindowRateLimiter(
+        login_account_limit
+    )
     # Middleware is registered inside-out. Among the general request stack,
     # idempotency wraps the routes and run context wraps idempotency. The body
     # cap is added after session middleware below, so oversized requests are
@@ -1509,6 +1568,32 @@ def create_app(
                         request.state.attention_signals = attention["signals"]
             finally:
                 conn.close()
+        # The fail-closed switch, applied above every route rather than inside them,
+        # so a page or endpoint added later inherits it instead of having to
+        # remember it. It runs AFTER the session is resolved, so a signed-in browser
+        # is unaffected, and refuses before any route touches the database.
+        #
+        # A bearer-authenticated REST caller has no session cookie and is therefore
+        # "anonymous" here — so the refusal is deferred to the routes' own
+        # dependencies (identity.current_actor / optional_actor), which can actually
+        # see the token. What this middleware refuses is the caller who presents
+        # NOTHING: no cookie, no bearer, no actor header.
+        if (
+            request.state.user is None
+            and not _anonymous_web_read_allowed(
+                request.method, get_route_path(request.scope)
+            )
+            and not _carries_a_credential(request)
+        ):
+            # Answer in the caller's own idiom: a browser gets the sign-in page, an
+            # API client gets the same opaque 401 every other refusal uses. Sending
+            # a REST client an HTML redirect would turn a clear refusal into a
+            # confusing 200.
+            if _wants_html(request):
+                return RedirectResponse("/login", status_code=303)
+            return JSONResponse(
+                status_code=401, content={"detail": "authentication required"}
+            )
         return await call_next(request)
 
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
