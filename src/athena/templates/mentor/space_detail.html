@@ -15,7 +15,7 @@
            you hear it move. Unwatch is the only volume control there is. #}
         {% if request.state.user %}
         <form method="post" action="/mentor/spaces/{{ space.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
-              style="display:inline">
+              class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button secondary small"
                     title="{{ 'Stop receiving notifications for pages in this space'
@@ -50,7 +50,7 @@
     <tbody>
     {% for p in tree %}
         <tr>
-            <td class="issue-title" style="padding-left: {{ 1 + p.depth * 1.5 }}rem;">
+            <td class="issue-title tree-indent-{{ [p.depth, 9] | min }}">
                 {% if p.depth %}<span class="muted">└ </span>{% endif %}
                 <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
                 {% if p.archived_at %}<span class="chip" data-tone="neutral">Archived</span>{% endif %}

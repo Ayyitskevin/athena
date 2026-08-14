@@ -21,9 +21,10 @@
    keyboard-navigable and readable in a text browser — the same no-build-chain
    rule the link graph follows. #}
 {% if timeline.cards or timeline.lanes | length > 1 %}
-<div class="timeline-wrap" style="overflow-x: auto;">
+<div class="timeline-wrap">
+    <style nonce="{{ request.state.csp_nonce }}">.timeline-svg-{{ timeline.width }}{min-width: {{ timeline.width }}px; height: auto}</style>
     <svg viewBox="0 0 {{ timeline.width }} {{ timeline.height }}"
-         width="100%" style="min-width: {{ timeline.width }}px; height: auto;"
+         width="100%" class="timeline-svg-{{ timeline.width }}"
          role="img" aria-label="Sprint timeline for {{ project.name }}">
         <defs>
             {# One arrowhead, reused by every blocking edge. #}

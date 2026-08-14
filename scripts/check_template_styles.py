@@ -69,9 +69,8 @@ ALLOWLIST: dict[str, str] = {
     "board-filter-search": "marker; .search-input carries the rules",
     "board-filter-sprint": "marker; .filter-select carries the rules",
     "board-filter-status": "marker; .filter-select carries the rules",
-    # Scroll wrappers with inline overflow styles (SVG surfaces).
-    "graph-wrap": "inline overflow-x style; SVG inside",
-    "timeline-wrap": "inline overflow-x style; SVG inside",
+    # SVG surfaces. The scroll wrappers carry real rules now that style-src
+    # dropped 'unsafe-inline' and their inline overflow moved into styles.css.
     "timeline-lane": "SVG <g> grouping element",
     # Markdown fence language tag; nh3 strips it before it reaches a page.
     "language-athena": "mentioned in render.py comments only; sanitizer strips it",

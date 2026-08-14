@@ -7,9 +7,10 @@
 
    `graph` is the dict ego_graph() returns. #}
 {% if graph.nodes %}
-<div class="graph-wrap" style="overflow-x: auto;">
+<div class="graph-wrap">
+    <style nonce="{{ request.state.csp_nonce }}">.graph-svg-{{ graph.width }}{max-width: {{ graph.width }}px; height: auto}</style>
     <svg viewBox="0 0 {{ graph.width }} {{ graph.height }}"
-         width="100%" style="max-width: {{ graph.width }}px; height: auto;"
+         width="100%" class="graph-svg-{{ graph.width }}"
          role="img" aria-label="Link graph around this item">
         {# Edges first so nodes paint over them. #}
         {% for edge in graph.edges %}

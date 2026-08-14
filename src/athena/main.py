@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 import hashlib
 import json
 import logging
+import secrets
 from pathlib import Path
 import sqlite3
 from typing import Awaitable, Callable
@@ -90,11 +91,25 @@ from athena.web import work_context as web_work_context
 from athena.web import init_templates, router as web_router
 
 
-SECURITY_HEADERS = {
-    "Content-Security-Policy": (
+def content_security_policy(nonce: str | None = None) -> str:
+    """The CSP for one response.
+
+    `style-src` carries no 'unsafe-inline'. Athena renders a handful of styles that
+    genuinely depend on data — a label's stored hex, a rollup bar's percentage, a
+    page's nesting depth — and none of them can be a static class, because the value
+    is not known until the row is read. A CSP nonce does NOT license inline `style=`
+    ATTRIBUTES (only `<style>` elements and scripts), so those values are emitted as
+    tiny nonce-carrying `<style>` elements instead, and the attribute form is gone
+    from the templates entirely. See web/render.py and the label chips.
+
+    The nonce is per response and unguessable, so markup an attacker manages to
+    inject cannot carry a matching one.
+    """
+    style_src = "'self'" if nonce is None else f"'self' 'nonce-{nonce}'"
+    return (
         "default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
+        f"style-src {style_src}; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "font-src 'self'; "
@@ -102,7 +117,11 @@ SECURITY_HEADERS = {
         "base-uri 'self'; "
         "form-action 'self'; "
         "frame-ancestors 'none'"
-    ),
+    )
+
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": content_security_policy(),
     "Cross-Origin-Opener-Policy": "same-origin",
     "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
     "Referrer-Policy": "same-origin",
@@ -1172,8 +1191,13 @@ def _apply_private_cache_policy(request: Request, response: Response) -> None:
     _append_vary(response, *vary)
 
 
-def _attach_security_headers(response: Response, *, is_https: bool = False) -> Response:
+def _attach_security_headers(
+    response: Response, *, is_https: bool = False, nonce: str | None = None
+) -> Response:
     for name, value in SECURITY_HEADERS.items():
+        if name == "Content-Security-Policy" and nonce is not None:
+            response.headers.setdefault(name, content_security_policy(nonce))
+            continue
         response.headers.setdefault(name, value)
     # Emit HSTS when the operator declared HTTPS (COOKIE_SECURE) OR the request actually
     # arrived over TLS. The scheme check auto-covers a direct-HTTPS deploy; behind a
@@ -1600,10 +1624,16 @@ def create_app(
 
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
+        # Minted BEFORE the routes run, because the templates have to embed it, and
+        # spent in this response's own CSP below. One per response, unguessable, so
+        # injected markup cannot carry a matching one.
+        request.state.csp_nonce = secrets.token_urlsafe(16)
         response = await call_next(request)
         _apply_private_cache_policy(request, response)
         return _attach_security_headers(
-            response, is_https=request.url.scheme == "https"
+            response,
+            nonce=request.state.csp_nonce,
+            is_https=request.url.scheme == "https",
         )
 
     # A saturated signed-inbound peer is refused before the body cap buffers bytes

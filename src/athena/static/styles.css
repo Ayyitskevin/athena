@@ -838,6 +838,18 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 
 .form-actions { display: flex; gap: var(--sp-2); margin-top: var(--sp-2); }
 .inline-form { display: inline-flex; align-items: center; gap: var(--sp-1); margin: 0; }
+/* Utilities that replaced inline style= attributes when style-src dropped
+   'unsafe-inline' (see main.content_security_policy). Deliberately few and
+   single-purpose: this is not the start of a utility framework, it is the
+   handful of one-declaration rules those attributes were carrying. */
+.inline { display: inline; }
+.inherit-color { color: inherit; }
+.uppercase { text-transform: uppercase; }
+.menu-form { padding: 6px 8px; }
+.nav-menu-right { right: 0; left: auto; }
+/* Scroll wrappers around generated SVG. The SVG is sized from its own data, so
+   the wrapper is what keeps a wide graph or timeline from widening the page. */
+.graph-wrap, .timeline-wrap { overflow-x: auto; }
 .filter-bar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .filter-bar input, .filter-bar select, .filter-bar .button { height: 32px; font-size: var(--fs-sm); }
 .filter-bar input { padding: 0 var(--sp-3); }
@@ -1219,7 +1231,20 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .doc-tree a { display: block; padding: 5px var(--sp-2); border-radius: 7px; font-size: var(--fs-md); color: var(--text-2); }
 .doc-tree a:hover { background: var(--surface-2); text-decoration: none; }
 .doc-tree-current { display: block; padding: 5px var(--sp-2); border-radius: 7px; font-size: var(--fs-md); font-weight: 700; color: var(--text); background: var(--surface-2); box-shadow: inset 2px 0 0 var(--accent); }
-/* Depth is set inline by the template: style="--depth: 2" */
+/* Nesting depth. Set by a stepped class rather than an inline style, so
+   style-src can drop 'unsafe-inline' (see main.content_security_policy).
+   Clamped at 9 by the template: deeper trees keep the deepest indent
+   rather than marching off the edge. */
+.doc-tree-depth-0 { --depth: 0; }
+.doc-tree-depth-1 { --depth: 1; }
+.doc-tree-depth-2 { --depth: 2; }
+.doc-tree-depth-3 { --depth: 3; }
+.doc-tree-depth-4 { --depth: 4; }
+.doc-tree-depth-5 { --depth: 5; }
+.doc-tree-depth-6 { --depth: 6; }
+.doc-tree-depth-7 { --depth: 7; }
+.doc-tree-depth-8 { --depth: 8; }
+.doc-tree-depth-9 { --depth: 9; }
 .doc-tree li a, .doc-tree li .doc-tree-current { padding-left: calc(var(--sp-2) + var(--depth, 0) * 14px); }
 
 .doc-main { padding: var(--sp-8) var(--sp-10) 64px; min-width: 0; }
@@ -1709,3 +1734,120 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
   body { background: #fff; color: #000; }
   .prose { max-width: none; }
 }
+
+/* Space page tree indent — the stepped twin of .doc-tree-depth-*. */
+.tree-indent-0 { padding-left: 1.0rem; }
+.tree-indent-1 { padding-left: 2.5rem; }
+.tree-indent-2 { padding-left: 4.0rem; }
+.tree-indent-3 { padding-left: 5.5rem; }
+.tree-indent-4 { padding-left: 7.0rem; }
+.tree-indent-5 { padding-left: 8.5rem; }
+.tree-indent-6 { padding-left: 10.0rem; }
+.tree-indent-7 { padding-left: 11.5rem; }
+.tree-indent-8 { padding-left: 13.0rem; }
+.tree-indent-9 { padding-left: 14.5rem; }
+
+/* Rollup bar segment widths, 0-100%% in whole percent. The exact count is in
+   the segment's title; a one-percent step is visually identical and lets the
+   bar be a class instead of an inline style. */
+.rollup-w-0 { width: 0%; }
+.rollup-w-1 { width: 1%; }
+.rollup-w-2 { width: 2%; }
+.rollup-w-3 { width: 3%; }
+.rollup-w-4 { width: 4%; }
+.rollup-w-5 { width: 5%; }
+.rollup-w-6 { width: 6%; }
+.rollup-w-7 { width: 7%; }
+.rollup-w-8 { width: 8%; }
+.rollup-w-9 { width: 9%; }
+.rollup-w-10 { width: 10%; }
+.rollup-w-11 { width: 11%; }
+.rollup-w-12 { width: 12%; }
+.rollup-w-13 { width: 13%; }
+.rollup-w-14 { width: 14%; }
+.rollup-w-15 { width: 15%; }
+.rollup-w-16 { width: 16%; }
+.rollup-w-17 { width: 17%; }
+.rollup-w-18 { width: 18%; }
+.rollup-w-19 { width: 19%; }
+.rollup-w-20 { width: 20%; }
+.rollup-w-21 { width: 21%; }
+.rollup-w-22 { width: 22%; }
+.rollup-w-23 { width: 23%; }
+.rollup-w-24 { width: 24%; }
+.rollup-w-25 { width: 25%; }
+.rollup-w-26 { width: 26%; }
+.rollup-w-27 { width: 27%; }
+.rollup-w-28 { width: 28%; }
+.rollup-w-29 { width: 29%; }
+.rollup-w-30 { width: 30%; }
+.rollup-w-31 { width: 31%; }
+.rollup-w-32 { width: 32%; }
+.rollup-w-33 { width: 33%; }
+.rollup-w-34 { width: 34%; }
+.rollup-w-35 { width: 35%; }
+.rollup-w-36 { width: 36%; }
+.rollup-w-37 { width: 37%; }
+.rollup-w-38 { width: 38%; }
+.rollup-w-39 { width: 39%; }
+.rollup-w-40 { width: 40%; }
+.rollup-w-41 { width: 41%; }
+.rollup-w-42 { width: 42%; }
+.rollup-w-43 { width: 43%; }
+.rollup-w-44 { width: 44%; }
+.rollup-w-45 { width: 45%; }
+.rollup-w-46 { width: 46%; }
+.rollup-w-47 { width: 47%; }
+.rollup-w-48 { width: 48%; }
+.rollup-w-49 { width: 49%; }
+.rollup-w-50 { width: 50%; }
+.rollup-w-51 { width: 51%; }
+.rollup-w-52 { width: 52%; }
+.rollup-w-53 { width: 53%; }
+.rollup-w-54 { width: 54%; }
+.rollup-w-55 { width: 55%; }
+.rollup-w-56 { width: 56%; }
+.rollup-w-57 { width: 57%; }
+.rollup-w-58 { width: 58%; }
+.rollup-w-59 { width: 59%; }
+.rollup-w-60 { width: 60%; }
+.rollup-w-61 { width: 61%; }
+.rollup-w-62 { width: 62%; }
+.rollup-w-63 { width: 63%; }
+.rollup-w-64 { width: 64%; }
+.rollup-w-65 { width: 65%; }
+.rollup-w-66 { width: 66%; }
+.rollup-w-67 { width: 67%; }
+.rollup-w-68 { width: 68%; }
+.rollup-w-69 { width: 69%; }
+.rollup-w-70 { width: 70%; }
+.rollup-w-71 { width: 71%; }
+.rollup-w-72 { width: 72%; }
+.rollup-w-73 { width: 73%; }
+.rollup-w-74 { width: 74%; }
+.rollup-w-75 { width: 75%; }
+.rollup-w-76 { width: 76%; }
+.rollup-w-77 { width: 77%; }
+.rollup-w-78 { width: 78%; }
+.rollup-w-79 { width: 79%; }
+.rollup-w-80 { width: 80%; }
+.rollup-w-81 { width: 81%; }
+.rollup-w-82 { width: 82%; }
+.rollup-w-83 { width: 83%; }
+.rollup-w-84 { width: 84%; }
+.rollup-w-85 { width: 85%; }
+.rollup-w-86 { width: 86%; }
+.rollup-w-87 { width: 87%; }
+.rollup-w-88 { width: 88%; }
+.rollup-w-89 { width: 89%; }
+.rollup-w-90 { width: 90%; }
+.rollup-w-91 { width: 91%; }
+.rollup-w-92 { width: 92%; }
+.rollup-w-93 { width: 93%; }
+.rollup-w-94 { width: 94%; }
+.rollup-w-95 { width: 95%; }
+.rollup-w-96 { width: 96%; }
+.rollup-w-97 { width: 97%; }
+.rollup-w-98 { width: 98%; }
+.rollup-w-99 { width: 99%; }
+.rollup-w-100 { width: 100%; }

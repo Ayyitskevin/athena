@@ -260,9 +260,14 @@ def _embed_html(resolved: dict) -> str:
         else:
             # Widths arrive already computed, from the same rollup the issue page
             # draws — neither surface does the arithmetic, so neither can drift.
+            # The width is a stepped class, not an inline style: style-src carries
+            # no 'unsafe-inline' (see main.content_security_policy), and an embed is
+            # rendered here rather than in a template, so it has no nonce to use.
+            # Whole percent only — the exact count rides in the title, and a
+            # one-percent step is visually identical on a bar.
             segments = "".join(
-                f'<span class="rollup-seg rollup-{segment["bucket"]}" '
-                f'style="width: {segment["percent"]}%"'
+                f'<span class="rollup-seg rollup-{segment["bucket"]} '
+                f'rollup-w-{round(segment["percent"])}"'
                 f' title="{escape(str(segment["count"]))} '
                 f'{escape(segment["bucket"])}"></span>'
                 for segment in rollup["segments"]
