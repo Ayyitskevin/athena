@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from athena import config
+
 
 def create_space(
     conn: sqlite3.Connection,
@@ -33,6 +35,11 @@ def create_space(
     )
     space_id = cur.lastrowid
     assert space_id is not None
+    # Born private when the operator asked for that posture — the projects twin. The
+    # schema default is 'public', so this writes only on opt-in, and it writes through
+    # set_visibility so spaces.visibility keeps exactly one writer.
+    if config.DEFAULT_VISIBILITY == "private":
+        set_visibility(conn, space_id, "private", commit=False)
     if commit:
         conn.commit()
     space = get_space(conn, space_id)

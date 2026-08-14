@@ -21,7 +21,7 @@ from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
     current_actor,
-    optional_actor,
+    bootstrap_optional_actor,
     require_admin,
 )
 from athena.mcp.config import claude_mcp_config
@@ -177,7 +177,7 @@ def create(
     payload: UserCreate,
     request: Request,
     bootstrap_token: str | None = Header(default=None, alias=BOOTSTRAP_TOKEN_HEADER),
-    actor: dict | None = Depends(optional_actor),
+    actor: dict | None = Depends(bootstrap_optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Bootstrap exception: there is no existing actor on a fresh database, so the
