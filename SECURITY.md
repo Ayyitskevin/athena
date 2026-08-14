@@ -95,6 +95,42 @@ A useful report includes:
 Please allow the maintainer time to reproduce and coordinate a fix before
 public disclosure. Athena does not currently promise a formal response SLA.
 
+## Login throttling, and the trade it makes
+
+`POST /login` is credential-free at the door, so two fixed-window throttles guard it,
+both checked **before** the password hash (so a flood is bounded by the limiter rather
+than by PBKDF2's per-guess CPU cost):
+
+| Limit | Keyed by | Default | Bounds |
+|---|---|---|---|
+| `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | direct peer IP | 10/min | one host hammering |
+| `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | submitted email | 5/min | one account, from anywhere |
+
+The per-account limit exists because credential stuffing is distributed by
+construction: a thousand hosts guessing ten passwords each at one address stays under
+every per-IP ceiling while making ten thousand attempts on that account.
+
+**The trade, stated plainly:** any per-account throttle is also a lever for denying
+service to a known address — an attacker who knows your email can spend five requests
+a minute keeping you at a 429. Three things bound that, deliberately:
+
+- The window is **one minute**, not a durable lockout. There is no state an attacker
+  can push you into that outlasts their own effort, and no administrative unlock to
+  wait for. Sixty seconds after they stop, you log in.
+- The limiter is **in-process** (`core/rate_limits.py`) and resets on restart, like
+  every other limit here.
+- It is **keyed by the submitted email, not the resolved account**, so it cannot be
+  used as a membership oracle. Throttling by user id would mean a real address returns
+  429 while an unknown one returns 401 — a free existence test, undoing the
+  opacity that `users.verify_credentials`' dummy PBKDF2 verify and the background-task
+  audit write exist to provide. A 429 tells the caller only that this address was
+  hammered recently, which the caller doing the hammering already knows.
+
+Set `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE=0` to disable it if that trade is
+wrong for your deployment; the per-IP limit is unaffected. A throttled attempt against
+a real account is recorded on the activity trail as a `login_throttled` security event
+and appears on **Admin → Security** with the other refusals.
+
 ## High-value review areas
 
 Reports are especially useful around:

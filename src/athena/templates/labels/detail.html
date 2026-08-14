@@ -8,7 +8,7 @@
         <a href="/aegis/labels" class="muted">← All labels</a>
         {% if label %}
         <h1>
-            <span class="label" style="--label-color: {{ label.color }}">{{ label.name }}</span>
+            <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ label.color[1:] }}{--label-color: {{ label.color }}}</style><span class="label label-c-{{ label.color[1:] }}">{{ label.name }}</span>
         </h1>
         <p class="subtitle">Everything tagged <code>{{ label.name }}</code></p>
         {% else %}

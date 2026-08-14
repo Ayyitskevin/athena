@@ -39,7 +39,7 @@
         {% if can_write %}
         <form method="post"
               action="{% if item.kind == 'issue' %}/aegis/issues/{{ item.id }}/link-mention{% else %}/mentor/pages/{{ item.id }}/link-mention{% endif %}"
-              style="display:inline">
+              class="inline">
             {% include "partials/csrf.html" %}
             <input type="hidden" name="target_kind" value="{{ target_kind }}">
             <input type="hidden" name="target_id" value="{{ target_id }}">

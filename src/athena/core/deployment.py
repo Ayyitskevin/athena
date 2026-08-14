@@ -484,6 +484,7 @@ def validate_static_configuration(
     token_rate_limit_per_minute: int,
     anon_rate_limit_per_minute: int,
     login_rate_limit_per_minute: int,
+    login_account_rate_limit_per_minute: int,
 ) -> tuple[Authority, ...]:
     """Validate static deployment policy before SQLite or accepted traffic."""
     if not db_path.is_absolute():
@@ -516,6 +517,9 @@ def validate_static_configuration(
             "ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE": token_rate_limit_per_minute,
             "ATHENA_ANON_RATE_LIMIT_PER_MINUTE": anon_rate_limit_per_minute,
             "ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE": login_rate_limit_per_minute,
+            "ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE": (
+                login_account_rate_limit_per_minute
+            ),
         }
         disabled = sorted(name for name, value in required_limits.items() if value <= 0)
         if disabled:

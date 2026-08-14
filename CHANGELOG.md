@@ -12,6 +12,58 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **Credential stuffing is bounded per account, not just per IP.** Login
+  throttling was per-IP only, which bounds one peer and not one account —
+  credential stuffing is distributed by construction, so a thousand hosts
+  guessing ten passwords each at one address stayed under every ceiling while
+  making ten thousand attempts on that account. A second fixed-window limiter
+  (`ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE`, default 5/min, 0 disables)
+  closes that axis, checked before the password hash like the first. It is keyed
+  by the **submitted email, not the resolved account**, which is the design and
+  not an implementation detail: keying by user id would make a real address
+  return 429 while an unknown one returned 401 — a free membership test that
+  would undo the opacity `verify_credentials`' dummy PBKDF2 and the
+  background-task audit write exist to provide. A throttled attempt against a
+  real account lands on the trail under its own `login_throttled` verb, which
+  joins the closed `SECURITY_VERBS` set and so reaches Admin → Security, the
+  zero-filled counts and the attention rollup without any surface learning a new
+  name. SECURITY.md documents the denial-of-service trade the feature makes and
+  why the window is one minute rather than a lockout.
+
+- **A fail-closed switch for anonymous reads.** Projects and spaces are public
+  by default, which is right on loopback and wrong the moment the box is
+  reachable — an accidental tunnel, a Funnel left on, a port-forward that
+  outlived its reason. Per-container visibility does not help there: the
+  containers really are public. `ATHENA_ANONYMOUS_READS=0` requires an
+  authenticated actor for every read regardless of visibility, applied at two
+  choke points rather than route by route — `identity.optional_actor` (the one
+  dependency behind all 55 optional-identity REST reads) and the session
+  middleware for browsers. Two things stay open deliberately, because a switch
+  that locks the operator out of their own login page or their own empty
+  database is an outage and not a control: the sign-in path, and creating the
+  first user, which uses a separate `bootstrap_optional_actor` dependency so the
+  exemption is greppable and a test pins that exactly one route uses it. Bearer
+  callers are unaffected — the middleware refuses only a caller presenting
+  nothing, and answers in the caller's idiom (sign-in page vs 401 JSON).
+  `ATHENA_DEFAULT_VISIBILITY=private` is the ergonomics half: new containers are
+  born private. Both default to today's behavior.
+
+- **`style-src` no longer allows `'unsafe-inline'`.** The exception existed for
+  styles that genuinely depend on data — a label's stored hex, a rollup bar's
+  percentage, a page's nesting depth, a generated SVG's width — and it covered
+  34 inline `style=` attributes across 15 templates and two Python emitters, not
+  the handful the review estimated. They needed three different answers, because
+  a CSP nonce does **not** license inline style *attributes* (only `<style>`
+  elements), so there was no way to permit the hard cases and convert the rest:
+  static declarations became utility classes; bounded numbers (bar percentages,
+  tree depth) became stepped classes, which is also what lets `web/render.py`
+  keep working since it builds embed HTML outside any template and has no nonce
+  to use; and genuinely arbitrary values became tiny nonce-carrying `<style>`
+  elements, with the nonce minted per response and spent in that response's own
+  policy. `web/html_export.py` keeps its inline style deliberately: that export
+  is downloaded as an attachment and opened from `file://`, where no CSP of ours
+  applies and the document has to render without Athena.
+
 - **Webhook egress now refuses CGNAT and IPv6 site-local targets.** The address
   policy behind `is_safe_url` and the delivery-time pinned connect relied on
   `ipaddress`' `is_private`/`is_reserved` family, and neither covers

@@ -21,7 +21,7 @@
     <div class="header-actions">
         {% if request.state.user %}
         <form method="post" action="/mentor/pages/{{ page.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
-              style="display:inline">
+              class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button secondary small">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
         </form>
@@ -40,7 +40,7 @@
     <nav class="doc-tree" aria-label="Pages in this space">
         <ul>
         {% for p in tree %}
-            <li style="--depth: {{ p.depth }}">
+            <li class="doc-tree-depth-{{ [p.depth, 9] | min }}">
                 {% if p.id == page.id %}
                 <span class="doc-tree-current" aria-current="page">{{ p.title }}</span>
                 {% else %}
@@ -134,7 +134,7 @@
                         {% endif %}
                         {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
                         <form method="post" action="/mentor/pages/{{ page.id }}/attachments/{{ a.id }}/delete"
-                              data-confirm="Remove {{ a.filename }}?" style="display:inline">
+                              data-confirm="Remove {{ a.filename }}?" class="inline">
                             {% include "partials/csrf.html" %}
                             <button type="submit" class="button danger small">Remove</button>
                         </form>
@@ -254,8 +254,8 @@
             <h2>Labels</h2>
             <div class="label-list">
                 {% for l in page_labels %}
-                <span class="label" style="--label-color: {{ l.color }}">
-                    <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><span class="label label-c-{{ l.color[1:] }}">
+                    <a href="/aegis/labels/{{ l.name }}" class="inherit-color">{{ l.name }}</a>
                     {% if can_write %}
                     <form method="post" action="/mentor/pages/{{ page.id }}/labels/{{ l.id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}

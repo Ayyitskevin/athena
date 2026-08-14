@@ -472,6 +472,9 @@ def serve_main(argv: list[str] | None = None) -> int:
             token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
             anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
             login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+            login_account_rate_limit_per_minute=(
+                config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
+            ),
         )
         checks = _deployment_checks(
             config.DB_PATH,
@@ -622,6 +625,7 @@ def _deployment_doctor_checks(args: argparse.Namespace) -> list[str]:
         token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
         anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
         login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+        login_account_rate_limit_per_minute=config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE,
     )
     if args.db_path != config.DB_PATH:
         raise ValueError("deployment db_path must exactly match ATHENA_DB")

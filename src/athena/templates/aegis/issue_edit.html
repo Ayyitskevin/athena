@@ -51,7 +51,7 @@
     {% endif %}
     <div class="form-actions">
         <form method="post" action="/aegis/issues/{{ issue.id }}/draft/discard"
-              data-confirm="Discard your unsaved draft of this issue?" style="display:inline">
+              data-confirm="Discard your unsaved draft of this issue?" class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button secondary small">Discard draft</button>
         </form>

@@ -54,7 +54,7 @@
             <span class="note-small">— {{ used }} issue{{ "s" if used != 1 }}</span>
             {% elif statuses|length > 1 %}
             <form method="post" action="/aegis/projects/{{ project.id }}/statuses/{{ s.name }}/delete"
-                  data-confirm="Remove status {{ s.name }}?" style="display:inline">
+                  data-confirm="Remove status {{ s.name }}?" class="inline">
                 {% include "partials/csrf.html" %}
                 <button type="submit" class="button danger small">Remove</button>
             </form>

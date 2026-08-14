@@ -139,19 +139,19 @@
                 <span class="avatar" aria-hidden="true">{{ request.state.user.name[:2] | upper }}</span>
                 {{ request.state.user.name }}
             </summary>
-            <div class="nav-menu" style="right: 0; left: auto;">
+            <div class="nav-menu nav-menu-right">
                 <a href="/settings/password">Password <span class="route">/settings/password</span></a>
                 {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins <span class="route">/settings/identities</span></a>{% endif %}
                 {# Theme cycles system → dark → light → system; the label names
                    what you are ON, the arrow what you get. #}
                 {% set current_theme = request.cookies.get("athena_theme") if request.cookies.get("athena_theme") in ("dark", "light") else "system" %}
-                <form method="post" action="/settings/theme" class="inline-form" style="padding: 6px 8px;">
+                <form method="post" action="/settings/theme" class="inline-form menu-form">
                     {% include "partials/csrf.html" %}
                     <input type="hidden" name="next" value="{{ request.url.path }}">
                     <input type="hidden" name="theme" value="{{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}">
                     <button type="submit" class="button ghost small">Theme: {{ current_theme }} &#8594; {{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}</button>
                 </form>
-                <form method="post" action="/logout" class="inline-form" style="padding: 6px 8px;">
+                <form method="post" action="/logout" class="inline-form menu-form">
                     {% include "partials/csrf.html" %}
                     <button type="submit" class="button ghost small">Sign out</button>
                 </form>

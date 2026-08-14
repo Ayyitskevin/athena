@@ -45,7 +45,7 @@
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
                 {% for l in issue.labels %}
-                <a href="/aegis/labels/{{ l.name }}" class="label" style="--label-color: {{ l.color }}">{{ l.name }}</a>
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><a href="/aegis/labels/{{ l.name }}" class="label label-c-{{ l.color[1:] }}">{{ l.name }}</a>
                 {% endfor %}
             </td>
             <td>

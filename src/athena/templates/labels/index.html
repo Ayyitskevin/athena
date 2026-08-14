@@ -24,7 +24,7 @@
         <tr>
             <td class="issue-title">
                 <a href="/aegis/labels/{{ l.name }}">
-                    <span class="label" style="--label-color: {{ l.color }}">{{ l.name }}</span>
+                    <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><span class="label label-c-{{ l.color[1:] }}">{{ l.name }}</span>
                 </a>
             </td>
             <td class="muted">{{ l.issue_count }}</td>

@@ -157,7 +157,7 @@
             {% if issue.labels %}
             <span class="label-list">
                 {% for label in issue.labels %}
-                <span class="label" style="--label-color: {{ label.color }}">{{ label.name }}</span>
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ label.color[1:] }}{--label-color: {{ label.color }}}</style><span class="label label-c-{{ label.color[1:] }}">{{ label.name }}</span>
                 {% endfor %}
             </span>
             {% else %}

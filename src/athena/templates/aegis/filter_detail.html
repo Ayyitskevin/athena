@@ -57,7 +57,7 @@
             <td class="issue-title">
                 <a href="/aegis/issues/{{ issue.id }}">{{ issue.title }}</a>
                 {% for l in issue.labels %}
-                <span class="label" style="--label-color: {{ l.color }}">{{ l.name }}</span>
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><span class="label label-c-{{ l.color[1:] }}">{{ l.name }}</span>
                 {% endfor %}
             </td>
             <td><span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></td>

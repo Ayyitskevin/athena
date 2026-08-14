@@ -170,7 +170,17 @@ the cache-buster changes when the file changes (test by editing a temp copy).
 
 (From the security pass; the SSRF range fix already landed with the review.)
 
-### F-1.1 Per-account brute-force protection
+### F-1.1 Per-account brute-force protection — **DONE**
+
+> Landed. A second fixed-window limiter keyed by the SUBMITTED EMAIL rather than
+> the resolved account — that keying is the finding worth keeping: throttling by
+> user id would have made a real address return 429 while an unknown one returned
+> 401, a free membership oracle undoing the opacity the dummy PBKDF2 verify and
+> the background-task audit write already provide. A test asserts the two status
+> sequences are identical rather than merely both bounded. New `login_throttled`
+> verb in the closed SECURITY_VERBS set; the DoS trade is written down in
+> SECURITY.md. Original finding follows.
+
 
 Login throttling is per-IP only (`auth.py:176-189`) — distributed credential
 stuffing against one account is unbounded per-account. Add a per-account
@@ -197,7 +207,18 @@ Do not build (a) speculatively — it widens the deployment claim
 RELEASE_READINESS.md holds the line on. Whichever way the decision goes, the
 launcher's refusal message should point at the decision's documentation.
 
-### F-1.3 A global default-private visibility switch
+### F-1.3 A global default-private visibility switch — **DONE**
+
+> Landed. `ATHENA_ANONYMOUS_READS=0` is enforced at two choke points, not route
+> by route: `identity.optional_actor` (all 55 optional-identity REST reads) and
+> the session middleware (browsers). The enumeration the finding asked for is a
+> test rather than a list — it walks the route table and asserts that exactly one
+> route uses the ungated resolver, which is the first-user bootstrap. Two
+> deliberate openings, because a switch that locks the operator out of their own
+> login page or empty database is an outage: the sign-in path, and that bootstrap.
+> `ATHENA_DEFAULT_VISIBILITY=private` is the ergonomics half. Original finding
+> follows.
+
 
 Projects and spaces are public-by-default (`core/access.py:3-5`); an
 accidental tunnel or Funnel exposes every public container with zero
@@ -218,7 +239,31 @@ rolling idle timeout (config, default generous — this is a solo tool) and a
 bounded per-user session count (oldest evicted, audited). Password change
 already revokes other sessions; this extends the same hygiene to quiet decay.
 
-### F-1.5 Drop `style-src 'unsafe-inline'`
+### F-1.5 Drop `style-src 'unsafe-inline'` — **DONE**, and it was ~3x this estimate
+
+> Landed, but re-scope this one before trusting the estimate on anything like it.
+> The finding below says the exception "exists for the rollup width styles". The
+> real surface was **34 inline `style=` attributes across 15 templates and two
+> Python emitters**.
+>
+> The binding constraint was not volume, it was a CSP detail worth knowing: **a
+> nonce does not license inline `style=` ATTRIBUTES**, only `<style>` elements and
+> scripts. So there was no way to permit the hard cases and convert the easy
+> ones — every attribute had to go, which is what pulled in the whole template
+> tree. Three mechanisms, because they are three different problems: static
+> declarations became utility classes; bounded numbers (bar percentages, tree
+> depth) became stepped classes — which is also what keeps `web/render.py`
+> working, since it builds embed HTML outside any template and so has no nonce to
+> reach for; and arbitrary values (a user's `#RRGGBB` label hex, a computed SVG
+> width) became per-response nonce'd `<style>` elements.
+>
+> Two things the gate taught along the way: `graph-wrap`/`timeline-wrap` were on
+> check_template_styles' ALLOWLIST *because* their overflow lived inline, so
+> removing it made those entries stale and the build refused until they had real
+> rules. And `web/html_export.py` keeps its inline style deliberately — that
+> export is downloaded as an attachment and opened from `file://`, where no CSP of
+> ours applies. Original finding follows.
+
 
 The CSP exception (`main.py:97`) exists for the rollup width styles. Replace
 inline `style=` widths with a small set of stepped width classes (the design
@@ -392,7 +437,7 @@ hand to a fleet in the first place.
 ## Suggested order
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
-F-1.1/F-1.3/F-1.5 (hardening with no design dependency) → F-0.3/F-0.4 →
+~~F-1.1/F-1.3/F-1.5~~ (done) → F-0.3/F-0.4 →
 F-2.5 (needs F-0.3's cache) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
 three [OPERATOR DECISION] items whenever Kevin decides. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
