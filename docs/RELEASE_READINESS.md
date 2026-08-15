@@ -304,7 +304,7 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
 | Dependency/security scan | The 32-distribution hash-locked evidence/build toolchain audits itself; `pip-audit` scans the exact 63 CI/build/bootstrap inputs and the verified 29-package base / 41-package MCP third-party runtime closures; no ignores or soft pass | PASS (local draft) |
 | GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were disabled when last inspected; settings changes are out of scope for a code change | NOT CONFIGURED |
-| SBOM / signing / provenance | The gate retains the exact 63-component input SBOM plus base/MCP CycloneDX graphs rooted at the candidate wheel SHA-256; the candidate remains unsigned, unattested, unpublished, and does not represent a first-party code scan | PARTIAL |
+| SBOM / signing / provenance | The gate retains the exact 65-component input SBOM plus base/MCP CycloneDX graphs rooted at the candidate wheel SHA-256; the candidate remains unsigned, unattested, unpublished, and does not represent a first-party code scan | PARTIAL |
 
 ### Python supply-chain evidence (2026-07-31)
 
@@ -313,7 +313,7 @@ A fresh Linux/Python 3.12 environment installed pip 26.1.2, `pip-audit` 2.10.1,
 exclusively from the repository's 32-distribution hash-locked requirement file.
 `pip check` passed, the toolchain self-audit reported no known vulnerabilities,
 and the application-input scan reported zero known vulnerabilities across
-exactly 63 subjects: 61 CI dependency pins, pip, and the setuptools build
+exactly 65 subjects: 63 CI dependency pins, pip, and the setuptools build
 backend.
 
 `scripts/check_supply_chain.py` independently verified that input CycloneDX 1.4

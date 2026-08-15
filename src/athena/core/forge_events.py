@@ -29,6 +29,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from athena.core import links
+
 # The event kinds Athena understands, normalized away from any one forge's naming.
 KIND_PUSH = "push"
 KIND_PULL_REQUEST = "pull_request"
@@ -62,7 +64,12 @@ MAX_ISSUES_PER_DELIVERY = 10
 # A token SHAPED like an issue key: a letter-led alphanumeric prefix, a dash, and
 # digits. Deliberately permissive — the prefix is validated against real project
 # keys by the caller, which is the only check that can tell ATH-12 from UTF-8.
-_KEY_RE = re.compile(r"(?<![0-9A-Za-z])([A-Za-z][A-Za-z0-9]*)-(\d+)(?![0-9A-Za-z])")
+# Permissive on the prefix, BOUNDED on the digits (links.ID_DIGITS): a commit
+# message is untrusted text arriving over the signed-inbound webhook, and an
+# unbounded run made the int() below raise rather than return no keys.
+_KEY_RE = re.compile(
+    rf"(?<![0-9A-Za-z])([A-Za-z][A-Za-z0-9]*)-({links.ID_DIGITS})(?![0-9A-Za-z])"
+)
 
 
 @dataclass(frozen=True)

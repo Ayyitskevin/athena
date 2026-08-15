@@ -21,7 +21,7 @@ import re
 import sqlite3
 from typing import cast
 
-from athena.core import access
+from athena.core import access, links
 
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
 # rejects unknown kinds. 'space' is the SHARED-MEMORY subscription: it covers the
@@ -41,7 +41,13 @@ _UNGATED = object()
 # [[issue:N]]/[[page:N]] cross-links, but for people. The links/backlinks system
 # only indexes issue/page kinds, so this token is invisible to it; it exists only
 # to notify the named user.
-_MENTION_RE = re.compile(r"\[\[user:(\d+)\]\]")
+#
+# Owned here because notifying is what a mention is FOR. `web/render.py` imports
+# this exact object rather than keeping its own copy — the two were identical
+# literals under a comment asserting they were shared, which is a claim source code
+# cannot keep on its own. Digit-bounded via links.ID_DIGITS for the reason
+# documented there: an unbounded run made int() raise on text any author can type.
+MENTION_RE = re.compile(rf"\[\[user:({links.ID_DIGITS})\]\]")
 
 
 # --- watches ----------------------------------------------------------------
@@ -179,7 +185,7 @@ def parse_mentions(text: str | None) -> list[int]:
     if not text:
         return []
     seen: list[int] = []
-    for match in _MENTION_RE.finditer(text):
+    for match in MENTION_RE.finditer(text):
         uid = int(match.group(1))
         if uid not in seen:
             seen.append(uid)
