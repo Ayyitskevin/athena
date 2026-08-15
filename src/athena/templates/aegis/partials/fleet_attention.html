@@ -1,0 +1,42 @@
+{# Steer by exception: one card for everything asking for a human, each number
+   linking to the surface that owns it. Counts only — this card computes nothing,
+   so it cannot disagree with the page it sends you to.
+
+   It refreshes itself (see partials/live.html), because a count of what needs a
+   human is the one number on the dashboard that is worthless when stale: it exists
+   to be noticed within the minute something goes wrong, not on the next reload. #}
+{% import "partials/live.html" as live_ui %}
+<section class="panel" aria-labelledby="fleet-attention-heading"{{ live_ui.live_attrs(live) }}>
+    <div class="panel-head">
+        <h3 id="fleet-attention-heading">
+            Fleet attention
+            {% if fleet_attention.total %}<span class="chip" data-tone="accent">{{ fleet_attention.total }}</span>{% endif %}
+        </h3>
+    </div>
+    <div class="panel-body">
+        {% if fleet_attention.total %}
+        <ul class="dashboard-list">
+            {% for signal in fleet_attention.signals %}
+            {% if signal.count %}
+            <li>
+                <a href="{{ signal.href }}">{{ signal.label }}</a>
+                <strong>{{ signal.count }}</strong>
+                <span class="muted">{{ signal.scope }}</span>
+            </li>
+            {% endif %}
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">
+            Nothing is asking for you right now. That is what the last
+            {{ fleet_attention.window_hours }} hours recorded — not a promise that every
+            agent is healthy.
+        </p>
+        {% endif %}
+        <p class="muted">
+            <a href="/admin/agents/runs">Mission Control</a> ·
+            <a href="/admin/security">Security signals</a>
+        </p>
+        {{ live_ui.live_stamp(live) }}
+    </div>
+</section>

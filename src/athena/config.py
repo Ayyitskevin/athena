@@ -299,6 +299,43 @@ def _visibility_env(name: str, default: str) -> str:
 DEFAULT_VISIBILITY = _visibility_env("ATHENA_DEFAULT_VISIBILITY", "public")
 
 
+# --- cockpit liveness ------------------------------------------------------
+#
+# How often the three "right now" surfaces re-ask the server for their own markup:
+# the dashboard's fleet-attention card, Mission Control's active-work table, and the
+# open run-control requests. VISION promises the operator can see what each agent is
+# doing right now, and a page that only changes when you press reload cannot keep
+# that promise.
+#
+# 0 disables polling entirely — the pages still render, they just stop refreshing
+# themselves, which is what an operator watching over a metered or battery-powered
+# link wants. Any other value is held to [MIN, MAX] rather than accepted as typed,
+# because the floor is a load statement and not a preference: at 10s each polling
+# admin costs roughly 0.05 ms of server time per second (the rollup measures ~0.5 ms
+# for a real fleet, see main.py), and a 1s interval would multiply that by ten
+# without making anything more legible to a human eye.
+LIVE_REFRESH_MIN_SECONDS = 5
+LIVE_REFRESH_MAX_SECONDS = 3600
+
+
+def _refresh_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer number of seconds") from exc
+    if value == 0:
+        return 0
+    if not (LIVE_REFRESH_MIN_SECONDS <= value <= LIVE_REFRESH_MAX_SECONDS):
+        raise ValueError(
+            f"{name} must be 0 (no polling) or between {LIVE_REFRESH_MIN_SECONDS} "
+            f"and {LIVE_REFRESH_MAX_SECONDS} seconds (got {value})"
+        )
+    return value
+
+
+LIVE_REFRESH_SECONDS = _refresh_env("ATHENA_LIVE_REFRESH_SECONDS", 10)
+
+
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local
 # dev — turn it ON (ATHENA_COOKIE_SECURE=1) whenever Athena is served over HTTPS.

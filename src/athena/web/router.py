@@ -51,6 +51,7 @@ from athena.core import (
     users,
 )
 from athena.core.deps import get_conn
+from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.render import (
     MAX_PREVIEW_CHARS,
@@ -192,13 +193,6 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     from aegis.delegations, so this route only lays them out. Open to read, like the
     issue list."""
     user = getattr(request.state, "user", None)
-    # Every number is counted only over the projects this viewer may see (admins all;
-    # the backlog is always in). recent_activity is gated the same way: actor=user
-    # makes list_activity drop events whose target the viewer can't see.
-    vis = access.visible_project_filter(conn, user)
-    delegation_inbox = (
-        delegations.list_delegations(conn, user, limit=8) if user else None
-    )
     # The steer-by-exception rollup, admin-only because every input is already an
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.
@@ -207,10 +201,33 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
         if user is not None and identity.is_admin(user)
         else None
     )
+    live_refresh = live.build(request, live.FLEET_ATTENTION)
+    # The attention card refreshes itself, and answers here before the rest of the
+    # dashboard is built: a poll wants one card, and every ten seconds is the wrong
+    # cadence at which to also count the whole board and read a delegation inbox
+    # nobody is looking at. The gate is the same one the page uses — a non-admin
+    # has `attention = None`, renders no card and so has no poll to fire, and asking
+    # for the panel directly gets the same nothing rather than the card.
+    if live.wants_panel(request, live.FLEET_ATTENTION):
+        if attention is None:
+            return HTMLResponse("")
+        return get_templates().TemplateResponse(
+            request=request,
+            name="aegis/partials/fleet_attention.html",
+            context={"fleet_attention": attention, "live": live_refresh},
+        )
+    # Every number is counted only over the projects this viewer may see (admins all;
+    # the backlog is always in). recent_activity is gated the same way: actor=user
+    # makes list_activity drop events whose target the viewer can't see.
+    vis = access.visible_project_filter(conn, user)
+    delegation_inbox = (
+        delegations.list_delegations(conn, user, limit=8) if user else None
+    )
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
         context={
+            "live": live_refresh,
             "totals": dashboard.totals(conn, vis),
             "status_counts": dashboard.status_counts(conn, vis),
             "priority_counts": dashboard.priority_counts(conn, vis),

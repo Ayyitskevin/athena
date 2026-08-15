@@ -31,60 +31,6 @@
     <button type="submit">Filter</button>
 </form>
 
-{% if controls %}
-{% if clipped %}
-<p class="muted">Showing the newest {{ limit }} — older controls exist beyond this page.</p>
-{% endif %}
-<table class="issues-table">
-    <thead>
-        <tr>
-            <th>Run</th><th>Request</th><th>State</th>
-            <th>Asked</th><th>Expires</th><th>Agent's answer</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for control in controls %}
-        <tr>
-            <td>
-                {# A run with no visible activity events has no lineage page —
-                   heartbeat-only runs are steerable but have nothing to draw.
-                   Show the id plainly rather than linking to a 404. #}
-                {% if control.run_id in linkable_runs %}
-                <a href="/aegis/activity/runs/{{ control.run_id | urlencode }}/lineage"><code>{{ control.run_id }}</code></a>
-                {% else %}
-                <code>{{ control.run_id }}</code>
-                <div class="muted">no lineage page — this run has only checked in</div>
-                {% endif %}
-                <div class="muted">{{ control.agent_name }}{% if control.worker_key %} · worker {{ control.worker_key }}{% endif %}</div>
-            </td>
-            <td>
-                {{ control.kind }}
-                {% if control.payload %}<div class="muted">{{ control.payload }}</div>{% endif %}
-            </td>
-            <td>
-                {{ control.state }}
-                {% if control.state == 'acknowledged' %}<div class="muted">receipt only — no outcome yet</div>{% endif %}
-                {% if control.state == 'expired' %}<div class="muted">no answer before {{ control.expires_at }}</div>{% endif %}
-            </td>
-            <td>by {{ control.requested_by_name }} <div class="muted">{{ control.created_at }}</div></td>
-            <td>{{ control.expires_at }}</td>
-            <td>
-                {% if control.settlement %}
-                {{ control.result_summary }}
-                {% if control.handoff %}<div class="muted">structured handoff — see the run's lineage page</div>{% endif %}
-                {% else %}
-                <span class="muted">—</span>
-                {% endif %}
-            </td>
-        </tr>
-    {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<p class="muted">
-    No {{ "" if selected_state == "all" else selected_state + " " }}controls recorded.
-    A quiet list means nobody has asked anything of a live run{% if selected_state != "all" %} that is still in this state{% endif %}
-    — not that every run is healthy.
-</p>
-{% endif %}
+{% include "admin/partials/run_controls_list.html" %}
+
 {% endblock %}

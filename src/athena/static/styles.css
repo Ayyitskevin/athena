@@ -1446,6 +1446,19 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .note { margin-top: var(--sp-5); font-size: var(--fs-sm); color: var(--text-3); }
 .note-small { font-size: var(--fs-xs); color: var(--text-3); }
 
+/* A self-refreshing panel's freshness stamp: when it was read, how often it
+   rebuilds. Ruled off from the panel body because it describes the panel rather
+   than the work in it — an operator scanning for a claim or a control should be
+   able to skip it, and find it in the same place on all three surfaces when they
+   want to know how old the numbers are. Tabular figures so a clock ticking under
+   a refresh does not shift the line's width. */
+.live-stamp {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Muted text on a tinted row -------------------------------------------
    --text-3 clears 4.5:1 on all four FLAT surfaces, but a semantic tint layered
    over one of them (a danger-soft check row, an is-attention table row) lifts
