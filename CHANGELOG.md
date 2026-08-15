@@ -110,6 +110,37 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **A standing prune ledger, and the tooling that makes it runnable.** VISION says
+  *when a proposed feature doesn't serve the picture, cut it or reshape it*, and
+  nothing visible has ever been cut — against a surface of **362 routes, 124 MCP
+  tools, 65 tables and ~46,600 lines** that the external review called the project's
+  biggest long-term risk. `docs/PRUNE_LEDGER.md` is the first quarterly review, with
+  every verdict deliberately **unset**: deciding to cut or park a subsystem is a
+  promise to users, not an agent's call.
+
+  The durable half is `scripts/prune_evidence.py`, which produces the ledger's
+  evidence column from a real database (read-only, `immutable=1`, safe against a
+  live deployment). That column cannot come from the repository: source proves a
+  feature *exists*, only a database somebody worked in shows whether anyone reached
+  for it.
+
+  Building it surfaced three ways such a report lies, each now closed. Verb names
+  were **guessed** in the first draft, and reported zero events for agent
+  supervision against a database that plainly exercises it — an argument to cut the
+  fleet loop, from a typo; a test now pins every verb against the vocabulary the
+  code actually writes, extracted by AST because `verb="lease_renewed" if renewed
+  else "claimed"` defeats a regex. **Forge inbound** lands its events as imported
+  history by design, and the default query excludes imported rows, so it read as
+  never-used however much it was used — now a flagged exception with its own test.
+  And **migration-seeded singleton tables** can never read zero, so they were
+  dropped from the map: a count with a floor measures nothing.
+
+  The report also refuses to collapse `n/a` into `0`. A pure read surface — the
+  graph view, the answerability page, search, export, recovery — writes nothing and
+  is invisible to this tooling *by construction*; saying so plainly matters because
+  two of the three subsystems the guide names as candidates are in that category,
+  and a reviewer skimming a column of zeroes would not stop to notice.
+
 - **A container image, built and proved in CI — and not published.** A
   `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
   reaches the runtime image, non-root uid 10001, one volume holding the SQLite file

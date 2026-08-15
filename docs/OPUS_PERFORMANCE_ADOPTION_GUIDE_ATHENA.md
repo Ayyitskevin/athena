@@ -572,7 +572,29 @@ Linux-only support in OPERATIONS.md and make `athena-doctor` say so on other
 platforms. The decision is scope, not code; the fallback is a day of work if
 wanted.
 
-### F-3.4 Prune or promote — the standing review
+### F-3.4 Prune or promote — the standing review — **DONE** (first ledger drafted)
+
+> Landed as the item describes: a process, with the first ledger drafted from
+> evidence and every verdict left unset for Kevin. `docs/PRUNE_LEDGER.md` plus
+> `scripts/prune_evidence.py`, which regenerates the evidence column from a real
+> database read-only.
+>
+> Three findings worth keeping, all of them about how a ledger like this LIES.
+> Guessed verb names reported zero events for agent supervision against a database
+> that plainly exercises it — a typo arguing to cut the fleet loop; verbs are now
+> pinned against the code by an AST-based test, because
+> `verb="lease_renewed" if renewed else "claimed"` defeats a regex. Forge inbound
+> lands as imported history BY DESIGN and the default evidence query excludes
+> imported rows, so it read as never-used regardless of truth — the one candidate
+> the tooling can measure was the one it measured wrong. And migration-seeded
+> singleton tables can never read zero, so they measure nothing and are excluded.
+>
+> The honest limitation, stated in the ledger rather than buried: a pure read
+> surface leaves no trace, so `n/a` is reported instead of `0` — and **two of the
+> three candidates this item names are in that category**. The evidence is worst
+> exactly where the question is sharpest, which is a reason to judge those two on
+> operator habit rather than to wait for data that will never arrive.
+> Original finding follows.
 
 VISION.md says "when a proposed feature doesn't serve the picture, cut it or
 reshape it"; nothing visible has ever been cut, and the maintenance surface
@@ -602,7 +624,8 @@ hand to a fleet in the first place.
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
 ~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → ~~F-2.3/F-2.4~~ (done) → the
-three [OPERATOR DECISION] items whenever Kevin decides — each now has a brief in
+three [OPERATOR DECISION] items whenever Kevin decides (F-3.4's first ledger is
+drafted and waiting on verdicts) — each decision now has a brief in
 [`DECISIONS_PENDING.md`](DECISIONS_PENDING.md), so deciding is a read rather than a
 research project. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
