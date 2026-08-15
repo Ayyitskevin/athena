@@ -25,9 +25,14 @@ export ATHENA_BOOTSTRAP_TOKEN=$(python3 -c 'import secrets;print(secrets.token_u
 docker compose run --rm athena --bootstrap
 ```
 
-That migrates the database and serves with bootstrap enabled. Create the first
-admin against the token (see [OPERATIONS.md](OPERATIONS.md) for the request), stop
-the container, then bring it up normally — **without** the token in the
+That migrates the database and serves with bootstrap enabled. Now create the first
+admin against the token (see [OPERATIONS.md](OPERATIONS.md) for the request) —
+**this step is not optional.** `athena-serve` refuses to start a database that has
+no active administrator, so a volume that was bootstrapped but never given one
+cannot be brought up again; you would have to delete it and start over. CI performs
+exactly this sequence, which is how that sharp edge was found.
+
+Then stop the container and bring it up normally — **without** the token in the
 environment:
 
 ```bash

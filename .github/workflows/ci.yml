@@ -103,6 +103,9 @@ jobs:
           set -euo pipefail
           docker volume create athena-ci-data >/dev/null
           token="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+          # Carried to the next step explicitly rather than relying on `docker exec`
+          # inheriting the run-time environment. A throwaway CI credential.
+          echo "ATHENA_CI_BOOTSTRAP_TOKEN=$token" >> "$GITHUB_ENV"
           docker run --detach --name athena-ci \
             --volume athena-ci-data:/var/lib/athena \
             --env "ATHENA_BOOTSTRAP_TOKEN=$token" \
@@ -118,6 +121,37 @@ jobs:
           docker exec athena-ci test -f /var/lib/athena/athena.db
           owner="$(docker exec athena-ci stat -c '%U' /var/lib/athena/athena.db)"
           test "$owner" = "athena" || { echo "database owned by $owner"; exit 1; }
+      - name: Create the first admin, the way an operator does
+        run: |
+          set -euo pipefail
+          # Not decoration: `athena-serve` refuses to start a database with no
+          # active administrator, so without this the container can never be
+          # restarted out of bootstrap mode. Doing it here means the job exercises
+          # the real first-run flow end to end rather than half of it.
+          admin="$(docker exec --env "ATHENA_BOOTSTRAP_TOKEN=$ATHENA_CI_BOOTSTRAP_TOKEN" \
+            athena-ci python -c "
+          import json, os, urllib.request
+          request = urllib.request.Request(
+              'http://127.0.0.1:8000/users',
+              data=json.dumps({
+                  'email': 'ci@example.com',
+                  'name': 'CI admin',
+                  'password': 'ci-password-000001',
+              }).encode(),
+              headers={
+                  'Content-Type': 'application/json',
+                  'X-Athena-Bootstrap-Token': os.environ['ATHENA_BOOTSTRAP_TOKEN'],
+              },
+          )
+          print(json.dumps(json.load(urllib.request.urlopen(request, timeout=10))))
+          ")"
+          echo "$admin"
+          python3 -c "
+          import json, sys
+          admin = json.loads(sys.argv[1])
+          assert admin['id'] == 1, admin
+          assert admin['role'] == 'admin', admin
+          " "$admin"
       - name: A second container on the same volume starts with no bootstrap
         run: |
           set -euo pipefail
