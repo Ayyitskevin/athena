@@ -141,6 +141,20 @@ the newest one and for what tagging still requires.
   two of the three subsystems the guide names as candidates are in that category,
   and a reviewer skimming a column of zeroes would not stop to notice.
 
+  **The ledger's first finding is about the project, not any subsystem.** F-3.4 asks
+  when each subsystem was last used in the dogfood deployment; there is no dogfood
+  deployment, and RELEASE_READINESS.md has always said so — *"no production
+  deployment has occurred"*. So that column cannot be filled by anyone, and the
+  question changes from "what has gone quiet" (nothing has ever spoken) to "what was
+  built on demonstrated need rather than a guess". The ledger answers it with the
+  evidence that does exist: the two artifacts encoding what Athena's author believes
+  the product is — the demo seed and the 25-step field exercise. Not usage evidence,
+  but intent evidence, and it discriminates. **Six measurable subsystems are touched
+  by neither story** — automation rules, outbound webhooks, attachments, saved
+  filters, desk cursors and OIDC login — while forge inbound, one of the guide's
+  three pre-named candidates, IS exercised by the field exercise, which is evidence
+  in its favour.
+
 - **A container image, built and proved in CI — and not published.** A
   `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
   reaches the runtime image, non-root uid 10001, one volume holding the SQLite file

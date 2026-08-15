@@ -592,9 +592,19 @@ wanted.
 > The honest limitation, stated in the ledger rather than buried: a pure read
 > surface leaves no trace, so `n/a` is reported instead of `0` — and **two of the
 > three candidates this item names are in that category**. The evidence is worst
-> exactly where the question is sharpest, which is a reason to judge those two on
-> operator habit rather than to wait for data that will never arrive.
-> Original finding follows.
+> exactly where the question is sharpest.
+>
+> **And the premise needed correcting.** This item asks for "last real use in the
+> dogfood deployment". There is no dogfood deployment — Athena has never been run in
+> anger, which RELEASE_READINESS.md has always said. That column cannot be filled by
+> anyone, so the ledger asks the answerable question instead: which subsystems does
+> Athena's own account of itself reach? Measured against the demo seed and the
+> 25-step field exercise, **six measurable subsystems are touched by neither**
+> (automation rules, outbound webhooks, attachments, saved filters, desk cursors,
+> OIDC login) — and none of this item's three pre-named candidates is among them.
+> Forge inbound is exercised by the field exercise, which is evidence FOR it.
+> The single thing that would improve this ledger more than any verdict is using
+> Athena for a month. Original finding follows.
 
 VISION.md says "when a proposed feature doesn't serve the picture, cut it or
 reshape it"; nothing visible has ever been cut, and the maintenance surface
