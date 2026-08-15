@@ -36,7 +36,7 @@ from markupsafe import Markup, escape
 import nh3
 
 from athena.aegis import embed_data
-from athena.core import embeds, links, users
+from athena.core import embeds, links, notifications, users
 
 # One configured Markdown renderer for every body. `html=False` is the security
 # linchpin (raw HTML is escaped, not emitted); `breaks=True` preserves authored
@@ -47,9 +47,10 @@ _MD = MarkdownIt("commonmark", {"html": False, "breaks": True})
 _HREF = {"issue": "/aegis/issues/{}", "page": "/mentor/pages/{}"}
 
 # A mention token [[user:N]] renders as @Name (a plain span — there is no user
-# page to link to). Shares the grammar with notifications._MENTION_RE so the thing
-# that NOTIFIES and the thing that RENDERS can never disagree on what a mention is.
-_MENTION_RE = re.compile(r"\[\[user:(\d+)\]\]")
+# page to link to). Imports notifications.MENTION_RE rather than restating it, so the
+# thing that NOTIFIES and the thing that RENDERS cannot disagree on what a mention
+# is — they were two identical literals under a comment claiming they were shared.
+_MENTION_RE = notifications.MENTION_RE
 
 
 def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:

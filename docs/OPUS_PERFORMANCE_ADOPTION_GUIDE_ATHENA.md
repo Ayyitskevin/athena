@@ -444,7 +444,42 @@ the README for that.
 
 ## Wave F-3 — durability and hygiene
 
-### F-3.1 Property-based tests over the hand-rolled parsers
+### F-3.1 Property-based tests over the hand-rolled parsers — **DONE**
+
+> Landed, and it found a real one on the first run. Every bracket grammar captured
+> `\d+` unbounded; Python raises `ValueError` from `int(str)` past 4300 digits; so
+> `[[issue:<4301 digits>]]` in an issue body crashed `extract_refs` inside
+> `sync_links` — **on every issue and page write**. Same shape in `[[KEY-N]]`,
+> `[[user:N]]` (two copies, see below) and the forge linkifier, where the text
+> arrives from a webhook rather than a person. Five sites now share one
+> `links.ID_DIGITS` bound of 19 digits (a SQLite rowid's width), so an over-long run
+> simply stops matching and stays literal text. Verified the honest way: the
+> property fails against the old grammar and passes against the new.
+>
+> Two notes for whoever writes the next property test. The generator has to reach
+> the grammar — plain `st.text()` almost never emits a bracket, so `BODY` mixes
+> `[`, `]`, `:` and the literal words `issue`/`page`/`user` into its alphabet, and
+> without that these tests would have proved only that non-matching input does not
+> match. And the settings live once in `conftest.py` (`derandomize=True`,
+> `database=None`): a property test with fresh random inputs each run can fail on a
+> commit that changed nothing, which trains everyone to re-run red builds.
+>
+> One thing found and deliberately NOT changed: `parse('"a:b"')` raises
+> `unknown search field 'a'`. The tokenizer strips quotes before the colon check, so
+> quoting does not protect a phrase containing a colon — searching for
+> `"Error: timeout"` is an error rather than a text search. It is a UX wart, not a
+> crash, and changing it changes query semantics for saved filters, so it belongs to
+> whoever owns that call rather than to a testing PR.
+>
+> On the dependency: the freeze was regenerated in a clean venv as documented, but
+> with `-c constraints/ci-py312.txt` so pip resolved only what was new. The
+> unconstrained form in the README swept in ~20 unrelated upgrades (fastapi
+> 0.139→0.141, starlette 1.3.1→1.6.0, ruff 0.15→0.16) — a framework upgrade riding
+> inside a testing PR, where a later bisect would never look. The README now
+> documents both forms and when each is right. Net diff: two pins (`hypothesis`,
+> `sortedcontainers`; `attrs` was already there), counts updated in
+> `tests/test_supply_chain.py` and the two prose files that state them. Original
+> finding follows.
 
 The suite is curated-case excellent but has no generative testing, and the
 codebase carries several hand-rolled parsers over untrusted input: the
@@ -457,7 +492,34 @@ parse-never-crashes (arbitrary text), parse/serialize round-trips where a
 serializer exists, and grammar-error-always-names-the-atom (QUERY.md's
 promise). Keep them deterministic in CI (`derandomize=true`, explicit seeds).
 
-### F-3.2 One connection per request
+### F-3.2 One connection per request — **DONE**
+
+> Landed, and the premise measured much larger than this item claims. The item
+> blames "re-running three PRAGMAs"; the PRAGMAs are free (~0.005 ms each). What
+> costs is the **first statement that touches the database file: ~2.2 ms to attach,
+> per connection.** `sqlite3.connect` itself is lazy (0.03 ms) and `SELECT 1` never
+> reaches the file, which is why this hides from casual profiling. Holding another
+> connection open does not help — it is genuinely per-connection — while reusing an
+> already-open one costs 0.004 ms, 500× less. So the only fix is to open fewer, and
+> the value is far above what "fewer PRAGMAs" suggests.
+>
+> Counted, not assumed: a browser page and a plain REST call opened **2**, an
+> idempotent write opened **5** (session, identity, reserve, publish, route). All
+> are 1 now, and `/static` is still **0** — the holder opens lazily, so F-0.4's skip
+> survives. Measured end to end: dashboard **14.97 → 9.81 ms**, `GET /issues`
+> **15.22 → 10.20 ms**, idempotent `POST /issues` **35.32 → 19.19 ms**.
+>
+> Two things a reader should know before touching this. **The route dependency
+> cannot own the connection's lifetime** — the idempotency publish and the
+> exception handlers run *after* `get_conn` has exited, which is why an outer
+> middleware creates and closes the holder instead. And **the invariant that makes
+> sharing safe is transaction cleanliness**: `db.transaction` picks a real
+> transaction or a savepoint by reading `conn.in_transaction`, so a layer returning
+> the connection mid-transaction would turn the next writer's commit into a
+> savepoint that is released without committing — a lost write, no error, no log.
+> Every handoff verifies it, and a test proves the check fires. The 161
+> Barrier-coordinated race tests pass unchanged; they use their own connections per
+> thread, which is a different axis from this one. Original finding follows.
 
 Each authenticated request opens 2-4 SQLite connections (session middleware,
 route dependency, idempotency, handlers), each re-running three PRAGMAs, and
@@ -506,7 +568,7 @@ hand to a fleet in the first place.
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
-~~F-2.5~~ (done) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
+~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → F-2.3/F-2.4 (release prep) → the
 three [OPERATOR DECISION] items whenever Kevin decides. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.

@@ -70,10 +70,10 @@ def _write_sbom(path: Path, document: dict[str, Any]) -> Path:
 
 
 def test_current_repository_has_exact_ci_build_and_bootstrap_subjects():
-    assert len(check_supply_chain.read_pins(ROOT / "constraints/ci-py312.txt")) == 61
+    assert len(check_supply_chain.read_pins(ROOT / "constraints/ci-py312.txt")) == 63
     dependencies = check_supply_chain.expected_dependencies(ROOT)
 
-    assert len(dependencies) == 63
+    assert len(dependencies) == 65
     assert dependencies["pip"].version == "26.1.2"
     assert dependencies["setuptools"].version == "83.0.0"
     assert dependencies["fastapi"].source.endswith("constraints/ci-py312.txt")

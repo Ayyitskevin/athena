@@ -12,6 +12,27 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **A long number between brackets could take down a write.** Python raises
+  `ValueError` from `int(str)` past 4300 digits, and every one of Athena's
+  bracket grammars captured `\d+` with no bound — so a body containing
+  `[[issue:<4301 digits>]]` crashed `links.extract_refs`, which runs inside
+  `sync_links`, which runs on **every issue and page write**. An authenticated
+  author could 500 their own write by typing a long number, and the same shape
+  reached `[[KEY-N]]`, `[[user:N]]` (both the notify and the render copy), and the
+  forge key linkifier — where the text arrives from a signed-inbound webhook rather
+  than a person. Four grammars, five sites, one bug. All of them now bound the run
+  through a single `links.ID_DIGITS` (19 digits, the width of a SQLite rowid), so
+  an over-long run stops matching and stays literal text like any other
+  non-reference — no caller has to defend against a number it was handed. Found by
+  the property tests below, which is the whole argument for them: no hand-written
+  example contains a 4301-digit number, because nobody thinks to write one.
+
+  The mention grammar was two identical literals in `core/notifications.py` and
+  `web/render.py`, under a comment asserting they were shared — a claim source code
+  cannot keep on its own. `render.py` now imports the one in `notifications.py`,
+  so a future edit cannot make the thing that notifies and the thing that renders
+  disagree about what a mention is.
+
 - **Credential stuffing is bounded per account, not just per IP.** Login
   throttling was per-IP only, which bounds one peer and not one account —
   credential stuffing is distributed by construction, so a thousand hosts
@@ -89,6 +110,29 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Generative tests over the hand-rolled parsers.** The suite was curated-case
+  excellent and had no property testing, against a codebase carrying four
+  hand-rolled grammars over untrusted text. `hypothesis` is now in the dev extras
+  with `tests/test_parser_properties.py` covering the `[[ref]]` link grammar, the
+  mention grammar, the work-query grammar and the forge key linkifier: parse never
+  raises anything but its declared error, what it returns is well-formed (closed
+  vocabularies stay closed, results stay deduplicated, every ref it claims is
+  really in the text), references round-trip through a rendered body, re-parsing a
+  query's own `raw` is stable — which is what makes a saved filter mean the same
+  thing the second time it is opened — and an error about an atom always names
+  that atom, which is QUERY.md's promise.
+
+  It paid for itself immediately: see the digit-bound crash under Security. The
+  property that found it fails against the old code and passes against the new,
+  which is the only way to know a regression test is one.
+
+  Configured once in `tests/conftest.py` with `derandomize=True` and
+  `database=None`. A property test that picks fresh inputs every run can fail on a
+  commit that changed nothing, and that is the worst kind of red build — the honest
+  response ("re-run it") is indistinguishable from ignoring a real regression.
+  Deterministic inputs mean a failure reproduces and a green run means the same
+  thing twice, including under `pytest -n 4`.
+
 - **The cockpit updates itself.** VISION promises the operator can see what each
   agent is doing right now, against a UI that only changed when someone pressed
   reload — so the dashboard's fleet-attention card, Mission Control's active
@@ -117,6 +161,36 @@ the newest one and for what tagging still requires.
   rollup cache; the measurement that removed the cache also removed the need.
 
 ### Changed
+
+- **One SQLite connection per request, down from two to five.** The session
+  middleware opened one to resolve the cookie, the route dependency opened
+  another, and an idempotent write opened three more (identity, reserve, publish).
+  The cost is not where it looks: `sqlite3.connect` is lazy and costs ~0.03 ms,
+  but the **first statement that touches the database file pays ~2.2 ms to
+  attach** — per connection, and holding another one open does not help, while
+  reusing an already-open connection costs 0.004 ms. So a browser page spent
+  ~4.4 ms and an idempotent write ~11 ms simply reaching the data, against a whole
+  fleet-attention rollup that measures ~0.5 ms.
+
+  A request now carries one lazily-opened connection (`core/deps.RequestConnection`),
+  created by a middleware registered outside the session layer so it also spans
+  what runs *after* the route returns — the idempotency publish, an exception
+  handler recording a refusal. That is why the route dependency could not own the
+  lifetime: it has already exited by then. Lazily, so `/static` still opens zero,
+  keeping the skip added for browser caching.
+
+  Measured end to end: **`GET /aegis/dashboard` 14.97 ms → 9.81 ms**, **`GET
+  /issues` 15.22 ms → 10.20 ms**, **`POST /issues` with an idempotency key
+  35.32 ms → 19.19 ms** — a third off every page and REST read, and nearly half off
+  an agent's idempotent write.
+
+  Sharing is safe only if a borrower returns the connection with no transaction
+  open, and that is enforced rather than assumed: `db.transaction` chooses between
+  a real transaction and a savepoint by reading `conn.in_transaction`, so a layer
+  that left one open would silently turn the next writer's commit into a savepoint
+  released without ever committing — a lost write with no error and no log. Every
+  handoff checks, rolls back, and logs which layer misbehaved. The
+  Barrier-coordinated race tests (161 of them) still pass unchanged.
 
 - **Packaged assets are browser-cacheable, and fetching one no longer runs the
   session.** `_apply_private_cache_policy` marked every cookie-carrying response

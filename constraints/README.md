@@ -24,6 +24,24 @@ python3.12 -m venv "$constraint_env"
 "$constraint_env/bin/python" -I -m pip freeze --exclude-editable
 ```
 
+That form resolves the whole graph fresh, so it upgrades every package that has
+moved since the last refresh — which is what you want when the *point* is to move
+the graph forward. It is the wrong tool for adding one dependency: the diff then
+carries a framework upgrade next to the addition, and a later bisect lands on a
+commit whose title says nothing about it. To add or change one package, keep the
+existing pins and let pip resolve only what is new — same clean environment, same
+`pip check`, one extra flag:
+
+```bash
+"$constraint_env/bin/python" -I -m pip install \
+  -c constraints/ci-py312.txt -e ".[dev,mcp]"
+```
+
+Packages already listed hold their pinned versions; a package not yet listed is
+unconstrained and resolves normally. This is also exactly the install CI performs,
+so the freeze it produces is the one CI will diff against. Either way the output
+is pip's, not hand-written — that is the part that must not be shortcut.
+
 Replace `ci-py312.txt` with the final command's output, then repeat CI's
 constrained install in a second clean environment and run Ruff, the full test
 suite, and `scripts/smoke_app.py`. CI also compares its installed external
@@ -62,14 +80,14 @@ wheel-profile audits in
 [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 The CI evidence job first scans this tool lock itself. It then audits exactly
-61 CI dependency pins, hash-pinned pip, and the pinned setuptools build backend.
+63 CI dependency pins, hash-pinned pip, and the pinned setuptools build backend.
 [`scripts/check_supply_chain.py`](../scripts/check_supply_chain.py) rejects
 unpinned or duplicate inputs, a scanner environment that differs from the
 hash-locked tool graph, scanner/service failures, malformed required CycloneDX
 identity fields/components, component drift, and any reported vulnerability.
 There is no advisory ignore list or soft-pass path.
 
-The resulting 63-component CycloneDX file describes CI, build, and bootstrap
+The resulting 65-component CycloneDX file describes CI, build, and bootstrap
 *inputs*. It is not a signed release SBOM, does not claim that the application
 constraint graph is hash-locked, and does not attest to a particular wheel.
 Advisory status is also time-sensitive: rerunning against PyPI's vulnerability

@@ -53,6 +53,7 @@ from athena.core import (
     budgets,
     db,
     deployment,
+    deps,
     identity,
     security_events,
     events_api,
@@ -385,6 +386,43 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
+class RequestConnectionMiddleware:
+    """Give one request exactly one SQLite connection, and close it once.
+
+    A request used to open several: the session middleware for the cookie, the route
+    dependency for the handler, and an idempotent write three more (identity,
+    reserve, publish). Opening is not free — `sqlite3.connect` is lazy and costs
+    ~0.03 ms, but the first statement that touches the file pays ~2.2 ms to attach,
+    per connection, and holding another open does not help. Measured here: ~4.4 ms
+    of attach on a browser page and ~11 ms on an idempotent write, against a
+    fleet-attention rollup that measures ~0.5 ms.
+
+    Pure ASGI, and registered OUTSIDE the session middleware so it also spans the
+    layers that run after the route returns — the idempotency publish, an exception
+    handler recording a refusal. Those are why the route dependency cannot own the
+    lifetime: it has already exited by then.
+
+    The holder opens lazily, so this middleware costs a request that never touches
+    the database exactly nothing — a `/static` fetch still opens zero connections.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        holder = deps.RequestConnection(lambda: scope["app"].state.db_path)
+        scope.setdefault("state", {})["db_holder"] = holder
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            # One close, whatever happened — a handler that raised past every
+            # exception handler still must not leak the file handle.
+            holder.close()
+
+
 class RunContextMiddleware:
     """Capture run headers into the request-scoped run context, so every activity
     event recorded while handling this request is stamped with that run metadata.
@@ -542,22 +580,44 @@ class IdempotencyMiddleware:
         ]
 
     @staticmethod
-    def _run_db(db_path, operation, **kwargs):
-        conn = db.connect(db_path)
+    def _run_db(source, operation, **kwargs):
+        """Run one idempotency operation against the request's connection.
+
+        `source` is the request's RequestConnection when the request-connection
+        middleware is installed — the normal case, and the reason an idempotent
+        write no longer pays three extra ~2.2 ms attaches. It falls back to a path
+        so this middleware still works when mounted without that one (a bare ASGI
+        app, a focused test).
+
+        Nothing here closes a borrowed connection: the reserve happens before the
+        route and the publish after it, and the middleware that opened it closes it
+        once. Every idempotency operation commits or rolls back its own transaction,
+        so the connection goes back clean — RequestConnection.get verifies that on
+        the next handoff rather than trusting it.
+        """
+        if isinstance(source, deps.RequestConnection):
+            return operation(source.get(), **kwargs)
+        conn = db.connect(source)
         try:
             return operation(conn, **kwargs)
         finally:
             conn.close()
 
+    def _source(self, scope):
+        """This request's connection holder, or the path if there is no middleware."""
+        return scope.get("state", {}).get("db_holder") or self.db_path
+
     async def _authenticate(
-        self, headers: dict[bytes, bytes]
+        self, scope, headers: dict[bytes, bytes]
     ) -> tuple[str | None, int | None, bool]:
         """Return a canonical live credential identity, optional token id, and
         whether that credential's account is currently paused."""
         authorization = headers.get(b"authorization")
         if authorization is not None and authorization.lower().startswith(b"bearer "):
             raw = authorization[len(b"bearer ") :].strip().decode("latin-1")
-            actor = await asyncio.to_thread(self._resolve_token, raw)
+            actor = await asyncio.to_thread(
+                self._resolve_token, self._source(scope), raw
+            )
             if actor is None:
                 return None, None, False
             return (
@@ -573,24 +633,20 @@ class IdempotencyMiddleware:
                     actor_id = int(raw_actor.decode("latin-1"))
                 except ValueError:
                     return None, None, False
-                actor = await asyncio.to_thread(self._resolve_actor, actor_id)
+                actor = await asyncio.to_thread(
+                    self._resolve_actor, self._source(scope), actor_id
+                )
                 if actor is not None:
                     return f"actor:{actor_id}", None, bool(actor.get("paused_at"))
         return None, None, False
 
-    def _resolve_token(self, raw: str) -> dict | None:
-        conn = db.connect(self.db_path)
-        try:
-            return tokens.resolve_token(conn, raw)
-        finally:
-            conn.close()
+    @classmethod
+    def _resolve_token(cls, source, raw: str) -> dict | None:
+        return cls._run_db(source, tokens.resolve_token, raw=raw)
 
-    def _resolve_actor(self, actor_id: int) -> dict | None:
-        conn = db.connect(self.db_path)
-        try:
-            return users.get_user(conn, actor_id)
-        finally:
-            conn.close()
+    @classmethod
+    def _resolve_actor(cls, source, actor_id: int) -> dict | None:
+        return cls._run_db(source, users.get_user, user_id=actor_id)
 
     @staticmethod
     async def _read_body(receive):
@@ -647,6 +703,7 @@ class IdempotencyMiddleware:
 
     async def _claim(
         self,
+        scope,
         *,
         key: str,
         identity: str,
@@ -656,7 +713,7 @@ class IdempotencyMiddleware:
     ) -> idempotency.ClaimResult:
         return await asyncio.to_thread(
             self._run_db,
-            self.db_path,
+            self._source(scope),
             idempotency.claim_or_read,
             key=key,
             identity=identity,
@@ -668,6 +725,7 @@ class IdempotencyMiddleware:
 
     async def _mark_indeterminate(
         self,
+        scope,
         *,
         key: str,
         identity: str,
@@ -678,7 +736,7 @@ class IdempotencyMiddleware:
             await asyncio.shield(
                 asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.mark_indeterminate,
                     key=key,
                     identity=identity,
@@ -778,7 +836,7 @@ class IdempotencyMiddleware:
             return
 
         try:
-            identity, token_id, paused = await self._authenticate(headers)
+            identity, token_id, paused = await self._authenticate(scope, headers)
         except sqlite3.Error:
             _logger.exception("could not authenticate idempotent request")
             await _send_json_response(
@@ -839,6 +897,7 @@ class IdempotencyMiddleware:
         while True:
             try:
                 claim = await self._claim(
+                    scope,
                     key=key,
                     identity=identity,
                     method=method,
@@ -952,6 +1011,7 @@ class IdempotencyMiddleware:
                 raise _IdempotencyCaptureError("incomplete ASGI response")
         except BaseException:
             await self._mark_indeterminate(
+                scope,
                 key=key,
                 identity=identity,
                 owner_token=owner_token,
@@ -976,7 +1036,7 @@ class IdempotencyMiddleware:
                 )
                 completion = await asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.complete,
                     key=key,
                     identity=identity,
@@ -995,6 +1055,7 @@ class IdempotencyMiddleware:
                     raise RuntimeError("invalid idempotency completion state")
             except BaseException:
                 await self._mark_indeterminate(
+                    scope,
                     key=key,
                     identity=identity,
                     owner_token=owner_token,
@@ -1011,6 +1072,7 @@ class IdempotencyMiddleware:
 
         if status_code >= 500:
             await self._mark_indeterminate(
+                scope,
                 key=key,
                 identity=identity,
                 owner_token=owner_token,
@@ -1020,7 +1082,7 @@ class IdempotencyMiddleware:
             try:
                 await asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.release,
                     key=key,
                     identity=identity,
@@ -1616,7 +1678,10 @@ def create_app(
         )
         raw = None if signed_inbound else request.cookies.get(config.SESSION_COOKIE)
         if raw:
-            conn = db.connect(request.app.state.db_path)
+            # The request's one connection (see RequestConnectionMiddleware) rather
+            # than a second one opened and thrown away here — resolving a cookie used
+            # to cost a full ~2.2 ms attach on top of the route's own.
+            conn = deps.request_connection(request).get()
             try:
                 request.state.user = sessions.resolve_session(conn, raw)
                 # The pause lever reaches browser sessions too: a paused user is
@@ -1660,7 +1725,10 @@ def create_app(
                         request.state.attention_total = attention["total"]
                         request.state.attention_signals = attention["signals"]
             finally:
-                conn.close()
+                # Not closed here: the route, the idempotency publish and any
+                # exception handler still need it. The middleware that opened it
+                # closes it once, at the end of the request.
+                deps.RequestConnection._ensure_clean(conn)
         # The fail-closed switch, applied above every route rather than inside them,
         # so a page or endpoint added later inherits it instead of having to
         # remember it. It runs AFTER the session is resolved, so a signed-in browser
@@ -1689,6 +1757,11 @@ def create_app(
             )
         return await call_next(request)
 
+    # Outside the session middleware, so the one connection also spans the layers
+    # that run AFTER the route returns (the idempotency publish, an exception
+    # handler recording a refusal). It opens lazily, so sitting this high costs a
+    # request that never reaches the database nothing at all.
+    app.add_middleware(RequestConnectionMiddleware)
     app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")

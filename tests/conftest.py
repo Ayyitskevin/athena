@@ -13,6 +13,7 @@ effect immediately.
 """
 
 import httpx
+import hypothesis
 from fastapi.testclient import TestClient
 import pytest
 
@@ -114,3 +115,29 @@ def fast_password_hashing(monkeypatch):
     # policy itself (600k, needs_rehash, dummy_verify cost parity) is covered by
     # dedicated tests that pin explicit iteration values.
     monkeypatch.setattr(passwords, "_ITERATIONS", 2_000)
+
+
+# --- generative testing ------------------------------------------------------
+#
+# Hypothesis is configured once, here, so every property test in the suite runs
+# under the same contract rather than restating settings per module.
+#
+# `derandomize=True` is the load-bearing one. A property test that picks fresh
+# random inputs each run is a test that can fail on a commit which changed nothing
+# — the worst kind of red build, because the honest response ("re-run it") is
+# indistinguishable from ignoring a real regression. Derandomized, the inputs are a
+# deterministic function of the test, so a failure is reproducible and a green run
+# means the same thing twice.
+#
+# `database=None` for the same reason at a different layer: Hypothesis's example
+# database would otherwise make a run depend on files left by an earlier run, which
+# under `pytest -n 4` are also being written by three other processes.
+hypothesis.settings.register_profile(
+    "athena",
+    max_examples=200,
+    derandomize=True,
+    database=None,
+    deadline=None,  # a first-call import or SQLite page fault is not a failure
+    suppress_health_check=[hypothesis.HealthCheck.function_scoped_fixture],
+)
+hypothesis.settings.load_profile("athena")
