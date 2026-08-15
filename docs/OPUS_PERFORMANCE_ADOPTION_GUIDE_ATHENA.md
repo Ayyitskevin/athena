@@ -392,7 +392,31 @@ everything mechanical around it: a PyPI publish workflow (trusted publishing,
 dry-run against TestPyPI, gated on the human tag event), the version-bump
 discipline note, and a RELEASING.md that names the exact order. Do not tag.
 
-### F-2.5 Liveness for the cockpit — htmx polling, not SSE
+### F-2.5 Liveness for the cockpit — htmx polling, not SSE — **DONE**
+
+> Landed on exactly the three surfaces named below, with one design decision worth
+> keeping: **the poll is the page**. Each panel's `hx-get` re-enters the route that
+> rendered it, distinguished by an explicit `?panel=<name>` marker rather than the
+> `HX-Request` header — the header would mean "any future htmx interaction on the
+> dashboard returns the attention card", a trap waiting for the next feature. The
+> consequence is that no partial has its own endpoint, so no partial can be given a
+> weaker gate than the page it mirrors, and a filtered view survives its own
+> refresh instead of silently widening to the whole fleet.
+>
+> The acceptance criterion "a paused/anonymous session polls nothing" needed no new
+> code and got tests instead: the polling markup lives *inside* the admin-gated
+> panel, so a viewer renders a page with no poll in it, and the session middleware
+> already treats a paused user as signed out. Asking for a panel directly is
+> answered the same way the page answers — an empty body, not a card.
+>
+> Two things surfaced while building it. `fleet_work.parse_query_pairs` is strict
+> (an unknown key is a 400, deliberately, so a request can never be silently
+> widened), so `/admin/agents/runs` strips the panel marker before parsing rather
+> than loosening that rule. And the swap must be `outerHTML` on the panel's root:
+> anything else polls exactly once and then stops, which looks live for one
+> interval and is stale forever after — pinned by a test, since it fails silently.
+> `ATHENA_LIVE_REFRESH_SECONDS` defaults to 10, accepts 0 to disable, and is held
+> to 5–3600 otherwise. Original finding follows.
 
 VISION's Observe promise ("what is each agent doing right now") meets a
 refresh-only UI. SSE fights the one-process model and htmx already ships;
@@ -482,7 +506,7 @@ hand to a fleet in the first place.
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
-F-2.5 → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
+~~F-2.5~~ (done) → F-3.1/F-3.2 → F-2.3/F-2.4 (release prep) → the
 three [OPERATOR DECISION] items whenever Kevin decides. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.

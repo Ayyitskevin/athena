@@ -1,4 +1,8 @@
-<section class="panel" aria-labelledby="fleet-active-work-heading">
+{# Refreshes itself (see partials/live.html): a lease expiring and a check-in going
+   stale are both events that happen to a page nobody is touching, which is exactly
+   the case a reload-only view reports wrong. #}
+{% import "partials/live.html" as live_ui %}
+<section class="panel" aria-labelledby="fleet-active-work-heading"{{ live_ui.live_attrs(live) }}>
     <div class="panel-head"><h2 id="fleet-active-work-heading">Active claimed work</h2></div>
     <div class="panel-body">
     <p class="subtitle">
@@ -144,7 +148,8 @@
     <p class="empty-state">No agent-held issue claims match this filter.</p>
     {% endif %}
     <p class="note-small">
-        Observed {{ active_work.observed_at }} UTC. An expired lease, stale/missing
+        Observed {{ active_work.observed_at }} UTC.{{ live_ui.live_cadence(live) }}
+        An expired lease, stale/missing
         check-in, or visible blocker is an operator signal only; this view never
         revokes credentials, transfers work, or approves an action.
     </p>

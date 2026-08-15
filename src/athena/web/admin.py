@@ -45,6 +45,7 @@ from athena.core import (
 )
 from athena.core.deps import get_conn
 from athena.mcp.config import claude_mcp_config
+from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
@@ -903,7 +904,15 @@ def agent_runs_admin(
         err.headers.update(_ACTIVE_WORK_PRIVATE_HEADERS)
         return err
     try:
-        query_pairs = list(request.query_params.multi_items())
+        # `panel` is this page's own refresh marker, not an active-work criterion.
+        # fleet_work.parse_query_pairs is strict by design — an unknown key is a 400
+        # rather than a silently widened request — so the marker is removed before
+        # the criteria are parsed. Everything else still faces the strict parse.
+        query_pairs = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key != live.PANEL_PARAM
+        ]
         agent_values = [value for key, value in query_pairs if key == "agent_id"]
         # The no-JS "All agents" option submits one empty select value. Treat that
         # exact form shape as absence; repeated keys and empty REST criteria remain
@@ -927,6 +936,19 @@ def agent_runs_admin(
     )
     context["attention_states"] = list(fleet_work.ATTENTION_STATES)
     context["automation_failures"] = automation.list_rules(conn, failing_only=True)
+    context["live"] = live.build(request, live.ACTIVE_WORK)
+    # The table refreshes itself, and its poll re-enters this route — past the same
+    # _admin_required above, through the same parse of the same query string. The
+    # filter an operator chose therefore survives a refresh instead of silently
+    # widening to the whole fleet, and there is no partial-only path that could
+    # forget a gate this one applies.
+    if live.wants_panel(request, live.ACTIVE_WORK):
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/partials/fleet_active_work.html",
+            context=context,
+            headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        )
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
@@ -1234,17 +1256,26 @@ def run_controls_admin(
         for control in controls
         if activity.run_lineage(conn, control["run_id"], actor=user) is not None
     }
+    context = {
+        "controls": controls,
+        "linkable_runs": linkable,
+        "states": list(_CONTROL_STATE_FILTERS),
+        "selected_state": selected,
+        "clipped": len(controls) == run_controls.MAX_LIST_LIMIT,
+        "limit": run_controls.MAX_LIST_LIMIT,
+        "live": live.build(request, live.RUN_CONTROLS),
+    }
+    # Refreshes itself through this same route, so the state filter survives and the
+    # admin gate cannot be bypassed by asking for the panel directly.
+    name = (
+        "admin/partials/run_controls_list.html"
+        if live.wants_panel(request, live.RUN_CONTROLS)
+        else "admin/run_controls.html"
+    )
     return templates.TemplateResponse(
         request=request,
-        name="admin/run_controls.html",
-        context={
-            "controls": controls,
-            "linkable_runs": linkable,
-            "states": list(_CONTROL_STATE_FILTERS),
-            "selected_state": selected,
-            "clipped": len(controls) == run_controls.MAX_LIST_LIMIT,
-            "limit": run_controls.MAX_LIST_LIMIT,
-        },
+        name=name,
+        context=context,
         headers=_ACTIVE_WORK_PRIVATE_HEADERS,
     )
 

@@ -87,6 +87,35 @@ the newest one and for what tagging still requires.
   `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
   build and an htmx upgrade names the new version and digest in the same diff.
 
+### Added
+
+- **The cockpit updates itself.** VISION promises the operator can see what each
+  agent is doing right now, against a UI that only changed when someone pressed
+  reload — so the dashboard's fleet-attention card, Mission Control's active
+  claimed work, and the recorded run controls each re-ask their own page for
+  their own markup every `ATHENA_LIVE_REFRESH_SECONDS` (default 10; `0` turns
+  polling off entirely). htmx is already vendored, so this is three attributes on
+  elements that already existed — no SSE (which fights the one-process model), no
+  websockets, no JS build chain.
+
+  The design point is that **the poll is the page**. A refresh re-enters the same
+  route behind the same admin gate, carrying the same query string, so a filtered
+  view stays filtered and there is no partial-only endpoint that could be given a
+  weaker gate than the page it mirrors. A viewer who may not see a surface has no
+  polling markup to fire, because that markup lives inside the surface they were
+  refused; a paused admin is treated as signed out and so polls nothing, which
+  matters because pause exists to cut off exactly this state. Each panel also
+  prints when it was read and how often it rebuilds — a refresh that has quietly
+  died (polling off, a suspended tab, a network the browser gave up on) is then
+  visibly stale instead of silently wrong.
+
+  The interval is held to 0 or 5–3600 seconds rather than taken as typed. That
+  floor is a load statement, not taste: the nav rollup measures ~0.5 ms for a real
+  fleet, so a 10s poll costs a watching admin ~0.05 ms of server time per second,
+  and a 1s interval would multiply that tenfold without a human eye noticing the
+  difference. This is the item the performance guide expected to depend on a
+  rollup cache; the measurement that removed the cache also removed the need.
+
 ### Changed
 
 - **Packaged assets are browser-cacheable, and fetching one no longer runs the
