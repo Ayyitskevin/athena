@@ -1,0 +1,54 @@
+# Athena, one service and one volume.
+#
+# There is deliberately no `ports:` mapping. ATHENA_NETWORK_MODE defaults to
+# `local`, which permits binding loopback and nothing else — so a published port
+# would map to an address the process is not on, and the failure would look like a
+# hang rather than a refusal. That is worse than not offering it. docs/DOCKER.md
+# explains the shapes that do reach the app, and the ones that remain unsupported.
+#
+# First run, once per volume — `athena-serve` refuses a database that does not
+# exist, and creating the first admin is meant to be an explicit act:
+#
+#   ATHENA_BOOTSTRAP_TOKEN=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))') \
+#     docker compose run --rm athena --bootstrap
+#
+# Then create the first user against that token, stop it, and `docker compose up -d`
+# without the token in the environment.
+
+services:
+  athena:
+    build: .
+    image: athena:local
+    restart: unless-stopped
+    volumes:
+      # One named volume for the SQLite file and the attachment blobs together, so
+      # there is one thing to back up and it is always internally consistent.
+      - athena-data:/var/lib/athena
+    environment:
+      # Left unset on purpose rather than given a default:
+      #   ATHENA_BOOTSTRAP_TOKEN  — only for the one-time bootstrap run above.
+      #   ATHENA_ALLOWED_AUTHORITIES — derived in `local` mode; REQUIRED for tailnet.
+      ATHENA_NETWORK_MODE: local
+      ATHENA_LOG_LEVEL: INFO
+    # The image's HEALTHCHECK asks over loopback from inside the container, which is
+    # where a local-mode bind actually lives.
+
+    # --- reaching it from another machine -----------------------------------
+    # Loopback inside a container namespace is reachable only from that namespace.
+    # To serve a tailnet, the container needs a real Tailscale address, which means
+    # sharing the host's network namespace and binding that address explicitly:
+    #
+    #   network_mode: host
+    #   environment:
+    #     ATHENA_NETWORK_MODE: tailnet
+    #     ATHENA_ALLOWED_AUTHORITIES: "athena.your-tailnet.ts.net:8000"
+    #     ATHENA_ANON_RATE_LIMIT_PER_MINUTE: "60"   # tailnet mode requires > 0
+    #   command: ["--host", "100.x.y.z", "--port", "8000"]
+    #
+    # `network_mode: host` and `ports:` are mutually exclusive, which is the honest
+    # shape here: the port is not being published, the process is on the host's
+    # network. Read docs/DOCKER.md before doing this — tailnet mode has required
+    # settings that `local` derives for you, and it fails closed if they are absent.
+
+volumes:
+  athena-data:
