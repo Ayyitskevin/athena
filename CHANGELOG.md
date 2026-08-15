@@ -110,6 +110,89 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **A container image, built and proved in CI — and not published.** A
+  `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
+  reaches the runtime image, non-root uid 10001, one volume holding the SQLite file
+  and the attachment blobs together), a `compose.yaml`, and `docs/DOCKER.md`. CI
+  builds it and then checks the things that would make it a liability: that it does
+  not run as root, that a fresh volume is still **refused** without an explicit
+  `--bootstrap` (an image that quietly migrated an empty volume would undo the gate
+  the launcher exists to hold), that its declared `HEALTHCHECK` actually reports
+  healthy, that the database lands in the volume owned by the non-root user, and
+  that it restarts on an existing database with no bootstrap token.
+
+  What the compose file deliberately does **not** contain is a `ports:` mapping.
+  `ATHENA_NETWORK_MODE=local` permits binding loopback and nothing else — there is
+  no `public` mode, in a container or out of one — so a published port maps to an
+  address the process is not on, and the failure looks like a hang rather than a
+  refusal. `docs/DOCKER.md` names the shapes that do reach the app (`docker exec`,
+  host networking with a tailnet address, a Tailscale sidecar) and the ones that
+  remain unsupported. Publishing the image is a separate decision and stays open.
+
+- **Release mechanics, up to the point a human takes over.** `RELEASING.md` names
+  the exact order; `.github/workflows/publish.yml` does the mechanical part. It
+  runs only on a pushed `v*` tag or on a manual dispatch that can reach TestPyPI
+  and nothing else, and it sits behind a GitHub Environment so approval is the
+  owner's. Before anything is built, a guard job refuses a tag that does not name
+  the packaged version, a commit that is not an ancestor of `main`, and — the one
+  RELEASE_READINESS.md's checklist asks for and nothing previously enforced — a
+  commit whose `test`, `audit` and `container` checks are not green. Build and
+  publish are one job on purpose: an artifact handoff would mean a second
+  third-party action to pin and a window in which the thing published is not
+  provably the thing verified. The sdist is built first and the wheel from *that*
+  sdist, verified by both the checkout's `verify_wheel.py` and the sdist's own
+  copy, so a tampered sdist cannot supply the verifier that blesses it.
+
+  Nothing is tagged and nothing is published. The workflow cannot run at all until
+  the `pypi`/`testpypi` environments and PyPI trusted publishers exist, which is
+  the correct state for a project that has never released.
+
+- **`docs/DECISIONS_PENDING.md`** — a brief for each of the three open
+  `[OPERATOR DECISION]` items (a supported TLS shape, recovery portability vs
+  documented Linux-only, publishing the image): what is true today, each option's
+  real cost, what it commits Athena to, and a recommendation that is explicitly not
+  the decision. Writing them turned up a correction worth having: the guide's
+  proposed portable fallback for recovery, `os.link` + unlink, **cannot work** —
+  every call site publishes a *directory*, and no mainstream platform lets you
+  hardlink one. That moves F-3.3's option (a) from "a day of work" to a design
+  change that trades away an atomicity guarantee.
+
+### Changed
+
+- **The pinned dependency graph moved forward as a whole.** 21 packages, most of
+  them load-bearing: **fastapi 0.139.0 → 0.141.1**, **starlette 1.3.1 → 1.6.0**,
+  **ruff 0.15.21 → 0.16.3**, **mcp 1.28.1 → 1.29.0**, **uvicorn 0.51.0 → 0.52.3**,
+  **websockets 16.1 → 17.0.1**, plus pydantic-settings, coverage, mypy, certifi
+  and the rest. This is the refresh deliberately kept *out* of the property-test
+  change that first surfaced it, so the graph move is one commit a bisect can land
+  on rather than a framework upgrade riding inside a testing diff.
+
+  The sharp edge was Starlette: Athena imports `starlette._utils.get_route_path`,
+  a private module, across a three-minor jump. It survived, and is now exercised
+  by the whole suite on the new pin — but a private import is a standing liability
+  that a version bump is the natural moment to notice. Ruff 0.16's new rules found
+  nothing to change; mypy is clean on 174 files. One new warning appears in the
+  test run and is third-party, not Athena's: pydantic-settings 2.15 warns about an
+  unresolved forward reference in `mcp.server.fastmcp`'s own settings model.
+
+### Fixed
+
+- **Quotes protect a colon in a work query.** QUERY.md documents a
+  `"quoted phrase"` as a substring search of title or body, but the tokenizer
+  stripped the quotes and *then* split on the first colon it found — so searching
+  for `"Error: timeout"` answered `unknown search field 'error'`. The parser
+  contradicted its own documentation, and it did so on exactly the strings an
+  operator is most likely to hunt for, since a colon is ordinary punctuation in a
+  log line. The tokenizer now records where the field separator was rather than
+  rediscovering it after the quotes are gone, which is the only point at which
+  "was this colon quoted?" is still answerable. A field with a quoted **value** is
+  untouched — that colon is outside the quotes, so `assignee:"Ada Lovelace"` is
+  still an assignee filter. Found by the property tests added alongside them and
+  deferred at the time as a semantics question; it turned out to be a plain
+  contradiction of the spec, which is a bug.
+
+### Added
+
 - **Generative tests over the hand-rolled parsers.** The suite was curated-case
   excellent and had no property testing, against a codebase carrying four
   hand-rolled grammars over untrusted text. `hypothesis` is now in the dev extras

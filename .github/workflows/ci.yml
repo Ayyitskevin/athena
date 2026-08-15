@@ -71,6 +71,104 @@ jobs:
           include-hidden-files: true
           retention-days: 14
 
+  # Builds the image and proves it actually serves. Not gated on `test`: a broken
+  # Dockerfile is worth knowing about immediately, and this job shares no state with
+  # the suite. It does NOT push anywhere — publishing the image is an open operator
+  # decision (F-2.3), and a build-and-boot check does not presume it.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build --tag athena:ci .
+      - name: Refuse to run as root
+        run: |
+          set -euo pipefail
+          user="$(docker run --rm --entrypoint id athena:ci -un)"
+          test "$user" = "athena" || { echo "image runs as $user"; exit 1; }
+      - name: A fresh volume is refused without an explicit bootstrap
+        run: |
+          set -euo pipefail
+          # The launcher's contract, which the image must not quietly relax: no
+          # database, no serve. An image that auto-migrated an empty volume would
+          # open first-admin bootstrap on every fresh deployment.
+          if docker run --rm athena:ci --host 127.0.0.1 --port 8000; then
+            echo "served without a database — the bootstrap gate is gone"; exit 1
+          fi
+      - name: Boot it on a named volume, and wait for its own HEALTHCHECK
+        run: |
+          set -euo pipefail
+          docker volume create athena-ci-data >/dev/null
+          token="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+          # Carried to the next step explicitly rather than relying on `docker exec`
+          # inheriting the run-time environment. A throwaway CI credential.
+          echo "ATHENA_CI_BOOTSTRAP_TOKEN=$token" >> "$GITHUB_ENV"
+          docker run --detach --name athena-ci \
+            --volume athena-ci-data:/var/lib/athena \
+            --env "ATHENA_BOOTSTRAP_TOKEN=$token" \
+            athena:ci --bootstrap --host 127.0.0.1 --port 8000
+          # The image declares a HEALTHCHECK that asks /healthz over loopback from
+          # inside the namespace — the only place a local-mode bind lives. Waiting
+          # on Docker's verdict tests the app AND the healthcheck, rather than
+          # writing a second probe that could pass while the declared one is broken.
+          ./scripts/wait_for_container_health.sh athena-ci
+      - name: Data lands in the declared volume, owned by the non-root user
+        run: |
+          set -euo pipefail
+          docker exec athena-ci test -f /var/lib/athena/athena.db
+          owner="$(docker exec athena-ci stat -c '%U' /var/lib/athena/athena.db)"
+          test "$owner" = "athena" || { echo "database owned by $owner"; exit 1; }
+      - name: Create the first admin, the way an operator does
+        run: |
+          set -euo pipefail
+          # Not decoration: `athena-serve` refuses to start a database with no
+          # active administrator, so without this the container can never be
+          # restarted out of bootstrap mode. Doing it here means the job exercises
+          # the real first-run flow end to end rather than half of it.
+          admin="$(docker exec --env "ATHENA_BOOTSTRAP_TOKEN=$ATHENA_CI_BOOTSTRAP_TOKEN" \
+            athena-ci python -c "
+          import json, os, urllib.request
+          request = urllib.request.Request(
+              'http://127.0.0.1:8000/users',
+              data=json.dumps({
+                  'email': 'ci@example.com',
+                  'name': 'CI admin',
+                  'password': 'ci-password-000001',
+              }).encode(),
+              headers={
+                  'Content-Type': 'application/json',
+                  'X-Athena-Bootstrap-Token': os.environ['ATHENA_BOOTSTRAP_TOKEN'],
+              },
+          )
+          print(json.dumps(json.load(urllib.request.urlopen(request, timeout=10))))
+          ")"
+          echo "$admin"
+          python3 -c "
+          import json, sys
+          admin = json.loads(sys.argv[1])
+          assert admin['id'] == 1, admin
+          assert admin['role'] == 'admin', admin
+          " "$admin"
+      - name: A second container on the same volume starts with no bootstrap
+        run: |
+          set -euo pipefail
+          # The two-lifecycle check. It has to run against the VOLUME, not a
+          # committed image: `docker commit` captures the container filesystem and
+          # deliberately excludes volume contents, so an image-based version of this
+          # test would start from an empty database and prove nothing.
+          docker rm --force athena-ci >/dev/null
+          docker run --detach --name athena-ci2 \
+            --volume athena-ci-data:/var/lib/athena \
+            athena:ci --host 127.0.0.1 --port 8000
+          ./scripts/wait_for_container_health.sh athena-ci2
+          docker rm --force athena-ci2 >/dev/null
+          docker volume rm athena-ci-data >/dev/null
+      - name: The compose file is valid
+        run: docker compose -f compose.yaml config --quiet
+
   audit:
     needs: test
     runs-on: ubuntu-latest

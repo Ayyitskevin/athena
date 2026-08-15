@@ -373,7 +373,22 @@ shows it" without reading any other doc; the recipe is exercised by a test to
 the extent it can be (the MCP config it prints parses; the tool names it cites
 exist — pin against `mcp/server.py`'s registry so drift fails the build).
 
-### F-2.3 Docker image + compose file **[OPERATOR DECISION on publishing]**
+### F-2.3 Docker image + compose file — **DONE** (build/test landed; publishing still open)
+
+> Landed exactly as scoped: the image and compose file are in the tree, CI builds
+> and boots them, and nothing is pushed anywhere. The publishing question is
+> written up in [`DECISIONS_PENDING.md`](DECISIONS_PENDING.md) with a
+> recommendation rather than left as a line item.
+>
+> The finding worth carrying: **a container cannot usefully publish a port.**
+> `local` mode permits loopback only and `tailnet` only Tailscale's ranges, so a
+> `ports:` mapping points at an address the process is not on and the failure looks
+> like a hang. compose.yaml therefore ships no port mapping, and docs/DOCKER.md
+> names the shapes that do work. CI checks the properties that would make the image
+> a liability rather than just that it starts: non-root, a fresh volume still
+> refused without an explicit `--bootstrap`, its own HEALTHCHECK reporting healthy,
+> the database owned by the non-root user, and a restart on an existing database.
+> Original finding follows.
 
 A `Dockerfile` (python:3.12-slim, non-root user, volume for the SQLite file
 and attachments, `athena-serve` entrypoint, loopback-by-default with the
@@ -384,7 +399,20 @@ Whether to *publish* the image (GHCR) is Kevin's call; building and testing it
 in CI (boot the container, hit `/healthz`, run the two-lifecycle smoke) is not
 speculative and should land regardless.
 
-### F-2.4 Prepare the release the checklist already defines
+### F-2.4 Prepare the release the checklist already defines — **DONE** (nothing tagged)
+
+> Landed: `RELEASING.md`, `.github/workflows/publish.yml`, the version-bump
+> discipline in CONTRIBUTING.md, and an executable version-agreement test. No tag,
+> no publish — and the workflow cannot run until the `pypi`/`testpypi` environments
+> and PyPI trusted publishers exist, which is the right state for a project that
+> has never released.
+>
+> Two things went beyond the item as written. The guard job **verifies** the
+> checklist's "hosted CI green at the exact head" rather than trusting it — a tag
+> can be applied to a commit whose run went red, and nothing previously stopped
+> that. And build+publish are one job on purpose: an artifact handoff would need a
+> second third-party action pinned and would open a window in which the published
+> artifact is not provably the verified one. Original finding follows.
 
 RELEASE_READINESS.md's promotion checklist is two boxes from done: hosted CI
 green at the exact head (re-check at tag time) and the human tag. Prepare
@@ -464,19 +492,24 @@ the README for that.
 > `database=None`): a property test with fresh random inputs each run can fail on a
 > commit that changed nothing, which trains everyone to re-run red builds.
 >
-> One thing found and deliberately NOT changed: `parse('"a:b"')` raises
-> `unknown search field 'a'`. The tokenizer strips quotes before the colon check, so
-> quoting does not protect a phrase containing a colon — searching for
-> `"Error: timeout"` is an error rather than a text search. It is a UX wart, not a
-> crash, and changing it changes query semantics for saved filters, so it belongs to
-> whoever owns that call rather than to a testing PR.
+> One thing found and deferred at the time: `parse('"a:b"')` raised
+> `unknown search field 'a'` — the tokenizer stripped quotes before the colon check,
+> so quoting did not protect a phrase containing one. Deferred as a semantics
+> question; on a closer look it was a plain contradiction of QUERY.md, which
+> documents a quoted phrase as a substring search, so it was a bug and **is now
+> fixed**. The tokenizer records where the separator was instead of rediscovering it
+> after the quotes are gone. `assignee:"Ada Lovelace"` is unaffected — that colon is
+> outside the quotes.
 >
 > On the dependency: the freeze was regenerated in a clean venv as documented, but
 > with `-c constraints/ci-py312.txt` so pip resolved only what was new. The
 > unconstrained form in the README swept in ~20 unrelated upgrades (fastapi
 > 0.139→0.141, starlette 1.3.1→1.6.0, ruff 0.15→0.16) — a framework upgrade riding
 > inside a testing PR, where a later bisect would never look. The README now
-> documents both forms and when each is right. Net diff: two pins (`hypothesis`,
+> documents both forms and when each is right. **That full refresh landed
+> separately and is now done**, as its own commit: 21 packages, gate green,
+> `starlette._utils.get_route_path` (a private import) verified to survive the
+> three-minor jump. Net diff: two pins (`hypothesis`,
 > `sortedcontainers`; `attrs` was already there), counts updated in
 > `tests/test_supply_chain.py` and the two prose files that state them. Original
 > finding follows.
@@ -568,8 +601,10 @@ hand to a fleet in the first place.
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
-~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → F-2.3/F-2.4 (release prep) → the
-three [OPERATOR DECISION] items whenever Kevin decides. Waves are
+~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → ~~F-2.3/F-2.4~~ (done) → the
+three [OPERATOR DECISION] items whenever Kevin decides — each now has a brief in
+[`DECISIONS_PENDING.md`](DECISIONS_PENDING.md), so deciding is a read rather than a
+research project. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.
 

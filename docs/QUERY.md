@@ -34,6 +34,12 @@ is none to get wrong.
 | `sort:<key>` | see below |
 | bare words, `"quoted phrases"` | substring of title or body |
 
+Quotes protect a colon. `"Error: timeout"` searches for that phrase rather than
+being read as a `field:value` atom — which matters because a colon is ordinary
+punctuation in the log lines and error strings an operator is most likely to be
+hunting for. A field with a quoted **value** is unaffected, since that colon is
+outside the quotes: `assignee:"Ada Lovelace"` is still an assignee filter.
+
 `is:open` and `is:closed` are **category-based**, not name-based. A project whose
 done state is called `shipped` behaves correctly, because the query resolves
 through the same status-category expression the fleet views use — there is one
