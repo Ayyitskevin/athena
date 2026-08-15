@@ -373,7 +373,22 @@ shows it" without reading any other doc; the recipe is exercised by a test to
 the extent it can be (the MCP config it prints parses; the tool names it cites
 exist — pin against `mcp/server.py`'s registry so drift fails the build).
 
-### F-2.3 Docker image + compose file **[OPERATOR DECISION on publishing]**
+### F-2.3 Docker image + compose file — **DONE** (build/test landed; publishing still open)
+
+> Landed exactly as scoped: the image and compose file are in the tree, CI builds
+> and boots them, and nothing is pushed anywhere. The publishing question is
+> written up in [`DECISIONS_PENDING.md`](DECISIONS_PENDING.md) with a
+> recommendation rather than left as a line item.
+>
+> The finding worth carrying: **a container cannot usefully publish a port.**
+> `local` mode permits loopback only and `tailnet` only Tailscale's ranges, so a
+> `ports:` mapping points at an address the process is not on and the failure looks
+> like a hang. compose.yaml therefore ships no port mapping, and docs/DOCKER.md
+> names the shapes that do work. CI checks the properties that would make the image
+> a liability rather than just that it starts: non-root, a fresh volume still
+> refused without an explicit `--bootstrap`, its own HEALTHCHECK reporting healthy,
+> the database owned by the non-root user, and a restart on an existing database.
+> Original finding follows.
 
 A `Dockerfile` (python:3.12-slim, non-root user, volume for the SQLite file
 and attachments, `athena-serve` entrypoint, loopback-by-default with the
@@ -384,7 +399,20 @@ Whether to *publish* the image (GHCR) is Kevin's call; building and testing it
 in CI (boot the container, hit `/healthz`, run the two-lifecycle smoke) is not
 speculative and should land regardless.
 
-### F-2.4 Prepare the release the checklist already defines
+### F-2.4 Prepare the release the checklist already defines — **DONE** (nothing tagged)
+
+> Landed: `RELEASING.md`, `.github/workflows/publish.yml`, the version-bump
+> discipline in CONTRIBUTING.md, and an executable version-agreement test. No tag,
+> no publish — and the workflow cannot run until the `pypi`/`testpypi` environments
+> and PyPI trusted publishers exist, which is the right state for a project that
+> has never released.
+>
+> Two things went beyond the item as written. The guard job **verifies** the
+> checklist's "hosted CI green at the exact head" rather than trusting it — a tag
+> can be applied to a commit whose run went red, and nothing previously stopped
+> that. And build+publish are one job on purpose: an artifact handoff would need a
+> second third-party action pinned and would open a window in which the published
+> artifact is not provably the verified one. Original finding follows.
 
 RELEASE_READINESS.md's promotion checklist is two boxes from done: hosted CI
 green at the exact head (re-check at tag time) and the human tag. Prepare
@@ -573,8 +601,10 @@ hand to a fleet in the first place.
 
 ~~F-0.1 → F-0.2~~ (done) → ~~F-2.1 + F-2.2~~ (done) →
 ~~F-1.1/F-1.3/F-1.5~~ (done) → ~~F-0.3/F-0.4~~ (done) →
-~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → F-2.3/F-2.4 (release prep) → the
-three [OPERATOR DECISION] items whenever Kevin decides. Waves are
+~~F-2.5~~ (done) → ~~F-3.1/F-3.2~~ (done) → ~~F-2.3/F-2.4~~ (done) → the
+three [OPERATOR DECISION] items whenever Kevin decides — each now has a brief in
+[`DECISIONS_PENDING.md`](DECISIONS_PENDING.md), so deciding is a read rather than a
+research project. Waves are
 parallelizable across agents except where noted; one item = one PR = one green
 gate.
 

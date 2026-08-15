@@ -108,6 +108,55 @@ the newest one and for what tagging still requires.
   `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
   build and an htmx upgrade names the new version and digest in the same diff.
 
+### Added
+
+- **A container image, built and proved in CI — and not published.** A
+  `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
+  reaches the runtime image, non-root uid 10001, one volume holding the SQLite file
+  and the attachment blobs together), a `compose.yaml`, and `docs/DOCKER.md`. CI
+  builds it and then checks the things that would make it a liability: that it does
+  not run as root, that a fresh volume is still **refused** without an explicit
+  `--bootstrap` (an image that quietly migrated an empty volume would undo the gate
+  the launcher exists to hold), that its declared `HEALTHCHECK` actually reports
+  healthy, that the database lands in the volume owned by the non-root user, and
+  that it restarts on an existing database with no bootstrap token.
+
+  What the compose file deliberately does **not** contain is a `ports:` mapping.
+  `ATHENA_NETWORK_MODE=local` permits binding loopback and nothing else — there is
+  no `public` mode, in a container or out of one — so a published port maps to an
+  address the process is not on, and the failure looks like a hang rather than a
+  refusal. `docs/DOCKER.md` names the shapes that do reach the app (`docker exec`,
+  host networking with a tailnet address, a Tailscale sidecar) and the ones that
+  remain unsupported. Publishing the image is a separate decision and stays open.
+
+- **Release mechanics, up to the point a human takes over.** `RELEASING.md` names
+  the exact order; `.github/workflows/publish.yml` does the mechanical part. It
+  runs only on a pushed `v*` tag or on a manual dispatch that can reach TestPyPI
+  and nothing else, and it sits behind a GitHub Environment so approval is the
+  owner's. Before anything is built, a guard job refuses a tag that does not name
+  the packaged version, a commit that is not an ancestor of `main`, and — the one
+  RELEASE_READINESS.md's checklist asks for and nothing previously enforced — a
+  commit whose `test`, `audit` and `container` checks are not green. Build and
+  publish are one job on purpose: an artifact handoff would mean a second
+  third-party action to pin and a window in which the thing published is not
+  provably the thing verified. The sdist is built first and the wheel from *that*
+  sdist, verified by both the checkout's `verify_wheel.py` and the sdist's own
+  copy, so a tampered sdist cannot supply the verifier that blesses it.
+
+  Nothing is tagged and nothing is published. The workflow cannot run at all until
+  the `pypi`/`testpypi` environments and PyPI trusted publishers exist, which is
+  the correct state for a project that has never released.
+
+- **`docs/DECISIONS_PENDING.md`** — a brief for each of the three open
+  `[OPERATOR DECISION]` items (a supported TLS shape, recovery portability vs
+  documented Linux-only, publishing the image): what is true today, each option's
+  real cost, what it commits Athena to, and a recommendation that is explicitly not
+  the decision. Writing them turned up a correction worth having: the guide's
+  proposed portable fallback for recovery, `os.link` + unlink, **cannot work** —
+  every call site publishes a *directory*, and no mainstream platform lets you
+  hardlink one. That moves F-3.3's option (a) from "a day of work" to a design
+  change that trades away an atomicity guarantee.
+
 ### Changed
 
 - **The pinned dependency graph moved forward as a whole.** 21 packages, most of
