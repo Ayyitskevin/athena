@@ -110,6 +110,51 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **A standing prune ledger, and the tooling that makes it runnable.** VISION says
+  *when a proposed feature doesn't serve the picture, cut it or reshape it*, and
+  nothing visible has ever been cut — against a surface of **362 routes, 124 MCP
+  tools, 65 tables and ~46,600 lines** that the external review called the project's
+  biggest long-term risk. `docs/PRUNE_LEDGER.md` is the first quarterly review, with
+  every verdict deliberately **unset**: deciding to cut or park a subsystem is a
+  promise to users, not an agent's call.
+
+  The durable half is `scripts/prune_evidence.py`, which produces the ledger's
+  evidence column from a real database (read-only, `immutable=1`, safe against a
+  live deployment). That column cannot come from the repository: source proves a
+  feature *exists*, only a database somebody worked in shows whether anyone reached
+  for it.
+
+  Building it surfaced three ways such a report lies, each now closed. Verb names
+  were **guessed** in the first draft, and reported zero events for agent
+  supervision against a database that plainly exercises it — an argument to cut the
+  fleet loop, from a typo; a test now pins every verb against the vocabulary the
+  code actually writes, extracted by AST because `verb="lease_renewed" if renewed
+  else "claimed"` defeats a regex. **Forge inbound** lands its events as imported
+  history by design, and the default query excludes imported rows, so it read as
+  never-used however much it was used — now a flagged exception with its own test.
+  And **migration-seeded singleton tables** can never read zero, so they were
+  dropped from the map: a count with a floor measures nothing.
+
+  The report also refuses to collapse `n/a` into `0`. A pure read surface — the
+  graph view, the answerability page, search, export, recovery — writes nothing and
+  is invisible to this tooling *by construction*; saying so plainly matters because
+  two of the three subsystems the guide names as candidates are in that category,
+  and a reviewer skimming a column of zeroes would not stop to notice.
+
+  **The ledger's first finding is about the project, not any subsystem.** F-3.4 asks
+  when each subsystem was last used in the dogfood deployment; there is no dogfood
+  deployment, and RELEASE_READINESS.md has always said so — *"no production
+  deployment has occurred"*. So that column cannot be filled by anyone, and the
+  question changes from "what has gone quiet" (nothing has ever spoken) to "what was
+  built on demonstrated need rather than a guess". The ledger answers it with the
+  evidence that does exist: the two artifacts encoding what Athena's author believes
+  the product is — the demo seed and the 25-step field exercise. Not usage evidence,
+  but intent evidence, and it discriminates. **Six measurable subsystems are touched
+  by neither story** — automation rules, outbound webhooks, attachments, saved
+  filters, desk cursors and OIDC login — while forge inbound, one of the guide's
+  three pre-named candidates, IS exercised by the field exercise, which is evidence
+  in its favour.
+
 - **A container image, built and proved in CI — and not published.** A
   `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
   reaches the runtime image, non-root uid 10001, one volume holding the SQLite file
