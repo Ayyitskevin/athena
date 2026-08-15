@@ -1,0 +1,199 @@
+name: Publish
+
+# Publishing is the release owner's act, and this workflow is built so that it
+# cannot become anything else.
+#
+#   * It runs on a pushed `v*` tag, or on a manual dispatch that can ONLY reach
+#     TestPyPI. There is no path from an ordinary push, a pull request, or a
+#     schedule to a real publish.
+#   * The publish job sits behind a GitHub Environment — `pypi` for a tag,
+#     `testpypi` for a dispatch — so the account that owns the repository decides
+#     who may approve one and where the trusted-publishing identity lives. Until
+#     those environments exist the job cannot run at all, which is the correct
+#     state before the first release.
+#   * Before it, `guard` refuses a tag that does not match the packaged
+#     version, a tag that is not an ancestor of `main`, or a commit whose required
+#     CI checks are not green. RELEASE_READINESS.md's last two boxes are exactly
+#     "hosted CI green at the head" and "a human applies the tag"; the first is
+#     checked here rather than trusted, and the second is what triggers this file.
+#
+# See RELEASING.md for the order a human follows.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the version you expect to upload to TestPyPI (e.g. 0.1.0a1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: read   # to read this commit's check runs, below
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Read the packaged version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(python -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "packaged version: $version"
+      - name: The dunder version and the packaged version agree
+        run: |
+          set -euo pipefail
+          # Two files carry the version. They drifting apart is the classic release
+          # bug: the wheel says one thing and the running app reports another.
+          dunder="$(python -c "
+          import re, pathlib
+          text = pathlib.Path('src/athena/__init__.py').read_text()
+          print(re.search(r'__version__ = \"([^\"]+)\"', text).group(1))
+          ")"
+          test "$dunder" = "${{ steps.version.outputs.version }}" || {
+            echo "src/athena/__init__.py says $dunder, pyproject.toml says ${{ steps.version.outputs.version }}"
+            exit 1
+          }
+      - name: A tag must name the version it ships
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          test "$tag" = "v${{ steps.version.outputs.version }}" || {
+            echo "tag $tag does not match packaged version ${{ steps.version.outputs.version }}"
+            echo "bump the version and re-tag, or tag the right commit"
+            exit 1
+          }
+      - name: A dispatch must name the version it expects
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirm }}" = "${{ steps.version.outputs.version }}" || {
+            echo "you typed '${{ inputs.confirm }}'; this tree packages ${{ steps.version.outputs.version }}"
+            exit 1
+          }
+      - name: The commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "$GITHUB_SHA is not an ancestor of main — refusing to publish it"
+            exit 1
+          }
+      - name: Required CI is green at this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # RELEASE_READINESS.md's promotion checklist says "hosted CI succeeds at
+          # the exact final head". Checked, not assumed — a tag can be applied to a
+          # commit whose run went red, or never ran.
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --jq '.check_runs[] | "  \(.name): \(.status)/\(.conclusion)"'
+          for required in test audit container; do
+            # The LATEST run for that name, not "the only one": re-running a check
+            # adds a second run with the same name, so a naive match would see two
+            # lines and refuse a commit that is actually green. A gate that fails
+            # spuriously is a gate someone eventually removes.
+            verdict="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+              --jq "[.check_runs[] | select(.name == \"$required\")]
+                    | sort_by(.started_at) | last
+                    | if . == null then \"missing\" else \"\(.status):\(.conclusion)\" end")"
+            test "$verdict" = "completed:success" || {
+              echo "required check '$required' is not green (latest run: $verdict)"
+              exit 1
+            }
+            echo "$required: green"
+          done
+
+  # Build and publish in ONE job, deliberately. An artifact handoff would mean a
+  # second third-party action to pin and a window in which the thing published is
+  # not provably the thing built; here the wheel never leaves the runner between
+  # `verify_wheel` and upload. The environment gate therefore also gates the build,
+  # which is the right order: nothing is produced until a human has approved.
+  publish:
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: ${{ github.event_name == 'push' && 'pypi' || 'testpypi' }}
+      url: ${{ github.event_name == 'push' && 'https://pypi.org/p/athena' || 'https://test.pypi.org/p/athena' }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install the hash-verified build toolchain
+        run: |
+          set -euo pipefail
+          python -I -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/python" -I -m pip install \
+            --only-binary :all: --require-hashes \
+            -r constraints/bootstrap-py312.txt
+          "$RUNNER_TEMP/build-venv/bin/python" -I -m pip install \
+            --only-binary :all: --require-hashes \
+            -r constraints/security-tools-py312.txt
+      - name: Build the sdist, then the wheel from that sdist, and verify both
+        run: |
+          set -euo pipefail
+          # The same recipe the audit job verifies, for the same reason: a wheel
+          # built from the working tree can contain files the sdist omits, so the
+          # artifact that ships is built from the artifact that was inspected.
+          py="$RUNNER_TEMP/build-venv/bin/python"
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist/upload" "$dist/source"
+          "$py" -I -m build --no-isolation --sdist --outdir "$dist/built" .
+          sdists=("$dist"/built/*.tar.gz)
+          test "${#sdists[@]}" -eq 1 || { echo "expected exactly one sdist"; exit 1; }
+          tar -xf "${sdists[0]}" -C "$dist/source"
+          trees=("$dist"/source/athena-*)
+          test "${#trees[@]}" -eq 1 || { echo "expected one extracted tree"; exit 1; }
+          "$py" -I -m build --no-isolation --wheel --outdir "$dist/artifacts" "${trees[0]}"
+          wheels=("$dist"/artifacts/*.whl)
+          test "${#wheels[@]}" -eq 1 || { echo "expected exactly one wheel"; exit 1; }
+          # Verified by the checkout's copy AND the sdist's own copy, so a tampered
+          # sdist cannot also supply the verifier that blesses it.
+          "$py" -I scripts/verify_wheel.py "${wheels[0]}"
+          "$py" -I "${trees[0]}/scripts/verify_wheel.py" "${wheels[0]}"
+          cp "${sdists[0]}" "${wheels[0]}" "$dist/upload/"
+          ls -l "$dist/upload"
+          echo "ATHENA_DIST=$dist/upload" >> "$GITHUB_ENV"
+      - name: Keep the built artifacts as evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: distribution-${{ needs.guard.outputs.version }}
+          path: ${{ env.ATHENA_DIST }}
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: ${{ env.ATHENA_DIST }}
+          repository-url: ${{ github.event_name == 'push' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}

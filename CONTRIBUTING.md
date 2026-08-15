@@ -295,6 +295,27 @@ login, and starts Athena. It refuses to overwrite an existing path.
 Never push directly to `main`. Do not rewrite another contributor's branch or
 hide unrelated work in a formatting or dependency update.
 
+### Bumping the version
+
+The version lives in **three** places, and them drifting apart is the classic
+release bug — the wheel says one thing and the running app reports another:
+
+| file | what it is |
+|---|---|
+| `pyproject.toml` → `[project] version` | what gets packaged |
+| `src/athena/__init__.py` → `__version__` | what the running app reports |
+| `tests/test_smoke.py` | the literal tripwire, so a bump is never accidental |
+
+Change all three in **one commit that does nothing else**. Two guards back this
+up: `test_the_packaged_version_and_the_dunder_version_agree` fails the moment the
+first two disagree, and the publish workflow refuses to run on a tag that does not
+name the version being packaged.
+
+While Athena is pre-1.0 the line is `0.1.0aN`. A CHANGELOG heading is a
+**milestone**, not a release — it becomes a release only once a matching git tag
+exists. See [`RELEASING.md`](RELEASING.md) for the order, and note that tagging is
+the release owner's act, not a step any contributor or agent performs.
+
 ## Architecture guardrails
 
 - The database is the sole data owner. The Jinja/HTMX web layer never carries a
