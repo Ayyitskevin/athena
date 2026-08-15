@@ -162,6 +162,36 @@ the newest one and for what tagging still requires.
 
 ### Changed
 
+- **One SQLite connection per request, down from two to five.** The session
+  middleware opened one to resolve the cookie, the route dependency opened
+  another, and an idempotent write opened three more (identity, reserve, publish).
+  The cost is not where it looks: `sqlite3.connect` is lazy and costs ~0.03 ms,
+  but the **first statement that touches the database file pays ~2.2 ms to
+  attach** — per connection, and holding another one open does not help, while
+  reusing an already-open connection costs 0.004 ms. So a browser page spent
+  ~4.4 ms and an idempotent write ~11 ms simply reaching the data, against a whole
+  fleet-attention rollup that measures ~0.5 ms.
+
+  A request now carries one lazily-opened connection (`core/deps.RequestConnection`),
+  created by a middleware registered outside the session layer so it also spans
+  what runs *after* the route returns — the idempotency publish, an exception
+  handler recording a refusal. That is why the route dependency could not own the
+  lifetime: it has already exited by then. Lazily, so `/static` still opens zero,
+  keeping the skip added for browser caching.
+
+  Measured end to end: **`GET /aegis/dashboard` 14.97 ms → 9.81 ms**, **`GET
+  /issues` 15.22 ms → 10.20 ms**, **`POST /issues` with an idempotency key
+  35.32 ms → 19.19 ms** — a third off every page and REST read, and nearly half off
+  an agent's idempotent write.
+
+  Sharing is safe only if a borrower returns the connection with no transaction
+  open, and that is enforced rather than assumed: `db.transaction` chooses between
+  a real transaction and a savepoint by reading `conn.in_transaction`, so a layer
+  that left one open would silently turn the next writer's commit into a savepoint
+  released without ever committing — a lost write with no error and no log. Every
+  handoff checks, rolls back, and logs which layer misbehaved. The
+  Barrier-coordinated race tests (161 of them) still pass unchanged.
+
 - **Packaged assets are browser-cacheable, and fetching one no longer runs the
   session.** `_apply_private_cache_policy` marked every cookie-carrying response
   `private, no-store` — including `/static/*` — so a signed-in browser
