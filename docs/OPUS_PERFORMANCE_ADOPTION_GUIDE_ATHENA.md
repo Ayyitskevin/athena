@@ -464,19 +464,24 @@ the README for that.
 > `database=None`): a property test with fresh random inputs each run can fail on a
 > commit that changed nothing, which trains everyone to re-run red builds.
 >
-> One thing found and deliberately NOT changed: `parse('"a:b"')` raises
-> `unknown search field 'a'`. The tokenizer strips quotes before the colon check, so
-> quoting does not protect a phrase containing a colon — searching for
-> `"Error: timeout"` is an error rather than a text search. It is a UX wart, not a
-> crash, and changing it changes query semantics for saved filters, so it belongs to
-> whoever owns that call rather than to a testing PR.
+> One thing found and deferred at the time: `parse('"a:b"')` raised
+> `unknown search field 'a'` — the tokenizer stripped quotes before the colon check,
+> so quoting did not protect a phrase containing one. Deferred as a semantics
+> question; on a closer look it was a plain contradiction of QUERY.md, which
+> documents a quoted phrase as a substring search, so it was a bug and **is now
+> fixed**. The tokenizer records where the separator was instead of rediscovering it
+> after the quotes are gone. `assignee:"Ada Lovelace"` is unaffected — that colon is
+> outside the quotes.
 >
 > On the dependency: the freeze was regenerated in a clean venv as documented, but
 > with `-c constraints/ci-py312.txt` so pip resolved only what was new. The
 > unconstrained form in the README swept in ~20 unrelated upgrades (fastapi
 > 0.139→0.141, starlette 1.3.1→1.6.0, ruff 0.15→0.16) — a framework upgrade riding
 > inside a testing PR, where a later bisect would never look. The README now
-> documents both forms and when each is right. Net diff: two pins (`hypothesis`,
+> documents both forms and when each is right. **That full refresh landed
+> separately and is now done**, as its own commit: 21 packages, gate green,
+> `starlette._utils.get_route_path` (a private import) verified to survive the
+> three-minor jump. Net diff: two pins (`hypothesis`,
 > `sortedcontainers`; `attrs` was already there), counts updated in
 > `tests/test_supply_chain.py` and the two prose files that state them. Original
 > finding follows.

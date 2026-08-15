@@ -108,6 +108,40 @@ the newest one and for what tagging still requires.
   `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
   build and an htmx upgrade names the new version and digest in the same diff.
 
+### Changed
+
+- **The pinned dependency graph moved forward as a whole.** 21 packages, most of
+  them load-bearing: **fastapi 0.139.0 → 0.141.1**, **starlette 1.3.1 → 1.6.0**,
+  **ruff 0.15.21 → 0.16.3**, **mcp 1.28.1 → 1.29.0**, **uvicorn 0.51.0 → 0.52.3**,
+  **websockets 16.1 → 17.0.1**, plus pydantic-settings, coverage, mypy, certifi
+  and the rest. This is the refresh deliberately kept *out* of the property-test
+  change that first surfaced it, so the graph move is one commit a bisect can land
+  on rather than a framework upgrade riding inside a testing diff.
+
+  The sharp edge was Starlette: Athena imports `starlette._utils.get_route_path`,
+  a private module, across a three-minor jump. It survived, and is now exercised
+  by the whole suite on the new pin — but a private import is a standing liability
+  that a version bump is the natural moment to notice. Ruff 0.16's new rules found
+  nothing to change; mypy is clean on 174 files. One new warning appears in the
+  test run and is third-party, not Athena's: pydantic-settings 2.15 warns about an
+  unresolved forward reference in `mcp.server.fastmcp`'s own settings model.
+
+### Fixed
+
+- **Quotes protect a colon in a work query.** QUERY.md documents a
+  `"quoted phrase"` as a substring search of title or body, but the tokenizer
+  stripped the quotes and *then* split on the first colon it found — so searching
+  for `"Error: timeout"` answered `unknown search field 'error'`. The parser
+  contradicted its own documentation, and it did so on exactly the strings an
+  operator is most likely to hunt for, since a colon is ordinary punctuation in a
+  log line. The tokenizer now records where the field separator was rather than
+  rediscovering it after the quotes are gone, which is the only point at which
+  "was this colon quoted?" is still answerable. A field with a quoted **value** is
+  untouched — that colon is outside the quotes, so `assignee:"Ada Lovelace"` is
+  still an assignee filter. Found by the property tests added alongside them and
+  deferred at the time as a semantics question; it turned out to be a plain
+  contradiction of the spec, which is a bug.
+
 ### Added
 
 - **Generative tests over the hand-rolled parsers.** The suite was curated-case

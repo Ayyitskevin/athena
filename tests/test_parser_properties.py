@@ -235,3 +235,37 @@ def test_an_over_long_reference_does_not_500_an_issue_write(tmp_path):
         assert body.count("9") == 5000, "the author's text was kept as written"
     finally:
         conn.close()
+
+
+# --- quotes protect a colon --------------------------------------------------
+
+
+#: Phrase halves without outer whitespace. `Query.text` is a normalized join —
+#: `" ".join(words).strip()` — so a phrase's LEADING or TRAILING space has never
+#: survived, quoted or not. That predates this fix and is not what these tests are
+#: about; internal spaces do survive, which is what quoting is for.
+PHRASE_HALF = (
+    st.text(alphabet="abc XYZ", min_size=1, max_size=10).map(str.strip).filter(bool)
+)
+
+
+@given(PHRASE_HALF, PHRASE_HALF)
+def test_a_quoted_phrase_containing_a_colon_is_text(left, right):
+    """QUERY.md documents a quoted phrase as a substring search of title or body.
+    The tokenizer used to strip the quotes and then split on the first colon it
+    found, so searching for `"Error: timeout"` answered `unknown search field
+    'error'` — the parser contradicting its own documentation. Quotes protect the
+    colon now."""
+    phrase = f"{left}:{right}"
+    query = work_query.parse(f'"{phrase}"')
+    assert query.terms == ()
+    assert query.text == phrase
+
+
+@given(PHRASE_HALF)
+def test_a_quoted_value_after_a_real_field_still_parses(value):
+    """The case the fix must not break: that colon is OUTSIDE the quotes, so it is
+    still a field separator, and the quoted value keeps its spaces."""
+    query = work_query.parse(f'assignee:"{value}"')
+    assert query.of("assignee") == (value,)
+    assert query.text == ""
