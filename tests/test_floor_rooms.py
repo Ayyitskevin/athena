@@ -58,6 +58,63 @@ def test_starter_pack_and_place_issue(tmp_path):
     conn.close()
 
 
+def test_room_commands_refuse_bad_place_and_blank_name(tmp_path):
+    from athena.aegis import projects
+
+    conn = db.connect(tmp_path / "rooms-refuse.db")
+    db.migrate(conn)
+    admin = users.create_user(
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+    )
+    project = projects.create_project(
+        conn, name="Scranton", key="SCR", created_by=admin["id"]
+    )
+    other = projects.create_project(
+        conn, name="Stamford", key="STF", created_by=admin["id"]
+    )
+    try:
+        room_commands.create_room(
+            conn, actor=admin, project_id=project["id"], name="   "
+        )
+        raise AssertionError("blank")
+    except room_commands.RoomCommandError as exc:
+        assert exc.kind == "invalid"
+    warehouse = room_commands.create_room(
+        conn, actor=admin, project_id=project["id"], name="The Warehouse"
+    )
+    try:
+        room_commands.create_room(
+            conn, actor=admin, project_id=project["id"], name="The Warehouse"
+        )
+        raise AssertionError("dup")
+    except room_commands.RoomCommandError as exc:
+        assert exc.kind == "conflict"
+    backlog = issues.create_issue(conn, title="orphan", body="", created_by=admin["id"])
+    try:
+        room_commands.place_issue(
+            conn, actor=admin, issue_id=backlog["id"], room_id=warehouse["id"]
+        )
+        raise AssertionError("backlog")
+    except room_commands.RoomCommandError as exc:
+        assert "backlog" in exc.detail
+    foreign = issues.create_issue(
+        conn, title="other", body="", created_by=admin["id"], project_id=other["id"]
+    )
+    try:
+        room_commands.place_issue(
+            conn, actor=admin, issue_id=foreign["id"], room_id=warehouse["id"]
+        )
+        raise AssertionError("foreign")
+    except room_commands.RoomCommandError as exc:
+        assert exc.kind == "invalid"
+    annex = office.build_floor(
+        conn, project_id=project["id"], actor=admin, room_slug="unassigned"
+    )
+    assert annex is not None
+    assert annex["filter"] == "unassigned"
+    conn.close()
+
+
 def test_floor_html_stocks_and_filters(tmp_path):
     app = create_app(tmp_path / "rooms-web.db")
     with TestClient(app) as client:
