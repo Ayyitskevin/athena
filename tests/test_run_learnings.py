@@ -255,8 +255,36 @@ def test_the_first_promotion_must_say_where_the_runbook_lives(tmp_path):
         # space to publish someone's notes into.
         missing = _record(c, issue["id"])
         assert missing.status_code == 422
-        assert "space_id is required" in missing.json()["detail"]
+        detail = missing.json()["detail"]
+        text = detail if isinstance(detail, str) else detail.get("error", "")
+        assert "space_id is required" in text
         assert c.get(f"/issues/{issue['id']}/runbook", headers=H1).json() is None
+
+
+def test_one_visible_space_is_used_when_space_id_is_omitted(tmp_path):
+    app, _ = _app(tmp_path, name="one-space.db")
+    with TestClient(app) as c:
+        _bootstrap(c)
+        space = _space(c)
+        issue = _issue(c)
+        created = _record(c, issue["id"])
+        assert created.status_code == 201, created.text
+        assert created.json()["space_id"] == space["id"]
+
+
+def test_several_spaces_list_suggestions_when_space_id_is_omitted(tmp_path):
+    app, _ = _app(tmp_path, name="two-space.db")
+    with TestClient(app) as c:
+        _bootstrap(c)
+        _space(c, key="ENG", name="Eng")
+        _space(c, key="OPS", name="Ops")
+        issue = _issue(c)
+        missing = _record(c, issue["id"])
+        assert missing.status_code == 422
+        detail = missing.json()["detail"]
+        assert isinstance(detail, dict)
+        keys = {row["key"] for row in detail["suggested_spaces"]}
+        assert keys == {"ENG", "OPS"}
 
 
 def test_the_summary_is_bounded_and_must_say_something(tmp_path):

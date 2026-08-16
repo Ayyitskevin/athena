@@ -243,6 +243,11 @@ def test_notifications_and_delegations_reach_the_desk(tmp_path):
         assert [d["issue"]["id"] for d in board["work"]["delegations"]["items"]] == [
             issue["id"]
         ]
+        item = board["work"]["delegations"]["items"][0]
+        assert item["issue_etag"]
+        assert item["how_to_claim"]["from"] == "issue_etag"
+        assert item["complete_does_not_close_issue"] is True
+        assert item["runbook"]["exists"] is False
         assert board["signals"]["unread_notifications"] >= 1
         assert board["signals"]["notifications"]
 

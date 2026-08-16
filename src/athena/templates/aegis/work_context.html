@@ -102,6 +102,24 @@
             {% endfor %}
         </dd>
         <dt>Issue ETag</dt><dd><code>{{ issue_etag }}</code></dd>
+        <dt>Claim with</dt>
+        <dd><code>{{ how_to_claim.header }}</code> from <code>{{ how_to_claim.from }}</code></dd>
+        <dt>Runbook</dt>
+        <dd>
+            {% if runbook.exists %}
+            page {{ runbook.page_id }} in space {{ runbook.space_id }}
+            {% else %}
+            none yet
+            {% if runbook.suggested_spaces %}
+            — suggested:
+            {% for space in runbook.suggested_spaces %}
+            <code>{{ space.key }}</code> ({{ space.id }}){% if not loop.last %}, {% endif %}
+            {% endfor %}
+            {% endif %}
+            {% endif %}
+        </dd>
+        <dt>Complete claim</dt>
+        <dd>Releases the lease only. Does not mark the issue done.</dd>
     </dl>
     </div>
 </section>

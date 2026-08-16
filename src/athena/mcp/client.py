@@ -434,15 +434,20 @@ class AthenaClient:
         if_match: str,
         generation: str | None = None,
         lease_seconds: int | None = None,
+        paths: list[str] | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Claim against the exact strong root issue ETag the caller reviewed."""
+        """Claim against the exact strong root issue ETag the caller reviewed.
+
+        ``paths`` optionally fences repo-relative files against other active leases.
+        """
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/claim",
             json=self._params(
                 lease_seconds=lease_seconds,
                 generation=generation,
+                paths=paths,
             ),
             if_match=if_match,
             idempotency_key=idempotency_key,

@@ -1590,22 +1590,21 @@ def build_server(
         if_match: str,
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
+        paths: list[str] | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Claim or renew an issue only against the exact root issue revision reviewed.
-        First call get_issue and copy its _etag, or copy issue_etag from
-        get_issue_work_context; never use the work-context packet's top-level _etag.
-        Omit generation to acquire only a free/expired lease. To renew your current
-        active lease, pass its exact generation; stale generations never acquire new
-        work. Missing or non-exact issue tags fail, stale tags return 412 with the
-        current tag, and a different live holder remains a 409. lease_seconds defaults
-        to 30 minutes. A successful response includes open_claim_handoff when prior
-        work yielded continuation context; acknowledge it explicitly before completion."""
+        Copy `issue_etag` from my_desk() or get_issue_work_context — never the
+        work-context packet's top-level `_etag`. Optional `paths` is a file fence:
+        repo-relative POSIX paths; overlap with another active lease is 409.
+        Omit generation to acquire only a free/expired lease. lease_seconds defaults
+        to 30 minutes."""
         return client.claim_issue(
             issue_id,
             if_match=if_match,
             generation=generation,
             lease_seconds=lease_seconds,
+            paths=paths,
             idempotency_key=idempotency_key,
         )
 
@@ -1665,10 +1664,10 @@ def build_server(
         generation: LeaseGeneration,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Release the lease you hold on an issue by completing the claimed work (complete)
-        — it frees the issue for the next claimant. This releases the coordination lease
-        only; change the issue's status through update_issue as usual. An open claim
-        handoff returns 409 until this exact leaseholder explicitly resumes it."""
+        """Release the lease you hold. This does NOT mark the issue done.
+        The 200 body repeats issue_status and issue_still_open; PATCH the issue
+        to `done` separately if the work is finished. An open claim handoff
+        returns 409 until this exact leaseholder explicitly resumes it."""
         return client.complete_claim(
             issue_id,
             generation=generation,

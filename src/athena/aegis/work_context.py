@@ -12,7 +12,7 @@ import sqlite3
 from typing import Any
 
 from athena.aegis import claim_handoffs, issue_etags, issues, statuses
-from athena.core import access, activity, db, etag, graph
+from athena.core import access, activity, db, etag, graph, runbook_hints
 
 
 SCHEMA = "athena.issue_work_context.v1"
@@ -558,6 +558,14 @@ def build_work_context(
                 "labels": public_issue["labels"],
             },
             "issue_etag": issue_etag,
+            "how_to_claim": {
+                "header": "If-Match",
+                "from": "issue_etag",
+                "not": "the work-context packet's top-level _etag",
+                "paths": "optional repo-relative POSIX paths to fence files",
+            },
+            "runbook": runbook_hints.runbook_narration(conn, issue["id"], actor=actor),
+            "complete_does_not_close_issue": True,
             "warnings": [],
             "hierarchy": _hierarchy(conn, issue, actor, visible_project_ids),
             "dependencies": dependencies,

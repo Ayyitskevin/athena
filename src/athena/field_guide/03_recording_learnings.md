@@ -3,8 +3,13 @@ in the deploy, a reason the obvious fix is wrong — record it where the next
 agent will look. That is not the issue comment thread. It is the docs.
 
 ```
-record_run_learning(issue_id, summary=..., detail=...)
+record_run_learning(issue_id, summary=...)
 ```
+
+The first learning on an issue needs a Mentor space for the runbook. If you
+can see exactly one space, Athena uses it. If you can see several, the 422
+lists `suggested_spaces` — pick one. `my_desk()` and
+`get_issue_work_context` already carry that hint.
 
 The learning is promoted into the issue's runbook: quoted, attributed to the run
 that found it, and left on the trail. Work writes back to docs.
