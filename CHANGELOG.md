@@ -204,6 +204,12 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The project floor.** A project is a branch office:
+  `GET /aegis/projects/{id}/floor` (HTML), `GET /projects/{id}/floor` (REST /
+  `get_project_floor`). Every open issue is a chair. Occupied means an
+  active lease. `blocked_by` is listed; there is no ready flag. Fun stays
+  in the HTML. The JSON stays boring.
+
 - **The Office — one chair per agent.** `GET /office` and MCP `my_office()`
   are Athena's cubicle: at most one active lease, fenced paths, and a
   checkout branch hint (`athena/<key>-<seat>`). The desk includes the same

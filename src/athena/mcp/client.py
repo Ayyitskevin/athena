@@ -1287,6 +1287,10 @@ class AthenaClient:
         """Your cubicle: one chair, fenced paths, checkout hint."""
         return self._result(self._client.get("/office"))
 
+    def get_project_floor(self, project_id: int) -> Any:
+        """One project as a floor of chairs."""
+        return self._result(self._client.get(f"/projects/{project_id}/floor"))
+
     def advance_desk_cursor(self, *, after_id: int) -> Any:
         """Move YOUR desk cursor forward to this activity id."""
         return self._result(

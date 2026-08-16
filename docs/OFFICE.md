@@ -51,6 +51,18 @@ Two agents can still read the same office shape at once. Sitting down is
 `seated` is true only when there is **exactly one** active lease. Two active
 leases set a warning: pick a chair and release the other.
 
+## The floor
+
+A **project** is a branch office. `GET /aegis/projects/{id}/floor` (HTML),
+`GET /projects/{id}/floor` (REST / MCP `get_project_floor`) lists every
+*open* issue as a chair. Occupied is **derived** from an active lease — never
+stored on the floor. Empty = still needs a body. `blocked_by` is the existing
+issue-link graph (open blockers only). There is no ready flag; `claim_issue`
+plus If-Match remains the authority.
+
+This is how many agents share one big project without sitting in the same
+chair.
+
 ## Operator view
 
 Admin → Fleet → **Who is sitting** lists active chairs. That is occupancy,

@@ -246,6 +246,7 @@ TOOL_SCOPES: dict[str, str] = {
     "get_issue_runbook": READ_ONLY,
     "my_desk": READ_ONLY,
     "my_office": READ_ONLY,
+    "get_project_floor": READ_ONLY,
     "activity_chain_status": READ_ONLY,
     "verify_activity_chain": READ_ONLY,
     "list_workers": READ_ONLY,
@@ -1188,6 +1189,14 @@ def build_server(
         RESERVES NOTHING. Claim through claim_issue. complete_claim stands
         you up; it does not close the issue."""
         return client.my_office()
+
+    @tool
+    def get_project_floor(project_id: int) -> dict:
+        """A project's floor: every open issue is a chair. Occupied chairs
+        have a sitting agent and optional fenced paths. Empty chairs still
+        need a body. `blocked_by` lists open blockers; there is no 'ready'
+        flag. RESERVES NOTHING."""
+        return client.get_project_floor(project_id)
 
     @mutation_tool
     def advance_desk_cursor(after_id: int) -> dict:

@@ -542,6 +542,16 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
 .panel--interactive { transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease); }
 .panel--interactive:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); border-color: var(--border-strong); }
 
+/* Project floor: a room of chairs, not a ticket table. */
+.floor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--sp-4);
+}
+.floor-chair.is-occupied {
+  border-color: var(--success-line, var(--border-strong));
+}
+
 /* The eyebrow caption above the markdown editor's live preview pane. */
 .editor-preview-label {
   margin-bottom: var(--sp-2);
