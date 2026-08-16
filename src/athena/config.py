@@ -211,6 +211,33 @@ def icarus_configured() -> bool:
     return bool(ICARUS_URL and ICARUS_SECRET)
 
 
+def buzz_relay_url() -> str:
+    return os.environ.get("ATHENA_BUZZ_RELAY_URL", "").strip()
+
+
+def buzz_cli_path() -> str:
+    return os.environ.get("ATHENA_BUZZ_CLI", "").strip()
+
+
+def buzz_key_file() -> str:
+    return os.environ.get("ATHENA_BUZZ_KEY_FILE", "").strip()
+
+
+def buzz_assign_channel() -> str:
+    # command-deck on the mickey relay. Override if the channel is recreated.
+    default = "3fc2b270-cd0b-4a6b-afcd-f10471caffb2"
+    return os.environ.get("ATHENA_BUZZ_ASSIGN_CHANNEL", default).strip()
+
+
+def public_base_url() -> str:
+    return os.environ.get("ATHENA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+def buzz_radio_configured() -> bool:
+    """CLI + key file + relay. Channel has a built-in default."""
+    return bool(buzz_relay_url() and buzz_cli_path() and buzz_key_file())
+
+
 # One agent may run several workers (a box per node, a process per capability), but
 # not unboundedly many: a looping or compromised token can refresh the rows it has
 # forever and still never grow the registry past this ceiling.

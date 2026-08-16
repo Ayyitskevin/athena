@@ -204,6 +204,12 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Admin → Fleet assign.** One form on `/admin/fleet` sets assignee, delegates
+  the agent, and optionally radios command-deck with `ATHENA_ASSIGN` (new
+  assignment, not a steer). Radio needs `ATHENA_BUZZ_CLI`,
+  `ATHENA_BUZZ_KEY_FILE`, and `ATHENA_BUZZ_RELAY_URL`. A radio miss does not
+  undo the desk assignment.
+
 - **Admin → Fleet roster.** A read-only page (`/admin/fleet`, JSON twin
   `/admin/fleet.json`) lists the declared mickey seats (operator + ACP units),
   this host's `systemctl --user` verdict, and whether each seat has an Athena

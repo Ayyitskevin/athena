@@ -18,6 +18,58 @@
     </div>
 </div>
 
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
+<section class="panel" aria-labelledby="assign-heading">
+    <div class="panel-head"><h2 id="assign-heading">Assign to a seat</h2></div>
+    <div class="panel-body">
+    <p class="subtitle">
+        Puts the issue on that agent's desk (assignee + delegate) and, if the
+        radio is configured, posts <code>ATHENA_ASSIGN</code> to command-deck
+        as a new assignment — not a steer.
+        {% if radio_configured %}
+        Radio is configured.
+        {% else %}
+        Radio is off (set ATHENA_BUZZ_CLI, ATHENA_BUZZ_KEY_FILE, ATHENA_BUZZ_RELAY_URL).
+        The desk assignment still works.
+        {% endif %}
+    </p>
+    {% if assignable and open_issues %}
+    <form method="post" action="/admin/fleet/assign" class="issue-form">
+        {% include "partials/csrf.html" %}
+        <div class="form-group">
+            <label for="assign-issue">Issue</label>
+            <select id="assign-issue" name="issue_id" required>
+                {% for issue in open_issues %}
+                <option value="{{ issue.id }}">{{ issue.key or ('#' ~ issue.id) }} — {{ issue.title }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="assign-seat">Seat</label>
+            <select id="assign-seat" name="seat_slug" required>
+                {% for seat in assignable %}
+                <option value="{{ seat.slug }}">{{ seat.name }} ({{ seat.email }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="assign-note">Note <span class="muted">(optional)</span></label>
+            <input id="assign-note" type="text" name="note" autocomplete="off">
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="button">Assign</button>
+        </div>
+    </form>
+    {% elif not assignable %}
+    <p class="empty-state">No declared seats have an Athena agent account yet.</p>
+    {% else %}
+    <p class="empty-state">No open issues to assign.</p>
+    {% endif %}
+    </div>
+</section>
+
 <p class="note-small">
     Observed {{ roster.observed_at }} on <code>{{ roster.host }}</code>.
     Does not assert:
