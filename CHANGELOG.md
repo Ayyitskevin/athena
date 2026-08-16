@@ -204,6 +204,12 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Desk packet names the seat and the work rules.** `my_desk()` identity
+  carries `seat_slug` when the account is a declared fleet seat (same slug as
+  Buzz / systemd / drift-check). `work.protocol` states claim-one-issue, do
+  not touch other fenced files, and complete-does-not-close. Work-context
+  repeats both so an agent does not need a second document.
+
 - **Admin → Fleet assign.** One form on `/admin/fleet` sets assignee, delegates
   the agent, and optionally radios command-deck with `ATHENA_ASSIGN` (new
   assignment, not a steer). Radio needs `ATHENA_BUZZ_CLI`,

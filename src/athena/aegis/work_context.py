@@ -12,7 +12,15 @@ import sqlite3
 from typing import Any
 
 from athena.aegis import claim_handoffs, issue_etags, issues, statuses
-from athena.core import access, activity, db, etag, graph, runbook_hints
+from athena.core import (
+    access,
+    activity,
+    db,
+    etag,
+    fleet_roster,
+    graph,
+    runbook_hints,
+)
 
 
 SCHEMA = "athena.issue_work_context.v1"
@@ -558,6 +566,14 @@ def build_work_context(
                 "labels": public_issue["labels"],
             },
             "issue_etag": issue_etag,
+            "seat_slug": fleet_roster.seat_slug_for_email(
+                None if actor is None else actor.get("email")
+            ),
+            "protocol": {
+                "claim_one_issue": True,
+                "do_not_touch_other_work": True,
+                "complete_does_not_close_issue": True,
+            },
             "how_to_claim": {
                 "header": "If-Match",
                 "from": "issue_etag",

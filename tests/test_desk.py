@@ -65,7 +65,10 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
     with TestClient(app) as client:
         _bootstrap(client)
         sol = _agent(client)
+        grok = _agent(client, email="grok@agents.local", name="Grok")
         board = _desk(client, _bearer(sol))
+        grok_desk = _desk(client, _bearer(grok))
+        assert grok_desk["identity"]["seat_slug"] == "grok"
 
     assert board["schema"] == desk.SCHEMA
     assert board["identity"]["id"] == sol["user"]["id"]
@@ -75,6 +78,10 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
     assert board["identity"]["budget"] is None  # unbudgeted, not zero
     assert board["identity"]["approval_required"] == []
     assert sorted(board["identity"]["scopes"]) == ["issue:write", "read"]
+    # sol@e.com is not a declared fleet seat
+    assert board["identity"]["seat_slug"] is None
+    assert board["work"]["protocol"]["claim_one_issue"] is True
+    assert board["work"]["protocol"]["do_not_touch_other_work"] is True
     assert board["asks"]["run_controls"]["items"] == []
     assert board["asks"]["worker_kill_requests"]["items"] == []
     assert board["asks"]["claim_handoffs"]["items"] == []

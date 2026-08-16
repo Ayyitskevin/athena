@@ -107,6 +107,18 @@ def find_declared_seat(slug: str) -> dict[str, str | None] | None:
     return None
 
 
+def seat_slug_for_email(email: str | None) -> str | None:
+    """Map an Athena email to the declared fleet slug, or None if undeclared."""
+    if not email:
+        return None
+    wanted = email.strip().lower()
+    for spec in DECLARED_SEATS:
+        listed = spec.get("email")
+        if listed and str(listed).lower() == wanted:
+            return str(spec["slug"])
+    return None
+
+
 def assignable_seat_slugs() -> tuple[str, ...]:
     return tuple(
         str(spec["slug"])
