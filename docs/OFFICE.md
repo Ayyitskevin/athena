@@ -60,6 +60,11 @@ stored on the floor. Empty = still needs a body. `blocked_by` is the existing
 issue-link graph (open blockers only). There is no ready flag; `claim_issue`
 plus If-Match remains the authority.
 
+**Rooms** are flavor. Warehouse / Accounting / Sales / Annex group chairs
+and filter the floor (`?room=warehouse`). They do not change claim, lease,
+status, or assignee. Unplaced chairs live in The Annex. Stock the starter
+pack once, or add your own rooms.
+
 This is how many agents share one big project without sitting in the same
 chair. An operator who can write may sit a declared seat in an empty
 chair from the floor (`POST .../floor/assign`) — same command as Admin →

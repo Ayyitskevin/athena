@@ -1486,13 +1486,16 @@ def show_project(
 @projects_router.get("/{project_id}/floor")
 def project_floor(
     project_id: RowIdPath,
+    room: str | None = None,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """One project as a floor of chairs. 404 if missing or hidden."""
     from athena.aegis import office
 
-    floor = office.build_floor(conn, project_id=project_id, actor=actor)
+    floor = office.build_floor(
+        conn, project_id=project_id, actor=actor, room_slug=room
+    )
     if floor is None:
         raise HTTPException(status_code=404, detail="no such project")
     return floor
