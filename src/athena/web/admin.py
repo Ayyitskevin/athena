@@ -40,6 +40,7 @@ from athena.core import (
     users,
     webhook_commands,
     webhooks,
+    fleet_roster,
     worker_commands,
     workers,
 )
@@ -583,6 +584,38 @@ def agents_admin(
         name="admin/agents.html",
         context=_agents_context(conn, user, notice=notice, error=error),
     )
+
+
+@router.get("/admin/fleet", response_class=HTMLResponse)
+def fleet_roster_page(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Who we declared, plus what this host and Athena can observe. Read-only."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    roster = fleet_roster.build_roster(conn)
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/fleet.html",
+        context={"roster": roster},
+    )
+
+
+@router.get("/admin/fleet.json")
+def fleet_roster_json(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return JSONResponse({"detail": "sign in required"}, status_code=401)
+    if user.get("role") != "admin":
+        return JSONResponse({"detail": "admin only"}, status_code=403)
+    return fleet_roster.build_roster(conn)
 
 
 @router.post(

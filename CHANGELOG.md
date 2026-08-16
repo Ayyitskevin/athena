@@ -202,6 +202,14 @@ the newest one and for what tagging still requires.
   hardlink one. That moves F-3.3's option (a) from "a day of work" to a design
   change that trades away an atomicity guarantee.
 
+### Added
+
+- **Admin → Fleet roster.** A read-only page (`/admin/fleet`, JSON twin
+  `/admin/fleet.json`) lists the declared mickey seats (operator + ACP units),
+  this host's `systemctl --user` verdict, and whether each seat has an Athena
+  account or a worker heartbeat. It never says alive or killed. Undeclared
+  Athena agents show up as drift.
+
 ### Changed
 
 - **The desk loop now narrates the three things that kept the gremlin-hunt

@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Fleet roster - Admin - Athena{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1>Fleet roster</h1>
+        <p class="subtitle">
+            Who we declared on this host, whether systemd has their unit, and
+            whether they have an Athena account. This page does not claim anyone
+            is alive.
+        </p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/admin/agents" class="button secondary">Agents</a>
+        <a href="/admin/fleet.json" class="button secondary">JSON</a>
+    </div>
+</div>
+
+<p class="note-small">
+    Observed {{ roster.observed_at }} on <code>{{ roster.host }}</code>.
+    Does not assert:
+    {% for claim in roster.semantics.does_not_assert %}
+    <code>{{ claim }}</code>{% if not loop.last %}, {% endif %}
+    {% endfor %}.
+</p>
+
+<div class="agent-pill-row">
+    <span class="chip" data-tone="neutral">declared {{ roster.summary.declared }}</span>
+    <span class="chip" data-tone="success">unit active {{ roster.summary.unit_active }}</span>
+    <span class="chip" data-tone="warning">unit inactive {{ roster.summary.unit_inactive }}</span>
+    <span class="chip" data-tone="danger">unit missing {{ roster.summary.unit_missing }}</span>
+    <span class="chip" data-tone="neutral">athena linked {{ roster.summary.athena_linked }}</span>
+    <span class="chip" data-tone="accent">undeclared {{ roster.summary.undeclared_agents }}</span>
+</div>
+
+<section class="panel" aria-labelledby="fleet-seats-heading">
+    <div class="panel-head"><h2 id="fleet-seats-heading">Declared seats</h2></div>
+    <div class="panel-body">
+    <table class="issues-table">
+        <thead>
+            <tr>
+                <th>Seat</th>
+                <th>Kind</th>
+                <th>Unit</th>
+                <th>Athena</th>
+                <th>Worker report</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for seat in roster.seats %}
+            <tr>
+                <td>
+                    <strong>{{ seat.name }}</strong>
+                    {% if seat.email %}<div class="muted"><code>{{ seat.email }}</code></div>{% endif %}
+                    {% if seat.buzz_pubkey %}
+                    <div class="muted"><code>{{ seat.buzz_pubkey[:8] }}…{{ seat.buzz_pubkey[-6:] }}</code></div>
+                    {% endif %}
+                </td>
+                <td>{{ seat.kind }}</td>
+                <td>
+                    {% if seat.unit %}
+                    <code>{{ seat.unit }}</code>
+                    <div>
+                        {% if seat.unit_verdict == "active" %}
+                        <span class="chip" data-tone="success">{{ seat.unit_verdict }}</span>
+                        {% elif seat.unit_verdict == "missing" %}
+                        <span class="chip" data-tone="danger">{{ seat.unit_verdict }}</span>
+                        {% elif seat.unit_verdict == "unobserved" %}
+                        <span class="chip" data-tone="neutral">{{ seat.unit_verdict }}</span>
+                        {% else %}
+                        <span class="chip" data-tone="warning">{{ seat.unit_verdict }}</span>
+                        {% endif %}
+                        <span class="muted">{{ seat.unit_probe.active_state }}/{{ seat.unit_probe.sub_state }}</span>
+                    </div>
+                    {% else %}
+                    <span class="muted">no unit (operator)</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if seat.athena %}
+                    #{{ seat.athena.id }} {{ seat.athena.name }}
+                    {% if seat.athena.paused %}<span class="chip" data-tone="warning">paused</span>{% endif %}
+                    {% if not seat.athena.is_agent and seat.kind != "operator" %}
+                    <span class="chip" data-tone="warning">not agent</span>
+                    {% endif %}
+                    {% else %}
+                    <span class="chip" data-tone="accent">no account</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if seat.worker %}
+                    <span class="chip" data-tone="{{ 'success' if seat.worker.reporting_state == 'reporting_recently' else 'warning' }}">{{ seat.worker.reporting_state }}</span>
+                    <div class="muted">{{ seat.worker.last_seen_at }} · {{ seat.worker.node_label }}</div>
+                    {% else %}
+                    <span class="muted">no worker heartbeat</span>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+{% if roster.undeclared_athena_agents %}
+<section class="panel" aria-labelledby="undeclared-heading">
+    <div class="panel-head"><h2 id="undeclared-heading">Athena agents not on the declared roster</h2></div>
+    <div class="panel-body">
+    <p class="subtitle">Onboarded here, missing from the declared seat list. That is drift.</p>
+    <ul>
+        {% for agent in roster.undeclared_athena_agents %}
+        <li>{{ agent.name }} <code>{{ agent.email }}</code> (id {{ agent.id }})</li>
+        {% endfor %}
+    </ul>
+    </div>
+</section>
+{% endif %}
+{% endblock %}
