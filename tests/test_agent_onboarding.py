@@ -335,7 +335,7 @@ def test_web_onboard_form_is_agent_not_human(tmp_path):
         assert page.status_code == 200
         assert "Agent name" in page.text
         assert "What it may do" in page.text
-        assert "name=\"password\"" not in page.text
+        assert 'name="password"' not in page.text
         assert "user-role" not in page.text
         r = c.post(
             "/admin/agents/onboard",
