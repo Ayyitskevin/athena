@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import sqlite3
-from typing import Any
 
 from athena import config
 from athena.aegis import issue_commands, issues
