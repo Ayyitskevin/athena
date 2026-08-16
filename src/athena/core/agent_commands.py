@@ -31,6 +31,7 @@ same authorization policy that protects the REST and browser routes.
 from __future__ import annotations
 
 from collections.abc import Iterable
+import re
 import sqlite3
 
 from athena.core import (
@@ -51,6 +52,18 @@ VERB_OFFBOARD = "offboarded_user"
 VERB_ONBOARD = "onboarded_agent"
 VERB_PAUSED = "paused_user"
 VERB_RESUMED = "resumed_user"
+
+# Synthetic login id when the operator only names the agent. Agents do not
+# sign in with a mailbox; this is a unique handle, not a human inbox.
+AGENT_EMAIL_DOMAIN = "agents.local"
+
+
+def agent_email_from_name(name: str) -> str:
+    """Turn a display name into the unique email the users table requires."""
+    slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+    if not slug:
+        raise AgentCommandError("agent name is required", status_code=422)
+    return f"{slug}@{AGENT_EMAIL_DOMAIN}"
 
 
 class AgentCommandError(Exception):
@@ -86,9 +99,9 @@ def onboard_agent(
     conn: sqlite3.Connection,
     *,
     actor: dict | None,
-    email: str,
     name: str,
     scopes: Iterable[str] | None,
+    email: str | None = None,
     token_name: str | None = None,
 ) -> dict:
     """Provision a working agent in ONE atomic move: create the agent user
@@ -104,15 +117,19 @@ def onboard_agent(
     moment with the credential's power spelled out. The raw secret rides back in
     the returned dict only; it is never written to the log.
 
+    ``email`` is optional. Agents do not sign in with a mailbox; when omitted,
+    Athena stores ``{slug}@agents.local`` as the unique handle. An explicit
+    email is still accepted so existing API/MCP callers keep working.
+
     Scopes are required — an agent's first credential must say what it may do
     (the same no-fail-open rule as every other mint surface). Raises
     AgentCommandError(401/403) for a missing or non-admin actor, (409) for a
-    duplicate email, (422) for blank email/name or missing/invalid scopes."""
+    duplicate email, (422) for blank name or missing/invalid scopes."""
     actor = _require_admin_actor(actor)
-    email = email.strip()
     name = name.strip()
-    if not email or not name:
-        raise AgentCommandError("agent email and name are required", status_code=422)
+    if not name:
+        raise AgentCommandError("agent name is required", status_code=422)
+    email = (email or "").strip() or agent_email_from_name(name)
     try:
         normalized = tokens.normalize_scopes(scopes)
     except ValueError as exc:

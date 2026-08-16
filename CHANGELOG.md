@@ -204,6 +204,12 @@ the newest one and for what tagging still requires.
 
 ### Changed
 
+- **Onboarding an agent is no longer "new user + agent checkbox."** Admin →
+  Agents now has a first-class form: name, what it may do (scopes), optional
+  token label. No password, no role. The handle is `{slug}@agents.local` unless
+  an API caller still sends an email. Admin → Users is for people who sign in;
+  a leftover `is_agent` tick on that form is ignored.
+
 - **The pinned dependency graph moved forward as a whole.** 21 packages, most of
   them load-bearing: **fastapi 0.139.0 → 0.141.1**, **starlette 1.3.1 → 1.6.0**,
   **ruff 0.15.21 → 0.16.3**, **mcp 1.28.1 → 1.29.0**, **uvicorn 0.51.0 → 0.52.3**,

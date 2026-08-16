@@ -65,7 +65,12 @@
 </table>
 
 <div class="panel">
-    <h3>New User</h3>
+    <h3>New person</h3>
+    <p class="subtitle">
+        Humans who sign in with email and password. To add an AI teammate, use
+        <a href="/admin/agents">Onboard an agent</a> — agents get a scoped token,
+        not a password.
+    </p>
     <form method="post" action="/admin/users" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
@@ -88,11 +93,8 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="form-group form-check">
-            <label><input type="checkbox" name="is_agent" value="1"> This account is an agent</label>
-        </div>
         <div class="form-actions">
-            <button type="submit" class="button">Create User</button>
+            <button type="submit" class="button">Create person</button>
         </div>
     </form>
 </div>

@@ -133,11 +133,13 @@ class OffboardOut(BaseModel):
 
 
 class AgentOnboard(BaseModel):
-    email: str
     name: str
     # REQUIRED: an agent's first credential must say what it may do — the same
     # least-privilege rule as POST /tokens (no omitted-scopes fail-open).
     scopes: list[Literal["read", "issue:write", "docs:write", "admin"]]
+    # Optional unique handle. Omitted → ``{slug}@agents.local``. Agents do not
+    # sign in with a mailbox; this is only the users-table uniqueness key.
+    email: str | None = None
     # Defaults to the agent's name.
     token_name: str | None = None
 
@@ -312,8 +314,8 @@ def onboard_agent(
         result = agent_commands.onboard_agent(
             conn,
             actor=actor,
-            email=payload.email,
             name=payload.name,
+            email=payload.email,
             scopes=payload.scopes,
             token_name=payload.token_name,
         )

@@ -137,7 +137,11 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
             "/users", json={"email": "m@e.com", "name": "Member"}, headers=H1
         ).json()
 
-        # The create form's agent checkbox marks a brand-new account.
+        # New User is for people. An is_agent tick on that form is ignored so
+        # operators cannot accidentally mint a password-user and call it an agent.
+        page = client.get("/admin/users")
+        assert "This account is an agent" not in page.text
+        assert "/admin/agents" in page.text
         client.post(
             "/admin/users",
             data={"email": "bot@e.com", "name": "Botty", "is_agent": "1"},
@@ -145,7 +149,9 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
         )
         conn = db.connect(db_path)
         try:
-            assert users.get_user_by_email(conn, "bot@e.com")["is_agent"] is True
+            created = users.get_user_by_email(conn, "bot@e.com")
+            assert created is not None
+            assert created["is_agent"] is False
         finally:
             conn.close()
 

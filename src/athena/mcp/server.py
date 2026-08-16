@@ -975,18 +975,18 @@ def build_server(
 
     @mutation_tool
     def onboard_agent(
-        email: str,
         name: str,
         scopes: list[str],
+        email: str | None = None,
         token_name: str | None = None,
     ) -> dict:
         """Admin: provision a NEW agent teammate in one audited move — create its
         user account (member role, token-only) and mint its first scoped token.
         Scopes are required (least privilege: e.g. ["read", "issue:write"]).
-        Returns the user, the one-time raw token, and a ready-to-paste MCP config
-        block for connecting the agent. Requires an admin token."""
+        Email is optional; omitted becomes {slug}@agents.local. Returns the user,
+        the one-time raw token, and a ready-to-paste MCP config. Requires admin."""
         return client.onboard_agent(
-            email=email, name=name, scopes=scopes, token_name=token_name
+            name=name, email=email, scopes=scopes, token_name=token_name
         )
 
     @mutation_tool
