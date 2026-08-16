@@ -119,6 +119,30 @@ def seat_slug_for_email(email: str | None) -> str | None:
     return None
 
 
+def athena_assignable_seats(conn: sqlite3.Connection) -> list[dict]:
+    """Declared seats that already have an Athena agent account.
+
+    Does not probe systemd — assigning a chair does not require the unit
+    to be up; radio will skip if they are dark.
+    """
+    rows: list[dict] = []
+    for spec in DECLARED_SEATS:
+        if spec.get("kind") == "operator" or not spec.get("email"):
+            continue
+        account = _athena_account(conn, str(spec["email"]))
+        if account is None or not account.get("is_agent"):
+            continue
+        rows.append(
+            {
+                "slug": spec["slug"],
+                "name": spec["name"],
+                "email": spec["email"],
+                "athena": account,
+            }
+        )
+    return rows
+
+
 def assignable_seat_slugs() -> tuple[str, ...]:
     return tuple(
         str(spec["slug"])

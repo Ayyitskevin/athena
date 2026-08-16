@@ -174,6 +174,16 @@ def build_floor(
     lease_by_issue = {
         int(lease["issue_id"]): lease for lease in leases.list_active_leases(conn)
     }
+    user_ids = [
+        int(issue["assignee_id"])
+        for issue in open_issues
+        if issue.get("assignee_id") is not None
+    ]
+    user_ids.extend(int(lease["holder_id"]) for lease in lease_by_issue.values())
+    people = users.get_users_by_ids(conn, user_ids)
+    blockers_by_issue = dependencies.open_blockers_by_issue(
+        conn, [int(issue["id"]) for issue in open_issues], actor=actor
+    )
 
     chairs: list[dict] = []
     for issue in open_issues:
@@ -181,7 +191,7 @@ def build_floor(
         lease = lease_by_issue.get(issue_id)
         occupant = None
         if lease is not None:
-            holder = users.get_user(conn, int(lease["holder_id"]))
+            holder = people.get(int(lease["holder_id"]))
             occupant = {
                 "holder_id": lease["holder_id"],
                 "holder_name": lease.get("holder_name"),
@@ -192,11 +202,13 @@ def build_floor(
                 "expires_at": lease.get("expires_at"),
                 "generation": lease.get("generation"),
             }
-        assignee_email = None
-        if issue.get("assignee_id") is not None:
-            assignee = users.get_user(conn, int(issue["assignee_id"]))
-            assignee_email = None if assignee is None else assignee.get("email")
-        blockers = dependencies.open_blockers(conn, issue_id, actor=actor)
+        assignee = (
+            people.get(int(issue["assignee_id"]))
+            if issue.get("assignee_id") is not None
+            else None
+        )
+        assignee_email = None if assignee is None else assignee.get("email")
+        blockers = blockers_by_issue.get(issue_id, [])
         chairs.append(
             {
                 "issue_id": issue_id,
