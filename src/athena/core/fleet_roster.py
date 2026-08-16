@@ -17,6 +17,7 @@ from typing import Callable
 from athena.core import users, workers
 
 SCHEMA = "athena.fleet_roster.v1"
+DEFAULT_ASSIGN_CHANNEL = "3fc2b270-cd0b-4a6b-afcd-f10471caffb2"  # command-deck
 
 # Public Buzz identities and unit names. These are not secrets.
 # email is the Athena handle when the seat has been onboarded.
@@ -96,6 +97,22 @@ DECLARED_SEATS: tuple[dict[str, str | None], ...] = (
 )
 
 UnitProbe = Callable[[str], dict]
+
+
+def find_declared_seat(slug: str) -> dict[str, str | None] | None:
+    wanted = slug.strip().lower()
+    for spec in DECLARED_SEATS:
+        if str(spec["slug"]).lower() == wanted:
+            return spec
+    return None
+
+
+def assignable_seat_slugs() -> tuple[str, ...]:
+    return tuple(
+        str(spec["slug"])
+        for spec in DECLARED_SEATS
+        if spec.get("kind") != "operator" and spec.get("email")
+    )
 
 
 def probe_systemd_user_unit(unit: str) -> dict:

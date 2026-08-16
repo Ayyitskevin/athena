@@ -15,6 +15,8 @@ from athena.aegis import (
     automation_commands,
     delegations,
     fleet_work,
+    issue_commands,
+    issues,
     projects,
     sprints,
     statuses,
@@ -49,6 +51,7 @@ from athena.mcp.config import claude_mcp_config
 from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
+from athena.workflows import fleet_assign_commands
 
 router = APIRouter()
 
@@ -586,22 +589,108 @@ def agents_admin(
     )
 
 
+def _fleet_page_context(
+    conn: sqlite3.Connection,
+    *,
+    notice: str | None = None,
+    error: str | None = None,
+) -> dict:
+    roster = fleet_roster.build_roster(conn)
+    open_issues = [
+        issue
+        for issue in issues.list_issues(conn, include_archived=False, limit=80)
+        if not statuses.is_done(conn, issue.get("project_id"), issue["status"])
+    ]
+    assignable = [
+        seat
+        for seat in roster["seats"]
+        if seat["athena"] is not None and seat["athena"].get("is_agent")
+    ]
+    return {
+        "roster": roster,
+        "open_issues": open_issues,
+        "assignable": assignable,
+        "radio_configured": config.buzz_radio_configured(),
+        "notice": notice,
+        "error": error,
+    }
+
+
 @router.get("/admin/fleet", response_class=HTMLResponse)
 def fleet_roster_page(
     request: Request,
+    assigned: str | None = Query(None),
+    seat: str | None = Query(None),
+    radio: str | None = Query(None),
+    error: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
-    """Who we declared, plus what this host and Athena can observe. Read-only."""
+    """Who we declared, plus assign-to-desk + optional Buzz radio."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
     err = _admin_required(user)
     if err is not None:
         return err
-    roster = fleet_roster.build_roster(conn)
+    notice = None
+    if assigned:
+        notice = f"Assigned {assigned} to {seat or 'seat'}."
+        if radio == "sent":
+            notice += " Radio posted to command-deck."
+        elif radio == "skipped":
+            notice += " Radio skipped (not configured)."
+        elif radio == "failed":
+            notice += " Radio failed; the desk assignment still landed."
     return templates.TemplateResponse(
         request=request,
         name="admin/fleet.html",
-        context={"roster": roster},
+        context=_fleet_page_context(conn, notice=notice, error=error),
+    )
+
+
+@router.post(
+    "/admin/fleet/assign",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def fleet_assign_issue(
+    request: Request,
+    issue_id: int = Form(...),
+    seat_slug: str = Form(...),
+    note: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None
+    try:
+        result = fleet_assign_commands.assign_issue_to_seat(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            seat_slug=seat_slug,
+            note=note,
+        )
+    except fleet_assign_commands.AssignError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/fleet.html",
+            context=_fleet_page_context(conn, error=exc.detail),
+            status_code=400,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/fleet.html",
+            context=_fleet_page_context(conn, error=str(exc.detail)),
+            status_code=400,
+        )
+    radio = (result.get("radio") or {}).get("status") or "skipped"
+    return RedirectResponse(
+        f"/admin/fleet?assigned={result['issue_key']}&seat={result['seat']}&radio={radio}",
+        status_code=303,
     )
 
 
