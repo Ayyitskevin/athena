@@ -228,6 +228,61 @@ def open_blockers(
     return _others(conn, open_ids, actor)
 
 
+def open_blockers_by_issue(
+    conn: sqlite3.Connection,
+    issue_ids: list[int],
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> dict[int, list[dict]]:
+    """Open blockers for many issues in a handful of queries, not one per chair.
+
+    Same meaning as :func:`open_blockers`: only ``blocks`` edges, only blockers
+    that are not done, visibility-gated when ``actor`` is not ``_UNGATED``.
+    """
+    ids = sorted({int(i) for i in issue_ids})
+    empty: dict[int, list[dict]] = {i: [] for i in ids}
+    if not ids:
+        return empty
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        "SELECT l.to_id AS blocked_id, l.from_id AS blocker, "
+        "i.status, i.project_id FROM issue_links l "
+        "JOIN issues i ON i.id = l.from_id "
+        "WHERE l.to_id IN (" + placeholders + ") AND l.kind = 'blocks' "
+        "ORDER BY l.to_id, l.from_id",
+        ids,
+    ).fetchall()
+    open_ids_by_blocked: dict[int, list[int]] = {i: [] for i in ids}
+    blocker_ids: list[int] = []
+    for row in rows:
+        if statuses.is_done(conn, row["project_id"], row["status"]):
+            continue
+        blocked_id = int(row["blocked_id"])
+        blocker = int(row["blocker"])
+        open_ids_by_blocked.setdefault(blocked_id, []).append(blocker)
+        blocker_ids.append(blocker)
+    visible_blockers: list[int] = []
+    for blocker in sorted(set(blocker_ids)):
+        if actor is not _UNGATED:
+            assert actor is None or isinstance(actor, dict)
+            if not access.can_see_issue(conn, actor, blocker):
+                continue
+        visible_blockers.append(blocker)
+    summaries: dict[int, dict] = {}
+    if visible_blockers:
+        placeholders = ",".join("?" for _ in visible_blockers)
+        for row in conn.execute(
+            issues.select_sql() + f" WHERE i.id IN ({placeholders})",
+            visible_blockers,
+        ).fetchall():
+            issue = issues.to_issue(row)
+            summaries[int(issue["id"])] = _summary(issue)
+    out = empty
+    for blocked_id, blockers in open_ids_by_blocked.items():
+        out[blocked_id] = [summaries[bid] for bid in blockers if bid in summaries]
+    return out
+
+
 def edges_among(conn: sqlite3.Connection, issue_ids: list[int]) -> list[dict]:
     """Every declared dependency whose BOTH ends are in the given set of issues.
 

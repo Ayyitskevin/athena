@@ -80,6 +80,79 @@ def test_floor_lists_empty_and_occupied_chairs(tmp_path):
         assert missing.status_code == 404
 
 
+def test_open_blockers_by_issue_matches_single_read(tmp_path):
+    from athena.aegis import dependencies, issues
+    from athena.core import db, users
+
+    conn = db.connect(tmp_path / "blockers.db")
+    db.migrate(conn)
+    admin = users.create_user(
+        conn, email="admin@e.com", name="Admin", role=users.ADMIN_ROLE
+    )
+    a = issues.create_issue(conn, title="blocker", body="", created_by=admin["id"])
+    b = issues.create_issue(conn, title="blocked", body="", created_by=admin["id"])
+    dependencies.add_link(
+        conn,
+        from_id=a["id"],
+        to_id=b["id"],
+        relation="blocks",
+        created_by=admin["id"],
+    )
+    single = dependencies.open_blockers(conn, b["id"], actor=admin)
+    batched = dependencies.open_blockers_by_issue(conn, [a["id"], b["id"]], actor=admin)
+    assert batched[a["id"]] == []
+    assert [row["id"] for row in batched[b["id"]]] == [row["id"] for row in single]
+    conn.close()
+
+
+def test_floor_assign_sits_an_empty_chair(tmp_path):
+    app = create_app(tmp_path / "floor-sit.db")
+    with TestClient(app) as client:
+        client.post(
+            "/users",
+            json={"email": "admin@e.com", "name": "Admin", "password": "secret"},
+        )
+        project = client.post(
+            "/projects",
+            json={"key": "SCR", "name": "Scranton"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        issue = client.post(
+            "/issues",
+            json={"title": "open chair", "project_id": project["id"]},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        client.post(
+            "/users/onboard_agent",
+            json={
+                "name": "Grok",
+                "email": "grok@agents.local",
+                "scopes": ["read", "issue:write"],
+            },
+            headers={"X-Athena-Actor": "1"},
+        )
+        client.post(
+            "/login",
+            data={"email": "admin@e.com", "password": "secret"},
+            follow_redirects=False,
+        )
+        client.headers["X-CSRF-Token"] = client.cookies.get("athena_csrf", "")
+        page = client.get(f"/aegis/projects/{project['id']}/floor")
+        assert "Sit them down" in page.text
+        posted = client.post(
+            f"/aegis/projects/{project['id']}/floor/assign",
+            data={"issue_id": issue["id"], "seat_slug": "grok"},
+            follow_redirects=False,
+        )
+        assert posted.status_code == 303, posted.text
+        assert "assigned=" in posted.headers["location"]
+        assert "seat=grok" in posted.headers["location"]
+        fresh = client.get(
+            f"/issues/{issue['id']}", headers={"X-Athena-Actor": "1"}
+        ).json()
+        assert fresh["assignee_name"] == "Grok"
+
+
 def test_chair_packet_names_project_and_blockers():
     from athena.aegis.office import PROTOCOL
 

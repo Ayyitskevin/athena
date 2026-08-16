@@ -18,8 +18,12 @@
     </div>
 </div>
 
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
 <p class="note-small">
     Occupancy is a lease, not a pulse. Empty chairs are work that still needs a body.
+    Sit someone here — they get the desk assignment and a command-deck ping if radio is on.
 </p>
 
 {% if floor.chairs %}
@@ -53,6 +57,23 @@
             <p class="muted">Assigned to {{ chair.assignee_seat_slug or chair.assignee_name }} — not sitting yet.</p>
             {% else %}
             <p class="muted">This chair is open. Assign someone before they start a fire.</p>
+            {% endif %}
+            {% if can_assign and assignable and not chair.occupied %}
+            <form method="post" action="/aegis/projects/{{ project.id }}/floor/assign" class="issue-form">
+                {% include "partials/csrf.html" %}
+                <input type="hidden" name="issue_id" value="{{ chair.issue_id }}">
+                <div class="form-group">
+                    <label for="seat-{{ chair.issue_id }}">Sit</label>
+                    <select id="seat-{{ chair.issue_id }}" name="seat_slug" required>
+                        {% for seat in assignable %}
+                        <option value="{{ seat.slug }}">{{ seat.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="button">Sit them down</button>
+                </div>
+            </form>
             {% endif %}
             {% if chair.blocked_by %}
             <p>

@@ -204,6 +204,11 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Sit someone from the floor.** Empty chairs carry an assign form for
+  writers. Same command as Admin → Fleet (assignee + delegate + optional
+  radio). Floor blocker/occupant lookups are batched — no per-chair
+  query storm.
+
 - **The project floor.** A project is a branch office:
   `GET /aegis/projects/{id}/floor` (HTML), `GET /projects/{id}/floor` (REST /
   `get_project_floor`). Every open issue is a chair. Occupied means an

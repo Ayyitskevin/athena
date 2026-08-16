@@ -61,7 +61,12 @@ issue-link graph (open blockers only). There is no ready flag; `claim_issue`
 plus If-Match remains the authority.
 
 This is how many agents share one big project without sitting in the same
-chair.
+chair. An operator who can write may sit a declared seat in an empty
+chair from the floor (`POST .../floor/assign`) — same command as Admin →
+Fleet assign, including the optional Buzz radio.
+
+Blockers for the whole floor are loaded in a handful of queries, not one
+round trip per chair.
 
 ## Operator view
 
