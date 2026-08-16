@@ -77,8 +77,11 @@ def record_learning(
             space_id=payload.space_id,
         )
     except run_learnings.LearningError as exc:
+        detail: object = exc.detail
+        if exc.extra:
+            detail = {"error": exc.detail, **exc.extra}
         raise HTTPException(
-            status_code=run_learnings.STATUS_BY_KIND[exc.kind], detail=exc.detail
+            status_code=run_learnings.STATUS_BY_KIND[exc.kind], detail=detail
         ) from exc
     page = result["page"]
     return {

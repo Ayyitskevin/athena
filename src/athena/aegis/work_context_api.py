@@ -268,6 +268,9 @@ class IssueWorkContextOut(BaseModel):
     semantics: WorkContextSemanticsOut
     issue: IssueSummaryOut
     issue_etag: str
+    how_to_claim: dict
+    runbook: dict
+    complete_does_not_close_issue: bool
     warnings: list[str]
     hierarchy: HierarchyOut
     dependencies: DependenciesOut

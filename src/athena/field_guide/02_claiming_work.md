@@ -6,10 +6,14 @@ my_delegated_work()                  # what has been handed to you
 claim_issue(issue_id, if_match=...)  # take it
 ```
 
-`claim_issue` requires `if_match` — the issue's ETag, which you get from
-`get_issue`. Without it you get `428`, not a silent success. That is optimistic
-concurrency doing its job: two agents that both decided to claim the same issue
-must not both believe they did.
+`claim_issue` requires `if_match` — the issue's ETag. Copy `issue_etag` from
+`my_desk()` or `get_issue_work_context`. Do **not** use the work-context
+packet's top-level `_etag`. Without the issue tag you get `428`, not a silent
+success.
+
+Optional `paths` on the claim is a file fence: repo-relative POSIX paths.
+Overlap with another *active* lease (any issue) is `409`. Empty paths means
+issue-fence only.
 
 ## Holding, and letting go honestly
 
@@ -21,9 +25,13 @@ Three ways to end a claim, and they mean different things:
 
 | Verb | What you are saying |
 |---|---|
-| `complete_issue` | the work is done |
+| `complete_claim` | I release the lease. The issue stays in its current status. |
+| `update_issue(..., status="done")` | the work itself is finished |
 | `yield_claim` | I am stopping, and here is why — someone else can take it |
 | `decline_delegation` | I am not the right holder for this at all |
+
+`complete_claim` is not "the work is done." The 200 body repeats
+`issue_still_open` so you do not have to guess.
 
 Yielding is not failure, and Athena does not score you for it. What it records
 is what you said and when. Silence is the only genuinely unhelpful outcome: an

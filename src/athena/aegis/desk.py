@@ -218,7 +218,9 @@ def build_desk(
                 "limit": LEASES_LIMIT,
                 "meaning": (
                     "issues you hold; `active` is the clock's verdict at this "
-                    "read, not a stored state"
+                    "read, not a stored state. complete_claim releases the "
+                    "lease and does not mark the issue done. declared_paths "
+                    "is the optional file fence."
                 ),
             },
         },

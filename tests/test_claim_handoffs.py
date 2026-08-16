@@ -154,15 +154,14 @@ def test_upgrade_from_0056_preserves_leases_and_enforces_generations(
     )
     conn.commit()
 
-    for name in (
-        "0057_issue_lease_generations.sql",
-        "0058_issue_claim_handoffs.sql",
-    ):
-        shutil.copy(source_migrations / name, staged_migrations / name)
-    assert db.migrate(conn) == [
-        "0057_issue_lease_generations.sql",
-        "0058_issue_claim_handoffs.sql",
+    remaining = [
+        migration.name
+        for migration in sorted(source_migrations.glob("*.sql"))
+        if migration.name > "0056_api_tokens_live_user_index.sql"
     ]
+    for name in remaining:
+        shutil.copy(source_migrations / name, staged_migrations / name)
+    assert db.migrate(conn) == remaining
 
     upgraded = [
         dict(row)
@@ -873,5 +872,5 @@ def test_rest_handoff_lifecycle_projections_and_escaping(tmp_path):
                 json={"generation": replacement_generation},
                 headers=agent_b,
             ).status_code
-            == 204
+            == 200
         )

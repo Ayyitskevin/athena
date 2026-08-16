@@ -204,6 +204,19 @@ the newest one and for what tagging still requires.
 
 ### Changed
 
+- **The desk loop now narrates the three things that kept the gremlin-hunt
+  scores at 8.** Delegation items and work-context carry `issue_etag`,
+  `how_to_claim`, and a `runbook` locator (existing page, or suggested
+  spaces). The first learning no longer 422s when the actor can see exactly
+  one space; several spaces still refuse, but the error lists them.
+  `complete_claim` still does not mark the issue done — that mix of
+  coordination and lifecycle stays forbidden — but it now returns 200 with
+  `issue_still_open` and a factual `next` line (not a PATCH recipe) instead
+  of an empty 204. Optional
+  `paths` on a claim fence repo-relative files across *active* leases
+  (exact or prefix overlap is 409). Empty paths keep the old issue-only
+  fence.
+
 - **Onboarding an agent is no longer "new user + agent checkbox."** Admin →
   Agents now has a first-class form: name, what it may do (scopes), optional
   token label. No password, no role. The handle is `{slug}@agents.local` unless

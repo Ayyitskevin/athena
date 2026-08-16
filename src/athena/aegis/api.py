@@ -1934,7 +1934,16 @@ class LeaseOut(BaseModel):
     expires_at: str
     generation: str
     active: bool
+    declared_paths: list[str] = []
     open_claim_handoff: ClaimHandoffOut | None = None
+
+
+class CompleteClaimOut(BaseModel):
+    released: bool
+    issue_id: int
+    issue_status: str
+    issue_still_open: bool
+    next: str
 
 
 HandoffEvidenceItem = Annotated[
@@ -1953,6 +1962,9 @@ class ClaimIn(BaseModel):
     # Omit to acquire a free/expired lease. Supply the current value to renew the
     # same active possession; a supplied stale value never becomes acquisition.
     generation: str | None = None
+    # Optional repo-relative POSIX paths this holder intends to touch. Empty or
+    # omitted = issue fence only. Overlap with another active lease is 409.
+    paths: list[str] | None = None
 
 
 class YieldClaimIn(BaseModel):
@@ -2137,6 +2149,7 @@ def claim_issue(
             issue_id=issue_id,
             if_match=_if_match_values(request),
             generation=payload.generation if payload else None,
+            paths=payload.paths if payload else None,
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:
@@ -2203,26 +2216,30 @@ def resume_issue_claim_handoff(
         return _issue_command_error_response(exc)
 
 
-@router.post("/{issue_id}/complete", status_code=204, response_model=None)
+@router.post(
+    "/{issue_id}/complete",
+    response_model=CompleteClaimOut,
+)
 def complete_issue_claim(
     issue_id: RowIdPath,
     response: Response,
     payload: LeaseGenerationIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> None | JSONResponse:
+) -> dict | JSONResponse:
     # Complete: release the lease you hold (the issue is freed for the next claimant).
     # 409 if you don't hold an active lease. Releases the coordination lease only — status
-    # changes go through the ordinary status command.
+    # changes go through the ordinary status command. The body says so explicitly so
+    # an agent does not have to read source to learn the issue is still open.
     try:
-        lease_commands.complete_claim(
+        released = lease_commands.complete_claim(
             conn,
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
         )
         response.headers.update(_PRIVATE_LEASE_HEADERS)
-        return None
+        return released
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
 

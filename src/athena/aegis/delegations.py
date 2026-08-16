@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import claim_handoffs
-from athena.core import access, db, labels
+from athena.aegis import claim_handoffs, issue_etags, issues
+from athena.core import access, db, labels, runbook_hints
 
 
 DEFAULT_LIMIT = 50
@@ -148,6 +148,8 @@ def _list_delegations(
     for row in page_rows:
         issue_id = int(row["id"])
         item = _to_item(
+            conn,
+            subject,
             row,
             subject_visible_project_ids,
             labels_by_issue.get(issue_id, []),
@@ -262,6 +264,8 @@ def _blocker_previews(
 
 
 def _to_item(
+    conn: sqlite3.Connection,
+    actor: dict,
     row: sqlite3.Row,
     subject_visible_project_ids: set[int] | None,
     issue_labels: list[dict],
@@ -286,6 +290,10 @@ def _to_item(
     if row["project_key"] and row["project_seq"] is not None:
         key = f"{row['project_key']}-{row['project_seq']}"
 
+    issue_row = issues.get_issue(conn, issue_id)
+    issue_etag = (
+        issue_etags.current_etag(conn, issue_row) if issue_row is not None else None
+    )
     return {
         "issue": {
             "id": issue_id,
@@ -301,16 +309,28 @@ def _to_item(
             "assignee_name": row["assignee_name"],
             "labels": issue_labels,
         },
+        "issue_etag": issue_etag,
+        "how_to_claim": {
+            "header": "If-Match",
+            "from": "issue_etag",
+            "paths": "optional repo-relative POSIX paths to fence files",
+        },
+        "runbook": runbook_hints.runbook_narration(conn, issue_id, actor=actor),
+        "complete_does_not_close_issue": True,
+        "next_after_complete": (
+            "complete_claim releases the lease only; PATCH the issue status "
+            "to done if the work is finished"
+        ),
         "delegated_at": row["delegated_at"],
         "delegated_by": {
             "id": row["delegated_by_id"],
             "name": row["delegated_by_name"],
         },
         "visible_to_subject": visible_to_subject,
+        "open_claim_handoff": open_claim_handoff,
         "visible_open_blockers": blocker_info["items"],
         "visible_open_blocker_count": blocker_info["count"],
         "visible_open_blockers_truncated": blocker_info["count"]
         > len(blocker_info["items"]),
-        "open_claim_handoff": open_claim_handoff,
         "warnings": warnings,
     }

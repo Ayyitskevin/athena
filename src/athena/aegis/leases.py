@@ -16,6 +16,7 @@ row, the command owns the policy + event).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import json
 import secrets
 import sqlite3
 from typing import TypeGuard
@@ -40,15 +41,30 @@ def is_valid_generation(value: object) -> TypeGuard[str]:
 
 _SELECT = (
     "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-    "l.claimed_at, l.expires_at, l.generation, "
+    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
     "(l.expires_at > datetime('now')) AS active "
     "FROM issue_leases l JOIN users u ON u.id = l.holder_id"
 )
 
 
+def _parse_declared_paths(raw: object) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(item) for item in raw]
+    try:
+        parsed = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed]
+
+
 def _row_to_lease(row: sqlite3.Row) -> dict:
     lease = dict(row)
     lease["active"] = bool(lease["active"])  # SQLite returns 0/1 for the comparison
+    lease["declared_paths"] = _parse_declared_paths(lease.get("declared_paths"))
     return lease
 
 
@@ -84,13 +100,29 @@ def leases_held_by(
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
         "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-        "l.claimed_at, l.expires_at, l.generation, "
+        "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
         "(l.expires_at > ?) AS active "
         "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
         "WHERE l.holder_id = ? ORDER BY l.claimed_at DESC, l.issue_id DESC LIMIT ?",
         (stamp, holder_id, bounded),
     ).fetchall()
     return [_row_to_lease(row) for row in rows]
+
+
+def list_active_leases(
+    conn: sqlite3.Connection, *, except_issue_id: int | None = None
+) -> list[dict]:
+    """Every currently active lease, optionally excluding one issue.
+
+    Used to fence declared paths across issues. ``active`` is the clock, same as
+    ``get_lease``.
+    """
+    sql = f"{_SELECT} WHERE l.expires_at > datetime('now')"
+    params: list[object] = []
+    if except_issue_id is not None:
+        sql += " AND l.issue_id != ?"
+        params.append(except_issue_id)
+    return [_row_to_lease(row) for row in conn.execute(sql, params).fetchall()]
 
 
 def count_leases_held_by(conn: sqlite3.Connection, *, holder_id: int) -> int:
@@ -109,6 +141,7 @@ def upsert_lease(
     holder_id: int,
     lease_seconds: int,
     generation: str | None = None,
+    declared_paths: list[str] | None = None,
     *,
     commit: bool = True,
 ) -> dict:
@@ -128,14 +161,22 @@ def upsert_lease(
     lease_generation = secrets.token_hex(16) if generation is None else generation
     if not is_valid_generation(lease_generation):
         raise ValueError("invalid issue lease generation")
+    paths_json = json.dumps(list(declared_paths or []))
     conn.execute(
         "INSERT INTO issue_leases "
-        "(issue_id, holder_id, claimed_at, expires_at, generation) "
-        "VALUES (?, ?, datetime('now'), datetime('now', ?), ?) "
+        "(issue_id, holder_id, claimed_at, expires_at, generation, declared_paths) "
+        "VALUES (?, ?, datetime('now'), datetime('now', ?), ?, ?) "
         "ON CONFLICT(issue_id) DO UPDATE SET "
         "holder_id = excluded.holder_id, claimed_at = excluded.claimed_at, "
-        "expires_at = excluded.expires_at, generation = excluded.generation",
-        (issue_id, holder_id, f"+{lease_seconds} seconds", lease_generation),
+        "expires_at = excluded.expires_at, generation = excluded.generation, "
+        "declared_paths = excluded.declared_paths",
+        (
+            issue_id,
+            holder_id,
+            f"+{lease_seconds} seconds",
+            lease_generation,
+            paths_json,
+        ),
     )
     if commit:
         conn.commit()
