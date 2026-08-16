@@ -14,10 +14,11 @@ import html
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena.aegis import (
     issues,
+    office,
     project_commands,
     project_etags,
     projects,
@@ -64,6 +65,35 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "is_admin": user is not None and identity.is_admin(user),
         },
     )
+
+
+@router.get("/aegis/projects/{project_id}/floor", response_class=HTMLResponse)
+def project_floor(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """The branch office: one project, many chairs. Open read like the issue list."""
+    user = getattr(request.state, "user", None)
+    floor = office.build_floor(conn, project_id=project_id, actor=user)
+    if floor is None:
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/floor.html",
+        context={"floor": floor, "project": floor["project"]},
+    )
+
+
+@router.get("/aegis/projects/{project_id}/floor.json")
+def project_floor_json(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    floor = office.build_floor(conn, project_id=project_id, actor=user)
+    if floor is None:
+        return JSONResponse({"detail": "no such project"}, status_code=404)
+    return floor
 
 
 @router.post(

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} — Floor — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Projects</a>
+        <h1>{{ project.name }} floor</h1>
+        <p class="subtitle">
+            One project. Many chairs. Nobody shares a seat.
+            {{ floor.occupied_count }} sitting · {{ floor.empty_count }} empty.
+        </p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/aegis/issues?project={{ project.id }}" class="button secondary">Issue list</a>
+        <a href="/admin/fleet" class="button secondary">Assign a seat</a>
+    </div>
+</div>
+
+<p class="note-small">
+    Occupancy is a lease, not a pulse. Empty chairs are work that still needs a body.
+</p>
+
+{% if floor.chairs %}
+<div class="floor-grid">
+    {% for chair in floor.chairs %}
+    <article class="panel floor-chair{% if chair.occupied %} is-occupied{% endif %}">
+        <div class="panel-head">
+            <h2>
+                <a href="/aegis/issues/{{ chair.issue_id }}">{{ chair.issue_key or ('#' ~ chair.issue_id) }}</a>
+            </h2>
+            {% if chair.occupied %}
+            <span class="chip" data-tone="success">occupied</span>
+            {% else %}
+            <span class="chip" data-tone="neutral">empty</span>
+            {% endif %}
+        </div>
+        <div class="panel-body">
+            <p class="issue-title">{{ chair.issue_title }}</p>
+            {% if chair.occupied and chair.occupant %}
+            <p>
+                <strong>{{ chair.occupant.seat_slug or chair.occupant.holder_name }}</strong>
+                is sitting
+                {% if chair.occupant.declared_paths %}
+                · fenced
+                {% for path in chair.occupant.declared_paths %}<code>{{ path }}</code> {% endfor %}
+                {% else %}
+                · issue fence only
+                {% endif %}
+            </p>
+            {% elif chair.assignee_name %}
+            <p class="muted">Assigned to {{ chair.assignee_seat_slug or chair.assignee_name }} — not sitting yet.</p>
+            {% else %}
+            <p class="muted">This chair is open. Assign someone before they start a fire.</p>
+            {% endif %}
+            {% if chair.blocked_by %}
+            <p>
+                Blocked by
+                {% for b in chair.blocked_by %}
+                <a href="/aegis/issues/{{ b.id }}">{{ b.key or ('#' ~ b.id) }}</a>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+            </p>
+            {% endif %}
+            <p class="muted"><code>{{ chair.checkout_hint }}</code></p>
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">
+    The warehouse is empty. Open an issue or the Dundies get cancelled.
+</p>
+{% endif %}
+{% endblock %}
