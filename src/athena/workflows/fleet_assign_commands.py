@@ -6,7 +6,9 @@ rolls back a successful assign.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import sqlite3
+from typing import Any
 
 from athena import config
 from athena.aegis import issue_commands, issues
@@ -26,7 +28,7 @@ def assign_issue_to_seat(
     issue_id: int,
     seat_slug: str,
     note: str = "",
-    radio: object | None = None,
+    radio: Callable[..., dict] | None = None,
 ) -> dict:
     spec = fleet_roster.find_declared_seat(seat_slug)
     if spec is None:

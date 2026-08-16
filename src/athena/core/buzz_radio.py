@@ -7,9 +7,11 @@ A missing radio is a skipped ping, not a failed assignment.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import os
 import subprocess
+from typing import Any
 
 from athena import config
 
@@ -56,7 +58,7 @@ def send_assignment(
     title: str,
     url: str,
     note: str = "",
-    runner: object | None = None,
+    runner: Callable[..., Any] | None = None,
 ) -> dict:
     """Post one assignment ping. Returns {status, detail}."""
     if not config.buzz_radio_configured():
