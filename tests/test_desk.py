@@ -82,6 +82,8 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
     assert board["identity"]["seat_slug"] is None
     assert board["work"]["protocol"]["claim_one_issue"] is True
     assert board["work"]["protocol"]["do_not_touch_other_work"] is True
+    assert board["office"]["schema"] == "athena.office.v1"
+    assert board["office"]["seated"] is False
     assert board["asks"]["run_controls"]["items"] == []
     assert board["asks"]["worker_kill_requests"]["items"] == []
     assert board["asks"]["claim_handoffs"]["items"] == []

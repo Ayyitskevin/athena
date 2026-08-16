@@ -43,6 +43,17 @@ class AdvanceCursorIn(BaseModel):
     after_id: int = Field(..., ge=1, le=MAX_SQLITE_INTEGER)
 
 
+@router.get("/office")
+def read_office(
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """The cubicle: one chair, fenced paths, checkout hint. Not a lock."""
+    from athena.aegis import office
+
+    return office.build_office(conn, actor=actor)
+
+
 @router.get("/desk")
 def read_desk(
     actor: dict = Depends(current_actor),

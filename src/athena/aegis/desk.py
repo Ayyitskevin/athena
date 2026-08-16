@@ -34,7 +34,7 @@ from __future__ import annotations
 from datetime import datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, delegations, leases
+from athena.aegis import claim_handoffs, delegations, leases, office
 from athena.core import (
     approvals,
     budgets,
@@ -259,5 +259,11 @@ def build_desk(
             # from `cursor.after_id`, then acknowledge this.
             "latest_visible_event_id": _latest_event_id(conn, actor=actor),
         },
+        "office": office.build_office(
+            conn,
+            actor=actor,
+            now=now,
+            inbox_items=inbox.get("items") or [],
+        ),
         "cursor": cursor,
     }

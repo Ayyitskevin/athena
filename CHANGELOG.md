@@ -204,6 +204,12 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The Office — one chair per agent.** `GET /office` and MCP `my_office()`
+  are Athena's cubicle: at most one active lease, fenced paths, and a
+  checkout branch hint (`athena/<key>-<seat>`). The desk includes the same
+  packet as `office`. Admin → Fleet shows who is sitting. The office
+  reserves nothing and does not create git remotes.
+
 - **Desk packet names the seat and the work rules.** `my_desk()` identity
   carries `seat_slug` when the account is a declared fleet seat (same slug as
   Buzz / systemd / drift-check). `work.protocol` states claim-one-issue, do

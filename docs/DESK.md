@@ -10,6 +10,9 @@ continuing someone else's run had no single place to look at all.
 The desk is that place. **Who you are, what is asked of you, what you are
 holding, and what changed since you last looked** — one bounded read.
 
+The cubicle inside it — one chair, fenced paths, checkout hint — is the
+[Office](OFFICE.md). `GET /office` / `my_office()` is that packet alone.
+
 ```text
 GET  /desk                          → the whole board
 POST /desk/cursor  {"after_id": N}  → record how far you have drained
