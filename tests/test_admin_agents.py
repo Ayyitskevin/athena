@@ -107,7 +107,9 @@ def test_agents_admin_empty_state(tmp_path):
         page = client.get("/admin/agents")
         assert page.status_code == 200
         assert "No agent accounts yet" in page.text
-        assert "/admin/users" in page.text
+        assert 'id="onboard-name"' in page.text
+        assert 'type="password"' not in page.text
+        assert "Onboard an agent" in page.text
 
 
 def test_agents_admin_shows_tokens_access_assignments_and_activity(tmp_path):

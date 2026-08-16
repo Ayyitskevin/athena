@@ -617,8 +617,8 @@ def onboard_agent(
         result = agent_commands.onboard_agent(
             conn,
             actor=user,
-            email=email,
             name=name,
+            email=email or None,
             scopes=_selected_scopes(
                 scope_read, scope_issue_write, scope_docs_write, scope_admin
             ),
@@ -985,7 +985,6 @@ def create_user(
     name: str = Form(""),
     password: str = Form(""),
     role: str = Form(users.DEFAULT_ROLE),
-    is_agent: str | None = Form(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -1013,7 +1012,7 @@ def create_user(
             name=name,
             password=password.strip() or None,
             role=role,
-            is_agent=is_agent is not None,
+            is_agent=False,
         )
     except user_commands.UserCommandError as exc:
         return templates.TemplateResponse(

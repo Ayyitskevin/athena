@@ -808,13 +808,14 @@ class AthenaClient:
     def onboard_agent(
         self,
         *,
-        email: str,
         name: str,
         scopes: list[str],
+        email: str | None = None,
         token_name: str | None = None,
     ) -> Any:
         """Admin: provision an agent (user + first scoped token) in one audited
         move. The response carries the one-time raw token and an MCP config block.
+        Email is optional — omitted becomes ``{slug}@agents.local``.
         Deliberately NO idempotency_key: the server refuses durable replay for
         endpoints that return a one-time secret (the raw token must never sit in
         the replay store)."""
