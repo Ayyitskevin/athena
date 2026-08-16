@@ -21,6 +21,52 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
+<section class="panel" aria-labelledby="occupancy-heading">
+    <div class="panel-head"><h2 id="occupancy-heading">Who is sitting</h2></div>
+    <div class="panel-body">
+    <p class="subtitle">
+        Active leases right now. Not a claim that the process is running —
+        only that this seat holds a chair.
+    </p>
+    {% if occupancy %}
+    <table class="issues-table">
+        <thead>
+            <tr>
+                <th>Seat</th>
+                <th>Chair</th>
+                <th>Fenced paths</th>
+                <th>Lease until</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for row in occupancy %}
+            <tr>
+                <td>
+                    <strong>{{ row.seat_slug or row.holder_name }}</strong>
+                    <div class="muted">{{ row.holder_name }}</div>
+                </td>
+                <td>
+                    <a href="/aegis/issues/{{ row.issue_id }}">{{ row.issue_key or ('#' ~ row.issue_id) }}</a>
+                    <div class="muted">{{ row.issue_title }}</div>
+                </td>
+                <td>
+                    {% if row.declared_paths %}
+                    {% for path in row.declared_paths %}<code>{{ path }}</code> {% endfor %}
+                    {% else %}
+                    <span class="muted">issue fence only</span>
+                    {% endif %}
+                </td>
+                <td class="muted">{{ row.expires_at }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">Nobody is sitting. Assign a seat below.</p>
+    {% endif %}
+    </div>
+</section>
+
 <section class="panel" aria-labelledby="assign-heading">
     <div class="panel-head"><h2 id="assign-heading">Assign to a seat</h2></div>
     <div class="panel-body">

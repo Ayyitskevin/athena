@@ -34,8 +34,15 @@ from __future__ import annotations
 from datetime import datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, delegations, leases
-from athena.core import approvals, budgets, desk_cursors, identity, notifications
+from athena.aegis import claim_handoffs, delegations, leases, office
+from athena.core import (
+    approvals,
+    budgets,
+    desk_cursors,
+    fleet_roster,
+    identity,
+    notifications,
+)
 from athena.core import run_control_commands, workers
 from athena.core.desk_cursors import DESK_CURSOR
 
@@ -178,6 +185,9 @@ def build_desk(
             "budget": None if budget is None else budget.public(),
             "approval_required": approvals.gated_kinds(conn, user_id),
             "is_admin": identity.is_admin(actor),
+            # None when this account is not a declared fleet seat. Same slug
+            # as Buzz / systemd / drift-check when it is.
+            "seat_slug": fleet_roster.seat_slug_for_email(actor.get("email")),
         },
         "asks": {
             "run_controls": {
@@ -203,6 +213,16 @@ def build_desk(
             },
         },
         "work": {
+            "protocol": {
+                "claim_one_issue": True,
+                "do_not_touch_other_work": True,
+                "complete_does_not_close_issue": True,
+                "meaning": (
+                    "The desk is orientation, not a lock. Claim at most one "
+                    "issue. Do not edit files another active lease has fenced. "
+                    "complete_claim releases the lease only."
+                ),
+            },
             "delegations": {
                 "items": inbox.get("items", []),
                 "limit": DELEGATIONS_LIMIT,
@@ -239,5 +259,11 @@ def build_desk(
             # from `cursor.after_id`, then acknowledge this.
             "latest_visible_event_id": _latest_event_id(conn, actor=actor),
         },
+        "office": office.build_office(
+            conn,
+            actor=actor,
+            now=now,
+            inbox_items=inbox.get("items") or [],
+        ),
         "cursor": cursor,
     }

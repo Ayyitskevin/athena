@@ -29,6 +29,13 @@ def _probe(unit: str) -> dict:
     )
 
 
+def test_seat_slug_for_declared_email():
+    assert fleet_roster.seat_slug_for_email("grok@agents.local") == "grok"
+    assert fleet_roster.seat_slug_for_email("GROK@agents.local") == "grok"
+    assert fleet_roster.seat_slug_for_email("stranger@e.com") is None
+    assert fleet_roster.seat_slug_for_email(None) is None
+
+
 def test_unit_verdict_words():
     assert fleet_roster.unit_verdict({"load_state": "not-found"}) == "missing"
     assert fleet_roster.unit_verdict({"active_state": "active"}) == "active"

@@ -268,6 +268,8 @@ class IssueWorkContextOut(BaseModel):
     semantics: WorkContextSemanticsOut
     issue: IssueSummaryOut
     issue_etag: str
+    seat_slug: str | None = None
+    protocol: dict
     how_to_claim: dict
     runbook: dict
     complete_does_not_close_issue: bool

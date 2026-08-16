@@ -1280,8 +1280,12 @@ class AthenaClient:
 
     def my_desk(self) -> Any:
         """Your desk: identity, what is asked of you, what you hold, and what
-        changed since your cursor."""
+        changed since your cursor. Includes `office` (the one-chair cubicle)."""
         return self._result(self._client.get("/desk"))
+
+    def my_office(self) -> Any:
+        """Your cubicle: one chair, fenced paths, checkout hint."""
+        return self._result(self._client.get("/office"))
 
     def advance_desk_cursor(self, *, after_id: int) -> Any:
         """Move YOUR desk cursor forward to this activity id."""

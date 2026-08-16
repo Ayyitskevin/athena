@@ -17,6 +17,7 @@ from athena.aegis import (
     fleet_work,
     issue_commands,
     issues,
+    office,
     projects,
     sprints,
     statuses,
@@ -611,6 +612,7 @@ def _fleet_page_context(
         "open_issues": open_issues,
         "assignable": assignable,
         "radio_configured": config.buzz_radio_configured(),
+        "occupancy": office.build_occupancy(conn),
         "notice": notice,
         "error": error,
     }

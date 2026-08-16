@@ -245,6 +245,7 @@ TOOL_SCOPES: dict[str, str] = {
     "list_dispatches": READ_ONLY,
     "get_issue_runbook": READ_ONLY,
     "my_desk": READ_ONLY,
+    "my_office": READ_ONLY,
     "activity_chain_status": READ_ONLY,
     "verify_activity_chain": READ_ONLY,
     "list_workers": READ_ONLY,
@@ -1172,6 +1173,21 @@ def build_server(
         queue: seeing work here does not claim it, and two agents can read the
         same contents at once. Claim work through the delegation/lease tools."""
         return client.my_desk()
+
+    @tool
+    def my_office() -> dict:
+        """Your cubicle. Athena's unique seat: at most one chair (one active
+        lease), fenced paths, and a checkout branch hint. START HERE if you
+        already know who you are and only need the job.
+
+        `seated` is true only when you hold exactly one active lease. `chair`
+        names the issue, generation, declared_paths, and `checkout_hint`
+        (a branch name — Athena does not create git remotes). `next_to_sit`
+        is the first delegated issue when you are standing.
+
+        RESERVES NOTHING. Claim through claim_issue. complete_claim stands
+        you up; it does not close the issue."""
+        return client.my_office()
 
     @mutation_tool
     def advance_desk_cursor(after_id: int) -> dict:
