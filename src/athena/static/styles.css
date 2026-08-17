@@ -551,6 +551,14 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
 .floor-chair.is-occupied {
   border-color: var(--success-line, var(--border-strong));
 }
+.floor-rooms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-5);
+}
+.floor-rooms a.is-current { font-weight: 800; }
+.floor-section { margin-bottom: var(--sp-6); }
 
 /* The eyebrow caption above the markdown editor's live preview pane. */
 .editor-preview-label {

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 import sqlite3
 
-from athena.aegis import dependencies, issues, leases, projects, statuses
+from athena.aegis import dependencies, issues, leases, projects, rooms, statuses
 from athena.core import access, fleet_roster, users
 
 FLOOR_SCHEMA = "athena.project_floor.v1"
@@ -158,6 +158,7 @@ def build_floor(
     project_id: int,
     actor: dict | None,
     now: datetime | None = None,
+    room_slug: str | None = None,
 ) -> dict | None:
     """One project as a floor of chairs. Missing or hidden project → None."""
     project = projects.get_project(conn, project_id)
@@ -184,6 +185,8 @@ def build_floor(
     blockers_by_issue = dependencies.open_blockers_by_issue(
         conn, [int(issue["id"]) for issue in open_issues], actor=actor
     )
+    catalog = rooms.list_rooms(conn, project_id)
+    room_by_id = {int(room["id"]): room for room in catalog}
 
     chairs: list[dict] = []
     for issue in open_issues:
@@ -209,6 +212,16 @@ def build_floor(
         )
         assignee_email = None if assignee is None else assignee.get("email")
         blockers = blockers_by_issue.get(issue_id, [])
+        room_row = None
+        if issue.get("room_id") is not None:
+            found = room_by_id.get(int(issue["room_id"]))
+            if found is not None:
+                room_row = {
+                    "id": found["id"],
+                    "slug": found["slug"],
+                    "name": found["name"],
+                    "blurb": found.get("blurb") or "",
+                }
         chairs.append(
             {
                 "issue_id": issue_id,
@@ -219,6 +232,7 @@ def build_floor(
                 "assignee_id": issue.get("assignee_id"),
                 "assignee_name": issue.get("assignee_name"),
                 "assignee_seat_slug": fleet_roster.seat_slug_for_email(assignee_email),
+                "room": room_row,
                 "occupied": occupant is not None,
                 "occupant": occupant,
                 "blocked_by": [
@@ -239,7 +253,47 @@ def build_floor(
             }
         )
 
+    wanted = (room_slug or "").strip().lower() or None
+    if wanted == "unassigned":
+        chairs = [chair for chair in chairs if chair["room"] is None]
+    elif wanted:
+        chairs = [
+            chair
+            for chair in chairs
+            if chair["room"] is not None and chair["room"]["slug"] == wanted
+        ]
+
     occupied = sum(1 for chair in chairs if chair["occupied"])
+    sections = []
+    for room in catalog:
+        sitting = [
+            chair
+            for chair in chairs
+            if chair["room"] is not None and chair["room"]["id"] == room["id"]
+        ]
+        if wanted and wanted not in (room["slug"],):
+            continue
+        sections.append(
+            {
+                "id": room["id"],
+                "slug": room["slug"],
+                "name": room["name"],
+                "blurb": room.get("blurb") or "",
+                "chairs": sitting,
+            }
+        )
+    unassigned = [chair for chair in chairs if chair["room"] is None]
+    if wanted in (None, "unassigned"):
+        sections.append(
+            {
+                "id": None,
+                "slug": "unassigned",
+                "name": "The Annex",
+                "blurb": "No room yet. Still a real chair.",
+                "chairs": unassigned,
+            }
+        )
+
     return {
         "schema": FLOOR_SCHEMA,
         "project": {
@@ -247,6 +301,9 @@ def build_floor(
             "key": project.get("key"),
             "name": project.get("name"),
         },
+        "rooms": catalog,
+        "sections": sections,
+        "filter": wanted,
         "chairs": chairs,
         "chair_count": len(chairs),
         "occupied_count": occupied,

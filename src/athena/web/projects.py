@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -21,6 +22,7 @@ from athena.aegis import (
     issues,
     office,
     project_commands,
+    room_commands,
     project_etags,
     projects,
     sprint_commands,
@@ -77,11 +79,12 @@ def project_floor(
     seat: str | None = Query(None),
     radio: str | None = Query(None),
     error: str | None = Query(None),
+    room: str | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """The branch office: one project, many chairs. Open read like the issue list."""
     user = getattr(request.state, "user", None)
-    floor = office.build_floor(conn, project_id=project_id, actor=user)
+    floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
     if floor is None:
         return HTMLResponse(
             '<div class="error">No such project.</div>', status_code=404
@@ -108,6 +111,7 @@ def project_floor(
             "can_assign": can_assign,
             "notice": notice,
             "error": error,
+            "room_filter": room,
         },
     )
 
@@ -198,12 +202,85 @@ def project_floor_assign(
     )
 
 
-@router.get("/aegis/projects/{project_id}/floor.json")
-def project_floor_json(
-    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+@router.post(
+    "/aegis/projects/{project_id}/rooms",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_add_room(
+    request: Request,
+    project_id: int,
+    name: str = Form(""),
+    blurb: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
 ):
     user = getattr(request.state, "user", None)
-    floor = office.build_floor(conn, project_id=project_id, actor=user)
+    try:
+        room_commands.create_room(
+            conn, actor=user, project_id=project_id, name=name, blurb=blurb
+        )
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/rooms/stock",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_stock_rooms(
+    request: Request,
+    project_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    try:
+        room_commands.stock_starter_rooms(conn, actor=user, project_id=project_id)
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/floor/place",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_place(
+    request: Request,
+    project_id: int,
+    issue_id: int = Form(...),
+    room_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    chosen = int(room_id) if room_id.strip().isdigit() else None
+    try:
+        room_commands.place_issue(conn, actor=user, issue_id=issue_id, room_id=chosen)
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.get("/aegis/projects/{project_id}/floor.json")
+def project_floor_json(
+    request: Request,
+    project_id: int,
+    room: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
     if floor is None:
         return JSONResponse({"detail": "no such project"}, status_code=404)
     return floor

@@ -204,6 +204,11 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **Floor rooms as flavor.** Optional rooms per project (Warehouse,
+  Accounting, Sales, Annex, or your own). They group and filter the floor
+  only. Claim, lease, and status stay untouched. Unplaced chairs sit in
+  The Annex.
+
 - **Sit someone from the floor.** Empty chairs carry an assign form for
   writers. Same command as Admin → Fleet (assignee + delegate + optional
   radio). Floor blocker/occupant lookups are batched — no per-chair
