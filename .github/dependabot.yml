@@ -1,0 +1,51 @@
+# Dependabot configuration.
+#
+# WHY THIS FILE EXISTS AT ALL
+# Without it, GitHub guesses the ecosystem. It guessed wrong: the security-update
+# job pulled `dependabot-updater-uv` and reported an alert against a `uv.lock`
+# that does not exist in this repository. Athena builds with setuptools and pins
+# through `constraints/*.txt`; there is no uv here. Declaring the ecosystem
+# explicitly stops the guessing.
+#
+# WHY ONLY github-actions
+# Every action in .github/workflows/ is pinned to a 40-character commit SHA. That
+# is the right call for supply-chain integrity, but a SHA pin never picks up an
+# upstream security fix on its own — it rots silently, and a human is unlikely to
+# notice. This is exactly the maintenance a bot should own, and Dependabot
+# updates the SHA and its trailing version comment together.
+#
+# `pip` is DELIBERATELY ABSENT. Athena's dependency inputs are a hand-maintained,
+# deliberately exact system: constraints/ci-py312.txt is asserted byte-for-byte
+# against `pip freeze` in CI, bootstrap and security-tools are hash-locked with
+# --require-hashes, and the audit job builds SBOMs bound to those exact inputs.
+# An automated bump to pyproject.toml alone would fail that freeze assertion; a
+# bump to the constraints file alone would invalidate the hashes. Until someone
+# decides how automation should drive that pipeline, Python dependency updates
+# stay manual and deliberate. Security ALERTS still arrive regardless of this
+# file — only automated version-bump PRs are scoped here.
+#
+# `docker` is absent for a different reason: the Dockerfile tracks the floating
+# `python:3.12-slim` tag rather than a digest, so there is no pin for Dependabot
+# to bump. Whether to digest-pin that base image is a real supply-chain vs
+# reproducibility decision, not a config toggle.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Etc/UTC"
+    # Monday morning UTC matches the existing scheduled CI and CodeQL sweeps, so
+    # all the weekly maintenance noise lands in one place.
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for all action bumps, not seven. Athena is built for a solo
+      # operator; seven near-identical PRs a week is how a useful signal becomes
+      # something you learn to close without reading.
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
