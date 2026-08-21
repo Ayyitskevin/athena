@@ -1,6 +1,6 @@
 # Run Report — The Final Sprint
 
-Guide: [`docs/OPUS_FINAL_SPRINT_ATHENA.md`](../../OPUS_FINAL_SPRINT_ATHENA.md)
+Guide: [`docs/plans/OPUS_FINAL_SPRINT_ATHENA.md`](../OPUS_FINAL_SPRINT_ATHENA.md)
 (written against `eafd039`). Branch: `claude/athena-buzz-integration-4hkyx8`.
 Starting SHA: `e8200d1` (origin/main at session start — the guide's own merge
 commit, so the tree is one commit ahead of what the guide was written against;
