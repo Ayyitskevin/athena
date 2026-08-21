@@ -1615,7 +1615,7 @@ def test_concurrent_delivery_acceptances_are_first_writer_wins(tmp_path):
                     poster=poster,
                 )
             )
-        except BaseException as exc:  # pragma: no cover - asserted below
+        except BaseException as exc:  # noqa: BLE001 — thread target: captured so the main thread can assert on it; pragma: no cover - asserted below
             errors.append(exc)
         finally:
             conn.close()
