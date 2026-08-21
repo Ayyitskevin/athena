@@ -386,9 +386,34 @@ resolved by a green test run.
 - **The executor contract has exactly one implementation.** Dispatch is proven
   against `examples/icarus_executor.py`, written alongside it. A contract with one
   counterparty is usually still wrong in ways only a second one reveals.
-- **No production deployment has occurred.** All evidence here comes from
-  synthetic temporary databases and loopback processes. No real operator data, no
-  second host, no disaster-recovery rehearsal.
+- **One real deployment now exists, and it is small.** Since 2026-08-17 a single
+  operator has run Athena on a tailnet host, driving it with five agent seats
+  through scoped tokens and the MCP surface. As of 2026-08-21 that instance holds
+  24 issues, 4 pages, 94 activity events, 8 users, and 8 tokens across a 900KB
+  database. It has served continuously for three days, survived restarts, and its
+  activity hash chain verifies end to end (`athena-doctor`: 94 entries, head
+  matches) — including from a restored backup.
+
+  What that evidences: the operator loop works against real agent traffic rather
+  than a seeded fixture; the tailnet deployment boundary holds; backup, restore,
+  and trail verification work on a live database.
+
+  What it does NOT evidence, and these are the honest limits: **the data is three
+  orders of magnitude smaller than the benchmark shape** the performance work is
+  stated against (10k issues / 100k events), so no read ceiling in this document
+  has been observed under real load. There is still no second host, no
+  disaster-recovery rehearsal beyond a restore-into-scratch drill, no
+  multi-operator use, and no public exposure. One instance run by the person who
+  wrote it is the weakest possible form of production evidence — it is not
+  nothing, and it is not much.
+
+  The first deployment also immediately produced a finding, which is the argument
+  for this bullet existing at all: the instance had been started through raw
+  `uvicorn` rather than `athena-serve`, and therefore ran for three days with
+  `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` unset — a value `core/deployment.py`
+  requires positive in tailnet mode and that only the launcher's preflight checks.
+  Switching to the supported launcher surfaced it in one refusal. Synthetic
+  evidence had not, and structurally could not.
 
 ## Promotion checklist
 
