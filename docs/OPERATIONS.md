@@ -116,6 +116,23 @@ every HTTP request. It also bypasses the database, attachment, administrator,
 worker, and bootstrap preflight even when an allowlist is supplied. Do not use it
 as a service command.
 
+The most dangerous of those omissions is the **request-limit check**, because it
+fails quietly rather than loudly. Supply an allowlist and raw `uvicorn` serves
+perfectly well in tailnet mode while skipping the rule that
+`ATHENA_ANON_RATE_LIMIT_PER_MINUTE` must be positive — and that variable defaults
+to `0` (off), unlike the other four limits, which default positive. The result is
+a tailnet-reachable instance with anonymous reads and signed-inbound attempts
+entirely unthrottled, and nothing in the logs to say so. `athena-serve` refuses to
+start at all in that state:
+
+```
+athena-serve: tailnet network mode requires positive request limits: ATHENA_ANON_RATE_LIMIT_PER_MINUTE
+```
+
+This is not hypothetical. It is exactly what a real tailnet deployment did for
+three days before being switched to the supported launcher, which surfaced it in
+one refusal on the first restart.
+
 For socket-activating supervisors and lifecycle tests, `athena-serve --fd N`
 accepts one already-listening IPv4/IPv6 stream descriptor and cannot be combined
 with `--host` or `--port`. The launcher duplicates the descriptor only to verify
