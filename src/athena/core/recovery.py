@@ -1832,7 +1832,7 @@ def _make_private_stage(
                 name,
                 label="private recovery stage",
             )
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 — translated into a stage-setup failure, never swallowed
             _raise_stage_setup_failure(destination, name, exc)
         stage = _PrivateStage(
             path=Path(f"/proc/self/fd/{descriptor}"),
@@ -1855,7 +1855,7 @@ def _make_private_stage(
             if owner is not None:
                 owner.stage = stage
             return stage
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 — translated into a stage-setup failure, never swallowed
             if owner is not None:
                 owner.stage = None
             try:
@@ -1890,14 +1890,14 @@ def _publish_private_stage(
     )
     try:
         _require_published_stage_safe(stage, destination, protected=protected)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — any validation failure must retract the publication
         _raise_retracted_publication(stage, destination, cause=exc)
     try:
         os.fsync(destination.parent_descriptor)
     except OSError as exc:
         try:
             _require_published_stage_safe(stage, destination, protected=protected)
-        except Exception as validation_exc:
+        except Exception as validation_exc:  # noqa: BLE001 — any validation failure must retract the publication
             _raise_retracted_publication(
                 stage,
                 destination,
@@ -1906,7 +1906,7 @@ def _publish_private_stage(
         raise RecoveryBundleDurabilityError(destination.path) from exc
     try:
         _require_published_stage_safe(stage, destination, protected=protected)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 — any validation failure must retract the publication
         _raise_retracted_publication(stage, destination, cause=exc)
 
 

@@ -120,7 +120,15 @@ athena = [
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+# BLE (flake8-blind-except) is enabled deliberately. Every broad catch in the
+# tree today is correct — a two-phase blob rollback, recovery-bundle failures
+# translated into domain errors, post-commit cleanup collected into an
+# ExceptionGroup, a thread target captured for the main thread — and each now
+# carries a `# noqa: BLE001` stating why. The rule is not here to fix existing
+# code; it is here so the NEXT accidental `except Exception:` fails the gate
+# instead of being reviewed by hope. It also makes the `# noqa: BLE001` comments
+# that were already in the tree load-bearing rather than decorative.
+select = ["E4", "E7", "E9", "F", "BLE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
