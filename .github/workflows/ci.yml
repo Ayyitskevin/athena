@@ -22,7 +22,16 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Measured, not guessed: the suite runs 19m37s here at 3580 tests (PR #363,
+    # 2026-08-21) and 17m32s on a docs-only change. `ubuntu-latest` is a 2-vCPU
+    # runner, so coverage.sh's `-n 4` oversubscribes and coverage tracing adds
+    # its own overhead on top. At a 20-minute ceiling the job was passing with
+    # 23 seconds to spare — close enough that ordinary runner variance, not a
+    # real regression, would have started failing the gate and blocking merges.
+    # 30 leaves ~50% headroom for suite growth. If a run ever approaches THIS
+    # ceiling, shard the job rather than raising the number again: a timeout
+    # that only ever moves up stops being a signal.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
