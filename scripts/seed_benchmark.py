@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Seed a benchmark database with a realistic trail, for measuring read performance.
 
-The performance work in docs/OPUS_PERFORMANCE_ADOPTION_GUIDE_ATHENA.md is stated in
+The performance work in docs/plans/OPUS_PERFORMANCE_ADOPTION_GUIDE_ATHENA.md is stated in
 measured milliseconds at a named data shape (10k issues / 100k events). This is the
 script that builds that shape, so a before/after number in a PR is reproducible by
 anyone rather than a claim about a database nobody else has.

@@ -17,7 +17,7 @@ alpha the project actually claims to be.**
 Re-affirmed 2026-08-08 after the Final Sprint and depth cycle (the section
 below), and before that 2026-07-31 after the Stage M–P expansion, the
 adversarial review of the merged tree (grade 7/10 — see
-OPUS_REMEDIATION_GUIDE_ATHENA.md), the H-0/H-1/H-2 remediation waves, and the
+docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md), the H-0/H-1/H-2 remediation waves, and the
 release-candidate evidence hardening described below. The 2026-07-30
 full-product gate passes locally at its named commit; the candidate evidence
 section explicitly distinguishes its local draft rehearsal from pending hosted

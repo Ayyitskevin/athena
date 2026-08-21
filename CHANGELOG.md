@@ -1218,7 +1218,7 @@ the newest one and for what tagging still requires.
   callback protocol is documented explicitly.
 
 - **Wave H-2: documentation reconciliation, and one real bug found while
-  verifying it** (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  verifying it** (`docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - `POST /labels` answered 500 on a duplicate-name race: two concurrent creates
     both passed the pre-check, and the loser surfaced the UNIQUE-constraint
     `IntegrityError` unhandled. It now maps to the same 409 the pre-check would
@@ -1238,7 +1238,7 @@ the newest one and for what tagging still requires.
     "Phase 3 (current)" marker and the phase-numbering collision with
     ROADMAP.md are resolved).
 - **Wave H-0: the five stop-ship defects from the adversarial review**
-  (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  (`docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - Event-source CRUD now enforces the admin **token scope** through the same
     `admin_actor` dependency as every parallel admin surface, not just the admin
     role — an admin's read-scoped token can no longer register a source and walk
