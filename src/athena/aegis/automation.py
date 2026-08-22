@@ -257,6 +257,14 @@ def validate_rule(
                 return f"{field} must be a string or null"
 
         allowed_conditions = SCHEDULE_CONDITION_FIELDS
+        if action_type == "buzz_message":
+            # Refused at the boundary: a scheduled occurrence is retried until it
+            # succeeds, and its dedup guard reads the activity trail for the
+            # firing's run id. A delivery writes no such row, so every retry
+            # would re-send the message — silently converting the documented
+            # exactly-once schedule contract into duplicate pings. Event rules
+            # have no retry, so they do not have this problem.
+            return "buzz_message cannot be a scheduled action (retries would re-send)"
     if action_type not in ACTION_TYPES:
         return f"action_type must be one of: {', '.join(ACTION_TYPES)}"
     for key in conditions:
@@ -839,13 +847,25 @@ def _perform_action(
             return False
 
     if rule["action_type"] == "buzz_message":
-        # An outbound DELIVERY, not an Athena write: nothing lands in the DB
-        # and nothing is recorded on the trail — the same contract as a webhook
-        # delivery (the audited thing is the rule's lifecycle, not each send).
-        # Consequence: the run-id idempotency guard cannot see a firing that
-        # crashed after sending, so this action is at-least-once across a
-        # crashed pass, exactly like webhooks' at-least-once retries.
+        # An outbound DELIVERY, not an Athena write: nothing lands in the DB and
+        # nothing is recorded on the trail — the audited thing is the rule's
+        # lifecycle, not each send.
+        #
+        # DELIVERY SEMANTICS, stated honestly: AT-MOST-ONCE, like every other
+        # event-rule action and UNLIKE webhooks. process_pending advances its
+        # cursor past an event whether or not the action succeeded, and there is
+        # no per-rule delivery cursor to rewind, so a failed send is never
+        # retried. What it must not do is drop a send SILENTLY: the in-app
+        # actions may fail soft because a no-op leaves the issue's own state as
+        # evidence, but a delivery leaves nothing behind, so a failed send is
+        # raised even on the fail-soft path and lands in failure_count /
+        # last_error where an operator can see it. Guaranteed delivery is what
+        # webhooks are for — they have the cursor and the backoff to promise it.
         if not config.buzz_radio_configured():
+            # A configuration problem, not a delivery failure: _configuration_error
+            # already flags such a rule as malformed on every read, so raising here
+            # would only pile identical failures onto a rule whose defect the
+            # operator has already been shown.
             if fail_closed:
                 raise ValueError("buzz radio is not configured")
             return False
@@ -875,11 +895,10 @@ def _perform_action(
         )
         if result.get("status") == "sent":
             return True
-        if fail_closed:
-            raise ValueError(
-                f"buzz radio {result.get('status')}: {result.get('detail')}"
-            )
-        return False
+        # Raised on BOTH paths deliberately (see the note above): a message lost
+        # with no trace, on a rule that still reads green, is the one outcome
+        # worse than a visible failure.
+        raise ValueError(f"buzz radio {result.get('status')}: {result.get('detail')}")
 
     return False
 

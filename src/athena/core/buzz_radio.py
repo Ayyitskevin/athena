@@ -32,6 +32,39 @@ def _load_private_key(path: str) -> str:
     raise RadioError("key file has no SECKEY or BUZZ_PRIVATE_KEY")
 
 
+#: The longest human-authored field allowed inside a directive frame. A title is
+#: display context, not payload; a long one is truncated rather than allowed to
+#: push the frame off a reader's screen.
+_FIELD_MAX_CHARS = 200
+
+#: The prefix every Athena directive frame opens with. Human text that could be
+#: read as one is neutralized by ``_one_line`` below.
+_DIRECTIVE_PREFIX = "ATHENA_"
+
+
+def _one_line(text: str, *, limit: int = _FIELD_MAX_CHARS) -> str:
+    """Flatten human-authored text so it cannot forge a directive.
+
+    The messages this module posts are a LINE-ORIENTED protocol read by
+    autonomous seats: a line beginning ``ATHENA_ASSIGN`` is an instruction to
+    park other work and take a job. Issue titles are author-supplied and only
+    stripped, so interpolating one verbatim would let anyone who can file an
+    issue emit a second, forged directive inside a real message signed with
+    Athena's own key — escalating "can file an issue" into "can direct a seat".
+
+    Collapsing every whitespace run (newlines included) to a single space is
+    what actually closes that: a forged directive can no longer START a line.
+    The ``ATHENA_`` token is additionally down-cased (the protocol is
+    case-sensitive) so it does not read as a directive even inline, and the
+    result is capped so a huge title cannot bury the real frame.
+    """
+    flattened = " ".join(str(text).split())
+    flattened = flattened.replace(_DIRECTIVE_PREFIX, _DIRECTIVE_PREFIX.lower())
+    if len(flattened) > limit:
+        flattened = flattened[: limit - 1].rstrip() + "…"
+    return flattened
+
+
 def assignment_message(
     *,
     seat_name: str,
@@ -40,12 +73,13 @@ def assignment_message(
     url: str,
     note: str,
 ) -> str:
-    extra = f"\n\nNote: {note.strip()}" if note.strip() else ""
+    safe_note = _one_line(note)
+    extra = f"\n\nNote: {safe_note}" if safe_note else ""
     return (
         f"ATHENA_ASSIGN {issue_key}\n\n"
-        f"@{seat_name} — new assignment, not a steer. "
+        f"@{_one_line(seat_name, limit=64)} — new assignment, not a steer. "
         f"Park other work after your current reply.\n\n"
-        f"{title}\n{url}\n\n"
+        f"{_one_line(title)}\n{url}\n\n"
         f"Desk → claim (If-Match from issue_etag) → work only this issue.{extra}"
     )
 
@@ -63,11 +97,19 @@ def event_message(
 
     Composed from the event and the issue alone — rules carry no template
     language, only an optional operator-authored note, so what a rule can say
-    is inspectable from this one function.
+    is inspectable from this one function. Every human-authored field goes
+    through ``_one_line`` first: a rule fires automatically on issues anyone may
+    file, so an unflattened title here would be a directive-forgery broadcast.
     """
-    actor = f" by {actor_name}" if actor_name.strip() else ""
-    extra = f"\n\nNote: {note.strip()}" if note.strip() else ""
-    return f"ATHENA_EVENT {verb} {issue_key}{actor}\n\n{title}\n{url}{extra}"
+    safe_actor = _one_line(actor_name, limit=64)
+    actor = f" by {safe_actor}" if safe_actor else ""
+    safe_note = _one_line(note)
+    extra = f"\n\nNote: {safe_note}" if safe_note else ""
+    return (
+        f"ATHENA_EVENT {_one_line(verb, limit=64)} {issue_key}{actor}\n\n"
+        f"{_one_line(title)}\n{url}"
+        f"{extra}"
+    )
 
 
 def send_channel_message(

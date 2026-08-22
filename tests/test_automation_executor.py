@@ -386,7 +386,10 @@ def test_buzz_message_unconfigured_radio_fails_soft_or_closed(tmp_path, monkeypa
             automation.execute_action(conn, rule, event, actor_id=1, fail_closed=True)
 
 
-def test_buzz_message_failed_send_raises_only_when_fail_closed(tmp_path, monkeypatch):
+def test_buzz_message_failed_send_raises_on_both_paths(tmp_path, monkeypatch):
+    # Superseded the earlier fail-soft expectation: a delivery leaves no trace of
+    # its own, so returning False on a failed send meant a lost message on a rule
+    # that still read green. Both paths raise now.
     db_file = tmp_path / "buzz4.db"
     with TestClient(create_app(db_file)) as client:
         _setup(client)
@@ -398,11 +401,13 @@ def test_buzz_message_failed_send_raises_only_when_fail_closed(tmp_path, monkeyp
             lambda **kw: {"status": "failed", "detail": "relay down"},
         )
         rule, event, _ = _buzz_rule_and_event(client, conn, {})
-        assert automation.execute_action(conn, rule, event, actor_id=1) is False
         import pytest as _pytest
 
-        with _pytest.raises(ValueError, match="relay down"):
-            automation.execute_action(conn, rule, event, actor_id=1, fail_closed=True)
+        for closed in (False, True):
+            with _pytest.raises(ValueError, match="relay down"):
+                automation.execute_action(
+                    conn, rule, event, actor_id=1, fail_closed=closed
+                )
 
 
 def test_buzz_message_rule_surfaces_missing_radio_as_configuration_error(
@@ -432,3 +437,61 @@ def test_buzz_message_rule_surfaces_missing_radio_as_configuration_error(
         assert all(
             "buzz radio" not in (r.get("configuration_error") or "") for r in listed
         )
+
+
+def test_buzz_message_failed_send_is_always_visible_failure(tmp_path, monkeypatch):
+    # A delivery leaves no trace of its own, so a failed send must never fail
+    # SOFT the way the in-app actions do — an operator would see a green rule and
+    # a lost message. It raises on both paths, which routes it through
+    # process_pending into failure_count/last_error.
+    db_file = tmp_path / "buzz-fail-visible.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            automation.buzz_radio,
+            "send_channel_message",
+            lambda **kw: {"status": "failed", "detail": "connection refused"},
+        )
+        rule, event, _ = _buzz_rule_and_event(client, conn, {})
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="connection refused"):
+            automation.execute_action(conn, rule, event, actor_id=1)
+
+        # And the engine turns that raise into visible rule state rather than
+        # stranding the cursor: one pass, rule flagged, cursor still advances.
+        def executor(c, r, e):
+            automation.execute_action(c, r, e, actor_id=automation.system_actor_id(c))
+
+        client.post("/issues", json={"title": "another"}, headers=H1)
+        automation.process_pending(conn, executor=executor)
+        flagged = next(r for r in automation.list_rules(conn) if r["id"] == rule["id"])
+        assert flagged["failure_count"] >= 1
+        assert "connection refused" in (flagged["last_error"] or "")
+
+
+def test_buzz_message_rejected_as_a_scheduled_action():
+    # Scheduled occurrences retry until they succeed and dedup by reading the
+    # trail for the firing's run id. A delivery writes no such row, so a retry
+    # would re-send — refused at the boundary instead.
+    error = automation.validate_rule(
+        trigger_verb=automation.SCHEDULE_TRIGGER_VERB,
+        action_type="buzz_message",
+        conditions={},
+        action_params={},
+        trigger_type="schedule",
+        schedule_at="2026-09-01T09:00:00Z",
+    )
+    assert error is not None and "scheduled" in error
+    # The same action stays valid on the event path, which has no retry.
+    assert (
+        automation.validate_rule(
+            trigger_verb="created",
+            action_type="buzz_message",
+            conditions={},
+            action_params={},
+        )
+        is None
+    )
