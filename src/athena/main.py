@@ -15,6 +15,7 @@ import logging
 import secrets
 from pathlib import Path
 import sqlite3
+import time
 from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
@@ -421,6 +422,61 @@ class RequestConnectionMiddleware:
             # One close, whatever happened — a handler that raised past every
             # exception handler still must not leak the file handle.
             holder.close()
+
+
+class SlowRequestLogMiddleware:
+    """Log one WARNING for any request slower than the configured threshold.
+
+    Nothing in Athena has ever measured request latency. Uvicorn's access log
+    carries method, path, and status but no timing, so a read that quietly grew
+    from 0.7ms to 229ms — which is exactly what F-0.1 was — looks identical to a
+    healthy one in the only per-request record that exists. This is the smallest
+    thing that makes that visible in production, and it is the runtime companion
+    to the CI scaling gate in tests/test_activity_feed_scaling.py.
+
+    Pure ASGI so it can time the response through to the last byte the inner
+    stack sends, including the idempotency publish that runs after the route
+    returns. `finally` so a request that raises is still timed — a slow failure
+    is the interesting kind.
+
+    What it deliberately does NOT log: query strings, headers, bodies, cookies,
+    or the raw path. It reports the ROUTE TEMPLATE (`/issues/{issue_id}`), which
+    is low-cardinality and cannot carry a page title, a search term, an
+    attacker-supplied 404 path, or a token. An unmatched request logs its method
+    and nothing else; uvicorn's access log already has the raw path for those.
+    """
+
+    def __init__(self, app, *, threshold_ms: int):
+        self.app = app
+        self.threshold_ms = threshold_ms
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or self.threshold_ms <= 0:
+            await self.app(scope, receive, send)
+            return
+        status_code = 0
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        started = time.perf_counter()
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            if elapsed_ms >= self.threshold_ms:
+                route = getattr(scope.get("route"), "path", None)
+                _logger.warning(
+                    "slow request: %s %s -> %s in %.0fms (threshold %dms)",
+                    scope.get("method", "?"),
+                    route or "<unmatched>",
+                    status_code or "no response",
+                    elapsed_ms,
+                    self.threshold_ms,
+                )
 
 
 class RunContextMiddleware:
@@ -1783,6 +1839,15 @@ def create_app(
     app.add_middleware(
         SignedInboundRateLimitMiddleware,
         limiter=app.state.anon_rate_limiter,
+    )
+    # Inside the deployment boundary, outside everything else: a request refused
+    # for an unsupported Host or socket never ran any Athena work, so timing it
+    # would report the cost of a rejection as if it were a slow page. Everything
+    # past that point — limiter, body cap, session, route, database, idempotency
+    # publish — is inside this timer.
+    app.add_middleware(
+        SlowRequestLogMiddleware,
+        threshold_ms=config.SLOW_REQUEST_LOG_MS,
     )
     # Registered last, therefore outermost: unsupported accepted-socket addresses
     # and Host authorities are refused before body, session, limiter, route, or DB
