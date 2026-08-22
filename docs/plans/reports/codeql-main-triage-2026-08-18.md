@@ -1,5 +1,8 @@
 # CodeQL main triage — 2026-08-18
 
+Historical snapshot. Superseded for current counts and decisions by
+[`security-baseline-2026-08-22.md`](security-baseline-2026-08-22.md).
+
 Scope: Athena `main` at `22689716a9230a84684dd21572fe0419815fb36e`.
 This is a local triage record, not authorization to dismiss alerts or change
 repository security settings.

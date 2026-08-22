@@ -7,11 +7,13 @@ startup/shutdown — so this also proves migrate-on-startup actually fires.
 import asyncio
 import json
 import os
+from pathlib import Path
 import sqlite3
+import subprocess
 
 from fastapi.testclient import TestClient
 
-from athena import config
+from athena import __version__, config
 from athena.core import db
 from athena.main import create_app
 
@@ -71,6 +73,51 @@ async def _raw_asgi_request(
         if message["type"] == "http.response.body"
     )
     return status, response_body
+
+
+def test_version_reports_the_running_checkout_without_opening_the_database(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(config, "ANONYMOUS_READS", False)
+    db_path = tmp_path / "must-not-exist.db"
+    repo_root = Path(__file__).resolve().parents[1]
+    expected_commit = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+    git_status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=normal"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    ).stdout.strip()
+    expected_tree_state = "dirty" if git_status else "clean"
+    app = create_app(db_path)
+
+    status, response_body = asyncio.run(
+        _raw_asgi_request(
+            app,
+            method="GET",
+            path="/version",
+            body=b"",
+            headers=[],
+        )
+    )
+
+    assert status == 200
+    assert json.loads(response_body) == {
+        "version": __version__,
+        "commit": expected_commit,
+        "tree_state": expected_tree_state,
+        "source": "git-checkout",
+    }
+    assert not db_path.exists()
 
 
 def test_deployment_boundary_allows_exact_local_socket_and_host(tmp_path):

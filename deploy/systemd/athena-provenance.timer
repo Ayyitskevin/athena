@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Athena runtime provenance every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=athena-provenance.service
+
+[Install]
+WantedBy=timers.target

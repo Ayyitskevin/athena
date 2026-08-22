@@ -1,0 +1,25 @@
+[Unit]
+Description=Verify Athena runtime provenance matches its checkout
+Documentation=https://github.com/Ayyitskevin/athena/tree/main/deploy
+After=athena.service
+
+[Service]
+Type=oneshot
+User=@ATHENA_USER@
+Group=@ATHENA_GROUP@
+WorkingDirectory=@ATHENA_CHECKOUT@
+ExecStart=@ATHENA_CHECKOUT@/.venv/bin/python @ATHENA_CHECKOUT@/scripts/check_runtime_provenance.py --url @ATHENA_VERSION_URL@ --checkout @ATHENA_CHECKOUT@
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=athena-provenance

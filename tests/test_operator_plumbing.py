@@ -101,7 +101,12 @@ def test_preference_next_cannot_leave_the_app(tmp_path):
     with TestClient(create_app(tmp_path / "n.db")) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
         _login(client)
-        for evil in ("https://evil.example", "//evil.example", "javascript:alert(1)"):
+        for evil in (
+            "https://evil.example",
+            "//evil.example",
+            "/\\evil.example",
+            "javascript:alert(1)",
+        ):
             r = client.post(
                 "/settings/theme",
                 data={"theme": "dark", "next": evil},

@@ -66,6 +66,7 @@ from athena.core import (
     idempotency,
     notifications,
     notifications_api,
+    provenance,
     rate_limits,
     run_context,
     run_controls_api,
@@ -1513,6 +1514,7 @@ def create_app(
     # athena.__version__ is the same source guide.py and recovery bundles
     # stamp, so every surface names one version.
     app.state.version = athena_version
+    app.state.build_provenance = provenance.CURRENT_BUILD
 
     # Teach the undo engine each layer's inverses. core/undo.py owns the mechanism
     # and may not import aegis/mentor (the import contract), so the composition
@@ -1970,6 +1972,11 @@ def create_app(
     def healthz():
         """Liveness check — cheap, no DB hit. Used by tests and monitoring."""
         return {"status": "ok"}
+
+    @app.get("/version")
+    def version(request: Request):
+        """Code identity snapshot — public metadata with no database access."""
+        return request.app.state.build_provenance.as_dict()
 
     @app.get("/readyz")
     def readyz(request: Request):
