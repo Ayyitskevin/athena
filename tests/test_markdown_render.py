@@ -270,3 +270,109 @@ def test_raw_angle_bracket_in_an_attribute_does_not_split_the_tag(tmp_path):
     # And the pass still does its job in real text nodes.
     html = str(render_body(conn, "text buzz://message?channel=ab&id=cd here"))
     assert 'class="xref buzz-link"' in html
+
+
+def _chip_attr(html: str, attr: str) -> str:
+    """The value a BROWSER resolves for an attribute on the rendered chip.
+
+    Unescaping is the point: the contract is "the href is the URI the author
+    wrote", and asserting on the escaped bytes instead would let a test pass by
+    agreeing with whatever the implementation happened to emit.
+    """
+    import re
+    from html import unescape
+
+    match = re.search(rf'{attr}="([^"]*)"', html)
+    assert match is not None, f"no {attr}= in {html!r}"
+    return unescape(match.group(1))
+
+
+def test_buzz_query_grammar_is_the_whole_rfc_3986_query_production(tmp_path):
+    # The href and the title must be the URI the AUTHOR WROTE. A positive class
+    # narrower than RFC 3986's `query` production does not merely decline to
+    # link — it linkifies a PREFIX, producing a chip that points at a different
+    # entity than the text it replaced, which is worse than no link at all. A
+    # cross-seat review caught `+` (`?id=cd+ef` linked only through `cd`); `'`
+    # is the same defect one sub-delim over, and it is the one that actually
+    # reaches this regex as itself, because nh3 escapes only `&`, `<` and `>`
+    # in a text node.
+    conn = _conn(tmp_path / "grammar.db")
+    for uri in (
+        "buzz://message?channel=ab&id=cd+ef",
+        "buzz://message?id=a'b",
+        "buzz://message?id=a!$&'()*+,;=b",  # every sub-delim at once
+        "buzz://message?id=a:b@c/d?e",  # the ":" "@" "/" "?" extras
+        "buzz://message?id=a%20b",  # pct-encoded
+        # `relay=` is the documented cross-community parameter and carries a
+        # wss:// URL, so ":" and "/" in a query are not academic.
+        "buzz://message?channel=ab&id=cd&relay=wss://relay.example.test/path",
+        "buzz://repo?owner=deadbeef&d=my-repo&tab=code",
+    ):
+        html = str(render_body(conn, uri))
+        assert _chip_attr(html, "href") == uri, uri
+        assert _chip_attr(html, "title") == uri, uri
+
+
+def test_buzz_and_url_passes_trim_the_same_sentence_punctuation(tmp_path):
+    # One question — "is this trailing character part of the URI or of the
+    # sentence around it?" — must not get two answers in one module. An earlier
+    # draft of the buzz set added `!` and `?`; both are legal query characters,
+    # so trimming them re-created the very truncation this slice closes. Pinned
+    # here rather than left to a comment, so editing either constant fails a
+    # test instead of forking the rule silently.
+    from athena.web.render import _BUZZ_TRAILING_PUNCTUATION, _URL_TRAILING_PUNCTUATION
+
+    assert _BUZZ_TRAILING_PUNCTUATION == _URL_TRAILING_PUNCTUATION
+
+    conn = _conn(tmp_path / "trail.db")
+    html = str(render_body(conn, "see buzz://message?id=ab."))
+    assert _chip_attr(html, "href") == "buzz://message?id=ab"
+    assert "</a>." in html  # the full stop stayed on the page, outside the href
+    # ...and a legal query character in the tail is NOT trimmed away.
+    html = str(render_body(conn, "see buzz://message?id=ab!"))
+    assert _chip_attr(html, "href") == "buzz://message?id=ab!"
+
+
+def test_a_trailing_paren_that_closes_the_query_stays_in_the_href(tmp_path):
+    # `(` and `)` are legal sub-delims AND `)` is trimmed as sentence
+    # punctuation, so admitting them to the class re-opened the truncation from
+    # the other side: `?id=a(b)` produced the href `?id=a(b`, an unbalanced URI
+    # nobody wrote. The trim now gives back each `)` that closes a paren still
+    # open in the match.
+    conn = _conn(tmp_path / "paren.db")
+    html = str(render_body(conn, "see buzz://message?id=a(b)"))
+    assert _chip_attr(html, "href") == "buzz://message?id=a(b)"
+    # ...while a sentence's own closing paren is still trimmed off.
+    html = str(render_body(conn, "(see buzz://message?id=ab)"))
+    assert _chip_attr(html, "href") == "buzz://message?id=ab"
+    assert "</a>)" in html
+    # ...and both at once: the URI's paren is kept, the sentence's is not.
+    html = str(render_body(conn, "(see buzz://message?id=a(b))"))
+    assert _chip_attr(html, "href") == "buzz://message?id=a(b)"
+    assert "</a>)" in html
+
+
+def test_an_apostrophe_in_the_query_cannot_break_out_of_the_href(tmp_path):
+    # `'` is admitted to the query class and is one of the two characters nh3
+    # leaves RAW in a text node, so it reaches the substitution as itself. This
+    # pass writes markup AFTER the sanitizer, so it must re-escape what it puts
+    # in the attribute or the chip becomes the injection point.
+    conn = _conn(tmp_path / "quote.db")
+    html = str(render_body(conn, "buzz://message?id=a' onmouseover='alert(1)"))
+    assert _chip_attr(html, "href") == "buzz://message?id=a'"
+    assert "onmouseover=" not in html.split("</a>")[0]  # not inside the anchor
+    assert html.count("<") == html.count(">")  # no tag opened or closed early
+    # `"` is NOT legal in a query (it must arrive percent-encoded), so it ends
+    # the match rather than entering it — the same place `_URL_RE` stops.
+    html = str(render_body(conn, 'buzz://message?id=a" onmouseover="alert(1)'))
+    assert _chip_attr(html, "href") == "buzz://message?id=a"
+    assert "onmouseover=" not in html.split("</a>")[0]
+
+
+def test_a_query_that_is_only_sentence_punctuation_is_not_a_permalink(tmp_path):
+    # Trimming can empty the query. A chip on a query-less `buzz://message`
+    # would point somewhere the author never wrote, so the text stays text.
+    conn = _conn(tmp_path / "empty.db")
+    html = str(render_body(conn, "buzz://message?."))
+    assert "buzz-link" not in html
+    assert "buzz://message?." in html
