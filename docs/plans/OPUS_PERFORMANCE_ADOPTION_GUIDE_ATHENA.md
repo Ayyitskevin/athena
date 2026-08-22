@@ -252,10 +252,13 @@ launcher's refusal message should point at the decision's documentation.
 ### F-1.3 A global default-private visibility switch — **DONE**
 
 > Landed. `ATHENA_ANONYMOUS_READS=0` is enforced at two choke points, not route
-> by route: `identity.optional_actor` (all 55 optional-identity REST reads) and
-> the session middleware (browsers). The enumeration the finding asked for is a
-> test rather than a list — it walks the route table and asserts that exactly one
-> route uses the ungated resolver, which is the first-user bootstrap. Two
+> by route: `identity.optional_actor` for optional-identity REST reads and one
+> dependency attached at browser-router inclusion. Bearer and trusted-header
+> credentials remain REST/MCP-only; only a resolved session satisfies the browser
+> gate. Route-table tests prove every browser route—and no REST route—inherits that
+> dependency. An exhaustive all-method route inventory permits only OpenAPI, liveness,
+> and readiness as public row-free metadata. Exactly one REST route uses the
+> ungated resolver: first-user bootstrap. Two
 > deliberate openings, because a switch that locks the operator out of their own
 > login page or empty database is an outage: the sign-in path, and that bootstrap.
 > `ATHENA_DEFAULT_VISIBILITY=private` is the ergonomics half. Original finding

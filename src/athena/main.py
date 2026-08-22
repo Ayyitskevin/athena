@@ -18,7 +18,12 @@ import sqlite3
 import time
 from typing import Awaitable, Callable
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -176,47 +181,20 @@ _ANONYMOUS_ALWAYS_ALLOWED = frozenset(
 )
 
 
-def _carries_a_credential(request: Request) -> bool:
-    """Whether the caller presented a credential that actually RESOLVES.
+class _BrowserSessionRequired(Exception):
+    """A closed browser route was reached without a resolved session."""
 
-    This must VALIDATE rather than pattern-match. It used to return True for any
-    header merely SHAPED like a credential, on the reasoning that "the routes' own
-    dependencies know how to validate it, and second-guessing that here would mean
-    re-implementing token validation in middleware". That reasoning holds for REST,
-    where every optional-identity read resolves through `identity.optional_actor` —
-    and is empty for the browser surface, whose routes render from
-    `request.state.user` and never consult a bearer at all. So with reads closed,
-    `Authorization: Bearer <anything>` walked straight past the switch on every
-    page: boards, the issue list and the activity trail answered a caller holding
-    nothing.
 
-    Validation here is deliberately side-effect free — `tokens.token_authenticates`,
-    not `resolve_token` — so the route's dependency still owns stamping, rate
-    limiting, revoked-token recording and the paused refusal, and nothing is
-    charged twice. The lookup only happens with reads closed and no session (see
-    the caller's short-circuit), so the default open deployment pays nothing.
+def _require_browser_session(request: Request) -> None:
+    """Require the browser identity path when anonymous reads are closed.
+
+    Browser routes render from ``request.state.user``; bearer and trusted actor
+    headers belong to REST/MCP and deliberately do not satisfy this dependency.
     """
-    authorization = request.headers.get("authorization")
-    if authorization and authorization.lower().startswith("bearer "):
-        raw = authorization[len("bearer ") :].strip()
-        conn = deps.request_connection(request).get()
-        return tokens.token_authenticates(conn, raw)
-    if not config.TRUST_ACTOR_HEADER:
-        return False
-    claimed = request.headers.get(identity.ACTOR_HEADER)
-    if claimed is None:
-        return False
-    try:
-        actor_id = int(claimed)
-    except ValueError:
-        return False
-    conn = deps.request_connection(request).get()
-    return users.get_user(conn, actor_id) is not None
-
-
-def _wants_html(request: Request) -> bool:
-    """Whether this looks like a browser navigation rather than an API call."""
-    return "text/html" in request.headers.get("accept", "")
+    if _anonymous_web_read_allowed(request.method, get_route_path(request.scope)):
+        return
+    if getattr(request.state, "user", None) is None:
+        raise _BrowserSessionRequired
 
 
 def _anonymous_web_read_allowed(method: str, path: str) -> bool:
@@ -1527,7 +1505,7 @@ def create_app(
                 ):
                     raise result
 
-    app = FastAPI(title="Athena", lifespan=lifespan)
+    app = FastAPI(title="Athena", lifespan=lifespan, docs_url=None, redoc_url=None)
     # The footer states which build rendered the page. Not decoration: a
     # long-running process serves old Python under live-reloaded templates
     # (this exact skew broke every htmx button on 2026-08-08), and a visible
@@ -1698,11 +1676,22 @@ def create_app(
     app.state.login_account_rate_limiter = rate_limits.FixedWindowRateLimiter(
         login_account_limit
     )
+
     # Middleware is registered inside-out. Among the general request stack,
     # idempotency wraps the routes and run context wraps idempotency. The body
     # cap is added after session middleware below, so oversized requests are
     # bounded before cookie-controlled SQLite work. The deployment boundary is
     # registered last and sits outside this entire stack.
+    async def _browser_session_required(
+        request: Request, exc: Exception
+    ) -> RedirectResponse:
+        if not isinstance(exc, _BrowserSessionRequired):
+            raise exc
+        del request
+        return RedirectResponse("/login", status_code=303)
+
+    app.add_exception_handler(_BrowserSessionRequired, _browser_session_required)
+
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,
@@ -1806,35 +1795,6 @@ def create_app(
                 # exception handler still need it. The middleware that opened it
                 # closes it once, at the end of the request.
                 deps.RequestConnection._ensure_clean(conn)
-        # The fail-closed switch, applied above every route rather than inside them,
-        # so a page or endpoint added later inherits it instead of having to
-        # remember it. It runs AFTER the session is resolved, so a signed-in browser
-        # is unaffected, and refuses before any route touches the database.
-        #
-        # A bearer-authenticated REST caller has no session cookie and is therefore
-        # "anonymous" here, so a credential that RESOLVES is allowed through and the
-        # routes' own dependencies (identity.current_actor / optional_actor) still
-        # own the real refusal, the rate limiting and the audit. What this middleware
-        # refuses is the caller whose credential names nobody: no cookie, and no
-        # bearer or actor header that resolves. The resolving happens here rather
-        # than downstream because the browser surface HAS no downstream — its routes
-        # render from request.state.user and never look at a token.
-        if (
-            request.state.user is None
-            and not _anonymous_web_read_allowed(
-                request.method, get_route_path(request.scope)
-            )
-            and not _carries_a_credential(request)
-        ):
-            # Answer in the caller's own idiom: a browser gets the sign-in page, an
-            # API client gets the same opaque 401 every other refusal uses. Sending
-            # a REST client an HTML redirect would turn a clear refusal into a
-            # confusing 200.
-            if _wants_html(request):
-                return RedirectResponse("/login", status_code=303)
-            return JSONResponse(
-                status_code=401, content={"detail": "authentication required"}
-            )
         return await call_next(request)
 
     # Outside the session middleware, so the one connection also spans the layers
@@ -1916,17 +1876,18 @@ def create_app(
     app.state.static_version = static_version(package_root / "static")
     templates.env.globals["static_version"] = app.state.static_version
     init_templates(templates)
-    app.include_router(web_router)
-    app.include_router(web_projects.router)
-    app.include_router(web_activity.router)
-    app.include_router(web_boards.router)
-    app.include_router(web_filters.router)
-    app.include_router(web_auth.router)
-    app.include_router(web_mentor.router)
-    app.include_router(web_labels.router)
-    app.include_router(web_admin.router)
-    app.include_router(web_work_context.router)
-    app.include_router(web_fleet_metrics.router)
+    browser_dependencies = [Depends(_require_browser_session)]
+    app.include_router(web_router, dependencies=browser_dependencies)
+    app.include_router(web_projects.router, dependencies=browser_dependencies)
+    app.include_router(web_activity.router, dependencies=browser_dependencies)
+    app.include_router(web_boards.router, dependencies=browser_dependencies)
+    app.include_router(web_filters.router, dependencies=browser_dependencies)
+    app.include_router(web_auth.router, dependencies=browser_dependencies)
+    app.include_router(web_mentor.router, dependencies=browser_dependencies)
+    app.include_router(web_labels.router, dependencies=browser_dependencies)
+    app.include_router(web_admin.router, dependencies=browser_dependencies)
+    app.include_router(web_work_context.router, dependencies=browser_dependencies)
+    app.include_router(web_fleet_metrics.router, dependencies=browser_dependencies)
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
@@ -1970,6 +1931,40 @@ def create_app(
     # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)
     app.include_router(mentor_api.pages_router)
+
+    # Framework-generated browser HTML follows the same session-only policy as
+    # Athena web routes. The machine-readable OpenAPI document remains public
+    # product metadata; it carries no workspace rows or credential facts.
+    @app.get(
+        "/docs",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def swagger_ui() -> Response:
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=f"{app.title} - Swagger UI",
+            oauth2_redirect_url="/docs/oauth2-redirect",
+        )
+
+    @app.get(
+        "/docs/oauth2-redirect",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def swagger_ui_redirect() -> Response:
+        return get_swagger_ui_oauth2_redirect_html()
+
+    @app.get(
+        "/redoc",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def redoc() -> Response:
+        return get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=f"{app.title} - ReDoc",
+        )
 
     @app.get("/healthz")
     def healthz():

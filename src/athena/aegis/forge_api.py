@@ -31,7 +31,7 @@ from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor
+from athena.core.identity import admin_actor, optional_actor
 
 router = APIRouter(tags=["forge"])
 
@@ -135,7 +135,7 @@ def delete_event_source(
 
 
 @router.get("/forge/help")
-def forge_help() -> dict:
+def forge_help(_actor: dict | None = Depends(optional_actor)) -> dict:
     """The inbound vocabulary and limits as data, emitted by the parser itself."""
     return forge_events.describe()
 

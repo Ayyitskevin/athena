@@ -247,13 +247,19 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
   (`ATHENA_TOKEN_RATE_LIMIT_PER_MINUTE`); optional-identity REST reads and
   signed-inbound attempts can be throttled per client IP
   (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off locally and required in tailnet
-  mode). That shared limiter is not a global browser-request ceiling.
+  mode). That shared limiter is not a global browser-request ceiling. With
+  anonymous reads closed, the REST dependency remains the sole bearer/header
+  authority while one dependency attached to every browser router requires a
+  resolved session. Bearer and trusted-header credentials never unlock HTML,
+  including Swagger UI and ReDoc. The OpenAPI document and liveness/readiness
+  probes remain public metadata and expose no workspace rows.
 - Optional OIDC single sign-on activates only when all four `ATHENA_OIDC_*`
   connection settings are present; first-login auto-provisioning can be locked
   to an email-domain allow-list. Local email+password login is unaffected.
 - The legacy `X-Athena-Actor` application-factory fallback is disabled by
   default. `athena-serve` refuses to start when it is enabled; supported
-  deployments use password/OIDC browser login or a scoped bearer token.
+  deployments use password/OIDC sessions for browser routes and scoped bearer
+  tokens for REST/MCP. The two transports do not authenticate each other.
 - When/if hosted: dedicated system user + systemd sandboxing, tailnet-only by
   default. Public exposure would be a deliberate, separate decision. See
   [`OPERATIONS.md`](OPERATIONS.md) for the deployment checklist.

@@ -661,7 +661,7 @@ def query_count(
 
 
 @router.get("/query/help")
-def query_help() -> dict:
+def query_help(_actor: dict | None = Depends(optional_actor)) -> dict:
     """The query vocabulary, as data.
 
     Emitted from `work_query.describe()` rather than restated, so this endpoint,
@@ -1831,7 +1831,10 @@ def remove_project_status(
 
 
 @labels_router.get("", response_model=list[LabelOut])
-def list_all_labels(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+def list_all_labels(
+    _actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
     # Reading the vocabulary is open, like listing issues.
     return labels.list_labels(conn)
 

@@ -9,7 +9,7 @@ fallback can be switched off so only real tokens authenticate.
 from fastapi.testclient import TestClient
 
 from athena import config
-from athena.core import tokens
+from athena.core import db, token_commands, tokens, users
 from athena.main import create_app
 
 
@@ -32,6 +32,46 @@ def _mint(client, user_id, name="laptop") -> str:
     )
     assert r.status_code == 201
     return r.json()["token"]
+
+
+def test_token_facts_are_complete_and_side_effect_free(tmp_path):
+    """One inspector owns validity before any transport applies side effects."""
+    conn = db.connect(tmp_path / "facts.db")
+    db.migrate(conn)
+    try:
+        actor = users.create_user(conn, email="facts@e.com", name="Facts", role="admin")
+        active = token_commands.mint_token(
+            conn, actor_id=actor["id"], name="active", scopes=[tokens.READ_SCOPE]
+        )
+        broken = token_commands.mint_token(
+            conn, actor_id=actor["id"], name="broken", scopes=[tokens.READ_SCOPE]
+        )
+        revoked = token_commands.mint_token(
+            conn, actor_id=actor["id"], name="revoked", scopes=[tokens.READ_SCOPE]
+        )
+        conn.execute(
+            "UPDATE api_tokens SET scopes = ? WHERE id = ?",
+            ("not-a-scope", broken["id"]),
+        )
+        tokens.revoke_token(conn, user_id=actor["id"], token_id=revoked["id"])
+        users.set_paused(conn, user_id=actor["id"], paused=True)
+        conn.commit()
+
+        active_facts = tokens.inspect_token(conn, active["token"])
+        assert active_facts.state == "active"
+        assert active_facts.actor is not None
+        assert active_facts.actor["paused_at"] is not None
+        assert active_facts.actor["_token_scopes"] == (tokens.READ_SCOPE,)
+        assert tokens.inspect_token(conn, broken["token"]).state == "invalid"
+        assert tokens.inspect_token(conn, revoked["token"]).state == "revoked"
+        assert tokens.inspect_token(conn, "ath_missing").state == "invalid"
+
+        rows = conn.execute(
+            "SELECT last_used_at FROM api_tokens ORDER BY id"
+        ).fetchall()
+        assert [row["last_used_at"] for row in rows] == [None, None, None]
+    finally:
+        conn.close()
 
 
 def test_token_authenticates_as_its_user(tmp_path):
