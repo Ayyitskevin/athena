@@ -25,7 +25,7 @@ MCP: `my_desk()` and `advance_desk_cursor(after_id)`.
 ```text
 my_desk()                        → orient: asks, work, signals
    ↓ act on what you found
-list_events(after=cursor.after_id) → drain the trail from your position
+recent_events(after=cursor.after_id) → drain the trail from your position
    ↓
 advance_desk_cursor(after_id=<the last event you actually handled>)
 ```
