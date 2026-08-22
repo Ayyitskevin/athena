@@ -66,6 +66,33 @@ def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
     return _MENTION_RE.sub(_one, html)
 
 
+# A bare buzz:// permalink — the relay's entity-link grammar: message, issue, pr,
+# repo, project — becomes a clickable chip labelled by its entity kind, with the
+# full URI in the title. Runs over already-safe HTML like the mention pass, and is
+# deliberately NEVER written into the links index: a Buzz entity has no local
+# table to resolve against, so backlinks/sync_links stay purely local and
+# core/links.py never learns an unresolvable kind. This pass is also the ONE way
+# a Buzz permalink stays clickable at all — nh3's scheme allowlist strips
+# buzz:// out of a Markdown link destination. The query matches the escaped text
+# (`&` arrives as `&amp;`), and the lookbehind keeps this out of attribute
+# values, where a scheme-stripped remnant could otherwise sit.
+_BUZZ_LINK_RE = re.compile(
+    r"(?<![\w\"'=/])buzz://(message|issue|pr|repo|project)"
+    r"\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
+)
+
+
+def _sub_buzz_links(html: str) -> str:
+    def _one(match) -> str:
+        uri = unescape(match.group(0))
+        return (
+            f'<a href="{escape(uri)}" class="xref buzz-link" '
+            f'title="{escape(uri)}">buzz:{match.group(1)}</a>'
+        )
+
+    return _BUZZ_LINK_RE.sub(_one, html)
+
+
 # core.search builds snippets with the matched terms wrapped in [..] (its chosen
 # delimiters). This pulls a balanced [..] pair out of the ALREADY-escaped snippet
 # so we can swap it for <mark>. Non-greedy + balanced, so a lone literal '[' with
@@ -438,6 +465,7 @@ def render_body(
     # by now every reserved token is either linked markup (no [[…]] left) or a rendered
     # literal the guard above skips, so this pass only ever sees genuine [[Title]] text.
     linked = links.TITLE_REF_RE.sub(_title_link, linked)
+    linked = _sub_buzz_links(linked)
     # Embeds go in LAST, after every substitution pass and after the sanitizer.
     # Their HTML is built entirely by this module from escaped values, so there is
     # no untrusted markup in it to sanitize — and passing it through nh3 would

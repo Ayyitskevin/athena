@@ -134,3 +134,47 @@ def test_page_body_renders_markdown(tmp_path):
     )
     html = str(render_body(conn, pg["body"]))
     assert "<h1>Heading</h1>" in html
+
+
+# --- buzz:// permalinks ------------------------------------------------------
+
+
+def test_bare_buzz_permalink_renders_as_link(tmp_path):
+    # A pasted relay permalink becomes a clickable chip labelled by entity kind,
+    # href intact (the & in the query survives the escape/unescape round trip),
+    # full URI in the title so hover shows where it goes.
+    conn = _conn(tmp_path / "b.db")
+    uri = "buzz://message?channel=e29bb951-d272-4822-a8e5-ffac2f9462f2&id=2ccaf8cb"
+    html = str(render_body(conn, f"review evidence: {uri} (thread)"))
+    assert f'href="{uri.replace("&", "&amp;")}"' in html
+    assert 'class="xref buzz-link"' in html
+    assert ">buzz:message</a>" in html
+    assert "(thread)" in html
+
+
+def test_buzz_permalink_entities_and_non_entities(tmp_path):
+    conn = _conn(tmp_path / "b2.db")
+    for entity in ("issue", "pr", "repo", "project"):
+        html = str(render_body(conn, f"buzz://{entity}?owner=ab&d=x"))
+        assert f">buzz:{entity}</a>" in html
+    # An unknown entity stays literal text — this pass renders the relay's
+    # entity-link grammar, it does not bless arbitrary buzz:// strings.
+    html = str(render_body(conn, "buzz://huddle?x=1"))
+    assert "<a" not in html and "buzz://huddle?x=1" in html
+
+
+def test_buzz_permalink_never_lands_in_the_links_index(tmp_path):
+    # Mention-style by design: rendered clickable, never indexed — there is no
+    # local table a Buzz entity resolves against, so backlinks stay local.
+    conn = _conn(tmp_path / "b3.db")
+    issue = issues.create_issue(
+        conn,
+        title="radio receipt",
+        body="see buzz://message?channel=ab&id=cd",
+        created_by=1,
+    )
+    rows = conn.execute(
+        "SELECT COUNT(*) FROM links WHERE source_kind='issue' AND source_id=?",
+        (issue["id"],),
+    ).fetchone()[0]
+    assert rows == 0

@@ -922,6 +922,7 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .xref { color: var(--link); border-bottom: 1px solid var(--accent-line); }
 .xref:hover { border-bottom-color: var(--link); text-decoration: none; }
 .xref.broken { color: var(--danger); border-bottom: 1px dashed var(--danger-line); cursor: help; }
+.xref.buzz-link { font-family: var(--mono, monospace); font-size: 0.9em; }
 .mention { color: var(--link); font-weight: 600; }
 
 
