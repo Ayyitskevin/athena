@@ -243,6 +243,20 @@ def buzz_radio_configured() -> bool:
 # forever and still never grow the registry past this ceiling.
 WORKER_MAX_PER_AGENT = _int_env("ATHENA_WORKER_MAX_PER_AGENT", 50, minimum=1)
 
+# Requests slower than this are logged at WARNING with their route template,
+# method, status, and duration. 0 disables it.
+#
+# Athena has never measured request latency anywhere — uvicorn's access log records
+# method, path, and status but no timing, and nothing else in the tree times a
+# request. That is the gap this closes: the F-0.1 read regression (229ms per page,
+# on a feed that looked perfectly healthy in the access log) would have been
+# invisible to an operator until someone thought to profile it by hand.
+#
+# 1000ms is deliberately high. This is a "something is wrong" signal, not a
+# profiler: an operator who gets a warning per page load stops reading the
+# warnings. Lower it when hunting something specific.
+SLOW_REQUEST_LOG_MS = _int_env("ATHENA_SLOW_REQUEST_LOG_MS", 1000, minimum=0)
+
 # Per-client-IP limit used by optional-identity REST reads and signed machine-
 # inbound deliveries. It is not a global browser-request ceiling. The per-token
 # limiter never runs for these paths. Defaults to 0 (OFF) for local use; tailnet

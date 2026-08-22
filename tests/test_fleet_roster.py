@@ -6,7 +6,7 @@ from athena.core import db, fleet_roster, users
 from athena.main import create_app
 
 
-def _probe(unit: str) -> dict:
+def _probe(unit: str, scope: str) -> dict:
     states = {
         "buzz-acp-claude.service": {
             "load_state": "loaded",
@@ -34,6 +34,61 @@ def test_seat_slug_for_declared_email():
     assert fleet_roster.seat_slug_for_email("GROK@agents.local") == "grok"
     assert fleet_roster.seat_slug_for_email("stranger@e.com") is None
     assert fleet_roster.seat_slug_for_email(None) is None
+
+
+def test_local_workers_declared_with_system_units():
+    # The 2026-08-21 drift repair: muse/qwen are onboarded (email + pubkey) and
+    # their hardened SYSTEM units are declared as such, so the probe stops
+    # reporting them "missing" against the wrong systemd manager. The retired
+    # nemotron seat is gone — its leftover account belongs in undeclared drift.
+    by_slug = {str(s["slug"]): s for s in fleet_roster.DECLARED_SEATS}
+    assert "nemotron" not in by_slug
+    for slug in ("muse", "qwen"):
+        seat = by_slug[slug]
+        assert seat["email"] == f"{slug}@agents.local"
+        assert seat["unit"] == f"buzz-seat-{slug}.service"
+        assert seat["unit_scope"] == "system"
+        assert seat["buzz_pubkey"], f"{slug} must carry its Buzz pubkey"
+    # Cloud seats stay user-scope by omission.
+    assert "unit_scope" not in by_slug["claude"]
+    assert set(fleet_roster.assignable_seat_slugs()) >= {"muse", "qwen"}
+
+
+def test_probe_scope_routed_from_declaration(tmp_path):
+    conn = db.connect(tmp_path / "scope.db")
+    db.migrate(conn)
+    seen: list[tuple[str, str]] = []
+
+    def probe(unit: str, scope: str) -> dict:
+        seen.append((unit, scope))
+        return {"load_state": "loaded", "active_state": "active", "sub_state": "x"}
+
+    declared = (
+        {
+            "slug": "muse",
+            "name": "Muse",
+            "email": None,
+            "unit": "buzz-seat-muse.service",
+            "unit_scope": "system",
+            "buzz_pubkey": "cc" * 32,
+            "kind": "local_ollama",
+        },
+        {
+            "slug": "claude",
+            "name": "Claude",
+            "email": None,
+            "unit": "buzz-acp-claude.service",
+            "buzz_pubkey": "aa" * 32,
+            "kind": "seat",
+        },
+    )
+    roster = fleet_roster.build_roster(conn, probe=probe, declared=declared)
+    assert ("buzz-seat-muse.service", "system") in seen
+    assert ("buzz-acp-claude.service", "user") in seen
+    by_slug = {seat["slug"]: seat for seat in roster["seats"]}
+    assert by_slug["muse"]["unit_scope"] == "system"
+    assert by_slug["claude"]["unit_scope"] == "user"
+    conn.close()
 
 
 def test_unit_verdict_words():

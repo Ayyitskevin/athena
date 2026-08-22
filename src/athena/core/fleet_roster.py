@@ -21,6 +21,10 @@ DEFAULT_ASSIGN_CHANNEL = "3fc2b270-cd0b-4a6b-afcd-f10471caffb2"  # command-deck
 
 # Public Buzz identities and unit names. These are not secrets.
 # email is the Athena handle when the seat has been onboarded.
+# unit_scope says which systemd manager owns the unit: cloud seats run as user
+# units ("user", the default); the hardened local workers run as system units
+# under isolated service accounts ("system") — probing them with --user reports
+# "missing" forever, which is exactly the drift this field repairs.
 DECLARED_SEATS: tuple[dict[str, str | None], ...] = (
     {
         "slug": "kevin",
@@ -73,30 +77,28 @@ DECLARED_SEATS: tuple[dict[str, str | None], ...] = (
     {
         "slug": "muse",
         "name": "Muse",
-        "email": None,
-        "unit": "buzz-acp-muse.service",
-        "buzz_pubkey": None,
-        "kind": "local_ollama",
-    },
-    {
-        "slug": "nemotron",
-        "name": "Nemotron",
-        "email": None,
-        "unit": "buzz-acp-nemotron.service",
-        "buzz_pubkey": None,
+        "email": "muse@agents.local",
+        "unit": "buzz-seat-muse.service",
+        "unit_scope": "system",
+        "buzz_pubkey": "a6466cb725ec90e9c759317df1bb5120c951474b7cf62ae5cb84f5bdeae98aa0",
         "kind": "local_ollama",
     },
     {
         "slug": "qwen",
         "name": "Qwen",
-        "email": None,
-        "unit": "buzz-acp-qwen.service",
-        "buzz_pubkey": None,
+        "email": "qwen@agents.local",
+        "unit": "buzz-seat-qwen.service",
+        "unit_scope": "system",
+        "buzz_pubkey": "7c29f9b39e7cb588617d9ed694ad2ed591aa77006d613e6b8b25a660f70f8020",
         "kind": "local_ollama",
     },
 )
+# Retired seats are REMOVED, not tombstoned: nemotron (retired 2026-08-16) left
+# an agent account behind, and that account showing up under
+# undeclared_athena_agents is the honest reading — leftover state the operator
+# has not cleaned up yet, not a seat we still claim to run.
 
-UnitProbe = Callable[[str], dict]
+UnitProbe = Callable[[str, str], dict]
 
 
 def find_declared_seat(slug: str) -> dict[str, str | None] | None:
@@ -151,22 +153,26 @@ def assignable_seat_slugs() -> tuple[str, ...]:
     )
 
 
-def probe_systemd_user_unit(unit: str) -> dict:
-    """Ask this host's user systemd about one unit.
+def probe_systemd_unit(unit: str, scope: str = "user") -> dict:
+    """Ask this host's systemd about one unit, in the manager that owns it.
 
-    Returns LoadState / ActiveState / SubState as systemd printed them, or
-    ``unobserved`` if we could not ask. Never invents 'running' from silence.
+    ``scope`` is ``"user"`` for the cloud seats' user units and ``"system"``
+    for the local workers' hardened system units. Returns LoadState /
+    ActiveState / SubState as systemd printed them, or ``unobserved`` if we
+    could not ask. Never invents 'running' from silence.
     """
+    argv = ["systemctl"]
+    if scope != "system":
+        argv.append("--user")
+    argv += [
+        "show",
+        unit,
+        "--property=LoadState,ActiveState,SubState",
+        "--no-pager",
+    ]
     try:
         completed = subprocess.run(
-            [
-                "systemctl",
-                "--user",
-                "show",
-                unit,
-                "--property=LoadState,ActiveState,SubState",
-                "--no-pager",
-            ],
+            argv,
             check=False,
             capture_output=True,
             text=True,
@@ -254,7 +260,7 @@ def build_roster(
 ) -> dict:
     """Compose the operator roster. ``probe`` is injectable so tests do not
     talk to systemd."""
-    probe_fn = probe_systemd_user_unit if probe is None else probe
+    probe_fn = probe_systemd_unit if probe is None else probe
     clock = datetime.now(UTC) if now is None else now
     if clock.tzinfo is None:
         clock = clock.replace(tzinfo=UTC)
@@ -267,10 +273,11 @@ def build_roster(
         if email:
             claimed_emails.add(str(email).lower())
         unit = spec.get("unit")
+        unit_scope = str(spec.get("unit_scope") or "user")
         unit_probe = (
             {"load_state": "none", "active_state": "none", "sub_state": "none"}
             if not unit
-            else probe_fn(str(unit))
+            else probe_fn(str(unit), unit_scope)
         )
         verdict = "none" if not unit else unit_verdict(unit_probe)
         account = _athena_account(conn, email if isinstance(email, str) else None)
@@ -284,6 +291,7 @@ def build_roster(
                 "kind": spec["kind"],
                 "email": email,
                 "unit": unit,
+                "unit_scope": unit_scope if unit else None,
                 "buzz_pubkey": spec.get("buzz_pubkey"),
                 "unit_probe": unit_probe,
                 "unit_verdict": verdict,

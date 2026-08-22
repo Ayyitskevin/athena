@@ -376,6 +376,106 @@ def _reject_blocked_close_policy() -> None:
     )
 
 
+def _record_issue_update_activity(
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    issue_id: int,
+    before: dict,
+    updated: dict,
+    provided: set[str],
+    project_changed: bool,
+    policy_override_used: bool,
+) -> None:
+    """Record the activity events for one issue edit, inside the caller's transaction.
+
+    Extracted from _update_issue for one reason: it is the only part of that
+    function with no ordering subtlety. Everything above it decides — resolve the
+    actor, authorize, validate the payload, check the precondition, apply the
+    blocked-close policy, spend the approval — and that sequence is
+    security-relevant and documented as such, so it stays in one place where a
+    reader can see it in order. This runs after every decision is already made and
+    every write has landed; it only describes what happened.
+
+    Every call passes commit=False: the caller owns the transaction, and the
+    events must land or roll back with the mutation that caused them.
+    """
+    transition_project_ids = (
+        {before["project_id"], updated["project_id"]} if project_changed else None
+    )
+    if "status" in provided or project_changed:
+        issue_activity.record_status_change(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            before=before["status"],
+            after=updated["status"],
+            commit=False,
+            issue_project_ids=transition_project_ids,
+            before_project_id=before["project_id"],
+            after_project_id=updated["project_id"],
+        )
+    if "priority" in provided:
+        issue_activity.record_priority_change(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            before=before["priority"],
+            after=updated["priority"],
+            commit=False,
+        )
+    if "assignee_id" in provided:
+        issue_activity.record_assignee_change(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            before=before["assignee_id"],
+            after=updated["assignee_id"],
+            commit=False,
+        )
+    if "project_id" in provided:
+        issue_activity.record_project_change(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            before=before["project_id"],
+            after=updated["project_id"],
+            commit=False,
+        )
+    if "sprint_id" in provided or project_changed:
+        project_caused_sprint_clear = (
+            project_changed
+            and before["sprint_id"] is not None
+            and updated["sprint_id"] is None
+        )
+        issue_activity.record_sprint_change(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            before=before["sprint_id"],
+            after=updated["sprint_id"],
+            include_before_detail=not project_caused_sprint_clear,
+            commit=False,
+            issue_project_ids=transition_project_ids,
+        )
+    if policy_override_used:
+        issue_activity.record_blocked_close_override(
+            conn,
+            actor_id=actor_id,
+            issue_id=issue_id,
+            issue_project_ids=transition_project_ids,
+            commit=False,
+        )
+    issue_activity.record_edited(
+        conn,
+        actor_id=actor_id,
+        issue_id=issue_id,
+        before=before,
+        after=updated,
+        commit=False,
+    )
+
+
 def _update_issue(
     conn: sqlite3.Connection,
     *,
@@ -580,79 +680,15 @@ def _update_issue(
             if updated is None:
                 raise IssueCommandError("not_found", "no such issue")
 
-        transition_project_ids = (
-            {before["project_id"], updated["project_id"]} if project_changed else None
-        )
-        if "status" in provided or project_changed:
-            issue_activity.record_status_change(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                before=before["status"],
-                after=updated["status"],
-                commit=False,
-                issue_project_ids=transition_project_ids,
-                before_project_id=before["project_id"],
-                after_project_id=updated["project_id"],
-            )
-        if "priority" in provided:
-            issue_activity.record_priority_change(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                before=before["priority"],
-                after=updated["priority"],
-                commit=False,
-            )
-        if "assignee_id" in provided:
-            issue_activity.record_assignee_change(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                before=before["assignee_id"],
-                after=updated["assignee_id"],
-                commit=False,
-            )
-        if "project_id" in provided:
-            issue_activity.record_project_change(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                before=before["project_id"],
-                after=updated["project_id"],
-                commit=False,
-            )
-        if "sprint_id" in provided or project_changed:
-            project_caused_sprint_clear = (
-                project_changed
-                and before["sprint_id"] is not None
-                and updated["sprint_id"] is None
-            )
-            issue_activity.record_sprint_change(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                before=before["sprint_id"],
-                after=updated["sprint_id"],
-                include_before_detail=not project_caused_sprint_clear,
-                commit=False,
-                issue_project_ids=transition_project_ids,
-            )
-        if policy_override_used:
-            issue_activity.record_blocked_close_override(
-                conn,
-                actor_id=actor["id"],
-                issue_id=issue_id,
-                issue_project_ids=transition_project_ids,
-                commit=False,
-            )
-        issue_activity.record_edited(
+        _record_issue_update_activity(
             conn,
             actor_id=actor["id"],
             issue_id=issue_id,
             before=before,
-            after=updated,
-            commit=False,
+            updated=updated,
+            provided=provided,
+            project_changed=project_changed,
+            policy_override_used=policy_override_used,
         )
     return updated
 

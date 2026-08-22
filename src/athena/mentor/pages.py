@@ -375,7 +375,7 @@ def finalize_page_deletion(
     for operation in operations:
         try:
             operation()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — post-commit cleanup: every failure is collected and re-raised as a group
             failures.append(exc)
     if len(failures) == 1:
         raise failures[0]

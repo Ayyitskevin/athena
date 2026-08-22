@@ -238,7 +238,7 @@ or that Athena is production-ready; deployment and release sign-off are separate
 Goal: a solo operator running an agent fleet needs no other tab open. Not feature
 parity with five products — the *jobs* those products do, done inside Athena's
 own architecture. The full campaign, with boundaries and parked decisions, is
-[OPUS_EXPANSION_GUIDE_ATHENA.md](OPUS_EXPANSION_GUIDE_ATHENA.md).
+[OPUS_EXPANSION_GUIDE_ATHENA.md](plans/OPUS_EXPANSION_GUIDE_ATHENA.md).
 
 The previous scoping deferred this "until the fleet loop above is complete and
 boring". Phases 1–4 and the hardening/field-proving/release stages that followed
