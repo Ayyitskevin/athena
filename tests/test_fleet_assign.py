@@ -1,5 +1,8 @@
 """Fleet assign: desk first, radio optional."""
 
+import subprocess
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues
@@ -23,6 +26,45 @@ def test_assignment_message_is_a_new_job_not_a_steer():
     assert text.startswith("ATHENA_ASSIGN MWS-2")
     assert "not a steer" in text
     assert "please" in text
+
+
+def test_radio_never_parses_assignment_text_through_a_shell(
+    monkeypatch, tmp_path: Path
+):
+    key_file = tmp_path / "buzz.env"
+    key_file.write_text("SECKEY=synthetic-test-key\n", encoding="utf-8")
+    monkeypatch.setenv("ATHENA_BUZZ_CLI", "/opt/buzz/bin/buzz")
+    monkeypatch.setenv("ATHENA_BUZZ_KEY_FILE", str(key_file))
+    monkeypatch.setenv("ATHENA_BUZZ_RELAY_URL", "ws://127.0.0.1:3000")
+
+    observed = {}
+
+    def runner(argv, **kwargs):
+        observed["argv"] = argv
+        observed["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    title = '$(touch /tmp/not-a-command) "quoted"'
+    note = "`id` && false; --broadcast"
+    result = buzz_radio.send_assignment(
+        seat_name="Codex",
+        buzz_pubkey="npub-test",
+        issue_key="ATH-1",
+        title=title,
+        url="http://athena.test/aegis/issues/1",
+        note=note,
+        runner=runner,
+    )
+
+    assert result["status"] == "sent"
+    assert observed["kwargs"]["shell"] is False
+    argv = observed["argv"]
+    assert argv[:3] == ["/opt/buzz/bin/buzz", "messages", "send"]
+    assert argv[-2] == "--content"
+    assert title in argv[-1]
+    assert note in argv[-1]
+    assert "synthetic-test-key" not in argv
+    assert observed["kwargs"]["env"]["BUZZ_PRIVATE_KEY"] == "synthetic-test-key"
 
 
 def test_assign_sets_assignee_and_delegates(tmp_path):

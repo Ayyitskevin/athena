@@ -105,6 +105,9 @@ def send_assignment(
             text=True,
             timeout=15,
             env=env,
+            # Assignment text can contain issue-controlled content. Keep every
+            # value inside argv and never cross a shell parsing boundary.
+            shell=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return {"status": "failed", "detail": type(exc).__name__}
