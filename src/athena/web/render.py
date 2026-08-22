@@ -74,15 +74,38 @@ def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
 # core/links.py never learns an unresolvable kind. This pass is also the ONE way
 # a Buzz permalink stays clickable at all — nh3's scheme allowlist strips
 # buzz:// out of a Markdown link destination. The query matches the escaped text
-# (`&` arrives as `&amp;`), and the lookbehind keeps this out of attribute
-# values, where a scheme-stripped remnant could otherwise sit.
+# (`&` arrives as `&amp;`).
 _BUZZ_LINK_RE = re.compile(
-    r"(?<![\w\"'=/])buzz://(message|issue|pr|repo|project)"
-    r"\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
+    r"(?<!\w)buzz://(message|issue|pr|repo|project)\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
 )
+
+# Sanitized HTML, split into tag segments and text segments. nh3 escapes every
+# stray `<` in text, and the passes that run before this one emit only
+# well-formed markup, so `<[^>]*>` matches exactly the tags and `[^<]+` exactly
+# the text between them.
+_HTML_SEGMENT_RE = re.compile(r"<[^>]*>|[^<]+")
+_TAG_NAME_RE = re.compile(r"^<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9]*)")
 
 
 def _sub_buzz_links(html: str) -> str:
+    """Linkify bare buzz:// URIs in the TEXT NODES of already-sanitized HTML.
+
+    Walking segments rather than running the regex over the whole string is a
+    correctness requirement, not tidiness. This pass emits markup AFTER nh3 has
+    sanitized, so anything it writes anywhere but a text node is markup
+    injection past the sanitizer — and a guard on the preceding character
+    cannot express "not inside a tag". A body like
+    ``![see buzz://message?id=ab](https://x/p.png)`` puts an author-controlled
+    URI inside the ``alt`` attribute Markdown builds, where substituting an
+    anchor injected raw quotes and a ``>`` that closed the ``<img>`` early; the
+    link-title variant pushed nh3's own ``rel="noopener noreferrer"`` out of the
+    tag and onto the page as visible text.
+
+    Tracking anchor depth in the same walk keeps a permalink that already sits
+    inside a link from nesting a second anchor, which browsers resolve by
+    closing the outer one — truncating the author's link.
+    """
+
     def _one(match) -> str:
         uri = unescape(match.group(0))
         return (
@@ -90,7 +113,19 @@ def _sub_buzz_links(html: str) -> str:
             f'title="{escape(uri)}">buzz:{match.group(1)}</a>'
         )
 
-    return _BUZZ_LINK_RE.sub(_one, html)
+    out: list[str] = []
+    anchor_depth = 0
+    for segment in _HTML_SEGMENT_RE.findall(html):
+        if segment.startswith("<"):
+            tag = _TAG_NAME_RE.match(segment)
+            if tag is not None and tag.group(2).lower() == "a":
+                anchor_depth = (
+                    max(0, anchor_depth - 1) if tag.group(1) else anchor_depth + 1
+                )
+            out.append(segment)
+            continue
+        out.append(segment if anchor_depth else _BUZZ_LINK_RE.sub(_one, segment))
+    return "".join(out)
 
 
 # core.search builds snippets with the matched terms wrapped in [..] (its chosen

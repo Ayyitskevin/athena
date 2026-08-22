@@ -165,16 +165,72 @@ def test_buzz_permalink_entities_and_non_entities(tmp_path):
 
 def test_buzz_permalink_never_lands_in_the_links_index(tmp_path):
     # Mention-style by design: rendered clickable, never indexed — there is no
-    # local table a Buzz entity resolves against, so backlinks stay local.
+    # local table a Buzz entity resolves against, so backlinks stay local. The
+    # body carries a REAL cross-ref alongside the permalink so the assertion can
+    # fail: the indexer demonstrably runs and records the local ref, and still
+    # records nothing for the buzz URI.
     conn = _conn(tmp_path / "b3.db")
+    target = issues.create_issue(conn, title="target", body="", created_by=1)
     issue = issues.create_issue(
         conn,
         title="radio receipt",
-        body="see buzz://message?channel=ab&id=cd",
+        body=f"see buzz://message?channel=ab&id=cd and [[issue:{target['id']}]]",
         created_by=1,
     )
     rows = conn.execute(
-        "SELECT COUNT(*) FROM links WHERE source_kind='issue' AND source_id=?",
+        "SELECT target_kind, target_id FROM links WHERE source_kind='issue' "
+        "AND source_id=?",
         (issue["id"],),
-    ).fetchone()[0]
-    assert rows == 0
+    ).fetchall()
+    assert [(r["target_kind"], r["target_id"]) for r in rows] == [
+        ("issue", target["id"])
+    ]
+    assert not any(r["target_kind"].startswith("buzz") for r in rows)
+
+
+def test_buzz_pass_cannot_inject_markup_into_an_attribute(tmp_path):
+    # The pass emits markup AFTER nh3 sanitized, so it must only ever touch text
+    # nodes. Markdown puts author text into alt= and title= attributes, which is
+    # where a character-class guard failed: substituting there injected a raw `"`
+    # and a `>` that closed the tag early.
+    conn = _conn(tmp_path / "attr.db")
+    html = str(
+        render_body(conn, "![see buzz://message?channel=ab&id=cd](https://x/p.png)")
+    )
+    assert 'alt="see buzz://message?channel=ab&amp;id=cd"' in html
+    assert "<a" not in html  # no anchor smuggled inside the img tag
+    assert html.count("<img") == 1 and html.count(">") == html.count("<")
+
+    # The link-title variant: nh3's own hardening must stay INSIDE the anchor.
+    html = str(
+        render_body(conn, '[click](https://good.example "go buzz://message?id=1")')
+    )
+    assert 'rel="noopener noreferrer"' in html.split(">")[0] + ">" or "rel=" in html
+    assert "buzz-link" not in html  # nothing substituted inside the title attribute
+    assert ">click</a>" in html
+
+
+def test_buzz_permalink_inside_a_link_stays_literal(tmp_path):
+    # A permalink already inside an anchor must not nest a second one — browsers
+    # resolve nested anchors by closing the outer link, truncating it.
+    conn = _conn(tmp_path / "nested.db")
+    html = str(
+        render_body(conn, "[buzz://message?channel=ab&id=cd](https://example.com/x)")
+    )
+    assert html.count("<a ") == 1
+    assert "buzz-link" not in html
+    assert 'href="https://example.com/x"' in html
+
+
+def test_buzz_pass_is_linear_on_adversarial_input(tmp_path):
+    # This repo has a py/polynomial-redos history in the link grammar. The
+    # pattern has one unambiguous repeated class, so a long non-matching run
+    # cannot backtrack quadratically; assert it stays fast rather than trusting
+    # the shape.
+    import time
+
+    conn = _conn(tmp_path / "redos.db")
+    hostile = "buzz://message?" + ("a=" * 40000)
+    start = time.monotonic()
+    render_body(conn, hostile)
+    assert time.monotonic() - start < 2.0
