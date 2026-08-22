@@ -26,9 +26,9 @@ def _fake_repo(
     ci: str = "fastapi==1.0\nJinja2==2.0\n",
     bootstrap: str = (
         "--only-binary :all:\n"
-        "pip==26.1.2 \\\n"
+        "pip==26.2 \\\n"
         "  --hash=sha256:"
-        "382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab\n"
+        "931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad\n"
     ),
     build: str = 'requires = ["setuptools==83.0.0"]',
 ) -> Path:
@@ -74,7 +74,7 @@ def test_current_repository_has_exact_ci_build_and_bootstrap_subjects():
     dependencies = check_supply_chain.expected_dependencies(ROOT)
 
     assert len(dependencies) == 65
-    assert dependencies["pip"].version == "26.1.2"
+    assert dependencies["pip"].version == "26.2"
     assert dependencies["setuptools"].version == "83.0.0"
     assert dependencies["fastapi"].source.endswith("constraints/ci-py312.txt")
 
@@ -101,14 +101,14 @@ def test_unpinned_or_ambiguous_requirements_are_rejected(tmp_path, bad_requireme
 
 
 def test_bootstrap_pin_requires_a_sha256_hash(tmp_path):
-    repo = _fake_repo(tmp_path, bootstrap="pip==26.1.2\n")
+    repo = _fake_repo(tmp_path, bootstrap="pip==26.2\n")
 
     with pytest.raises(ValueError, match="missing a SHA-256 hash"):
         check_supply_chain.expected_dependencies(repo)
 
 
 def test_duplicate_subjects_across_inputs_are_rejected(tmp_path):
-    repo = _fake_repo(tmp_path, ci="pip==26.1.2\n")
+    repo = _fake_repo(tmp_path, ci="pip==26.2\n")
 
     with pytest.raises(ValueError, match="duplicate audit subject"):
         check_supply_chain.expected_dependencies(repo)
@@ -127,7 +127,7 @@ def test_current_evidence_tool_lock_is_exact_and_matches_direct_inputs():
     assert len(dependencies) == 32
     assert dependencies["build"].version == "1.5.0"
     assert dependencies["packaging"].version == "26.2"
-    assert dependencies["pip"].version == "26.1.2"
+    assert dependencies["pip"].version == "26.2"
     assert dependencies["pip-audit"].version == "2.10.1"
     assert dependencies["setuptools"].version == "83.0.0"
 
@@ -345,7 +345,7 @@ def test_run_audit_uses_fail_closed_flags_and_cleans_input(tmp_path, monkeypatch
     assert observed_input.splitlines() == [
         "fastapi==1.0",
         "Jinja2==2.0",
-        "pip==26.1.2",
+        "pip==26.2",
         "setuptools==83.0.0",
     ]
     assert not list(output.parent.glob(".athena-audit.*.txt"))
