@@ -18,26 +18,34 @@ promise to users, and parking a subsystem is a judgement about what Athena is fo
 
 ---
 
-## There is no usage evidence, and that is the first finding
+## Usage evidence now exists
 
-F-3.4 asks for "its last real use in the dogfood deployment". **There is no dogfood
-deployment.** Athena has never been run in anger — by anyone, including its author.
-RELEASE_READINESS.md has said so all along, in a line that reads differently once
-you are trying to prune: *"No production deployment has occurred. All evidence here
-comes from synthetic temporary databases and loopback processes."*
+F-3.4 asks for "its last real use in the dogfood deployment". The premise this
+ledger started from is no longer true: Athena now has a canonical dogfood
+deployment. On 2026-08-22 its `/healthz` and `/readyz` endpoints both reported
+`ok`, and the read-only evidence command below measured its live database:
 
-So the column this ledger was designed around cannot be filled — not because the
-data is out of reach, but because it was never created. That is worth stating
-before any table, because it reframes the exercise. The question is not "which of
-these 362 routes has gone quiet?" Nothing has gone quiet; nothing has ever spoken.
-The question is **"which of these was built on a demonstrated need, and which on a
-guess?"** — and a surface this size assembled without a single day of real use is a
-larger risk than any subsystem on it.
+| signal | live evidence |
+|---|---|
+| issues (Aegis core) | 64 rows, 93 events; last seen 2026-08-22 04:38:18 |
+| pages (Mentor core) | 6 rows, 11 events; last seen 2026-08-22 01:01:38 |
+| agent supervision | 13 rows, 49 events; last seen 2026-08-22 03:30:22 |
+| activity trail | 368 rows |
+| delegation inbox | 4 events; last seen 2026-08-16 03:42:10 |
+| notifications / watches | 66 rows |
+| automation rules | 0 rows, 0 events |
+| webhooks (outbound) | 0 rows, 0 events |
 
-The honest first verdict for most rows is therefore neither keep, park, nor cut. It
-is **unknown, and unknowable until someone uses this thing.**
+That final pair is evidence of no recorded use in this snapshot, not a parking
+verdict. Usage is only one input: current integration dependencies and shared
+security/transport primitives are separate evidence, and removing either feature
+can break a live neighboring subsystem without changing these counts first.
 
-### What evidence does exist
+The deployed checkout was at `2268971` when measured, while repository `main` had
+advanced. This snapshot therefore describes the deployed database, not a claim
+that every capability on current `main` was already running there.
+
+### Additional intent evidence
 
 Two artifacts encode what Athena's author believes the product IS, and both are
 runnable today:
@@ -47,11 +55,9 @@ runnable today:
 - **`scripts/field_exercise.py` (25 steps over real HTTP)** — the operator loop,
   end to end, as a working system.
 
-Neither is usage evidence. Nobody chose to reach for a feature under time pressure;
-these are scripted. But they are **intent evidence**, and intent evidence is exactly
-the right instrument for the question above: a subsystem that neither canonical
-story touches is one that even the author's own account of the product does not
-need in order to be itself.
+Neither is usage evidence. These are scripted, but they remain **intent evidence**:
+a subsystem that neither canonical story touches is one the author's own account
+of the product did not need in order to be itself at the time the story was written.
 
 That is a signal available now, and it discriminates.
 
@@ -62,8 +68,8 @@ python scripts/prune_evidence.py <database> --markdown
 ```
 
 Read-only (`immutable=1`), so it is safe against a running deployment. Run it
-against **both** canonical stories and compare — that comparison, not either number
-alone, is what the table below records:
+against the canonical dogfood database first. The two scripted stories remain
+useful as a historical baseline or when no deployment exists:
 
 ```bash
 athena-demo --db /tmp/demo.db --attach-dir /tmp/demo-att --seed-only
@@ -82,8 +88,8 @@ database does, without installing anything.
   reviewer skimming a column of zeroes will not stop to make the distinction. Two of
   the three subsystems F-3.4 names as candidates are in this category: the evidence
   is worst exactly where the question is sharpest.
-- **Zero here means "no canonical story touches it"**, not "unused". Given the
-  paragraph above, no stronger reading is available.
+- **Zero means "no recorded use in this database or story"**, not "safe to
+  remove". Runtime dependencies and shared primitives are not usage rows.
 - **Some counts are floors.** Row counts for indexes maintained on every write track
   workspace size, not use. Migration-seeded singleton tables are excluded for the
   same reason — a count that can never reach zero measures nothing.
@@ -106,7 +112,8 @@ maintenance, a wrong cut costs trust.
 ## The ledger — 2026-Q3 (draft, verdicts unset)
 
 Measured 2026-08-15 against both canonical stories. "demo" is the five-minute pitch;
-"field" is the 25-step operator loop.
+"field" is the 25-step operator loop. This table is the pre-deployment baseline;
+the dated live snapshot above is the current usage evidence.
 
 | subsystem | surface | demo | field exercise | verdict |
 |---|---|---|---|---|
@@ -133,22 +140,22 @@ Measured 2026-08-15 against both canonical stories. "demo" is the five-minute pi
 
 ### What the comparison actually says
 
-**Six measurable subsystems are touched by neither story:** automation rules,
+**Six measurable subsystems were touched by neither scripted story:** automation rules,
 outbound webhooks, attachments, saved filters, desk cursors, and OIDC login. That is
-the shortlist this quarter produces — and note that F-3.4's three pre-named
+the shortlist the baseline produced — and note that F-3.4's three pre-named
 candidates are **not** on it. Two of them cannot be measured at all, and the third
 (forge inbound) is exercised by the field exercise, which is evidence *for* it.
 
 Two of the six have obvious innocent explanations and should not be read as
 findings: **OIDC login** is dormant unless four settings are configured, and
 **attachments** need a file upload that a scripted story reasonably skips. The
-other four are the real question — a rule engine, an outbound integration, stored
-queries, and a cursor store, none of which either account of the product reaches
-for.
+other four were the real question in that baseline — a rule engine, an outbound
+integration, stored queries, and a cursor store, none of which either scripted
+account of the product reached for.
 
-**The one thing that would change this ledger more than any verdict** is using
-Athena for a month. Every row above would gain a real answer, and the four
-interesting ones would resolve themselves.
+The live snapshot supersedes the baseline for usage claims. It does not resolve the
+verdicts by itself: zero recorded automation or webhook rows must be weighed against
+their current integration role before either can be parked.
 
 ## The three candidates F-3.4 named
 
@@ -202,21 +209,9 @@ operator can recall acting on it.
 
 ## Next review
 
-**2026-Q4.** Two different things could happen between now and then, and they call
-for different reviews.
-
-**If Athena is still unused**, re-running the two canonical stories will produce the
-same six-row shortlist, and the ledger will have said the same thing twice. That is
-itself a verdict — not about any subsystem, but about the project: a second
-identical quarter means the shortlist is the best evidence that will ever exist, and
-the four interesting rows should be decided on judgement rather than waited on
-further.
-
-**If Athena has been used for even a month**, throw this table away and regenerate
-against the real database. Every row gains an answer the scripted stories cannot
-give, and the `n/a` rows — the graph view, the answerability page, search — become
-answerable for the first time, because the question stops being "does the code write
-anything" and becomes "did you open it".
-
-The second is worth more than any verdict set here. A prune ledger without usage is
-a rehearsal; the thing that makes it real is using the product.
+**2026-Q4.** Re-run `scripts/prune_evidence.py` against the canonical dogfood
+database and compare it with the dated live snapshot above. Treat row-count and
+last-seen movement as usage evidence, then inspect runtime consumers and integration
+contracts before setting any verdict. The `n/a` rows — graph view, answerability,
+search, export, and recovery — still require operator evidence because they leave no
+database trace by construction.
