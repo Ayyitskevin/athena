@@ -172,6 +172,31 @@ def resolve_token(conn: sqlite3.Connection, raw: str) -> dict | None:
     return actor
 
 
+def token_authenticates(conn: sqlite3.Connection, raw: str) -> bool:
+    """Whether a raw token WOULD authenticate, without any of the side effects
+    resolution carries: no last_used_at stamp, no rate-limit charge, no trail entry.
+
+    The fail-closed middleware needs exactly one bit — "is this a real credential?" —
+    above every route, and must not double-charge or double-stamp the token that the
+    route's own dependency is about to resolve properly. Kept beside `resolve_token`
+    so the two cannot drift apart about what counts as live: same hash, same
+    revoked filter, same rejection of a token whose user row is gone.
+
+    Deliberately NOT a pause check. Pausing is enforced where it belongs, at
+    identity resolution (`identity._refuse_paused`), and this answers only whether
+    a credential is genuine — matching `resolve_token`, which also returns a paused
+    user's actor and leaves the refusal to its caller.
+    """
+    return (
+        conn.execute(
+            "SELECT 1 FROM api_tokens JOIN users ON users.id = api_tokens.user_id"
+            " WHERE api_tokens.token_hash = ? AND api_tokens.revoked_at IS NULL",
+            (_hash(raw),),
+        ).fetchone()
+        is not None
+    )
+
+
 def get_revoked_token(conn: sqlite3.Connection, raw: str) -> dict | None:
     """Identify a REVOKED token presented as a credential: {id, user_id}, or None
     when the raw value matches no revoked token. Failure auditing uses this to
