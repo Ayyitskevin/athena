@@ -53,7 +53,7 @@ Athena reads configuration from environment variables at process start.
 | `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Per-client-IP ceiling used by optional-identity REST reads and each signed-inbound attempt (forge and Icarus callbacks). It is not a global browser-request ceiling. Keyed by the accepted direct peer, never forwarding headers. Tailnet mode requires a positive value. |
 | `ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE` | `10` | Per-client-IP cap on `POST /login` attempts, checked before the password hash (bounds brute force and pbkdf2 CPU). Over the limit returns `429` with `Retry-After`. Keyed by the accepted direct peer, never forwarding headers. `0` disables it and is refused in tailnet mode. |
 | `ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE` | `5` | Per-**account** cap on `POST /login` attempts, keyed by the submitted email address rather than the resolved user, so a real address and an unknown one are throttled identically and the limiter cannot be used to test whether an account exists. Closes the axis the per-IP limit above leaves open: credential stuffing is distributed by construction. `0` disables it. See SECURITY.md for the denial-of-service trade. |
-| `ATHENA_ANONYMOUS_READS` | `true` | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, and readiness remain public metadata. |
+| `ATHENA_ANONYMOUS_READS` | `true` | When `false`, REST reads require an authenticated REST actor and browser routes require a resolved browser session, regardless of container visibility. Signing in and first-user creation stay reachable so the switch cannot lock out the operator. Bearer and trusted-header credentials remain REST/MCP-only and never satisfy the browser gate. Swagger UI and ReDoc follow that browser rule; OpenAPI, liveness, readiness, and build identity remain public metadata. |
 | `ATHENA_DEFAULT_VISIBILITY` | `public` | Visibility new projects and spaces are born with (`public` or `private`). Ergonomics, not enforcement: it does nothing for containers that already exist, and nothing at all when `ATHENA_ANONYMOUS_READS=false` has already closed reads. |
 | `ATHENA_LIVE_REFRESH_SECONDS` | `10` | How often the three self-refreshing cockpit panels (fleet attention, active claimed work, run controls) re-ask the server for their own markup. `0` turns polling off — the pages still render and say so, they just stop updating themselves. Any other value must be 5–3600; the floor is a load bound, since each polling admin costs roughly `0.5 ms / interval` of server time. |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames (comma-separated, case-insensitive, no wildcards) outbound webhook/dispatch POSTs may reach even though they resolve to private, loopback, or link-local addresses. Empty keeps the SSRF policy absolute. Set it when your webhook receiver or execution fleet legitimately lives on your own machine, LAN, or tailnet — e.g. `127.0.0.1` — and name only hosts you operate. Delivery still pins the connection to the resolved address. |
@@ -153,13 +153,32 @@ available to explicitly unsupported raw-factory HTTPS experiments.
   the exact packaged migration inventory, with no missing, unknown, future, or
   unpackaged entry and with every applied migration checksum matching its packaged
   file.
+- `GET /version` is a process-start identity snapshot and does not touch SQLite. It
+  reports the package version, full Git commit, startup tree state, and whether the
+  process found a Git checkout. This is public operational metadata, not an
+  authentication or readiness signal.
 
 Example:
 
 ```bash
 curl -fsS http://127.0.0.1:8000/healthz
 curl -fsS http://127.0.0.1:8000/readyz
+curl -fsS http://127.0.0.1:8000/version
 ```
+
+After every checkout update and process restart, compare the running snapshot with
+the deployed checkout:
+
+```bash
+python scripts/check_runtime_provenance.py \
+  --url http://127.0.0.1:8000/version \
+  --checkout /absolute/path/to/athena
+```
+
+The checker fails when the commits differ, either tree is dirty, the process did
+not start from a checkout, or the response is malformed. The sanitized systemd
+service/timer templates under `deploy/systemd/` make that comparison recurring;
+render and verify them as described in `deploy/README.md` before installation.
 
 The supported normal `athena-serve` preflight requires a current migration
 ledger before Athena/Uvicorn accepts traffic. It does not silently upgrade a

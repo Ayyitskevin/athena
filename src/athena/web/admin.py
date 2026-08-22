@@ -153,14 +153,22 @@ def _password_context(*, error: str | None = None, success: str | None = None) -
 
 
 def _safe_next(next_path: str) -> str:
-    """Only ever redirect back into this app: a one-segment local path.
+    """Only ever redirect back into this app using an absolute local path.
 
     The value rides in a hidden form field, so a tampered form must not turn
     a preference toggle into an open redirect. Anything that is not a plain
-    local path ("//host" is protocol-relative, "https://…" is absolute)
-    falls back to the home page.
+    local path ("//host" is protocol-relative, "https://…" is absolute, and
+    backslashes are authority separators in WHATWG URL parsing) falls back to
+    the home page. Reject controls as well instead of relying on response-header
+    serialization to make an unsafe value inert.
     """
-    if next_path.startswith("/") and not next_path.startswith("//"):
+    has_control = any(ord(char) < 0x20 or ord(char) == 0x7F for char in next_path)
+    if (
+        next_path.startswith("/")
+        and not next_path.startswith("//")
+        and "\\" not in next_path
+        and not has_control
+    ):
         return next_path
     return "/"
 

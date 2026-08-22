@@ -14,7 +14,8 @@ public forge; see [FORGE.md](FORGE.md).
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
 alpha the project actually claims to be.**
 
-Re-affirmed 2026-08-08 after the Final Sprint and depth cycle (the section
+Re-affirmed 2026-08-22 after the security-governance and runtime-provenance
+baseline, and before that 2026-08-08 after the Final Sprint and depth cycle (the section
 below), and before that 2026-07-31 after the Stage M–P expansion, the
 adversarial review of the merged tree (grade 7/10 — see
 docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md), the H-0/H-1/H-2 remediation waves, and the
@@ -303,7 +304,7 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
 | Dependency/security scan | The 32-distribution hash-locked evidence/build toolchain audits itself; `pip-audit` scans the exact 63 CI/build/bootstrap inputs and the verified 29-package base / 41-package MCP third-party runtime closures; no ignores or soft pass | PASS (local draft) |
-| GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were disabled when last inspected; settings changes are out of scope for a code change | NOT CONFIGURED |
+| GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were enabled when verified 2026-08-22. Branch governance remains weak: only `test` and `container` are required, administrator enforcement is off, approving reviews are zero, and no repository ruleset requires CodeQL. | PARTIAL |
 | SBOM / signing / provenance | The gate retains the exact 65-component input SBOM plus base/MCP CycloneDX graphs rooted at the candidate wheel SHA-256; the candidate remains unsigned, unattested, unpublished, and does not represent a first-party code scan | PARTIAL |
 
 ### Python supply-chain evidence (2026-07-31)
@@ -340,8 +341,12 @@ resolved by a green test run.
   runtime, invokes `actions/cache@v4` by a mutable tag, and pipes an unpinned
   remote installer into Bash — the repository reference is immutable, its
   transitive execution is not reproducible.
-- **Repository security automation is off.** Private vulnerability reporting,
-  Dependabot, secret scanning, and push protection were disabled when inspected.
+- **Repository security automation is enabled, but merge governance is incomplete.**
+  Private vulnerability reporting, Dependabot security updates, secret scanning,
+  and push protection were enabled when inspected on 2026-08-22. Code scanning is
+  active but is not a required merge check; administrator enforcement is off,
+  approving reviews are zero, and no repository ruleset exists. Changing those
+  controls is a separate repository-owner gate, not part of this code candidate.
 - **Deployment shape.** The supported launcher now fails closed to direct
   loopback or explicit tailnet listeners, but it cannot infer external
   publication. Public-internet exposure, proxy termination, hostile

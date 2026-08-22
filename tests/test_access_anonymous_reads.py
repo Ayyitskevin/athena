@@ -110,6 +110,7 @@ def test_every_route_has_an_explicit_auth_or_non_actor_boundary(tmp_path, closed
         (frozenset({"GET", "HEAD"}), "/openapi.json"),
         (frozenset({"GET"}), "/healthz"),
         (frozenset({"GET"}), "/readyz"),
+        (frozenset({"GET"}), "/version"),
         (frozenset({"POST"}), "/users"),
         (frozenset({"POST"}), "/callbacks/icarus"),
         (frozenset({"POST"}), "/forge/{source_name}"),

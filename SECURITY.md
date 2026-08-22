@@ -50,12 +50,12 @@ receipt; Athena rejects it on otherwise valid requests with the normal anonymous
 
 ## Reporting a vulnerability
 
-GitHub private vulnerability reporting is disabled for this repository (verified
-2026-07-23). First contact the repository owner using the contact information on
-their GitHub profile, without vulnerability details, affected endpoints, exploit
-steps, or secrets, and ask to arrange a private channel. If no private contact
-method is available, any public contact must remain a detail-free request to speak
-privately. Do not transmit the report until both sides have agreed on that channel.
+GitHub private vulnerability reporting is enabled for this repository (verified
+2026-08-22). Use **Security → Report a vulnerability** in the GitHub repository to
+open a private report. If GitHub does not offer that control, first contact the
+repository owner without vulnerability details and arrange another private channel.
+Do not put affected endpoints, exploit steps, credentials, or other sensitive detail
+in a public issue or discussion.
 
 Never include a live token, password, private database, attachment, operator note,
 journal text, customer information, or other secret in an issue, discussion, pull
