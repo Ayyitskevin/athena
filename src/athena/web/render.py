@@ -79,11 +79,21 @@ _BUZZ_LINK_RE = re.compile(
     r"(?<!\w)buzz://(message|issue|pr|repo|project)\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
 )
 
-# Sanitized HTML, split into tag segments and text segments. nh3 escapes every
-# stray `<` in text, and the passes that run before this one emit only
-# well-formed markup, so `<[^>]*>` matches exactly the tags and `[^<]+` exactly
-# the text between them.
-_HTML_SEGMENT_RE = re.compile(r"<[^>]*>|[^<]+")
+# Sanitized HTML, split into tag segments and text segments.
+#
+# A tag is `<`, then any run of (a character that is not a quote or `>`) or a
+# WHOLE quoted attribute value, then `>`. Consuming quoted values as units is
+# the load-bearing part: a sanitizer does NOT escape `>` inside an attribute
+# (it is valid there), so `alt="see > x"` carries a raw `>` and the obvious
+# `<[^>]*>` ends the tag early — handing the rest of a live attribute to the
+# text branch, which is exactly the injection this split exists to prevent.
+#
+# The three alternatives start with disjoint character sets, so the scan cannot
+# backtrack ambiguously. A lone `<` that begins no well-formed tag matches the
+# bare `<` branch and is emitted verbatim: sanitized HTML has no such character
+# (stray `<` is escaped to `&lt;`), but the branch means a malformed input is
+# passed through untouched rather than silently dropped by the scan.
+_HTML_SEGMENT_RE = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>|<|[^<]+""")
 _TAG_NAME_RE = re.compile(r"^<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9]*)")
 
 

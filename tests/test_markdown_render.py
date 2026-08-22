@@ -234,3 +234,39 @@ def test_buzz_pass_is_linear_on_adversarial_input(tmp_path):
     start = time.monotonic()
     render_body(conn, hostile)
     assert time.monotonic() - start < 2.0
+
+
+def test_raw_angle_bracket_in_an_attribute_does_not_split_the_tag(tmp_path):
+    # The bypass a cross-seat review found in the first version of the segment
+    # walk: a sanitizer does NOT escape `>` inside an attribute value (it is
+    # valid there), so `alt="see > x"` carries a raw `>`. A naive `<[^>]*>` tag
+    # pattern ends the tag at it and hands the REST OF A LIVE ATTRIBUTE to the
+    # text branch — reopening exactly the injection the walk exists to prevent.
+    conn = _conn(tmp_path / "rawangle.db")
+
+    html = str(
+        render_body(conn, "![see > buzz://message?channel=ab&id=cd](https://x/p.png)")
+    )
+    assert 'alt="see > buzz://message?channel=ab&amp;id=cd"' in html
+    assert "buzz-link" not in html  # nothing substituted inside the attribute
+    assert html.count("<img") == 1
+
+    # Two raw angles, and an apostrophe inside the double-quoted value (the
+    # scanner consumes whole quoted values, so a stray quote character in an
+    # attribute must not desynchronize it).
+    html = str(render_body(conn, "![it's > a > buzz://message?id=ab](https://x/p.png)"))
+    assert 'alt="it&#x27;s > a > buzz://message?id=ab"' in html or (
+        "buzz-link" not in html and html.count("<img") == 1
+    )
+
+    # Same for a link title, where nh3's own rel= hardening must stay in the tag.
+    html = str(
+        render_body(conn, '[click](https://good.example "go > buzz://message?id=1")')
+    )
+    assert 'rel="noopener noreferrer"' in html
+    assert "buzz-link" not in html
+    assert ">click</a>" in html
+
+    # And the pass still does its job in real text nodes.
+    html = str(render_body(conn, "text buzz://message?channel=ab&id=cd here"))
+    assert 'class="xref buzz-link"' in html
