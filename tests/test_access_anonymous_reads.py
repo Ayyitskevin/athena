@@ -60,6 +60,27 @@ def _events(db_path, verb):
         conn.close()
 
 
+def _last_used_at(db_path, token_id):
+    conn = db.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT last_used_at FROM api_tokens WHERE id = ?", (token_id,)
+        ).fetchone()
+        return row["last_used_at"]
+    finally:
+        conn.close()
+
+
+def _activity_count(db_path):
+    conn = db.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) AS count FROM activity").fetchone()[
+            "count"
+        ]
+    finally:
+        conn.close()
+
+
 def test_only_first_user_bootstrap_uses_ungated_optional_identity(tmp_path, closed):
     """First-user creation is the sole intentionally ungated identity adapter."""
     app = _seeded_app(tmp_path)
@@ -380,19 +401,13 @@ def test_a_live_bearer_does_not_open_the_browser_surface(tmp_path, closed):
         )
         assert response.status_code == 303, response.status_code
         assert response.headers["location"] == "/login"
+        assert _last_used_at(db_path, minted["id"]) is None
 
         rest_headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/issues", headers=rest_headers).status_code == 200
         assert client.get("/issues", headers=rest_headers).status_code == 429
 
-    conn = db.connect(db_path)
-    try:
-        row = conn.execute(
-            "SELECT last_used_at FROM api_tokens WHERE id = ?", (minted["id"],)
-        ).fetchone()
-        assert row["last_used_at"] is not None
-    finally:
-        conn.close()
+    assert _last_used_at(db_path, minted["id"]) is not None
 
 
 def test_a_paused_bearer_does_not_open_the_browser_surface(tmp_path, closed):
@@ -420,14 +435,7 @@ def test_a_paused_bearer_does_not_open_the_browser_surface(tmp_path, closed):
     assert response.status_code == 303, response.status_code
     assert response.headers["location"] == "/login"
     assert _events(db_path, "paused_account_refused") == []
-    conn = db.connect(db_path)
-    try:
-        row = conn.execute(
-            "SELECT last_used_at FROM api_tokens WHERE id = ?", (minted["id"],)
-        ).fetchone()
-        assert row["last_used_at"] is None
-    finally:
-        conn.close()
+    assert _last_used_at(db_path, minted["id"]) is None
 
 
 def test_malformed_stored_scope_does_not_open_the_browser_surface(tmp_path, closed):
@@ -457,14 +465,7 @@ def test_malformed_stored_scope_does_not_open_the_browser_surface(tmp_path, clos
 
     assert response.status_code == 303, response.status_code
     assert response.headers["location"] == "/login"
-    conn = db.connect(db_path)
-    try:
-        row = conn.execute(
-            "SELECT last_used_at FROM api_tokens WHERE id = ?", (minted["id"],)
-        ).fetchone()
-        assert row["last_used_at"] is None
-    finally:
-        conn.close()
+    assert _last_used_at(db_path, minted["id"]) is None
 
 
 def test_a_forged_actor_header_does_not_open_the_browser_surface(tmp_path, monkeypatch):
@@ -490,10 +491,12 @@ def test_a_live_trusted_header_does_not_open_the_browser_surface(tmp_path, monke
     """The local-trust REST adapter is not a browser session."""
     monkeypatch.setattr(config, "ANONYMOUS_READS", False)
     monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", True)
-    app = _seeded_app(tmp_path, "live_actor_header.db")
+    db_path = tmp_path / "live_actor_header.db"
+    app = _seeded_app(tmp_path, db_path.name)
     with TestClient(app) as client:
         rest = client.get("/users/me", headers={identity.ACTOR_HEADER: "1"})
         assert rest.status_code == 200, rest.text
+        activity_count = _activity_count(db_path)
         response = client.get(
             "/aegis/issues",
             headers={**BROWSER, identity.ACTOR_HEADER: "1"},
@@ -502,6 +505,7 @@ def test_a_live_trusted_header_does_not_open_the_browser_surface(tmp_path, monke
 
     assert response.status_code == 303, response.status_code
     assert response.headers["location"] == "/login"
+    assert _activity_count(db_path) == activity_count
 
 
 def test_missing_and_non_bearer_rest_credentials_share_the_anon_budget(
@@ -580,14 +584,7 @@ def test_malformed_stored_scope_is_rejected_before_token_side_effects(tmp_path, 
     assert denied.status_code == 401, denied.text
     assert denied.json()["detail"] == "authentication required"
     assert limited.status_code == 429
-    conn = db.connect(db_path)
-    try:
-        row = conn.execute(
-            "SELECT last_used_at FROM api_tokens WHERE id = ?", (minted["id"],)
-        ).fetchone()
-        assert row["last_used_at"] is None
-    finally:
-        conn.close()
+    assert _last_used_at(db_path, minted["id"]) is None
 
 
 def test_reads_stay_open_by_default(tmp_path):
