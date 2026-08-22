@@ -11,6 +11,7 @@ that invalid-bearer hammering is now rate-limited before it can flood the log.
 
 from fastapi.testclient import TestClient
 
+from athena import config
 from athena.core import activity, db
 from athena.main import create_app
 
@@ -56,7 +57,8 @@ def test_unknown_email_login_records_nothing(tmp_path):
     assert _events(db_file, "login_failed") == []
 
 
-def test_revoked_token_use_is_attributed_to_its_owner(tmp_path):
+def test_revoked_token_use_is_attributed_to_its_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "ANONYMOUS_READS", False)
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)

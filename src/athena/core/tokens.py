@@ -12,9 +12,11 @@ token scopes can only narrow what a bearer token may do as that user.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 import hashlib
 import secrets
 import sqlite3
+from typing import Literal
 
 # Raw tokens carry a short prefix so humans and secret-scanners recognize them.
 # The hash is computed over the whole string, prefix included.
@@ -32,6 +34,18 @@ LEGACY_SCOPES = (ADMIN_SCOPE,)
 
 # Columns safe to return to a caller — never the hash.
 _PUBLIC_COLS = "id, user_id, name, scopes, created_at, last_used_at, revoked_at"
+
+TokenCredentialState = Literal["active", "revoked", "invalid"]
+
+
+@dataclass(frozen=True, slots=True)
+class TokenCredential:
+    """Side-effect-free authentication facts for one presented bearer token."""
+
+    state: TokenCredentialState
+    token_id: int | None = None
+    user_id: int | None = None
+    actor: dict | None = None
 
 
 def _hash(raw: str) -> str:
@@ -146,67 +160,68 @@ def create_token(
     return {**_public_row(row), "token": raw}
 
 
-def resolve_token(conn: sqlite3.Connection, raw: str) -> dict | None:
-    """Authenticate a raw token: return the acting user, or None if the token is
-    unknown or revoked. Stamps last_used_at on success for audit."""
+def inspect_token(conn: sqlite3.Connection, raw: str) -> TokenCredential:
+    """Classify a bearer token without stamping, committing, throttling, or auditing.
+
+    This is the single owner of token validity: hash lookup, revocation, user
+    existence, and stored-scope parsing all complete before a credential is active.
+    Transport policy consumes these facts and owns its own effects.
+    """
     row = conn.execute(
-        "SELECT id, user_id, scopes FROM api_tokens"
-        " WHERE token_hash = ? AND revoked_at IS NULL",
+        "SELECT id, user_id, scopes, revoked_at FROM api_tokens WHERE token_hash = ?",
         (_hash(raw),),
     ).fetchone()
     if row is None:
-        return None
-    conn.execute(
-        "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
-        (row["id"],),
-    )
-    conn.commit()
+        return TokenCredential("invalid")
+    if row["revoked_at"] is not None:
+        return TokenCredential("revoked", token_id=row["id"], user_id=row["user_id"])
     user = conn.execute(
         "SELECT * FROM users WHERE id = ?", (row["user_id"],)
     ).fetchone()
     if user is None:
-        return None
+        return TokenCredential("invalid")
+    raw_scopes = row["scopes"]
+    if raw_scopes is not None and not isinstance(raw_scopes, str):
+        return TokenCredential("invalid")
+    try:
+        parsed_scopes = parse_scopes(raw_scopes)
+    except ValueError:
+        return TokenCredential("invalid")
     actor = dict(user)
     actor["_token_id"] = row["id"]
-    actor["_token_scopes"] = parse_scopes(row["scopes"])
-    return actor
-
-
-def token_authenticates(conn: sqlite3.Connection, raw: str) -> bool:
-    """Whether a raw token WOULD authenticate, without any of the side effects
-    resolution carries: no last_used_at stamp, no rate-limit charge, no trail entry.
-
-    The fail-closed middleware needs exactly one bit — "is this a real credential?" —
-    above every route, and must not double-charge or double-stamp the token that the
-    route's own dependency is about to resolve properly. Kept beside `resolve_token`
-    so the two cannot drift apart about what counts as live: same hash, same
-    revoked filter, same rejection of a token whose user row is gone.
-
-    Deliberately NOT a pause check. Pausing is enforced where it belongs, at
-    identity resolution (`identity._refuse_paused`), and this answers only whether
-    a credential is genuine — matching `resolve_token`, which also returns a paused
-    user's actor and leaves the refusal to its caller.
-    """
-    return (
-        conn.execute(
-            "SELECT 1 FROM api_tokens JOIN users ON users.id = api_tokens.user_id"
-            " WHERE api_tokens.token_hash = ? AND api_tokens.revoked_at IS NULL",
-            (_hash(raw),),
-        ).fetchone()
-        is not None
+    actor["_token_scopes"] = parsed_scopes
+    return TokenCredential(
+        "active", token_id=row["id"], user_id=row["user_id"], actor=actor
     )
 
 
+def resolve_token(conn: sqlite3.Connection, raw: str) -> dict | None:
+    """Authenticate and stamp a valid raw token; return its actor or None."""
+    credential = inspect_token(conn, raw)
+    if (
+        credential.state != "active"
+        or credential.token_id is None
+        or credential.actor is None
+    ):
+        return None
+    conn.execute(
+        "UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?",
+        (credential.token_id,),
+    )
+    conn.commit()
+    return credential.actor
+
+
 def get_revoked_token(conn: sqlite3.Connection, raw: str) -> dict | None:
-    """Identify a REVOKED token presented as a credential: {id, user_id}, or None
-    when the raw value matches no revoked token. Failure auditing uses this to
-    attribute the attempt to the token's owner; it never authenticates."""
-    row = conn.execute(
-        "SELECT id, user_id FROM api_tokens"
-        " WHERE token_hash = ? AND revoked_at IS NOT NULL",
-        (_hash(raw),),
-    ).fetchone()
-    return dict(row) if row is not None else None
+    """Identify a revoked credential for audit attribution without authenticating."""
+    credential = inspect_token(conn, raw)
+    if (
+        credential.state != "revoked"
+        or credential.token_id is None
+        or credential.user_id is None
+    ):
+        return None
+    return {"id": credential.token_id, "user_id": credential.user_id}
 
 
 def list_tokens(conn: sqlite3.Connection, user_id: int) -> list[dict]:

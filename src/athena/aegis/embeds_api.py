@@ -73,7 +73,7 @@ def resolve(
 
 
 @router.get("/help")
-def embed_help() -> dict:
+def embed_help(_actor: dict | None = Depends(optional_actor)) -> dict:
     """The embed vocabulary as data — kinds, keys, and limits.
 
     Emitted from `embeds.describe()` rather than restated, so this endpoint, the
