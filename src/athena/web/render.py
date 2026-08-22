@@ -66,6 +66,78 @@ def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
     return _MENTION_RE.sub(_one, html)
 
 
+# A bare buzz:// permalink — the relay's entity-link grammar: message, issue, pr,
+# repo, project — becomes a clickable chip labelled by its entity kind, with the
+# full URI in the title. Runs over already-safe HTML like the mention pass, and is
+# deliberately NEVER written into the links index: a Buzz entity has no local
+# table to resolve against, so backlinks/sync_links stay purely local and
+# core/links.py never learns an unresolvable kind. This pass is also the ONE way
+# a Buzz permalink stays clickable at all — nh3's scheme allowlist strips
+# buzz:// out of a Markdown link destination. The query matches the escaped text
+# (`&` arrives as `&amp;`).
+_BUZZ_LINK_RE = re.compile(
+    r"(?<!\w)buzz://(message|issue|pr|repo|project)\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
+)
+
+# Sanitized HTML, split into tag segments and text segments.
+#
+# A tag is `<`, then any run of (a character that is not a quote or `>`) or a
+# WHOLE quoted attribute value, then `>`. Consuming quoted values as units is
+# the load-bearing part: a sanitizer does NOT escape `>` inside an attribute
+# (it is valid there), so `alt="see > x"` carries a raw `>` and the obvious
+# `<[^>]*>` ends the tag early — handing the rest of a live attribute to the
+# text branch, which is exactly the injection this split exists to prevent.
+#
+# The three alternatives start with disjoint character sets, so the scan cannot
+# backtrack ambiguously. A lone `<` that begins no well-formed tag matches the
+# bare `<` branch and is emitted verbatim: sanitized HTML has no such character
+# (stray `<` is escaped to `&lt;`), but the branch means a malformed input is
+# passed through untouched rather than silently dropped by the scan.
+_HTML_SEGMENT_RE = re.compile(r"""<(?:[^>"']|"[^"]*"|'[^']*')*>|<|[^<]+""")
+_TAG_NAME_RE = re.compile(r"^<\s*(/?)\s*([a-zA-Z][a-zA-Z0-9]*)")
+
+
+def _sub_buzz_links(html: str) -> str:
+    """Linkify bare buzz:// URIs in the TEXT NODES of already-sanitized HTML.
+
+    Walking segments rather than running the regex over the whole string is a
+    correctness requirement, not tidiness. This pass emits markup AFTER nh3 has
+    sanitized, so anything it writes anywhere but a text node is markup
+    injection past the sanitizer — and a guard on the preceding character
+    cannot express "not inside a tag". A body like
+    ``![see buzz://message?id=ab](https://x/p.png)`` puts an author-controlled
+    URI inside the ``alt`` attribute Markdown builds, where substituting an
+    anchor injected raw quotes and a ``>`` that closed the ``<img>`` early; the
+    link-title variant pushed nh3's own ``rel="noopener noreferrer"`` out of the
+    tag and onto the page as visible text.
+
+    Tracking anchor depth in the same walk keeps a permalink that already sits
+    inside a link from nesting a second anchor, which browsers resolve by
+    closing the outer one — truncating the author's link.
+    """
+
+    def _one(match) -> str:
+        uri = unescape(match.group(0))
+        return (
+            f'<a href="{escape(uri)}" class="xref buzz-link" '
+            f'title="{escape(uri)}">buzz:{match.group(1)}</a>'
+        )
+
+    out: list[str] = []
+    anchor_depth = 0
+    for segment in _HTML_SEGMENT_RE.findall(html):
+        if segment.startswith("<"):
+            tag = _TAG_NAME_RE.match(segment)
+            if tag is not None and tag.group(2).lower() == "a":
+                anchor_depth = (
+                    max(0, anchor_depth - 1) if tag.group(1) else anchor_depth + 1
+                )
+            out.append(segment)
+            continue
+        out.append(segment if anchor_depth else _BUZZ_LINK_RE.sub(_one, segment))
+    return "".join(out)
+
+
 # core.search builds snippets with the matched terms wrapped in [..] (its chosen
 # delimiters). This pulls a balanced [..] pair out of the ALREADY-escaped snippet
 # so we can swap it for <mark>. Non-greedy + balanced, so a lone literal '[' with
@@ -438,6 +510,7 @@ def render_body(
     # by now every reserved token is either linked markup (no [[…]] left) or a rendered
     # literal the guard above skips, so this pass only ever sees genuine [[Title]] text.
     linked = links.TITLE_REF_RE.sub(_title_link, linked)
+    linked = _sub_buzz_links(linked)
     # Embeds go in LAST, after every substitution pass and after the sanitizer.
     # Their HTML is built entirely by this module from escaped values, so there is
     # no untrusted markup in it to sanitize — and passing it through nh3 would
