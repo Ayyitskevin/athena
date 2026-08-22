@@ -64,9 +64,7 @@ def test_radio_never_parses_assignment_text_through_a_shell(
     assert title in argv[-1]
     assert note in argv[-1]
     assert "synthetic-test-key" not in argv
-    assert (
-        observed["kwargs"]["env"]["BUZZ_PRIVATE_KEY"] == "synthetic-test-key"
-    )
+    assert observed["kwargs"]["env"]["BUZZ_PRIVATE_KEY"] == "synthetic-test-key"
 
 
 def test_assign_sets_assignee_and_delegates(tmp_path):
