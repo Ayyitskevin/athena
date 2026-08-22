@@ -33,7 +33,7 @@ from athena.aegis import (
     issue_commands,
     issues,
 )
-from athena.core import activity, db, labels, run_context, users
+from athena.core import activity, buzz_radio, db, labels, run_context, users
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,26 @@ logger = logging.getLogger(__name__)
 #   set_status               -> {"status": str}   (must be valid for the issue's project)
 #   add_label                -> {"label": str}    (find-or-created by name)
 #   comment                  -> {"body": str}
-ACTION_TYPES = ("assign", "add_label", "set_status", "comment", "add_contributor")
+#   buzz_message             -> {"channel"?: str uuid, "mention"?: str hex pubkey,
+#                                "note"?: str} — all optional; channel defaults to
+#                                the assign channel at fire time
+ACTION_TYPES = (
+    "assign",
+    "add_label",
+    "set_status",
+    "comment",
+    "add_contributor",
+    "buzz_message",
+)
+
+# The relay's channel grammar is uuid-v4-lowercase; a Nostr pubkey is 64 lowercase
+# hex chars. Validated at the boundary so a typo'd rule is a 422, never a rule
+# whose every firing silently fails at the CLI.
+_BUZZ_CHANNEL_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_BUZZ_PUBKEY_RE = re.compile(r"^[0-9a-f]{64}$")
+_BUZZ_NOTE_MAX_CHARS = 500
 
 # The issue fields a CONDITION may match against, resolved from the target issue at match
 # time. Keeping the set explicit means a typo'd condition key is a boundary error, never
@@ -140,6 +159,28 @@ def _validate_action_params(action_type: str, params: dict) -> str | None:
         body = params.get("body")
         if not isinstance(body, str) or not body.strip():
             return "comment requires action_params.body (a non-empty string)"
+    elif action_type == "buzz_message":
+        channel = params.get("channel")
+        if channel is not None and (
+            not isinstance(channel, str) or _BUZZ_CHANNEL_RE.fullmatch(channel) is None
+        ):
+            return (
+                "buzz_message channel must be a lowercase channel uuid "
+                "(or omitted to use the assign channel)"
+            )
+        mention = params.get("mention")
+        if mention is not None and (
+            not isinstance(mention, str) or _BUZZ_PUBKEY_RE.fullmatch(mention) is None
+        ):
+            return "buzz_message mention must be a 64-char lowercase hex pubkey"
+        note = params.get("note")
+        if note is not None and (
+            not isinstance(note, str) or len(note) > _BUZZ_NOTE_MAX_CHARS
+        ):
+            return (
+                "buzz_message note must be a string of at most "
+                f"{_BUZZ_NOTE_MAX_CHARS} characters"
+            )
     return None
 
 
@@ -216,6 +257,14 @@ def validate_rule(
                 return f"{field} must be a string or null"
 
         allowed_conditions = SCHEDULE_CONDITION_FIELDS
+        if action_type == "buzz_message":
+            # Refused at the boundary: a scheduled occurrence is retried until it
+            # succeeds, and its dedup guard reads the activity trail for the
+            # firing's run id. A delivery writes no such row, so every retry
+            # would re-send the message — silently converting the documented
+            # exactly-once schedule contract into duplicate pings. Event rules
+            # have no retry, so they do not have this problem.
+            return "buzz_message cannot be a scheduled action (retries would re-send)"
     if action_type not in ACTION_TYPES:
         return f"action_type must be one of: {', '.join(ACTION_TYPES)}"
     for key in conditions:
@@ -258,6 +307,15 @@ def _row(row: sqlite3.Row) -> dict:
 
 def _configuration_error(rule: dict) -> str | None:
     errors = list(rule.get("_json_errors", []))
+    if rule["action_type"] == "buzz_message" and not config.buzz_radio_configured():
+        # A rule whose whole action is the ping cannot do its job without the
+        # radio — surface that on the rule instead of letting every firing
+        # skip silently (send_channel_message's skip is for callers where the
+        # ping is a side effect, like the fleet assign).
+        errors.append(
+            "buzz radio is not configured (set ATHENA_BUZZ_CLI, "
+            "ATHENA_BUZZ_KEY_FILE, ATHENA_BUZZ_RELAY_URL)"
+        )
     if rule["trigger_type"] == "schedule":
         error = validate_rule(
             trigger_verb=rule["trigger_verb"],
@@ -787,6 +845,60 @@ def _perform_action(
             if fail_closed:
                 raise
             return False
+
+    if rule["action_type"] == "buzz_message":
+        # An outbound DELIVERY, not an Athena write: nothing lands in the DB and
+        # nothing is recorded on the trail — the audited thing is the rule's
+        # lifecycle, not each send.
+        #
+        # DELIVERY SEMANTICS, stated honestly: AT-MOST-ONCE, like every other
+        # event-rule action and UNLIKE webhooks. process_pending advances its
+        # cursor past an event whether or not the action succeeded, and there is
+        # no per-rule delivery cursor to rewind, so a failed send is never
+        # retried. What it must not do is drop a send SILENTLY: the in-app
+        # actions may fail soft because a no-op leaves the issue's own state as
+        # evidence, but a delivery leaves nothing behind, so a failed send is
+        # raised even on the fail-soft path and lands in failure_count /
+        # last_error where an operator can see it. Guaranteed delivery is what
+        # webhooks are for — they have the cursor and the backoff to promise it.
+        if not config.buzz_radio_configured():
+            # A configuration problem, not a delivery failure: _configuration_error
+            # already flags such a rule as malformed on every read, so raising here
+            # would only pile identical failures onto a rule whose defect the
+            # operator has already been shown.
+            if fail_closed:
+                raise ValueError("buzz radio is not configured")
+            return False
+        channel = params.get("channel")
+        if not isinstance(channel, str) or not channel:
+            channel = config.buzz_assign_channel()
+        key = issue.get("key") or f"#{issue['id']}"
+        base = config.public_base_url()
+        url = (
+            f"{base}/aegis/issues/{issue['id']}"
+            if base
+            else f"/aegis/issues/{issue['id']}"
+        )
+        body = buzz_radio.event_message(
+            verb=str(event.get("verb") or ""),
+            issue_key=str(key),
+            title=str(issue.get("title") or ""),
+            url=url,
+            actor_name=str(event.get("actor_name") or ""),
+            note=str(params.get("note") or ""),
+        )
+        mention = params.get("mention")
+        result = buzz_radio.send_channel_message(
+            channel=channel,
+            content=body,
+            mention=mention if isinstance(mention, str) and mention else None,
+        )
+        if result.get("status") == "sent":
+            return True
+        # Raised on BOTH paths deliberately (see the note above): a message lost
+        # with no trace, on a rule that still reads green, is the one outcome
+        # worse than a visible failure.
+        raise ValueError(f"buzz radio {result.get('status')}: {result.get('detail')}")
 
     return False
 

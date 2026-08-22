@@ -1558,17 +1558,29 @@ def _automation_context(conn: sqlite3.Connection, *, error: str | None = None) -
         "project_names": {p["id"]: p["name"] for p in project_rows},
         "sprint_names": {s["id"]: s["name"] for s in sprint_rows},
         "user_names": {u["id"]: u["name"] for u in user_rows},
+        # Shown as the buzz_message channel placeholder so the operator can see
+        # what "blank" means on this deployment.
+        "default_assign_channel": config.buzz_assign_channel(),
         "error": error,
     }
 
 
 def _action_params_from_form(
-    action_type: str, *, user_id: int | None, status: str, label: str, body: str
+    action_type: str,
+    *,
+    user_id: int | None,
+    status: str,
+    label: str,
+    body: str,
+    buzz_channel: str = "",
+    buzz_mention: str = "",
+    buzz_note: str = "",
 ) -> dict:
     """Fold the per-action form fields down to the one action_params dict the chosen
     action_type needs. Unrelated fields are ignored, so switching the action select
     doesn't smuggle a stale value into the rule. An empty field yields {}, which
-    validate_rule then rejects with the right 'requires …' message."""
+    validate_rule then rejects with the right 'requires …' message (buzz_message
+    accepts {} — every param is optional there)."""
     if action_type in ("assign", "add_contributor"):
         return {"user_id": user_id} if user_id is not None else {}
     if action_type == "set_status":
@@ -1577,6 +1589,15 @@ def _action_params_from_form(
         return {"label": label.strip()} if label.strip() else {}
     if action_type == "comment":
         return {"body": body.strip()} if body.strip() else {}
+    if action_type == "buzz_message":
+        params: dict = {}
+        if buzz_channel.strip():
+            params["channel"] = buzz_channel.strip()
+        if buzz_mention.strip():
+            params["mention"] = buzz_mention.strip()
+        if buzz_note.strip():
+            params["note"] = buzz_note.strip()
+        return params
     return {}
 
 
@@ -1612,6 +1633,9 @@ def create_rule(
     action_status: str = Form(""),
     action_label: str = Form(""),
     action_body: str = Form(""),
+    action_buzz_channel: str = Form(""),
+    action_buzz_mention: str = Form(""),
+    action_buzz_note: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -1656,6 +1680,9 @@ def create_rule(
         status=action_status,
         label=action_label,
         body=action_body,
+        buzz_channel=action_buzz_channel,
+        buzz_mention=action_buzz_mention,
+        buzz_note=action_buzz_note,
     )
 
     def _reject(message: str):
