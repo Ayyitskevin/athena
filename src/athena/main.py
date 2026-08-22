@@ -177,20 +177,41 @@ _ANONYMOUS_ALWAYS_ALLOWED = frozenset(
 
 
 def _carries_a_credential(request: Request) -> bool:
-    """Whether the caller presented SOMETHING to authenticate with.
+    """Whether the caller presented a credential that actually RESOLVES.
 
-    The middleware refuses only the caller who presented nothing at all. A bearer
-    token (or the actor header, where trusted) is resolved by the routes' own
-    dependencies, which know how to validate it and how to refuse it; second-guessing
-    that here would mean re-implementing token validation in middleware.
+    This must VALIDATE rather than pattern-match. It used to return True for any
+    header merely SHAPED like a credential, on the reasoning that "the routes' own
+    dependencies know how to validate it, and second-guessing that here would mean
+    re-implementing token validation in middleware". That reasoning holds for REST,
+    where every optional-identity read resolves through `identity.optional_actor` —
+    and is empty for the browser surface, whose routes render from
+    `request.state.user` and never consult a bearer at all. So with reads closed,
+    `Authorization: Bearer <anything>` walked straight past the switch on every
+    page: boards, the issue list and the activity trail answered a caller holding
+    nothing.
+
+    Validation here is deliberately side-effect free — `tokens.token_authenticates`,
+    not `resolve_token` — so the route's dependency still owns stamping, rate
+    limiting, revoked-token recording and the paused refusal, and nothing is
+    charged twice. The lookup only happens with reads closed and no session (see
+    the caller's short-circuit), so the default open deployment pays nothing.
     """
     authorization = request.headers.get("authorization")
     if authorization and authorization.lower().startswith("bearer "):
-        return True
-    return (
-        config.TRUST_ACTOR_HEADER
-        and request.headers.get(identity.ACTOR_HEADER) is not None
-    )
+        raw = authorization[len("bearer ") :].strip()
+        conn = deps.request_connection(request).get()
+        return tokens.token_authenticates(conn, raw)
+    if not config.TRUST_ACTOR_HEADER:
+        return False
+    claimed = request.headers.get(identity.ACTOR_HEADER)
+    if claimed is None:
+        return False
+    try:
+        actor_id = int(claimed)
+    except ValueError:
+        return False
+    conn = deps.request_connection(request).get()
+    return users.get_user(conn, actor_id) is not None
 
 
 def _wants_html(request: Request) -> bool:
@@ -1791,10 +1812,13 @@ def create_app(
         # is unaffected, and refuses before any route touches the database.
         #
         # A bearer-authenticated REST caller has no session cookie and is therefore
-        # "anonymous" here — so the refusal is deferred to the routes' own
-        # dependencies (identity.current_actor / optional_actor), which can actually
-        # see the token. What this middleware refuses is the caller who presents
-        # NOTHING: no cookie, no bearer, no actor header.
+        # "anonymous" here, so a credential that RESOLVES is allowed through and the
+        # routes' own dependencies (identity.current_actor / optional_actor) still
+        # own the real refusal, the rate limiting and the audit. What this middleware
+        # refuses is the caller whose credential names nobody: no cookie, and no
+        # bearer or actor header that resolves. The resolving happens here rather
+        # than downstream because the browser surface HAS no downstream — its routes
+        # render from request.state.user and never look at a token.
         if (
             request.state.user is None
             and not _anonymous_web_read_allowed(

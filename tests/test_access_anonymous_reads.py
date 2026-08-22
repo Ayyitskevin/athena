@@ -178,6 +178,98 @@ def test_a_bearer_token_still_reads_the_api(tmp_path, closed):
         assert authed.status_code == 200, authed.text
 
 
+def test_a_forged_bearer_does_not_open_the_browser_surface(tmp_path, closed):
+    """The hole the switch grew, and the reason the middleware now resolves instead
+    of pattern-matching. It used to accept any header merely SHAPED like a
+    credential, deferring validation to "the routes' own dependencies" — real for
+    REST, empty for the browser, whose routes render from request.state.user and
+    never consult a bearer. So `Authorization: Bearer <anything>` walked past the
+    switch on every page, and boards, the issue list and the whole activity trail
+    answered a caller holding nothing."""
+    app = _seeded_app(tmp_path, "forged.db")
+    forged = ("Bearer not-a-real-token", "bearer " + "x" * 64, "BEARER  ")
+    with TestClient(app) as client:
+        for header in forged:
+            for path in ("/aegis/issues", "/aegis/boards", "/aegis/activity.csv"):
+                response = client.get(
+                    path,
+                    headers={**BROWSER, "Authorization": header},
+                    follow_redirects=False,
+                )
+                assert response.status_code == 303, (
+                    f"{path} answered {response.status_code} for {header!r}"
+                )
+                assert response.headers["location"] == "/login"
+
+
+def test_a_revoked_bearer_does_not_open_the_browser_surface(tmp_path, closed):
+    """Revocation is the kill switch. A token that was real yesterday must not keep
+    the browser surface open today — the middleware asks the same live-token
+    question `resolve_token` asks, so revoking closes both doors at once."""
+    app = _seeded_app(tmp_path, "revoked.db")
+    conn = db.connect(tmp_path / "revoked.db")
+    try:
+        admin = users.get_user_by_email(conn, "a@e.com")
+        minted = token_commands.mint_token(
+            conn, actor_id=admin["id"], name="doomed", scopes=[tokens.READ_SCOPE]
+        )
+        tokens.revoke_token(conn, user_id=admin["id"], token_id=minted["id"])
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/aegis/issues",
+            headers={**BROWSER, "Authorization": f"Bearer {minted['token']}"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303, response.status_code
+        assert response.headers["location"] == "/login"
+
+
+def test_a_live_bearer_still_reaches_the_browser_surface(tmp_path, closed):
+    """The other half of the fix: validating must not lock out the agent that holds
+    a real credential. A live token still gets through the middleware — closing
+    anonymity closes strangers, not callers."""
+    app = _seeded_app(tmp_path, "live_bearer.db")
+    conn = db.connect(tmp_path / "live_bearer.db")
+    try:
+        admin = users.get_user_by_email(conn, "a@e.com")
+        token = token_commands.mint_token(
+            conn, actor_id=admin["id"], name="reader", scopes=[tokens.READ_SCOPE]
+        )["token"]
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.get(
+            "/aegis/issues",
+            headers={**BROWSER, "Authorization": f"Bearer {token}"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 200, response.status_code
+
+
+def test_a_forged_actor_header_does_not_open_the_browser_surface(tmp_path, monkeypatch):
+    """The same class on the local-trust path. TRUST_ACTOR_HEADER means "believe the
+    id this header names", not "believe there is a header" — an id naming nobody is
+    not a credential."""
+    monkeypatch.setattr(config, "ANONYMOUS_READS", False)
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", True)
+    app = _seeded_app(tmp_path, "forged_actor.db")
+    with TestClient(app) as client:
+        for claimed in ("999999", "not-an-int", ""):
+            response = client.get(
+                "/aegis/issues",
+                headers={**BROWSER, identity.ACTOR_HEADER: claimed},
+                follow_redirects=False,
+            )
+            assert response.status_code == 303, (
+                f"actor {claimed!r} answered {response.status_code}"
+            )
+
+
 def test_reads_stay_open_by_default(tmp_path):
     """The default is unchanged: an existing loopback deployment does not silently
     become password-walled by upgrading."""
