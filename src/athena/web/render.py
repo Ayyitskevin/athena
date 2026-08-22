@@ -73,11 +73,44 @@ def _sub_mentions(conn: sqlite3.Connection, html: str) -> str:
 # table to resolve against, so backlinks/sync_links stay purely local and
 # core/links.py never learns an unresolvable kind. This pass is also the ONE way
 # a Buzz permalink stays clickable at all — nh3's scheme allowlist strips
-# buzz:// out of a Markdown link destination. The query matches the escaped text
-# (`&` arrives as `&amp;`).
+# buzz:// out of a Markdown link destination.
+#
+# The query class is RFC 3986's `query` production in full (unreserved /
+# pct-encoded / sub-delims / ":" / "@" / "/" / "?"), matched against the ESCAPED
+# text, so `&` arrives as `&amp;` and is its own alternative rather than a class
+# member. A narrower class is not merely incomplete — it TRUNCATES: with `+`
+# missing, `?id=cd+ef` linkified only through `cd`, producing an href that
+# pointed somewhere other than the URI the author wrote and the title displayed.
+# A link that goes to the wrong place is worse than no link, so the class is the
+# whole production rather than the characters today's canonical builders happen
+# to emit — `relay=` already carries a `wss://…` value with `:` and `/` in it.
+#
+# `'` is IN the class and `"` is OUT, and the pair is deliberate: those are the
+# two characters nh3 leaves RAW in a text node (it escapes only `&`, `<`, `>`),
+# so they are the two that actually reach this regex as themselves. `'` is a
+# legal sub-delim, so excluding it truncated `?id=a'b` to `?id=a`; `"` is not
+# legal in a query and must arrive percent-encoded, so it correctly ENDS the
+# match — the same place `_URL_RE` stops. Whatever is matched is re-escaped on
+# the way into the attribute, so neither can break out of the href.
+#
+# The two alternatives have disjoint first characters (`&` is not in the class),
+# so the scan is linear — this grammar has a polynomial-ReDoS history.
+_BUZZ_QUERY_CHARS = r"A-Za-z0-9\-._~%!$'()*+,;:@/?="
 _BUZZ_LINK_RE = re.compile(
-    r"(?<!\w)buzz://(message|issue|pr|repo|project)\?((?:[A-Za-z0-9_.~%=-]|&amp;)+)"
+    rf"(?<!\w)buzz://(message|issue|pr|repo|project)\?((?:[{_BUZZ_QUERY_CHARS}]|&amp;)+)"
 )
+
+# Sentence punctuation that ends a sentence rather than a URI. These are legal
+# query characters, so they are matched and then trimmed from the tail — the
+# same shape `_URL_RE` / `_URL_TRAILING_PUNCTUATION` use below, so "see
+# buzz://message?id=ab." does not put the full stop inside the href.
+#
+# The VALUE deliberately equals `_URL_TRAILING_PUNCTUATION`: same question, same
+# answer, and a test pins the two together so a future edit to one surfaces as a
+# failure instead of a silent fork. An earlier draft added `!` and `?` here; both
+# are legal query characters, so trimming them re-created the very defect this
+# slice exists to close (an href that is not the URI the author wrote).
+_BUZZ_TRAILING_PUNCTUATION = ".,;:)"
 
 # Sanitized HTML, split into tag segments and text segments.
 #
@@ -117,10 +150,32 @@ def _sub_buzz_links(html: str) -> str:
     """
 
     def _one(match) -> str:
-        uri = unescape(match.group(0))
+        matched = match.group(0)
+        trimmed = matched.rstrip(_BUZZ_TRAILING_PUNCTUATION)
+        # `(` and `)` are legal sub-delims, so the trim above can unbalance a URI
+        # that legitimately ends in `)` — `?id=a(b)` became the href `?id=a(b`.
+        # Give back each `)` that closes a paren still open in the trimmed match,
+        # which keeps "(see buzz://message?id=ab)" trimming its sentence paren.
+        # Bounded by the trimmed tail, so it is linear like the trim it corrects.
+        while (
+            trimmed.count("(") > trimmed.count(")")
+            and matched[len(trimmed) : len(trimmed) + 1] == ")"
+        ):
+            trimmed = matched[: len(trimmed) + 1]
+        _, _, query = trimmed.partition("?")
+        if not query:
+            # The whole query was sentence punctuation (``buzz://message?...``),
+            # so there is no permalink here — and a link to a query-less URI
+            # would point somewhere the author never wrote. Leave it as text.
+            return matched
+        # The trimmed tail is emitted verbatim beside the link, so trimming can
+        # only move characters OUT of the href, never drop them from the page.
+        # It comes from already-escaped text, so it is emitted as-is.
+        tail = matched[len(trimmed) :]
+        uri = unescape(trimmed)
         return (
             f'<a href="{escape(uri)}" class="xref buzz-link" '
-            f'title="{escape(uri)}">buzz:{match.group(1)}</a>'
+            f'title="{escape(uri)}">buzz:{match.group(1)}</a>{tail}'
         )
 
     out: list[str] = []
