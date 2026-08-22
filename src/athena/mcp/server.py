@@ -1167,7 +1167,7 @@ def build_server(
         state), `signals` (unread notifications, and how many visible events
         sit past your cursor).
 
-        The loop: `my_desk()` -> act -> drain `list_events(after=...)` from
+        The loop: `my_desk()` -> act -> drain `recent_events(after=...)` from
         your cursor -> `advance_desk_cursor(after_id=<last id you handled>)`.
 
         The desk RESERVES NOTHING. It is a snapshot, not a lock, a lease, or a
@@ -1426,7 +1426,7 @@ def build_server(
         instead), a destroyed row is a trapdoor. Refused too when the event was
         already undone, was imported from another system, or when its effect is no
         longer in force (someone already changed it back). Find event ids with
-        `list_events` or `list_activity`."""
+        `recent_events(...)`."""
         return client.undo_action(event_id, idempotency_key=idempotency_key)
 
     @tool
