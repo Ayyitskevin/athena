@@ -33,7 +33,7 @@ from athena.aegis import (
     issue_commands,
     issues,
 )
-from athena.core import activity, db, labels, run_context, users
+from athena.core import activity, buzz_radio, db, labels, run_context, users
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,26 @@ logger = logging.getLogger(__name__)
 #   set_status               -> {"status": str}   (must be valid for the issue's project)
 #   add_label                -> {"label": str}    (find-or-created by name)
 #   comment                  -> {"body": str}
-ACTION_TYPES = ("assign", "add_label", "set_status", "comment", "add_contributor")
+#   buzz_message             -> {"channel"?: str uuid, "mention"?: str hex pubkey,
+#                                "note"?: str} — all optional; channel defaults to
+#                                the assign channel at fire time
+ACTION_TYPES = (
+    "assign",
+    "add_label",
+    "set_status",
+    "comment",
+    "add_contributor",
+    "buzz_message",
+)
+
+# The relay's channel grammar is uuid-v4-lowercase; a Nostr pubkey is 64 lowercase
+# hex chars. Validated at the boundary so a typo'd rule is a 422, never a rule
+# whose every firing silently fails at the CLI.
+_BUZZ_CHANNEL_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_BUZZ_PUBKEY_RE = re.compile(r"^[0-9a-f]{64}$")
+_BUZZ_NOTE_MAX_CHARS = 500
 
 # The issue fields a CONDITION may match against, resolved from the target issue at match
 # time. Keeping the set explicit means a typo'd condition key is a boundary error, never
@@ -140,6 +159,28 @@ def _validate_action_params(action_type: str, params: dict) -> str | None:
         body = params.get("body")
         if not isinstance(body, str) or not body.strip():
             return "comment requires action_params.body (a non-empty string)"
+    elif action_type == "buzz_message":
+        channel = params.get("channel")
+        if channel is not None and (
+            not isinstance(channel, str) or _BUZZ_CHANNEL_RE.fullmatch(channel) is None
+        ):
+            return (
+                "buzz_message channel must be a lowercase channel uuid "
+                "(or omitted to use the assign channel)"
+            )
+        mention = params.get("mention")
+        if mention is not None and (
+            not isinstance(mention, str) or _BUZZ_PUBKEY_RE.fullmatch(mention) is None
+        ):
+            return "buzz_message mention must be a 64-char lowercase hex pubkey"
+        note = params.get("note")
+        if note is not None and (
+            not isinstance(note, str) or len(note) > _BUZZ_NOTE_MAX_CHARS
+        ):
+            return (
+                "buzz_message note must be a string of at most "
+                f"{_BUZZ_NOTE_MAX_CHARS} characters"
+            )
     return None
 
 
@@ -258,6 +299,15 @@ def _row(row: sqlite3.Row) -> dict:
 
 def _configuration_error(rule: dict) -> str | None:
     errors = list(rule.get("_json_errors", []))
+    if rule["action_type"] == "buzz_message" and not config.buzz_radio_configured():
+        # A rule whose whole action is the ping cannot do its job without the
+        # radio — surface that on the rule instead of letting every firing
+        # skip silently (send_channel_message's skip is for callers where the
+        # ping is a side effect, like the fleet assign).
+        errors.append(
+            "buzz radio is not configured (set ATHENA_BUZZ_CLI, "
+            "ATHENA_BUZZ_KEY_FILE, ATHENA_BUZZ_RELAY_URL)"
+        )
     if rule["trigger_type"] == "schedule":
         error = validate_rule(
             trigger_verb=rule["trigger_verb"],
@@ -787,6 +837,49 @@ def _perform_action(
             if fail_closed:
                 raise
             return False
+
+    if rule["action_type"] == "buzz_message":
+        # An outbound DELIVERY, not an Athena write: nothing lands in the DB
+        # and nothing is recorded on the trail — the same contract as a webhook
+        # delivery (the audited thing is the rule's lifecycle, not each send).
+        # Consequence: the run-id idempotency guard cannot see a firing that
+        # crashed after sending, so this action is at-least-once across a
+        # crashed pass, exactly like webhooks' at-least-once retries.
+        if not config.buzz_radio_configured():
+            if fail_closed:
+                raise ValueError("buzz radio is not configured")
+            return False
+        channel = params.get("channel")
+        if not isinstance(channel, str) or not channel:
+            channel = config.buzz_assign_channel()
+        key = issue.get("key") or f"#{issue['id']}"
+        base = config.public_base_url()
+        url = (
+            f"{base}/aegis/issues/{issue['id']}"
+            if base
+            else f"/aegis/issues/{issue['id']}"
+        )
+        body = buzz_radio.event_message(
+            verb=str(event.get("verb") or ""),
+            issue_key=str(key),
+            title=str(issue.get("title") or ""),
+            url=url,
+            actor_name=str(event.get("actor_name") or ""),
+            note=str(params.get("note") or ""),
+        )
+        mention = params.get("mention")
+        result = buzz_radio.send_channel_message(
+            channel=channel,
+            content=body,
+            mention=mention if isinstance(mention, str) and mention else None,
+        )
+        if result.get("status") == "sent":
+            return True
+        if fail_closed:
+            raise ValueError(
+                f"buzz radio {result.get('status')}: {result.get('detail')}"
+            )
+        return False
 
     return False
 

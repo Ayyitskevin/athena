@@ -274,3 +274,161 @@ def test_invalid_action_params_fail_soft(tmp_path):
         assert after["assignee_id"] is None and after["status"] == before
         # The cursor still advanced past the event, so a second pass has nothing to do.
         assert automation.run_pass(db_file) == 0
+
+
+def _radio_env(monkeypatch, tmp_path, configured=True):
+    if configured:
+        keyfile = tmp_path / "buzz.key"
+        keyfile.write_text("SECKEY=" + "ab" * 32 + "\n")
+        monkeypatch.setenv("ATHENA_BUZZ_RELAY_URL", "http://relay.test:3000")
+        monkeypatch.setenv("ATHENA_BUZZ_CLI", "/bin/false")
+        monkeypatch.setenv("ATHENA_BUZZ_KEY_FILE", str(keyfile))
+    else:
+        for var in ("ATHENA_BUZZ_RELAY_URL", "ATHENA_BUZZ_CLI", "ATHENA_BUZZ_KEY_FILE"):
+            monkeypatch.delenv(var, raising=False)
+
+
+def _buzz_rule_and_event(client, conn, action_params):
+    rule = automation.create_rule(
+        conn,
+        name="ping",
+        trigger_verb="created",
+        action_type="buzz_message",
+        action_params=action_params,
+        created_by=1,
+    )
+    iid = client.post("/issues", json={"title": "Radio me"}, headers=H1).json()["id"]
+    event = next(
+        e
+        for e in activity.list_events(conn, target_kind="issue", target_id=iid)
+        if e["verb"] == "created"
+    )
+    return rule, event, iid
+
+
+def test_buzz_message_action_sends_a_delivery_not_a_write(tmp_path, monkeypatch):
+    # The action is an outbound DELIVERY (webhook semantics): the send goes out,
+    # but NOTHING lands in the DB — no activity event, no trail row. The audited
+    # thing is the rule's lifecycle, not each send.
+    db_file = tmp_path / "buzz.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path)
+        sent = []
+        monkeypatch.setattr(
+            automation.buzz_radio,
+            "send_channel_message",
+            lambda **kw: (sent.append(kw), {"status": "sent", "detail": "ok"})[1],
+        )
+        rule, event, iid = _buzz_rule_and_event(client, conn, {})
+        before = [e["id"] for e in activity.list_events(conn, limit=200)]
+        assert (
+            automation.execute_action(
+                conn, rule, event, actor_id=automation.system_actor_id(conn)
+            )
+            is True
+        )
+        after = [e["id"] for e in activity.list_events(conn, limit=200)]
+        assert after == before  # a delivery, not a write
+        assert len(sent) == 1
+        kw = sent[0]
+        # Channel defaults to the assign channel at fire time; no mention unless
+        # configured; the body is composed from the event + issue, deterministically.
+        from athena import config
+
+        assert kw["channel"] == config.buzz_assign_channel()
+        assert kw["mention"] is None
+        assert "ATHENA_EVENT created" in kw["content"]
+        assert "Radio me" in kw["content"]
+        assert f"/aegis/issues/{iid}" in kw["content"]
+
+
+def test_buzz_message_action_params_pass_through(tmp_path, monkeypatch):
+    db_file = tmp_path / "buzz2.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path)
+        sent = []
+        monkeypatch.setattr(
+            automation.buzz_radio,
+            "send_channel_message",
+            lambda **kw: (sent.append(kw), {"status": "sent", "detail": "ok"})[1],
+        )
+        params = {
+            "channel": "e29bb951-d272-4822-a8e5-ffac2f9462f2",
+            "mention": "cd" * 32,
+            "note": "P0 — needs eyes.",
+        }
+        rule, event, _ = _buzz_rule_and_event(client, conn, params)
+        assert automation.execute_action(conn, rule, event, actor_id=1) is True
+        kw = sent[0]
+        assert kw["channel"] == params["channel"]
+        assert kw["mention"] == params["mention"]
+        assert "Note: P0 — needs eyes." in kw["content"]
+
+
+def test_buzz_message_unconfigured_radio_fails_soft_or_closed(tmp_path, monkeypatch):
+    db_file = tmp_path / "buzz3.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path, configured=False)
+        rule, event, _ = _buzz_rule_and_event(client, conn, {})
+        # Event rules fail soft: no radio → skipped firing, engine keeps going.
+        assert automation.execute_action(conn, rule, event, actor_id=1) is False
+        # Scheduled receipts pass fail_closed=True: the miss must be VISIBLE
+        # failure state, not mistaken for a completed no-op.
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="not configured"):
+            automation.execute_action(conn, rule, event, actor_id=1, fail_closed=True)
+
+
+def test_buzz_message_failed_send_raises_only_when_fail_closed(tmp_path, monkeypatch):
+    db_file = tmp_path / "buzz4.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            automation.buzz_radio,
+            "send_channel_message",
+            lambda **kw: {"status": "failed", "detail": "relay down"},
+        )
+        rule, event, _ = _buzz_rule_and_event(client, conn, {})
+        assert automation.execute_action(conn, rule, event, actor_id=1) is False
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="relay down"):
+            automation.execute_action(conn, rule, event, actor_id=1, fail_closed=True)
+
+
+def test_buzz_message_rule_surfaces_missing_radio_as_configuration_error(
+    tmp_path, monkeypatch
+):
+    db_file = tmp_path / "buzz5.db"
+    with TestClient(create_app(db_file)) as client:
+        _setup(client)
+        conn = db.connect(db_file)
+        _radio_env(monkeypatch, tmp_path, configured=False)
+        automation.create_rule(
+            conn,
+            name="ping",
+            trigger_verb="created",
+            action_type="buzz_message",
+            action_params={},
+            created_by=1,
+        )
+        listed = automation.list_rules(conn)
+        assert any(
+            "buzz radio is not configured" in (r.get("configuration_error") or "")
+            for r in listed
+        )
+        # With the radio configured the same rule reads clean.
+        _radio_env(monkeypatch, tmp_path, configured=True)
+        listed = automation.list_rules(conn)
+        assert all(
+            "buzz radio" not in (r.get("configuration_error") or "") for r in listed
+        )

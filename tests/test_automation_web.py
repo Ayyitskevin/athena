@@ -408,3 +408,47 @@ def test_schedule_health_states_and_progress_are_visible(tmp_path):
         assert "catch-up skipped 3 older slot(s)" in listing.text
         assert "2 target(s) over limit; slot failed closed" in listing.text
         assert "canonical UTC" in listing.text
+
+
+def test_admin_can_create_a_buzz_message_rule_from_the_form(tmp_path):
+    # The form's buzz fields fold into action_params exactly like the other
+    # actions; blank channel means "assign channel at fire time" and stores no
+    # key at all, so a later channel change needs no rule edits.
+    db_file = tmp_path / "web-buzz.db"
+    with TestClient(create_app(db_file)) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        _login(client)
+        created = client.post(
+            "/admin/automation",
+            data={
+                "name": "radio-p0",
+                "trigger_verb": "created",
+                "action_type": "buzz_message",
+                "action_buzz_channel": "",
+                "action_buzz_mention": "ab" * 32,
+                "action_buzz_note": "New issue filed.",
+            },
+            follow_redirects=False,
+        )
+        assert created.status_code == 303
+        rules = automation.list_rules(db.connect(db_file))
+        assert len(rules) == 1
+        assert rules[0]["action_params"] == {
+            "mention": "ab" * 32,
+            "note": "New issue filed.",
+        }
+        listing = client.get("/admin/automation")
+        assert "buzz message" in listing.text and "assign channel" in listing.text
+
+        # A malformed channel is rejected at the boundary with the field named.
+        rejected = client.post(
+            "/admin/automation",
+            data={
+                "name": "bad",
+                "trigger_verb": "created",
+                "action_type": "buzz_message",
+                "action_buzz_channel": "not-a-uuid",
+            },
+            follow_redirects=False,
+        )
+        assert rejected.status_code == 400 and "channel" in rejected.text
