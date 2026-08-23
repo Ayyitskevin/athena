@@ -1311,7 +1311,8 @@ def _field_guide_author(conn: sqlite3.Connection, email: str | None) -> dict:
             raise ValueError(f"{email} is not an administrator")
         return dict(row)
     row = conn.execute(
-        "SELECT id, email, role FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+        "SELECT id, email, role FROM users "
+        "WHERE role = 'admin' AND removed_at IS NULL ORDER BY id LIMIT 1"
     ).fetchone()
     if row is None:
         raise ValueError("this workspace has no administrator to author the guide as")

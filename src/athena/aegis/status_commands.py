@@ -105,6 +105,7 @@ def _authorized_project(
     # have been paused, demoted, or narrowed since.
     if (
         effective.get("paused_at")
+        or effective.get("removed_at")
         or not identity.can_write(effective)
         or not identity.token_has_scope(effective, tokens.ISSUE_WRITE_SCOPE)
     ):

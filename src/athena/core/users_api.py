@@ -114,6 +114,9 @@ class UserOut(BaseModel):
     created_at: str
     # Set while the operator pause lever is engaged; None for an active account.
     paused_at: str | None = None
+    # Set while the removal tombstone holds; None for a present account. Only
+    # ever non-None in responses that opted into include_removed.
+    removed_at: str | None = None
 
 
 class UserPausedUpdate(BaseModel):
@@ -128,6 +131,13 @@ class TokenRevocationOut(BaseModel):
 class OffboardOut(BaseModel):
     user_id: int
     role: Role
+    revoked_session_count: int
+    revoked_token_count: int
+
+
+class RemoveOut(BaseModel):
+    user_id: int
+    removed_at: str
     revoked_session_count: int
     revoked_token_count: int
 
@@ -256,12 +266,15 @@ def create(
 
 @router.get("", response_model=list[UserOut])
 def index(
+    include_removed: bool = False,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Listing users is an authenticated operation — don't let an exposed instance
-    # be enumerated anonymously.
-    return users.list_users(conn)
+    # be enumerated anonymously. Removed users stay hidden unless the admin
+    # explicitly asks for tombstones (?include_removed=true) — the only surface
+    # that shows them, e.g. to find an id to /restore.
+    return users.list_users(conn, include_removed=include_removed)
 
 
 @router.get("/me", response_model=UserMeOut)
@@ -516,5 +529,34 @@ def offboard(
     and revoke every token — one audited action. Refuses to strip the last admin."""
     try:
         return agent_commands.offboard_user(conn, actor=actor, target_user_id=user_id)
+    except agent_commands.AgentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{user_id}/remove", response_model=RemoveOut)
+def remove(
+    user_id: RowIdPath,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Admin removal: offboard AND stamp the tombstone in one audited action.
+    The user vanishes from every list, picker, and email lookup; attributed
+    history stays intact (nothing is deleted). Restore with /restore."""
+    try:
+        return agent_commands.remove_user(conn, actor=actor, target_user_id=user_id)
+    except agent_commands.AgentCommandError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{user_id}/restore", response_model=UserOut)
+def restore(
+    user_id: RowIdPath,
+    actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Clear the removal tombstone: the account returns as an offboarded viewer
+    with no credentials — every further step is its own audited action."""
+    try:
+        return agent_commands.restore_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

@@ -94,15 +94,28 @@ def current_actor(
 def _refuse_paused(
     request: Request, conn: sqlite3.Connection, actor: dict, *, bounded: bool
 ) -> None:
-    """The pause lever, enforced at identity resolution: a paused account is
-    refused EVERY authenticated action — reads, writes, heartbeats — until an
-    admin resumes it. 403 (not 401): the credential is valid, the account is
-    deliberately frozen, and retrying with the same token is pointless. Each
-    refused attempt lands on the trail — a paused agent that KEEPS trying is
-    exactly what the operator paused it to find out — but only while the caller
-    is under a rate limit (``bounded`` on the bearer path via the per-token
-    limiter, or the anon limiter on the unbounded header path), so the recording
-    can never flood the trail. The 403 is raised regardless of that gate."""
+    """The pause and removal levers, enforced at identity resolution: a paused
+    or removed account is refused EVERY authenticated action — reads, writes,
+    heartbeats. 403 (not 401): the credential is valid, the account is
+    deliberately frozen, and retrying with the same token is pointless. Removal
+    is checked first — it is the stronger state (its credentials are revoked at
+    removal, so reaching here means a trusted-header claim or a race), and it
+    never lifts at this layer. Each refused attempt lands on the trail — an
+    account that KEEPS trying is exactly what the operator wants to see — but
+    only while the caller is under a rate limit (``bounded`` on the bearer path
+    via the per-token limiter, or the anon limiter on the unbounded header
+    path), so the recording can never flood the trail. The 403 is raised
+    regardless of that gate."""
+    if actor.get("removed_at"):
+        if bounded or _anon_rate_allows(request):
+            security_events.record_failure(
+                conn,
+                actor_id=actor["id"],
+                verb=security_events.VERB_REMOVED_REFUSED,
+                target_kind="user",
+                target_id=actor["id"],
+            )
+        raise HTTPException(status_code=403, detail="account is removed")
     if not actor.get("paused_at"):
         return
     if bounded or _anon_rate_allows(request):

@@ -555,6 +555,7 @@ def agents_admin(
     request: Request,
     revoked: int | None = Query(None),
     offboarded: str | None = Query(None),
+    removed: str | None = Query(None),
     paused: str | None = Query(None),
     resumed: str | None = Query(None),
     budget_set: str | None = Query(None),
@@ -577,6 +578,11 @@ def agents_admin(
         notice = f"Revoked {revoked} live token{'' if revoked == 1 else 's'}."
     elif offboarded:
         notice = "Offboarded: demoted to viewer, sessions and tokens revoked."
+    elif removed:
+        notice = (
+            "Removed: offboarded and hidden from every list; history stays "
+            "attributed. Restore via POST /users/{id}/restore."
+        )
     elif paused:
         notice = "Paused: every authenticated action is refused until resumed."
     elif resumed:
@@ -1022,6 +1028,24 @@ def offboard_agent(
     except agent_commands.AgentCommandError as exc:
         return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
     return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
+
+
+@router.post(
+    "/admin/agents/{user_id}/remove",
+    dependencies=[Depends(verify_csrf)],
+)
+def remove_agent(
+    request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    try:
+        agent_commands.remove_user(conn, actor=user, target_user_id=user_id)
+    except agent_commands.AgentCommandError as exc:
+        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    return RedirectResponse("/admin/agents?removed=1", status_code=303)
 
 
 @router.get("/admin/agents/runs", response_class=HTMLResponse)

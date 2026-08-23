@@ -126,7 +126,9 @@ def verify_credentials(
     email, or an API-only account with no password) we still burn a full PBKDF2
     verification so both rejections cost the same."""
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    if row is None or not row["password_hash"]:
+    # A removed account is indistinguishable from an unknown email — same
+    # opaque None, same full-cost verification, so removal leaks nothing.
+    if row is None or row["removed_at"] is not None or not row["password_hash"]:
         passwords.dummy_verify(password)
         return None
     if not passwords.verify_password(password, row["password_hash"]):
@@ -163,7 +165,12 @@ def get_users_by_ids(conn: sqlite3.Connection, user_ids: list[int]) -> dict[int,
 
 
 def get_user_by_email(conn: sqlite3.Connection, email: str) -> dict | None:
-    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    """Email lookup is a LIVENESS operation — login, OIDC, assignment by
+    address — so a removed account is not findable here. Attribution and
+    display resolve by id (get_user / get_users_by_ids), which never filter."""
+    row = conn.execute(
+        "SELECT * FROM users WHERE email = ? AND removed_at IS NULL", (email,)
+    ).fetchone()
     return _row_to_user(row) if row else None
 
 
@@ -201,17 +208,21 @@ def set_agent(
 
 
 def count_admins(conn: sqlite3.Connection) -> int:
+    # A removed admin cannot administrate, so it never satisfies a
+    # last-admin guard.
     return conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role = ?", (ADMIN_ROLE,)
+        "SELECT COUNT(*) AS n FROM users WHERE role = ? AND removed_at IS NULL",
+        (ADMIN_ROLE,),
     ).fetchone()["n"]
 
 
 def count_active_admins(conn: sqlite3.Connection) -> int:
-    """Admins who can actually act: the admin role AND not paused. The pause
-    guard counts these — pausing the last one would brick the workspace (a
-    paused admin cannot resume anyone, itself included)."""
+    """Admins who can actually act: the admin role AND not paused or removed.
+    The pause guard counts these — pausing the last one would brick the
+    workspace (a paused admin cannot resume anyone, itself included)."""
     return conn.execute(
-        "SELECT COUNT(*) AS n FROM users WHERE role = ? AND paused_at IS NULL",
+        "SELECT COUNT(*) AS n FROM users "
+        "WHERE role = ? AND paused_at IS NULL AND removed_at IS NULL",
         (ADMIN_ROLE,),
     ).fetchone()["n"]
 
@@ -234,12 +245,37 @@ def set_paused(
     return get_user(conn, user_id)
 
 
+def set_removed(
+    conn: sqlite3.Connection, user_id: int, removed: bool, *, commit: bool = True
+) -> dict | None:
+    """Stamp (or clear) the removal tombstone and return the updated row, or
+    None if the user doesn't exist. Removal hides the account from every list
+    and lookup-by-email while every attributed row keeps its real user; restore
+    clears the stamp and nothing else. ``commit=False`` lets the audited
+    command fold the flip and its activity event into one transaction."""
+    cur = conn.execute(
+        "UPDATE users SET removed_at = ? WHERE id = ?",
+        (_now(conn) if removed else None, user_id),
+    )
+    if commit:
+        conn.commit()
+    if cur.rowcount == 0:
+        return None
+    return get_user(conn, user_id)
+
+
 def _now(conn: sqlite3.Connection) -> str:
     return conn.execute("SELECT datetime('now')").fetchone()[0]
 
 
-def list_users(conn: sqlite3.Connection) -> list[dict]:
-    rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+def list_users(
+    conn: sqlite3.Connection, *, include_removed: bool = False
+) -> list[dict]:
+    """Every list and picker in the app builds from here, so removed users
+    vanish everywhere by default; pass ``include_removed=True`` only for a
+    surface that deliberately shows tombstones."""
+    clause = "" if include_removed else " WHERE removed_at IS NULL"
+    rows = conn.execute(f"SELECT * FROM users{clause} ORDER BY id").fetchall()
     return [_with_password_state(_row_to_user(row)) for row in rows]
 
 

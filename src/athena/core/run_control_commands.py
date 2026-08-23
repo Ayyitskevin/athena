@@ -156,7 +156,8 @@ def _recheck_credentials(
     fabricated actor dict cannot settle after revocation, pause, or unmarking.
     Mirrors worker_commands, plus the paused check issue_commands carries."""
     owner = conn.execute(
-        "SELECT paused_at FROM users WHERE id = ? AND is_agent = 1", (agent_id,)
+        "SELECT paused_at, removed_at FROM users WHERE id = ? AND is_agent = 1",
+        (agent_id,),
     ).fetchone()
     token = conn.execute(
         "SELECT scopes FROM api_tokens WHERE id = ? AND user_id = ? "
@@ -165,6 +166,8 @@ def _recheck_credentials(
     ).fetchone()
     if owner is None:
         raise RunControlCommandError("forbidden", "agent account required")
+    if owner["removed_at"] is not None:
+        raise RunControlCommandError("forbidden", "account is removed")
     if owner["paused_at"] is not None:
         raise RunControlCommandError("forbidden", "account is paused")
     if token is None:
@@ -308,10 +311,16 @@ def _resolve_run_owner(conn: sqlite3.Connection, run_id: str) -> int:
             )
         bound_actor = checkin_agents[0]
     owner = conn.execute(
-        "SELECT is_agent, paused_at FROM users WHERE id = ?", (bound_actor,)
+        "SELECT is_agent, paused_at, removed_at FROM users WHERE id = ?",
+        (bound_actor,),
     ).fetchone()
     if owner is None or not owner["is_agent"]:
         raise RunControlCommandError("invalid", "run is not owned by an agent account")
+    if owner["removed_at"] is not None:
+        raise RunControlCommandError(
+            "conflict",
+            "the run's agent is removed; its runs accept no further controls",
+        )
     if owner["paused_at"] is not None:
         raise RunControlCommandError(
             "conflict",

@@ -52,6 +52,8 @@ VERB_OFFBOARD = "offboarded_user"
 VERB_ONBOARD = "onboarded_agent"
 VERB_PAUSED = "paused_user"
 VERB_RESUMED = "resumed_user"
+VERB_REMOVED = "removed_user"
+VERB_RESTORED = "restored_user"
 
 # Synthetic login id when the operator only names the agent. Agents do not
 # sign in with a mailbox; this is a unique handle, not a human inbox.
@@ -306,3 +308,93 @@ def offboard_user(
         "revoked_session_count": revoked_sessions,
         "revoked_token_count": revoked_tokens,
     }
+
+
+def remove_user(
+    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
+) -> dict:
+    """The lever after offboarding: offboard (demote to viewer, revoke every
+    session and token) AND stamp the removal tombstone in one atomic move, then
+    record one audited event. A removed user vanishes from every list, picker,
+    and email lookup and can never authenticate; every attributed row — issues,
+    activity, forge sources — keeps pointing at the real user, because the
+    audit trail is load-bearing and 49 foreign keys reference users. Nothing is
+    deleted; ``restore_user`` brings the account back as an offboarded viewer.
+
+    Refuses to remove the last admin (409, mirroring the offboard guard —
+    removed admins no longer count). Raises AgentCommandError(404) for an
+    unknown target, (401/403) when the actor is missing or lacks the admin
+    role/scope. Idempotent: re-running on an already-removed account returns
+    its current state and records nothing."""
+    actor = _require_admin_actor(actor)
+    with db.transaction(conn, immediate=True):
+        target = users.get_user(conn, target_user_id)
+        if target is None:
+            raise AgentCommandError("no such user", status_code=404)
+        if target.get("removed_at"):
+            return {
+                "user_id": target_user_id,
+                "removed_at": target["removed_at"],
+                "revoked_session_count": 0,
+                "revoked_token_count": 0,
+            }
+        if target["role"] == users.ADMIN_ROLE and users.count_admins(conn) <= 1:
+            raise AgentCommandError("cannot remove the last admin", status_code=409)
+        users.set_role(conn, target_user_id, users.VIEWER_ROLE, commit=False)
+        revoked_sessions = sessions.revoke_all_sessions(
+            conn, target_user_id, commit=False
+        )
+        revoked_tokens = tokens.revoke_all_tokens_for_user(
+            conn, user_id=target_user_id, commit=False
+        )
+        updated = users.set_removed(conn, target_user_id, True, commit=False)
+        assert updated is not None
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=VERB_REMOVED,
+            target_kind="user",
+            target_id=target_user_id,
+            detail=(
+                f"removed: offboarded (revoked {revoked_sessions} session(s), "
+                f"{revoked_tokens} token(s)) and hidden everywhere; history "
+                "kept attributed"
+            ),
+            commit=False,
+        )
+    return {
+        "user_id": target_user_id,
+        "removed_at": updated["removed_at"],
+        "revoked_session_count": revoked_sessions,
+        "revoked_token_count": revoked_tokens,
+    }
+
+
+def restore_user(
+    conn: sqlite3.Connection, *, actor: dict | None, target_user_id: int
+) -> dict:
+    """Clear the removal tombstone and nothing else: the account returns as an
+    offboarded viewer with no sessions, no tokens, and no role back — every
+    further step (role, tokens) is its own audited action. Raises
+    AgentCommandError(404) for an unknown target, (401/403) when the actor is
+    missing or lacks the admin role/scope. Idempotent: restoring a present
+    account returns it unchanged and records nothing."""
+    actor = _require_admin_actor(actor)
+    with db.transaction(conn, immediate=True):
+        target = users.get_user(conn, target_user_id)
+        if target is None:
+            raise AgentCommandError("no such user", status_code=404)
+        if not target.get("removed_at"):
+            return target
+        updated = users.set_removed(conn, target_user_id, False, commit=False)
+        assert updated is not None
+        activity.record(
+            conn,
+            actor_id=actor["id"],
+            verb=VERB_RESTORED,
+            target_kind="user",
+            target_id=target_user_id,
+            detail="restored: back as an offboarded viewer with no credentials",
+            commit=False,
+        )
+    return updated

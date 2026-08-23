@@ -283,6 +283,7 @@ def set_blocked_close_policy(
             effective_actor is None
             or effective_actor.get("is_agent")
             or effective_actor.get("paused_at")
+            or effective_actor.get("removed_at")
             or not identity.can_write(effective_actor)
             or not identity.token_has_scope(effective_actor, tokens.ISSUE_WRITE_SCOPE)
             or (

@@ -44,6 +44,7 @@ VERB_LOGIN_THROTTLED = "login_throttled"
 VERB_REVOKED_TOKEN_USED = "revoked_token_used"
 VERB_SCOPE_DENIED = "scope_denied"
 VERB_PAUSED_REFUSED = "paused_account_refused"
+VERB_REMOVED_REFUSED = "removed_account_refused"
 
 
 def record_failure(
@@ -80,6 +81,7 @@ SECURITY_VERBS: tuple[str, ...] = (
     VERB_REVOKED_TOKEN_USED,
     VERB_SCOPE_DENIED,
     VERB_PAUSED_REFUSED,
+    VERB_REMOVED_REFUSED,
 )
 
 MAX_LIST_LIMIT = 200

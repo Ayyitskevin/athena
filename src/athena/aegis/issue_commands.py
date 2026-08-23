@@ -505,6 +505,8 @@ def _update_issue(
         if live_actor is None:
             raise IssueCommandError("forbidden", "actor is no longer available")
         actor = {**actor, **live_actor}
+        if actor.get("removed_at"):
+            raise IssueCommandError("forbidden", "account is removed")
         if actor.get("paused_at"):
             raise IssueCommandError("forbidden", "account is paused")
         if enforce_actor_policy:
@@ -776,6 +778,8 @@ def _resolve_write_actor(
     if live_actor is None:
         raise IssueCommandError("forbidden", "actor is no longer available")
     resolved = {**actor, **live_actor}
+    if resolved.get("removed_at"):
+        raise IssueCommandError("forbidden", "account is removed")
     if resolved.get("paused_at"):
         raise IssueCommandError("forbidden", "account is paused")
     if enforce_actor_policy:

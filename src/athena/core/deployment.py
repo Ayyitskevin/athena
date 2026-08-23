@@ -550,7 +550,7 @@ def has_configured_active_admin_credential(
     """Whether an active administrator has a configured durable login path."""
     active_admins = conn.execute(
         "SELECT id, email, password_hash FROM users "
-        "WHERE role = ? AND paused_at IS NULL ORDER BY id",
+        "WHERE role = ? AND paused_at IS NULL AND removed_at IS NULL ORDER BY id",
         (users.ADMIN_ROLE,),
     ).fetchall()
     for user in active_admins:

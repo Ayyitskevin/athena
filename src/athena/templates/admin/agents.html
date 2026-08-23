@@ -349,6 +349,11 @@
                     {% include "partials/csrf.html" %}
                     <button type="submit" class="button danger">Offboard</button>
                 </form>
+                <form method="post" action="/admin/agents/{{ agent.user.id }}/remove"
+                      data-confirm="Remove {{ agent.user.name }}? Offboards first, then hides the account from every list and picker. Nothing is deleted — history stays attributed, and POST /users/{{ agent.user.id }}/restore brings it back.">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button danger">Remove</button>
+                </form>
             </div>
         <div class="agent-admin-grid">
             <div class="agent-admin-section">

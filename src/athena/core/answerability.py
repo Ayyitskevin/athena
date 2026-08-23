@@ -55,7 +55,9 @@ def build_answerability(
         isinstance(agent_id, bool) or not isinstance(agent_id, int) or agent_id < 1
     ):
         raise ValueError("agent_id must be a positive integer")
-    clause = "WHERE is_agent = 1" + ("" if agent_id is None else " AND id = ?")
+    clause = "WHERE is_agent = 1 AND removed_at IS NULL" + (
+        "" if agent_id is None else " AND id = ?"
+    )
     params: list[object] = [] if agent_id is None else [agent_id]
     agent_rows = conn.execute(
         f"SELECT id, name, paused_at FROM users {clause} ORDER BY id", params
