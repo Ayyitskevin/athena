@@ -255,7 +255,8 @@ def test_admin_users_page_creates_users_and_changes_roles(tmp_path):
 
         page = client.get("/admin/users")
         assert page.status_code == 200
-        assert "New User" in page.text
+        assert "New person" in page.text
+        assert "/admin/agents" in page.text
 
         created = client.post(
             "/admin/users",

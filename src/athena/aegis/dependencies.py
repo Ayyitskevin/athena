@@ -226,3 +226,145 @@ def open_blockers(
         if not statuses.is_done(conn, r["project_id"], r["status"])
     ]
     return _others(conn, open_ids, actor)
+
+
+def open_blockers_by_issue(
+    conn: sqlite3.Connection,
+    issue_ids: list[int],
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> dict[int, list[dict]]:
+    """Open blockers for many issues in a handful of queries, not one per chair.
+
+    Same meaning as :func:`open_blockers`: only ``blocks`` edges, only blockers
+    that are not done, visibility-gated when ``actor`` is not ``_UNGATED``.
+    """
+    ids = sorted({int(i) for i in issue_ids})
+    empty: dict[int, list[dict]] = {i: [] for i in ids}
+    if not ids:
+        return empty
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        "SELECT l.to_id AS blocked_id, l.from_id AS blocker, "
+        "i.status, i.project_id FROM issue_links l "
+        "JOIN issues i ON i.id = l.from_id "
+        "WHERE l.to_id IN (" + placeholders + ") AND l.kind = 'blocks' "
+        "ORDER BY l.to_id, l.from_id",
+        ids,
+    ).fetchall()
+    open_ids_by_blocked: dict[int, list[int]] = {i: [] for i in ids}
+    blocker_ids: list[int] = []
+    for row in rows:
+        if statuses.is_done(conn, row["project_id"], row["status"]):
+            continue
+        blocked_id = int(row["blocked_id"])
+        blocker = int(row["blocker"])
+        open_ids_by_blocked.setdefault(blocked_id, []).append(blocker)
+        blocker_ids.append(blocker)
+    visible_blockers: list[int] = []
+    for blocker in sorted(set(blocker_ids)):
+        if actor is not _UNGATED:
+            assert actor is None or isinstance(actor, dict)
+            if not access.can_see_issue(conn, actor, blocker):
+                continue
+        visible_blockers.append(blocker)
+    summaries: dict[int, dict] = {}
+    if visible_blockers:
+        placeholders = ",".join("?" for _ in visible_blockers)
+        for row in conn.execute(
+            issues.select_sql() + f" WHERE i.id IN ({placeholders})",
+            visible_blockers,
+        ).fetchall():
+            issue = issues.to_issue(row)
+            summaries[int(issue["id"])] = _summary(issue)
+    out = empty
+    for blocked_id, blockers in open_ids_by_blocked.items():
+        out[blocked_id] = [summaries[bid] for bid in blockers if bid in summaries]
+    return out
+
+
+def edges_among(conn: sqlite3.Connection, issue_ids: list[int]) -> list[dict]:
+    """Every declared dependency whose BOTH ends are in the given set of issues.
+
+    The per-issue reader above is right for one issue's relationship panel and
+    wrong for a picture: drawing a project's worth of issues through it costs
+    three queries per issue plus a visibility check and a fetch per link. This is
+    the set-scoped read a drawn view needs — one query, no N+1.
+
+    **Both ends must be in the set, and that is the visibility gate.** Callers
+    pass a set they have already filtered, so an edge to an issue the viewer
+    cannot see simply has no second endpoint here and is never selected. It is
+    also what keeps an edge from pointing into empty space: an arrow to something
+    off the picture reads as a rendering bug rather than a boundary, so a view
+    that wants to admit those has to count them itself and say so.
+
+    Returns ``[{"from_id", "to_id", "kind"}]`` ordered deterministically, so a
+    layout built from it is reproducible. ``blocks`` is directed (from_id blocks
+    to_id); ``relates`` is stored once with the lower id first and is therefore
+    already exactly one row per pair — neither needs de-duplication here.
+    """
+    if len(issue_ids) < 2:
+        # One issue cannot have an edge with both ends inside the set, and zero
+        # issues would build an empty IN () that SQLite rejects.
+        return []
+    placeholders = ",".join("?" for _ in issue_ids)
+    ids = sorted(issue_ids)
+    rows = conn.execute(
+        "SELECT from_id, to_id, kind FROM issue_links"
+        f" WHERE from_id IN ({placeholders}) AND to_id IN ({placeholders})"
+        " ORDER BY kind, from_id, to_id",
+        [*ids, *ids],
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def count_edges_touching(
+    conn: sqlite3.Connection,
+    issue_ids: list[int],
+    *,
+    visible_project_ids: set[int] | None = None,
+) -> int:
+    """How many declared dependencies have EXACTLY ONE end in the given set, and
+    an off-picture end this viewer may see.
+
+    These are the edges a bounded picture cannot draw — the other end is outside
+    the view. A view that drops them silently is telling the operator this work
+    has no outside dependencies, so the number exists to be said out loud beside
+    the drawing.
+
+    The off-picture end is visibility-gated for the same reason the drawn set is:
+    an ungated count moves when a hidden issue gains a link to a visible one, and
+    a number that reacts to private work is an existence oracle no less than a
+    title would be. What the viewer cannot see does not exist here — not as a
+    row, and not as an increment.
+
+    An ARCHIVED far end does not count either: the picture this number sits
+    beside shows live work only, so "N dependencies reach beyond it" must mean
+    edges to work that could be drawn somewhere — a link onto archived history
+    is not an outside dependency of the live picture (review finding).
+    """
+    if not issue_ids:
+        return 0
+    placeholders = ",".join("?" for _ in issue_ids)
+    ids = sorted(issue_ids)
+    # The far end of the edge — whichever side is NOT in the drawn set.
+    far_end = f"CASE WHEN l.from_id IN ({placeholders}) THEN l.to_id ELSE l.from_id END"
+    clauses = [
+        f"(l.from_id IN ({placeholders})) != (l.to_id IN ({placeholders}))",
+        "o.archived_at IS NULL",
+    ]
+    params: list = [*ids, *ids, *ids]
+    if visible_project_ids is not None:
+        if visible_project_ids:
+            vis = ",".join("?" for _ in visible_project_ids)
+            clauses.append(f"(o.project_id IS NULL OR o.project_id IN ({vis}))")
+            params.extend(sorted(visible_project_ids))
+        else:
+            clauses.append("o.project_id IS NULL")
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM issue_links l"
+        f" JOIN issues o ON o.id = ({far_end})"
+        f" WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()
+    return int(row["n"])

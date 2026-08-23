@@ -196,7 +196,11 @@ def test_entrypoint_defaults_to_a_fresh_mcp_run_id(monkeypatch):
             captured["ran"] = True
 
     monkeypatch.setattr(server_module, "AthenaClient", _FakeClient)
-    monkeypatch.setattr(server_module, "build_server", lambda client: _FakeServer())
+    # main() also probes the token's scopes to size the tool surface; the fake
+    # has no whoami, so the probe fails open — accept the keyword and ignore it.
+    monkeypatch.setattr(
+        server_module, "build_server", lambda client, **_: _FakeServer()
+    )
 
     monkeypatch.delenv("ATHENA_RUN_ID", raising=False)
     monkeypatch.delenv("ATHENA_PARENT_RUN_ID", raising=False)

@@ -728,15 +728,17 @@ def test_rest_claim_conflict_and_lease_read(tmp_path):
         # The lease read now shows AgentA holds it, active.
         lease = client.get(f"/issues/{issue['id']}/lease").json()
         assert lease["holder_id"] == 2 and lease["active"] is True
-        # AgentA completes (204) → free again for AgentB.
-        assert (
-            client.post(
-                f"/issues/{issue['id']}/complete",
-                json={"generation": lease["generation"]},
-                headers={"X-Athena-Actor": "2"},
-            ).status_code
-            == 204
+        # AgentA completes (200) → lease gone, issue still open.
+        done = client.post(
+            f"/issues/{issue['id']}/complete",
+            json={"generation": lease["generation"]},
+            headers={"X-Athena-Actor": "2"},
         )
+        assert done.status_code == 200
+        body = done.json()
+        assert body["released"] is True
+        assert body["issue_still_open"] is True
+        assert body["issue_status"] == "open"
         again = client.post(
             f"/issues/{issue['id']}/claim",
             headers={"X-Athena-Actor": "3", "If-Match": issue_tag},

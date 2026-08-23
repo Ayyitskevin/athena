@@ -3,12 +3,16 @@
 {% block title %}Boards — Aegis{% endblock %}
 
 {% block content %}
+{# hx-indicator inherits — filter swaps AND keyboard/drag moves routed through
+   this coordinator mark the board busy (.board gains .htmx-request → §8 fades
+   the cards) while their response is in flight. #}
 <div
     class="page-header"
     id="board-request-coordinator"
     hx-sync="this:queue all"
     hx-target=".board"
-    hx-swap="outerHTML">
+    hx-swap="outerHTML"
+    hx-indicator=".board">
     <div>
         <a href="/aegis" class="muted">← Back to Aegis</a>
         <h1>Boards</h1>
@@ -101,5 +105,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/board-dnd.js"></script>
+<script src="/static/board-dnd.js?v={{ static_version }}"></script>
 {% endblock %}

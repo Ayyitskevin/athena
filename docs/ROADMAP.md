@@ -22,6 +22,31 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   possession-generation fencing, and typed blocker handoffs. The current holder
   can complete, yield, or decline work without a human performing every final
   transition.
+- **Direct** now runs both ways between the modules: a checklist page labeled
+  `playbook` instantiates a parent issue and its children, each citing the page
+  with an ordinary wikilink — so the page's backlinks show the work it started
+  and a rollup embed counts it. Embeds show work in docs, learnings write back
+  to docs, playbooks start work from docs (see [`PLAYBOOKS.md`](PLAYBOOKS.md)).
+- **Direct** also runs sideways: a space can be watched as shared memory, so
+  every page change inside it reaches the fleet's inboxes without anyone polling
+  the tree — loud on purpose, with `unwatch` the only volume control and no
+  digest to become a second story (see [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
+- **Editing is safe for two people.** A browser page save carries the page's ETag
+  as rendered, so a second editor cannot silently overwrite the first: the save is
+  refused, nothing is merged, and the loser's text is kept as their own draft with
+  both versions shown (see [`EDITING.md`](EDITING.md#two-people-one-page)).
+- **Onboarding** is part of the workspace: `athena-field-guide` seeds an agent's
+  manual as ordinary pages, so the instructions live in the same layer, under the
+  same search and links, as everything else an agent reads.
+- **Work** starts from one ask: `GET /search/workspace` (MCP `search_workspace`)
+  spans issues, pages, and comments, and the work query grammar passes through
+  to the issue side — so an agent does not need to know which module holds the
+  answer. Grouped by kind, never globally ranked, and every group says when its
+  bound cut the list (see [`QUERY.md`](QUERY.md)).
+- **Work** begins with one call: the Desk (`GET /desk`, MCP `my_desk()`) hands
+  an agent its identity, the asks addressed to it, the work it holds, and what
+  changed since its durable cursor — composed from the surfaces that own each
+  lane, never a second source of truth (see [`DESK.md`](DESK.md)).
 - **Work** over MCP carries run and parent/fork identity on writes. Agents can
   inspect effective identity and scopes, delegation context, replay artifacts,
   active-work supervision, and visibility-safe fleet metrics through MCP.
@@ -39,9 +64,18 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   registers by heartbeat, and an admin can ask it to stop. Athena records the
   request and the worker's reply — it cannot signal or observe a process, so a
   silent worker is stale, never terminated. That is not process-level kill.
+- **Intervene** now also reaches a single live run: an admin can record a bounded
+  control request against it — steer with guidance, request cooperative
+  cancellation, or request a structured fresh-context handoff — which only the
+  run's bound agent can read and settle (acknowledge, decline, or complete;
+  unanswered requests expire by the server clock). The same request-and-reply
+  honesty as the worker kill, at run granularity
+  (see [`RUN_CONTROLS.md`](RUN_CONTROLS.md)).
 - **Intervene** finally has one place to look: an admin-only fleet-attention
   rollup on the dashboard counts claims needing attention, waiting approvals,
-  unanswered kill requests, failing automation rules and webhooks, budget ceilings
+  unanswered kill requests, run controls awaiting an agent (with a fleet-wide
+  `/admin/run-controls` page owning that number), failing automation rules and
+  webhooks, budget ceilings
   hit, and boundary refusals — each linking to the surface that owns it. Refused
   logins, revoked tokens, scope denials, and paused refusals were always recorded;
   they now have a page and an API instead of requiring an operator to know the verb
@@ -63,6 +97,16 @@ The operator loop is **Assign → Work → Observe → Intervene**. Current stat
   already recorded), and its assignee (from the 0068 assignee facts) — each
   scalar refusing when a newer change has superseded it. Everything else is
   refused with its reversibility class. That is not general undo.
+- **Trust / Learn** gained a trail that can prove itself: every activity row
+  recorded after migration 0072 is hash-chained in the same transaction, chained
+  rows are undeletable, and bounded resumable verification (REST, MCP,
+  `athena-doctor`, a tail check on `/admin/security`) points at the first broken
+  link. The chain makes tampering evident, not impossible — the boundary is
+  documented in [`TRAIL_INTEGRITY.md`](TRAIL_INTEGRITY.md).
+- **Trust / Learn** also gained the answerability ledger: per agent, every
+  recorded ask (controls, kill requests, approvals) beside its recorded answer,
+  plus reversals — derived at read time, zero-filled, deliberately never a
+  score (see [`ANSWERABILITY.md`](ANSWERABILITY.md)).
 - **Intervene** finally has no unaudited durable writes left in the Aegis project
   surface: configuring a project's statuses — which is configuring what "closed"
   means for its issues — is a command with an actor and an audit event, and every
@@ -194,7 +238,7 @@ or that Athena is production-ready; deployment and release sign-off are separate
 Goal: a solo operator running an agent fleet needs no other tab open. Not feature
 parity with five products — the *jobs* those products do, done inside Athena's
 own architecture. The full campaign, with boundaries and parked decisions, is
-[OPUS_EXPANSION_GUIDE_ATHENA.md](OPUS_EXPANSION_GUIDE_ATHENA.md).
+[OPUS_EXPANSION_GUIDE_ATHENA.md](plans/OPUS_EXPANSION_GUIDE_ATHENA.md).
 
 The previous scoping deferred this "until the fleet loop above is complete and
 boring". Phases 1–4 and the hardening/field-proving/release stages that followed
@@ -224,8 +268,24 @@ under exactly the same architecture rules, none of which are amended.
       history (the attention-rollup and security-counter exclusion was added
       after review — see CHANGELOG).
       Athena never calls the forge: inbound only, no stored third-party token.
-- [ ] **Planning**: a timeline over sprints and dependencies, live parent rollups.
-- [ ] **Editing and leaving**: real-renderer preview, crash-safe drafts, HTML export.
+- [x] **Planning**: a per-project timeline draws sprints as lanes with issues
+      placed in them and declared dependencies between them, and a parent issue
+      shows live child status counts — computed on every read, never stored, and
+      available as a `kind: rollup` embed so a page can carry the same number.
+      Lane ORDER is chronological; lane WIDTH is deliberately not a duration,
+      because sprint dates are optional and unvalidated. Read-only: placement
+      still changes through the sprint form that owns that write. Per-issue
+      target dates were considered and deliberately not built (see
+      [PLANNING.md](PLANNING.md)).
+- [x] **Editing and leaving**: page and issue editors show a live preview
+      rendered by the SAME function the view uses, so it cannot drift; page
+      editors autosave crash-safe drafts that are user-private state rather than
+      content (own table, no activity event, owner-only, never exported, and
+      only an explicit save turns one into a page); attachment images render
+      inline from a byte-sniffed type with SVG deliberately excluded; and a
+      space exports to one self-contained HTML file where embeds are visibly
+      dead and carry their own directive text
+      (see [EDITING.md](EDITING.md)).
 
 ## Out of scope (for now)
 

@@ -179,11 +179,11 @@ def test_command_edit_vanished_comment_rejects_and_records_nothing(tmp_path):
     conn = db.connect(db_file)
     try:
         page_comment_commands.edit_page_comment(
-            conn, actor_id=1, page_id=pid, comment_id=999, body="x"
+            conn, actor={"id": 1}, page_id=pid, comment_id=999, body="x"
         )
         raise AssertionError("expected PageCommentCommandError")
     except page_comment_commands.PageCommentCommandError as exc:
-        assert exc.status_code == 404
+        assert exc.kind == "not_found"
     assert [
         e
         for e in activity.list_activity(conn, limit=50)

@@ -10,13 +10,14 @@ instance main.py injects at startup).
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from urllib.parse import quote, urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from athena.core import access, activity, undo
+from athena.core import access, activity, identity, run_control_commands, undo
 from athena.core.deps import get_conn
 from athena.mentor import run_learnings, spaces
 from athena.web.csrf import verify_csrf
@@ -286,6 +287,20 @@ def activity_run_lineage(
                 else None,
             }
         )
+    # The Run Controls panel: visible to admins and the run's bound agent, and
+    # nobody else — readable_controls already collapses everyone else to an
+    # empty list, so this page never becomes a side channel for operator intent.
+    # A run id outside the strict addressable form (possible for old lenient
+    # header values) simply has no controls rather than failing the page.
+    controls: list[dict] = []
+    if user is not None:
+        try:
+            controls = run_control_commands.readable_controls(
+                conn, actor=user, run_id=run_id
+            )
+        except run_control_commands.RunControlCommandError:
+            controls = []
+    can_create_control = user is not None and identity.is_admin(user)
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/run_lineage.html",
@@ -297,8 +312,75 @@ def activity_run_lineage(
             "notice": (request.query_params.get("notice") or "").strip(),
             "error": (request.query_params.get("error") or "").strip(),
             "can_record_learning": user is not None,
+            "controls": controls,
+            "can_create_control": can_create_control,
+            # A fresh key per render, so a double-submitted form records one
+            # control instead of two (the same single-flight contract the API
+            # offers, minted here because a browser form cannot mint its own).
+            "control_form_key": secrets.token_hex(16) if can_create_control else "",
+            "control_kinds": run_control_commands.CONTROL_KIND_CHOICES,
         },
     )
+
+
+@router.post(
+    "/aegis/activity/runs/{run_id}/controls",
+    dependencies=[Depends(verify_csrf)],
+)
+def create_run_control_web(
+    run_id: str,
+    request: Request,
+    kind: str = Form(""),
+    payload: str = Form(""),
+    ttl_seconds: str = Form(""),
+    idempotency_key: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Record a control request from the run page — the browser twin of
+    POST /run-controls, through the same command.
+
+    The hidden idempotency_key was minted when the form rendered, so a
+    double-click or browser resubmit replays the recorded control instead of
+    filing a second one — the same single-flight contract the API offers."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to issue a'
+            " run control.</div>",
+            status_code=401,
+        )
+    back = f"/aegis/activity/runs/{quote(run_id, safe='')}/lineage"
+    # This is a WRITE, so the lenient filter-parsing stance does not apply: a
+    # ttl the operator typed but Athena cannot read must refuse, never silently
+    # become the default lifetime (the API 422s the same input).
+    ttl_text = (ttl_seconds or "").strip()
+    parsed_ttl: int | None = None
+    if ttl_text:
+        parsed_ttl = _int_or_none(ttl_text)
+        if parsed_ttl is None:
+            return RedirectResponse(
+                f"{back}?{urlencode({'error': 'ttl_seconds must be a whole number of seconds'})}",
+                status_code=303,
+            )
+    try:
+        control = run_control_commands.create_control(
+            conn,
+            actor=user,
+            run_id=run_id,
+            kind=kind.strip(),
+            payload=payload,
+            ttl_seconds=parsed_ttl,
+            idempotency_key=idempotency_key.strip() or None,
+        )
+    except run_control_commands.RunControlCommandError as exc:
+        return RedirectResponse(
+            f"{back}?{urlencode({'error': exc.detail})}", status_code=303
+        )
+    notice = (
+        f"Recorded the {control['kind']} request. The run's agent will be told "
+        "when it next asks; nothing has been changed or stopped."
+    )
+    return RedirectResponse(f"{back}?{urlencode({'notice': notice})}", status_code=303)
 
 
 @router.post(

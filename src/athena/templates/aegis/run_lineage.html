@@ -49,8 +49,9 @@
 {# Trust/Learn made concrete. Looking at what a run DID is exactly the moment an
    operator knows what the next one should be told, so the promotion lives here.
    Nothing is promoted automatically — this form is the only way in. #}
-<section class="dashboard-card" aria-labelledby="record-learning-heading">
-    <h2 id="record-learning-heading">Record what this run learned</h2>
+<section class="panel" aria-labelledby="record-learning-heading">
+    <div class="panel-head"><h2 id="record-learning-heading">Record what this run learned</h2></div>
+    <div class="panel-body">
     <p class="subtitle">
         Appends your note to the issue's runbook page, quoted and attributed to you.
         The next agent working this issue reads it in its work-context packet.
@@ -81,35 +82,124 @@
         <button type="submit" class="button secondary">Record learning</button>
     </form>
     {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{% if controls or can_create_control %}
+{# The Fleet Room, as a derived view: operator requests on this run and how its
+   agent answered — read from the same command layer the API serves. Every state
+   word below reports what somebody actually SAID; Athena records requests and
+   replies, it does not control processes. #}
+<section class="panel" aria-labelledby="run-controls-heading">
+    <div class="panel-head"><h2 id="run-controls-heading">Run controls</h2></div>
+    <div class="panel-body">
+    <p class="subtitle">
+        Requests recorded for this run's agent. It is told when it next asks;
+        acknowledged means it reported receipt, completed and declined are its
+        own claims, and expired means the clock ran out with no answer.
+    </p>
+    {% if controls %}
+    <table>
+        <thead>
+            <tr><th>Kind</th><th>State</th><th>Requested</th><th>Expires</th><th>Answer</th></tr>
+        </thead>
+        <tbody>
+            {% for control in controls %}
+            <tr>
+                <td>
+                    {{ control.kind }}
+                    {% if control.payload %}<div class="muted">{{ control.payload }}</div>{% endif %}
+                </td>
+                <td>
+                    {{ control.state }}
+                    {% if control.state == 'acknowledged' %}<div class="muted">receipt only — no outcome yet</div>{% endif %}
+                    {% if control.state == 'expired' %}<div class="muted">no answer before {{ control.expires_at }}</div>{% endif %}
+                </td>
+                <td>by {{ control.requested_by_name }} <div class="muted">{{ control.created_at }}</div></td>
+                <td>{{ control.expires_at }}</td>
+                <td>
+                    {% if control.settlement %}
+                    {{ control.result_summary }}
+                    {% if control.handoff %}
+                    <details>
+                        <summary class="muted">handoff</summary>
+                        {% if control.handoff.unresolved_questions %}
+                        <div><strong>Unresolved:</strong>
+                            <ul>{% for q in control.handoff.unresolved_questions %}<li>{{ q }}</li>{% endfor %}</ul>
+                        </div>
+                        {% endif %}
+                        {% if control.handoff.athena_refs %}
+                        <div><strong>Refs:</strong> {{ control.handoff.athena_refs | join(", ") }}</div>
+                        {% endif %}
+                        {% if control.handoff.evidence_refs %}
+                        <div><strong>Evidence:</strong> {{ control.handoff.evidence_refs | join(", ") }}</div>
+                        {% endif %}
+                    </details>
+                    {% endif %}
+                    {% else %}
+                    <span class="muted">—</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No controls recorded for this run.</p>
+    {% endif %}
+    {% if can_create_control %}
+    <form method="post" action="/aegis/activity/runs/{{ lineage.run_id | urlencode }}/controls">
+        {% include "partials/csrf.html" %}
+        <input type="hidden" name="idempotency_key" value="{{ control_form_key }}">
+        <label for="control-kind">Request</label>
+        <select id="control-kind" name="kind">
+            {% for value, label in control_kinds %}
+            <option value="{{ value }}">{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label for="control-payload">Guidance or reason</label>
+        <textarea id="control-payload" name="payload" rows="3"
+                  placeholder="Required for steer: the bounded guidance the agent will read verbatim. Optional reason otherwise."></textarea>
+        <label for="control-ttl">Expires after (seconds, 60–86400; blank for the default)</label>
+        <input id="control-ttl" name="ttl_seconds" inputmode="numeric" placeholder="3600">
+        <button type="submit" class="button secondary">Record request</button>
+    </form>
+    {% endif %}
+    </div>
 </section>
 {% endif %}
 
 {# The focal run + its events (oldest-first, as it happened). #}
-<details class="run-card" open>
-    <summary>
+<details class="panel" open>
+    <summary class="panel-head">
         <span class="run-span">{{ lineage.run.started_at }} → {{ lineage.run.ended_at }}</span>
         <span class="run-id" title="Tagged run (X-Athena-Run)">run {{ lineage.run.run_id }}</span>
-        {% if lineage.run.partial %}<span class="run-partial" title="Older events of this run fall outside the window">partial</span>{% endif %}
+        {% if lineage.run.partial %}<span class="chip" data-tone="warning" title="Older events of this run fall outside the window">partial</span>{% endif %}
         <span class="run-count">{{ lineage.run.event_count }}{{ "+" if lineage.run.partial }} event{{ "s" if lineage.run.event_count != 1 }}</span>
         <span class="muted">by {{ lineage.run.actor_name }}</span>
     </summary>
+    <div class="panel-body">
     {% with events=lineage.run.events, show_target=True %}
     {% include "aegis/partials/activity_list.html" %}
     {% endwith %}
+    </div>
 </details>
 
 <h2>Fork headers</h2>
 {% if fork_contracts %}
 <div class="fork-contracts">
     {% for contract in fork_contracts %}
-    <section class="fork-contract">
-        <div>
+    <section class="panel">
+        <div class="panel-head">
             <strong>Fork from event #{{ contract.fork_from_event_id }}</strong>
             <span class="muted">{{ contract.fork_from_event.created_at }}</span>
         </div>
-        <textarea readonly rows="3" aria-label="Headers for fork from event {{ contract.fork_from_event_id }}">X-Athena-Run: {{ contract.headers["X-Athena-Run"] }}
+        <div class="panel-body">
+            <textarea readonly rows="3" aria-label="Headers for fork from event {{ contract.fork_from_event_id }}">X-Athena-Run: {{ contract.headers["X-Athena-Run"] }}
 X-Athena-Parent-Run: {{ contract.headers["X-Athena-Parent-Run"] }}
 X-Athena-Fork-From-Event: {{ contract.headers["X-Athena-Fork-From-Event"] }}</textarea>
+        </div>
     </section>
     {% endfor %}
 </div>

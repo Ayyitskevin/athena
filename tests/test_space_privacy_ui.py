@@ -97,7 +97,7 @@ def test_toggle_visibility_and_manage_members_via_web(tmp_path):
         assert remove_form not in client.get(f"/mentor/spaces/{sid}/access").text
 
         # The spaces list shows the lock badge to the creator.
-        assert "badge-private" in client.get("/mentor").text
+        assert 'title="Private — members only"' in client.get("/mentor").text
 
 
 def test_hidden_space_edit_form_and_delete_do_not_leak(tmp_path):

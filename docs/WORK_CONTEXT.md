@@ -118,6 +118,7 @@ The top-level object contains:
 | `attachments` | Bounded attachment metadata group |
 | `comments` | Bounded comments with bounded bodies |
 | `references` | Bounded outgoing links and backlinks |
+| `related` | Bounded co-citation shortlist — what cites what this cites, direct links excluded |
 | `recent_activity` | Bounded actor-visible activity for the issue |
 | `claim_handoffs` | Exact open continuation context plus bounded handoff history |
 
@@ -212,6 +213,7 @@ The current v1 caps are fixed server-side; callers cannot raise them.
 | Comments | 20 | Highest 20 comment ids selected, then id ascending |
 | Outgoing references | 10 | Kind, then id |
 | Backlinks | 10 | Kind, then id |
+| Related items | 10 | Shared-neighbour count descending, then kind, then id |
 | Recent activity | 30 | Activity id descending (newest first) |
 | Claim handoffs | 10 | Yield event id descending (newest first) |
 | Root issue description | 50,000 characters | Prefix of the field |

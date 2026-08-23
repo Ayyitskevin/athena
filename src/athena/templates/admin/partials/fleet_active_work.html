@@ -1,22 +1,33 @@
-<section class="dashboard-card" aria-labelledby="fleet-active-work-heading">
-    <h2 id="fleet-active-work-heading">Active claimed work</h2>
+{# Refreshes itself (see partials/live.html): a lease expiring and a check-in going
+   stale are both events that happen to a page nobody is touching, which is exactly
+   the case a reload-only view reports wrong. #}
+{% import "partials/live.html" as live_ui %}
+<section class="panel" aria-labelledby="fleet-active-work-heading"{{ live_ui.live_attrs(live) }}>
+    <div class="panel-head"><h2 id="fleet-active-work-heading">Active claimed work</h2></div>
+    <div class="panel-body">
     <p class="subtitle">
         Durable issue leases joined to the exact tagged claim run, its cooperative
         check-in, current blockers, and replay evidence. Reporting is not proof that
         an external process is alive or executing the issue.
     </p>
     <div class="agent-health-summary">
-        <div class="agent-health-stat">
-            <strong>{{ active_work.summary.active_claim_count }}</strong>
-            <span>active claims shown</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ active_work.summary.active_claim_count }}</strong>
+                <span>active claims shown</span>
+            </div>
         </div>
-        <div class="agent-health-stat">
-            <strong>{{ active_work.summary.expired_claim_count }}</strong>
-            <span>expired claims shown</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ active_work.summary.expired_claim_count }}</strong>
+                <span>expired claims shown</span>
+            </div>
         </div>
-        <div class="agent-health-stat">
-            <strong>{{ active_work.summary.needs_attention_count }}</strong>
-            <span>need attention shown</span>
+        <div class="panel">
+            <div class="panel-body">
+                <strong>{{ active_work.summary.needs_attention_count }}</strong>
+                <span>need attention shown</span>
+            </div>
         </div>
     </div>
     {% if active_work.clipped %}
@@ -58,7 +69,7 @@
                     </td>
                     <td>
                         <strong>{{ work.holder.name }}</strong>
-                        <span class="agent-badge">agent</span>
+                        <span class="chip" data-tone="agent">agent</span>
                         <div class="muted">{{ work.holder.email }}</div>
                         <div class="muted">
                             {{ work.holder.role }} ·
@@ -68,7 +79,7 @@
                         {% if work.holder.paused_at %}<div class="blocked">paused {{ work.holder.paused_at }} UTC</div>{% endif %}
                     </td>
                     <td>
-                        <span class="agent-checkin-state {{ work.lease.claim_state }}">
+                        <span class="chip" data-tone="{{ work.lease.claim_state | checkin_tone }}">
                             {{ work.lease.claim_state }}
                         </span>
                         <div class="muted">until {{ work.lease.expires_at }} UTC</div>
@@ -102,7 +113,7 @@
                         {% endif %}
                         {% endif %}
                         {% if work.attention_reasons %}
-                        <span class="badge">needs attention</span>
+                        <span class="chip" data-tone="warning">needs attention</span>
                         <div class="muted">{{ work.attention_reasons|join(", ")|replace("_", " ") }}</div>
                         {% else %}
                         <span class="muted">No current attention reason.</span>
@@ -137,8 +148,10 @@
     <p class="empty-state">No agent-held issue claims match this filter.</p>
     {% endif %}
     <p class="note-small">
-        Observed {{ active_work.observed_at }} UTC. An expired lease, stale/missing
+        Observed {{ active_work.observed_at }} UTC.{{ live_ui.live_cadence(live) }}
+        An expired lease, stale/missing
         check-in, or visible blocker is an operator signal only; this view never
         revokes credentials, transfers work, or approves an action.
     </p>
+    </div>
 </section>

@@ -8,7 +8,7 @@
         <a href="/aegis/labels" class="muted">← All labels</a>
         {% if label %}
         <h1>
-            <span class="label" style="background: {{ label.color }}1a; color: {{ label.color }};">{{ label.name }}</span>
+            <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ label.color[1:] }}{--label-color: {{ label.color }}}</style><span class="label label-c-{{ label.color[1:] }}">{{ label.name }}</span>
         </h1>
         <p class="subtitle">Everything tagged <code>{{ label.name }}</code></p>
         {% else %}
@@ -30,7 +30,7 @@
         <tr>
             <td class="muted"><code>{{ i.key or "#" ~ i.id }}</code></td>
             <td class="issue-title"><a href="/aegis/issues/{{ i.id }}">{{ i.title }}</a></td>
-            <td><span class="status {{ i.status }}">{{ i.status }}</span></td>
+            <td><span class="chip" data-tone="{{ i.status_category | category_tone }}">{{ i.status }}</span></td>
         </tr>
     {% endfor %}
     </tbody>

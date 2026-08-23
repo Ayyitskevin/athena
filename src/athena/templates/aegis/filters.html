@@ -30,7 +30,7 @@
             <td class="muted">
                 <a href="/aegis/filters/{{ f.id }}">Run</a>
                 <form method="post" action="/aegis/filters/{{ f.id }}/delete"
-                      data-confirm="Delete saved filter {{ f.name }}?" style="display:inline">
+                      data-confirm="Delete saved filter {{ f.name }}?" class="inline">
                     {% include "partials/csrf.html" %}
                     <button type="submit" class="button danger small">Delete</button>
                 </form>
@@ -43,7 +43,7 @@
 <p class="empty-state">No saved filters yet. Create one below, or use “★ Save current view” on the issues list.</p>
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
     <h3>New filter</h3>
     <form method="post" action="/aegis/filters" class="issue-form">
         {% include "partials/csrf.html" %}

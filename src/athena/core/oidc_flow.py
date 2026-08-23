@@ -279,13 +279,16 @@ def provision_or_link(
         # Fresh SSO account — no pre-existing account to seize, so no takeover risk.
         # Self-attributed (actor_id=None): the person signing in provisions their own
         # account, and the command records the atomic 'created_user' event.
-        user = user_commands.create_user(
-            conn,
-            actor_id=None,
-            email=email,
-            name=(claims.get("name") or "").strip() or email,
-            role=users.DEFAULT_ROLE,
-        )
+        try:
+            user = user_commands.create_user(
+                conn,
+                actor_id=None,
+                email=email,
+                name=(claims.get("name") or "").strip() or email,
+                role=users.DEFAULT_ROLE,
+            )
+        except user_commands.UserCommandError as exc:
+            raise OidcError("identity profile exceeds supported limits") from exc
     elif not allowed_domains:
         # An account with this email already exists and no domain allow-list is
         # configured, so we can't trust that this IdP owns the address. Refuse rather

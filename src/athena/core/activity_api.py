@@ -15,7 +15,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from athena.core import activity, agents, run_replay, undo
+from athena.core import activity, activity_chain, agents, run_replay, undo
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, current_actor
 
@@ -313,6 +314,79 @@ def export_csv(
     )
 
 
+class ChainHeadOut(BaseModel):
+    # The newest chain entry: the value an operator notes OUTSIDE Athena to make
+    # even a full-chain rebuild detectable (see docs/TRAIL_INTEGRITY.md).
+    event_id: int
+    entry_hash: str
+
+
+class ChainStatusOut(BaseModel):
+    schema_: str = Field(alias="schema")
+    # The first chained event id. Rows below it were recorded before the chain
+    # existed (0072) and are counted in unchained_count, never claimed.
+    anchor_event_id: int | None = None
+    head: ChainHeadOut | None = None
+    chained_count: int
+    unchained_count: int
+    latest_event_id: int | None = None
+
+
+class ChainMismatchOut(BaseModel):
+    # The FIRST broken link. Everything after it inherits the break, so one
+    # exact spot is the useful answer, not a thousand echoes.
+    event_id: int
+    reason: str
+    detail: str
+
+
+class ChainVerifyOut(BaseModel):
+    schema_: str = Field(alias="schema")
+    ok: bool
+    checked: int
+    after_id: int | None = None
+    through_event_id: int | None = None
+    # Resume cursor: pass back as after_id until has_more is false. Null once
+    # the walk is complete or a mismatch stopped it.
+    next_after: int | None = None
+    has_more: bool
+    mismatch: ChainMismatchOut | None = None
+    anchor_event_id: int | None = None
+
+
+@router.get("/chain", response_model=ChainStatusOut)
+def chain_status(
+    _actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Where the trail's hash chain stands: anchor, head, coverage counts. Admin-
+    # only like the security surface — chain state is operator intelligence about
+    # the audit trail itself, not project content.
+    return activity_chain.status(conn)
+
+
+@router.get("/chain/verify", response_model=ChainVerifyOut)
+def chain_verify(
+    after_id: int | None = Query(
+        None,
+        ge=1,
+        description="resume cursor: the next_after a previous verify returned",
+    ),
+    limit: int = Query(
+        activity_chain.DEFAULT_VERIFY_LIMIT,
+        ge=1,
+        le=activity_chain.MAX_VERIFY_LIMIT,
+        description="how many chain entries this call recomputes",
+    ),
+    _actor: dict = Depends(admin_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # Recompute a bounded window of the chain. A read that writes nothing: a
+    # broken chain is reported, never "repaired". Loop on next_after for the
+    # full walk (athena-doctor does this in one command).
+    return activity_chain.verify(conn, after_id=after_id, limit=limit)
+
+
 @router.get("/agent-runs", response_model=AgentRunHealthOut)
 def agent_run_health(
     agent_id: int | None = Query(
@@ -428,7 +502,7 @@ class UndoOut(BaseModel):
 
 @router.post("/{event_id}/undo", response_model=UndoOut, status_code=201)
 def undo_event(
-    event_id: int,
+    event_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:

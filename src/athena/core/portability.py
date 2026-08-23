@@ -16,7 +16,7 @@ import secrets
 import sqlite3
 from typing import Any, Iterable, Iterator
 
-from athena.core import issue_identity, links
+from athena.core import activity_chain, issue_identity, links
 from athena.core._util import atomic_write_json, utc_now_iso
 
 SCHEMA = "athena.portability.v1"
@@ -1150,6 +1150,11 @@ def _insert_activity(
         )
         activity_id = cur.lastrowid
         assert activity_id is not None
+        # Imported rows join the hash chain like every other write (0072): the
+        # chain attests to what the TRAIL stores — including that a row is
+        # foreign history (imported_at is part of the hashed facts) — so an
+        # import cannot open an unchained gap that verification would flag.
+        activity_chain.append_entry(conn, activity_id)
         activity_map[event["id"]] = activity_id
     return len(activity_map), activity_map
 

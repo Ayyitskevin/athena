@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.core import access, activity, db, links
+from athena.core import access, activity, db, links, runbook_hints
 from athena.mentor import page_commands, pages
 
 VERB_LEARNING_RECORDED = "page_learning_recorded"
@@ -51,10 +51,11 @@ _RUNBOOK_TITLE_PREFIX = "Runbook: "
 class LearningError(Exception):
     """A transport-neutral rejection. ``kind`` maps to each adapter's status."""
 
-    def __init__(self, kind: str, detail: str) -> None:
+    def __init__(self, kind: str, detail: str, extra: dict | None = None) -> None:
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
+        self.extra = extra or {}
 
 
 STATUS_BY_KIND: dict[str, int] = {
@@ -161,9 +162,23 @@ def record_learning(
     with db.transaction(conn, immediate=True):
         existing = get_runbook(conn, issue_id)
         if existing is None and space_id is None:
-            raise LearningError(
-                "invalid", "space_id is required to start this issue's runbook"
-            )
+            suggested = runbook_hints.visible_space_summaries(conn, actor)
+            if len(suggested) == 1:
+                space_id = int(suggested[0]["id"])
+            elif not suggested:
+                raise LearningError(
+                    "invalid",
+                    "space_id is required to start this issue's runbook; "
+                    "no visible space exists",
+                    extra={"suggested_spaces": []},
+                )
+            else:
+                raise LearningError(
+                    "invalid",
+                    "space_id is required to start this issue's runbook; "
+                    "more than one visible space exists",
+                    extra={"suggested_spaces": suggested},
+                )
         if existing is None:
             if not access.can_see_space(conn, actor, int(space_id or 0)):
                 raise LearningError("not_found", "no such space")
@@ -189,7 +204,7 @@ def record_learning(
         if existing is None:
             page = page_commands.create_page(
                 conn,
-                actor_id=actor["id"],
+                actor=actor,
                 space_id=int(space_id or 0),
                 title=runbook_title(issue_ref["title"], issue_id),
                 body=(
@@ -207,7 +222,7 @@ def record_learning(
         else:
             page = page_commands.edit_page(
                 conn,
-                actor_id=actor["id"],
+                actor=actor,
                 page_id=int(existing["id"]),
                 body=f"{existing['body'].rstrip()}\n\n{block}",
             )

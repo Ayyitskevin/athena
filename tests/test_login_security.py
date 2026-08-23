@@ -42,8 +42,15 @@ def test_login_is_throttled_per_ip_before_the_password_hash(tmp_path):
 
 
 def test_login_throttle_off_when_limit_is_zero(tmp_path):
-    # 0 disables the throttle: many bad attempts stay plain 401s, never 429.
-    app = create_app(tmp_path / "off.db", login_rate_limit_per_minute=0)
+    # 0 disables the throttle: many bad attempts stay plain 401s, never 429. BOTH
+    # limiters are switched off here — this test is about the per-IP off-switch, and
+    # leaving the per-account one at its default would refuse the sixth attempt for a
+    # different reason and prove nothing about the switch under test.
+    app = create_app(
+        tmp_path / "off.db",
+        login_rate_limit_per_minute=0,
+        login_account_rate_limit_per_minute=0,
+    )
     with TestClient(app) as client:
         _seed(client)
         for _ in range(6):

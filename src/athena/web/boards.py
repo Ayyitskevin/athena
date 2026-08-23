@@ -30,6 +30,13 @@ from athena.web.router import _attach_labels, _statuses_in_use, get_templates
 
 router = APIRouter()
 
+# How many cards one board render will hydrate. The board has no pagination — every
+# card is laid out at once — so this is the only thing standing between a large
+# instance and a render that reads (and label-joins) the whole issues table. Chosen
+# well above any board a person can actually scan, so the cap is a safety bound
+# rather than a routine truncation; when it does bite, the board says so.
+BOARD_CARD_CAP = 500
+
 
 def _board_scope(
     project_filter: str,
@@ -101,15 +108,22 @@ def _render_board(
     # projects the viewer may see (admins all; backlog always).
     user = getattr(request.state, "user", None)
     visible_project_ids = access.visible_project_filter(conn, user)
-    filtered = issues.list_issues(
-        conn,
-        status=status_filter or None,
-        search=search,
-        project_id=project_id,
-        backlog=backlog,
-        sprint_id=sprint_id,
-        visible_project_ids=visible_project_ids,
-    )
+    board_filters: dict = {
+        "status": status_filter or None,
+        "search": search,
+        "project_id": project_id,
+        "backlog": backlog,
+        "sprint_id": sprint_id,
+        "visible_project_ids": visible_project_ids,
+    }
+    # A board renders every card at once — there is no next-page link to fall back
+    # on — so the read is CAPPED and the cap is disclosed. Silently rendering the
+    # first N cards would make a clipped board look like the whole picture, which is
+    # the one thing a board must never do. Ordering is the data layer's default (id),
+    # so the cap keeps a stable prefix rather than a set that reshuffles per render.
+    board_total = issues.count_issues(conn, **board_filters)
+    filtered = issues.list_issues(conn, **board_filters, limit=BOARD_CARD_CAP)
+    board_clipped = board_total > len(filtered)
     _attach_labels(conn, filtered)
     if user is not None:
         for issue in filtered:
@@ -144,9 +158,18 @@ def _render_board(
         grouped[lane][issue.get("status", "")].append(issue)
 
     cat_rank = {"todo": 0, "doing": 1, "done": 2}
+    # One category lookup per distinct status name; the ordering below and the
+    # column-head tone in the template both read from this map, so they can't
+    # disagree about what a column IS.
+    category_by_name: dict[str, str] = {}
+
+    def _category(name: str) -> str:
+        if name not in category_by_name:
+            category_by_name[name] = statuses.global_category(conn, name)
+        return category_by_name[name]
 
     def _sort_key(name: str) -> tuple[int, str]:
-        return (cat_rank.get(statuses.global_category(conn, name), 1), name)
+        return (cat_rank.get(_category(name), 1), name)
 
     status_names = sorted(
         {status_name for issue in filtered for status_name in issue["status_options"]}
@@ -169,6 +192,7 @@ def _render_board(
                     {
                         "name": name,
                         "label": name.replace("_", " ").title(),
+                        "category": _category(name),
                         "issues": lane_issues[name],
                     }
                     for name in status_names
@@ -204,7 +228,9 @@ def _render_board(
         name=template,
         context={
             "board_lanes": board_lanes,
-            "board_total": len(filtered),
+            "board_total": board_total,
+            "board_shown": len(filtered),
+            "board_clipped": board_clipped,
             "all_statuses": all_statuses,
             "search": search,
             "status_filter": status_filter,

@@ -198,9 +198,12 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                     str(listener.fileno()),
                     "--log-level",
                     "warning",
+                    "--no-proxy-headers",
+                    "--no-server-header",
                 ],
                 env={
                     **os.environ,
+                    "ATHENA_ALLOWED_AUTHORITIES": f"127.0.0.1:{athena_port}",
                     "ATHENA_DB": str(root / "athena.db"),
                     "ATHENA_ATTACH_DIR": str(root / "attachments"),
                     "ATHENA_AUTOMATION": "0",
@@ -448,6 +451,58 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
             assert learning is not None
             step("agent promoted a learning into the issue's runbook")
 
+            # --- the operator reads the plan ---------------------------------
+            # Q added a roadmap step to the loop: after work is placed, the
+            # operator should be able to SEE where it sits and how far along a
+            # parent is, without opening a tracker. Exercised over real HTTP
+            # because a view that only works in a unit test is not a view.
+            _, plan, _ = _request(
+                "GET",
+                f"{athena}/projects/{project['id']}/timeline",
+                headers=admin_h,
+            )
+            assert plan is not None
+            if issue["id"] not in [card["id"] for card in plan["cards"]]:
+                raise Failure(f"the delegated issue is missing from the plan: {plan}")
+            if plan["shown"] > plan["total"]:
+                raise Failure(f"timeline reported more drawn than exist: {plan}")
+            step(
+                "operator read the project timeline",
+                f"{plan['shown']} of {plan['total']} across {len(plan['lanes'])} lanes",
+            )
+
+            _, child, _ = _request(
+                "POST",
+                f"{athena}/issues",
+                headers=admin_h,
+                body={
+                    "title": "Sub-task of the field exercise",
+                    "project_id": project["id"],
+                },
+                expect=(201,),
+            )
+            assert child is not None
+            _request(
+                "PUT",
+                f"{athena}/issues/{child['id']}/parent",
+                headers=admin_h,
+                body={"parent_id": issue["id"]},
+            )
+            _, rolled, _ = _request(
+                "POST",
+                f"{athena}/embeds/resolve",
+                headers=admin_h,
+                body={"text": (f"```athena\nkind: rollup\nissue: {issue['id']}\n```")},
+            )
+            assert isinstance(rolled, list)
+            rollup = rolled[0]
+            if rollup.get("error") or rollup["rollup"]["total"] != 1:
+                raise Failure(f"rollup embed did not count the sub-issue: {rollup}")
+            step(
+                "rollup embed counted the sub-issue live",
+                f"{rollup['rollup']['percent_done']}% done",
+            )
+
             _, context, _ = _request(
                 "GET",
                 f"{athena}/issues/{issue['id']}/work-context",
@@ -463,6 +518,30 @@ def main() -> int:  # noqa: PLR0915 - a transcript reads top to bottom on purpos
                     f"backlinks: {backlinks}"
                 )
             step("the next agent's work-context packet serves the runbook")
+
+            # --- the operator can leave -------------------------------------
+            # R closed the loop's last step: everything above is worthless if it
+            # can only be read inside Athena. Exercised over real HTTP because a
+            # standalone file that only works in a unit test is not an exit.
+            export_request = Request(
+                f"{athena}/mentor/spaces/{space['id']}/export.html",
+                headers=admin_h,
+                method="GET",
+            )
+            with _OPENER.open(export_request, timeout=10) as response:  # noqa: S310
+                document = response.read().decode("utf-8")
+                export_headers = dict(response.headers)
+            if "data:image" in document and "/attachments/" in document:
+                raise Failure("exported file still points at live attachments")
+            for promised in ("<!doctype html>", "is a snapshot and is not live"):
+                if promised not in document:
+                    raise Failure(f"export is missing {promised!r}")
+            if "attachment;" not in export_headers.get("content-disposition", ""):
+                raise Failure(f"export is not a download: {export_headers}")
+            step(
+                "operator exported the space as one standalone file",
+                f"{len(document)} bytes",
+            )
 
             # --- the runbook shows the issue's LIVE state --------------------
             # The payoff of embeds: a runbook that does not just describe work but

@@ -15,19 +15,26 @@ from athena.aegis import (
     automation_commands,
     delegations,
     fleet_work,
+    issue_commands,
+    issues,
+    office,
     projects,
     sprints,
     statuses,
 )
 from athena.core import (
     activity,
+    activity_chain,
     agent_commands,
     agents,
+    answerability,
     approvals,
     budgets,
     identity,
     oidc,
     oidc_commands,
+    run_control_commands,
+    run_controls,
     run_replay,
     security_events,
     token_commands,
@@ -36,13 +43,16 @@ from athena.core import (
     users,
     webhook_commands,
     webhooks,
+    fleet_roster,
     worker_commands,
     workers,
 )
 from athena.core.deps import get_conn
 from athena.mcp.config import claude_mcp_config
+from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
+from athena.workflows import fleet_assign_commands
 
 router = APIRouter()
 
@@ -129,6 +139,96 @@ def _token_context(
 
 def _password_context(*, error: str | None = None, success: str | None = None) -> dict:
     return {"error": error, "success": success}
+
+
+# --- Presentation preferences ------------------------------------------------
+#
+# Two cookie writes, no database row: which theme this BROWSER renders and
+# whether its nav rail is collapsed are per-device presentation state, not
+# facts about the operator, so they deliberately live outside the data model
+# the way the session cookie does. base.html reads both and degrades to
+# prefers-color-scheme + an open rail when they are absent, which is also why
+# these are POSTs from plain forms — the buttons are progressive enhancement
+# over working defaults.
+
+
+def _safe_next(next_path: str) -> str:
+    """Only ever redirect back into this app using an absolute local path.
+
+    The value rides in a hidden form field, so a tampered form must not turn
+    a preference toggle into an open redirect. Anything that is not a plain
+    local path ("//host" is protocol-relative, "https://…" is absolute, and
+    backslashes are authority separators in WHATWG URL parsing) falls back to
+    the home page. Reject controls as well instead of relying on response-header
+    serialization to make an unsafe value inert.
+    """
+    has_control = any(ord(char) < 0x20 or ord(char) == 0x7F for char in next_path)
+    if (
+        next_path.startswith("/")
+        and not next_path.startswith("//")
+        and "\\" not in next_path
+        and not has_control
+    ):
+        return next_path
+    return "/"
+
+
+_THEMES = {"dark", "light", "system"}
+
+
+@router.post("/settings/theme", dependencies=[Depends(verify_csrf)])
+def set_theme(
+    request: Request,
+    theme: str = Form(...),
+    next: str = Form("/"),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("change the theme")
+    if theme not in _THEMES:
+        return HTMLResponse("unknown theme", status_code=400)
+    response = RedirectResponse(_safe_next(next), status_code=303)
+    if theme == "system":
+        # No cookie IS the system setting; deleting beats storing a synonym.
+        response.delete_cookie("athena_theme", path="/")
+    else:
+        response.set_cookie(
+            "athena_theme",
+            theme,
+            max_age=365 * 24 * 3600,
+            httponly=True,
+            samesite="lax",
+            secure=config.COOKIE_SECURE or request.url.scheme == "https",
+            path="/",
+        )
+    return response
+
+
+@router.post("/settings/rail", dependencies=[Depends(verify_csrf)])
+def set_rail(
+    request: Request,
+    state: str = Form(...),
+    next: str = Form("/"),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("collapse the rail")
+    if state not in ("collapsed", "open"):
+        return HTMLResponse("unknown rail state", status_code=400)
+    response = RedirectResponse(_safe_next(next), status_code=303)
+    if state == "open":
+        response.delete_cookie("athena_rail", path="/")
+    else:
+        response.set_cookie(
+            "athena_rail",
+            "collapsed",
+            max_age=365 * 24 * 3600,
+            httponly=True,
+            samesite="lax",
+            secure=config.COOKIE_SECURE or request.url.scheme == "https",
+            path="/",
+        )
+    return response
 
 
 @router.get("/settings/password", response_class=HTMLResponse)
@@ -437,6 +537,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     ]
     return {
         "agents": agent_rows,
+        # The ask-and-answer ledger, one row per agent (zero-filled). Facts per
+        # lane from core/answerability.py — deliberately never a score.
+        "answerability": answerability.build_answerability(conn)["agents"],
         "unanswered_kills": unanswered_kills,
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
@@ -495,6 +598,125 @@ def agents_admin(
     )
 
 
+def _fleet_page_context(
+    conn: sqlite3.Connection,
+    *,
+    notice: str | None = None,
+    error: str | None = None,
+) -> dict:
+    roster = fleet_roster.build_roster(conn)
+    open_issues = [
+        issue
+        for issue in issues.list_issues(conn, include_archived=False, limit=80)
+        if not statuses.is_done(conn, issue.get("project_id"), issue["status"])
+    ]
+    assignable = [
+        seat
+        for seat in roster["seats"]
+        if seat["athena"] is not None and seat["athena"].get("is_agent")
+    ]
+    return {
+        "roster": roster,
+        "open_issues": open_issues,
+        "assignable": assignable,
+        "radio_configured": config.buzz_radio_configured(),
+        "occupancy": office.build_occupancy(conn),
+        "notice": notice,
+        "error": error,
+    }
+
+
+@router.get("/admin/fleet", response_class=HTMLResponse)
+def fleet_roster_page(
+    request: Request,
+    assigned: str | None = Query(None),
+    seat: str | None = Query(None),
+    radio: str | None = Query(None),
+    error: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Who we declared, plus assign-to-desk + optional Buzz radio."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    notice = None
+    if assigned:
+        notice = f"Assigned {assigned} to {seat or 'seat'}."
+        if radio == "sent":
+            notice += " Radio posted to command-deck."
+        elif radio == "skipped":
+            notice += " Radio skipped (not configured)."
+        elif radio == "failed":
+            notice += " Radio failed; the desk assignment still landed."
+    return templates.TemplateResponse(
+        request=request,
+        name="admin/fleet.html",
+        context=_fleet_page_context(conn, notice=notice, error=error),
+    )
+
+
+@router.post(
+    "/admin/fleet/assign",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def fleet_assign_issue(
+    request: Request,
+    issue_id: int = Form(...),
+    seat_slug: str = Form(...),
+    note: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None
+    try:
+        result = fleet_assign_commands.assign_issue_to_seat(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            seat_slug=seat_slug,
+            note=note,
+        )
+    except fleet_assign_commands.AssignError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/fleet.html",
+            context=_fleet_page_context(conn, error=exc.detail),
+            status_code=400,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/fleet.html",
+            context=_fleet_page_context(conn, error=str(exc.detail)),
+            status_code=400,
+        )
+    radio = (result.get("radio") or {}).get("status") or "skipped"
+    return RedirectResponse(
+        f"/admin/fleet?assigned={result['issue_key']}&seat={result['seat']}&radio={radio}",
+        status_code=303,
+    )
+
+
+@router.get("/admin/fleet.json")
+def fleet_roster_json(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return JSONResponse({"detail": "sign in required"}, status_code=401)
+    if user.get("role") != "admin":
+        return JSONResponse({"detail": "admin only"}, status_code=403)
+    return fleet_roster.build_roster(conn)
+
+
 @router.post(
     "/admin/agents/onboard",
     response_class=HTMLResponse,
@@ -527,8 +749,8 @@ def onboard_agent(
         result = agent_commands.onboard_agent(
             conn,
             actor=user,
-            email=email,
             name=name,
+            email=email or None,
             scopes=_selected_scopes(
                 scope_read, scope_issue_write, scope_docs_write, scope_admin
             ),
@@ -814,7 +1036,15 @@ def agent_runs_admin(
         err.headers.update(_ACTIVE_WORK_PRIVATE_HEADERS)
         return err
     try:
-        query_pairs = list(request.query_params.multi_items())
+        # `panel` is this page's own refresh marker, not an active-work criterion.
+        # fleet_work.parse_query_pairs is strict by design — an unknown key is a 400
+        # rather than a silently widened request — so the marker is removed before
+        # the criteria are parsed. Everything else still faces the strict parse.
+        query_pairs = [
+            (key, value)
+            for key, value in request.query_params.multi_items()
+            if key != live.PANEL_PARAM
+        ]
         agent_values = [value for key, value in query_pairs if key == "agent_id"]
         # The no-JS "All agents" option submits one empty select value. Treat that
         # exact form shape as absence; repeated keys and empty REST criteria remain
@@ -838,6 +1068,19 @@ def agent_runs_admin(
     )
     context["attention_states"] = list(fleet_work.ATTENTION_STATES)
     context["automation_failures"] = automation.list_rules(conn, failing_only=True)
+    context["live"] = live.build(request, live.ACTIVE_WORK)
+    # The table refreshes itself, and its poll re-enters this route — past the same
+    # _admin_required above, through the same parse of the same query string. The
+    # filter an operator chose therefore survives a refresh instead of silently
+    # widening to the whole fleet, and there is no partial-only path that could
+    # forget a gate this one applies.
+    if live.wants_panel(request, live.ACTIVE_WORK):
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/partials/fleet_active_work.html",
+            context=context,
+            headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        )
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
@@ -874,7 +1117,6 @@ def create_user(
     name: str = Form(""),
     password: str = Form(""),
     role: str = Form(users.DEFAULT_ROLE),
-    is_agent: str | None = Form(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -902,7 +1144,14 @@ def create_user(
             name=name,
             password=password.strip() or None,
             role=role,
-            is_agent=is_agent is not None,
+            is_agent=False,
+        )
+    except user_commands.UserCommandError as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="admin/users.html",
+            context=_admin_context(conn, error=exc.detail),
+            status_code=_USER_COMMAND_WEB_STATUS[exc.kind],
         )
     except sqlite3.IntegrityError:
         return templates.TemplateResponse(
@@ -1083,7 +1332,81 @@ def security_signals(
             "counts": security_events.failure_counts(conn),
             "verbs": list(security_events.SECURITY_VERBS),
             "selected_verb": selected,
+            # Trail integrity (0072): where the hash chain stands, plus a cheap
+            # tail recheck for THIS render. The card says exactly what the tail
+            # check covers; the full walk belongs to athena-doctor / the API.
+            "chain": activity_chain.status(conn),
+            "chain_tail": activity_chain.verify_tail(conn),
         },
+        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+    )
+
+
+_CONTROL_STATE_FILTERS = (
+    run_controls.STATE_FILTER_OPEN,
+    *run_controls.CONTROL_STATES,
+    "all",
+)
+
+
+@router.get("/admin/run-controls", response_class=HTMLResponse)
+def run_controls_admin(
+    request: Request,
+    state: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Every recorded control request in one place — the page the
+    fleet-attention rollup's "Run controls awaiting an agent" count links to.
+
+    Until now controls lived only on each run's lineage page, so an operator
+    had to already know which runs they had steered. Admin-only, like the rest
+    of the fleet cockpit; the bound agent's own inbox stays the API/MCP list.
+    This page renders the same command read those serve — it owns no data."""
+    templates = get_templates()
+    user = getattr(request.state, "user", None)
+    err = _admin_required(user)
+    if err is not None:
+        return err
+    assert user is not None, "_admin_required accepted a missing user"
+    # A hand-edited filter falls back to the default rather than erroring —
+    # the security page's lenient stance for GET filters.
+    selected = state if state in _CONTROL_STATE_FILTERS else "open"
+    controls = run_control_commands.readable_controls(
+        conn,
+        actor=user,
+        state=None if selected == "all" else selected,
+        limit=run_controls.MAX_LIST_LIMIT,
+    )
+    # A heartbeat-only run is steerable (the check-in fallback admits it) but
+    # has NO lineage page: that page is built from activity events, and a run
+    # whose agent only checked in has none. Linking there anyway would hand the
+    # operator a 404 from their own cockpit, so each row learns whether its run
+    # has a page before the template decides to link it.
+    linkable = {
+        control["run_id"]
+        for control in controls
+        if activity.run_lineage(conn, control["run_id"], actor=user) is not None
+    }
+    context = {
+        "controls": controls,
+        "linkable_runs": linkable,
+        "states": list(_CONTROL_STATE_FILTERS),
+        "selected_state": selected,
+        "clipped": len(controls) == run_controls.MAX_LIST_LIMIT,
+        "limit": run_controls.MAX_LIST_LIMIT,
+        "live": live.build(request, live.RUN_CONTROLS),
+    }
+    # Refreshes itself through this same route, so the state filter survives and the
+    # admin gate cannot be bypassed by asking for the panel directly.
+    name = (
+        "admin/partials/run_controls_list.html"
+        if live.wants_panel(request, live.RUN_CONTROLS)
+        else "admin/run_controls.html"
+    )
+    return templates.TemplateResponse(
+        request=request,
+        name=name,
+        context=context,
         headers=_ACTIVE_WORK_PRIVATE_HEADERS,
     )
 
@@ -1243,17 +1566,29 @@ def _automation_context(conn: sqlite3.Connection, *, error: str | None = None) -
         "project_names": {p["id"]: p["name"] for p in project_rows},
         "sprint_names": {s["id"]: s["name"] for s in sprint_rows},
         "user_names": {u["id"]: u["name"] for u in user_rows},
+        # Shown as the buzz_message channel placeholder so the operator can see
+        # what "blank" means on this deployment.
+        "default_assign_channel": config.buzz_assign_channel(),
         "error": error,
     }
 
 
 def _action_params_from_form(
-    action_type: str, *, user_id: int | None, status: str, label: str, body: str
+    action_type: str,
+    *,
+    user_id: int | None,
+    status: str,
+    label: str,
+    body: str,
+    buzz_channel: str = "",
+    buzz_mention: str = "",
+    buzz_note: str = "",
 ) -> dict:
     """Fold the per-action form fields down to the one action_params dict the chosen
     action_type needs. Unrelated fields are ignored, so switching the action select
     doesn't smuggle a stale value into the rule. An empty field yields {}, which
-    validate_rule then rejects with the right 'requires …' message."""
+    validate_rule then rejects with the right 'requires …' message (buzz_message
+    accepts {} — every param is optional there)."""
     if action_type in ("assign", "add_contributor"):
         return {"user_id": user_id} if user_id is not None else {}
     if action_type == "set_status":
@@ -1262,6 +1597,15 @@ def _action_params_from_form(
         return {"label": label.strip()} if label.strip() else {}
     if action_type == "comment":
         return {"body": body.strip()} if body.strip() else {}
+    if action_type == "buzz_message":
+        params: dict = {}
+        if buzz_channel.strip():
+            params["channel"] = buzz_channel.strip()
+        if buzz_mention.strip():
+            params["mention"] = buzz_mention.strip()
+        if buzz_note.strip():
+            params["note"] = buzz_note.strip()
+        return params
     return {}
 
 
@@ -1297,6 +1641,9 @@ def create_rule(
     action_status: str = Form(""),
     action_label: str = Form(""),
     action_body: str = Form(""),
+    action_buzz_channel: str = Form(""),
+    action_buzz_mention: str = Form(""),
+    action_buzz_note: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     templates = get_templates()
@@ -1341,6 +1688,9 @@ def create_rule(
         status=action_status,
         label=action_label,
         body=action_body,
+        buzz_channel=action_buzz_channel,
+        buzz_mention=action_buzz_mention,
+        buzz_note=action_buzz_note,
     )
 
     def _reject(message: str):

@@ -38,8 +38,11 @@ def test_home_returns_200_and_contains_athena(tmp_path):
     assert "Athena" in response.text
     # Basic sanity that it's HTML and our layout is there
     assert "<!DOCTYPE html>" in response.text or "<html" in response.text.lower()
-    assert '<script src="/static/htmx.min.js"></script>' in response.text
-    assert '<script src="/static/confirm.js"></script>' in response.text
+    # Vendored locally, never from a CDN, and fingerprinted so the year-long
+    # cache the app asks for can still be busted by a release.
+    version = app.state.static_version
+    assert f'<script src="/static/htmx.min.js?v={version}"></script>' in response.text
+    assert f'<script src="/static/confirm.js?v={version}"></script>' in response.text
     assert "unpkg.com" not in response.text
 
 
@@ -337,7 +340,7 @@ def test_issues_list_htmx_fragment_vs_full_page(tmp_path):
         # Fragment: has table content but NOT page chrome (search input, header, nav etc.)
         assert "search-input" not in response.text
         assert "page-header" not in response.text.lower()
-        assert '<div id="issues-table">' in response.text
+        assert '<div id="issues-table"' in response.text
 
         # Non-HTMX: full page
         response = client.get("/aegis/issues?search=Searchable")

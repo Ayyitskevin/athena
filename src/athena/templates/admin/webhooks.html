@@ -13,7 +13,7 @@
 {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
 {% if created %}
-<div class="form-container">
+<div class="panel">
     <h3>Webhook registered</h3>
     <p class="note-small">Copy this signing secret now — it is shown once and never again. The receiver verifies the <code>X-Athena-Signature</code> HMAC with it.</p>
     <pre class="token-secret">{{ created.secret }}</pre>
@@ -38,7 +38,7 @@
             <td class="issue-title">{{ hook.url }}</td>
             <td class="muted">{{ hook.event_kind or "all" }}</td>
             <td>
-                {% if hook.active %}<span class="badge-active">active</span>{% else %}<span class="muted">paused</span>{% endif %}
+                {% if hook.active %}<span class="chip" data-tone="success">active</span>{% else %}<span class="muted">paused</span>{% endif %}
                 <form method="post" action="/admin/webhooks/{{ hook.id }}/active" class="inline-form">
                     {% include "partials/csrf.html" %}
                     <input type="hidden" name="active" value="{{ 0 if hook.active else 1 }}">
@@ -69,7 +69,7 @@
 <p class="empty-state">No webhooks yet.</p>
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
     <h3>Register webhook</h3>
     <p class="note-small">Athena POSTs each new event to this URL, HMAC-signed. Delivery starts from now (not the backlog). Private/loopback URLs are refused.</p>
     <form method="post" action="/admin/webhooks" class="issue-form">

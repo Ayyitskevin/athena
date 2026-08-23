@@ -10,6 +10,7 @@
     </div>
     <div class="page-header-actions">
         <a href="/admin/users" class="button secondary">Manage users</a>
+        <a href="/admin/fleet" class="button secondary">Fleet roster</a>
         <a href="/admin/agents/runs" class="button secondary">Mission control</a>
         <a href="/aegis/activity?actor_type=agent" class="button secondary">Agent activity</a>
     </div>
@@ -19,171 +20,236 @@
 {% if notice %}<div class="success">{{ notice }}</div>{% endif %}
 
 {% if unanswered_kills %}
-<section class="dashboard-card" aria-labelledby="unanswered-kills-heading">
-    <h2 id="unanswered-kills-heading">
-        Told to stop <span class="badge">{{ unanswered_kills|length }}</span>
-    </h2>
-    <p class="subtitle">
-        Workers you asked to stop that have not confirmed. Athena cannot signal a
-        process — it records the request, and the worker learns of it on its next
-        heartbeat. A worker that goes quiet is <em>stale</em>, not stopped; one
-        still reporting after acknowledging is not honoring the request.
-    </p>
-    <table class="issues-table">
-        <thead>
-            <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>
-        </thead>
-        <tbody>
-        {% for worker in unanswered_kills %}
-            <tr>
-                <td>
-                    <strong>{{ worker.node_label or worker.worker_key }}</strong>
-                    <div class="muted">last reported {{ worker.age_seconds }}s ago</div>
-                </td>
-                <td>{{ worker.agent_name }}</td>
-                <td>{{ worker.kill_requested_at }} UTC</td>
-                <td>
-                    {% if worker.kill_state == "acknowledged_but_reporting" %}
-                    <span class="badge">acknowledged, still reporting</span>
-                    {% else %}
-                    <span class="badge">awaiting acknowledgement</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if worker.kill_state == "requested" %}
-                    <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form">
-                        {% include "partials/csrf.html" %}
-                        <input type="hidden" name="cancel" value="1">
-                        <button type="submit" class="button secondary small">Withdraw</button>
-                    </form>
-                    {% else %}
-                    <span class="muted">already acknowledged</span>
-                    {% endif %}
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+<section class="panel" aria-labelledby="unanswered-kills-heading">
+    <div class="panel-head">
+        <h2 id="unanswered-kills-heading">
+            Told to stop <span class="chip" data-tone="danger">{{ unanswered_kills|length }}</span>
+        </h2>
+    </div>
+    <div class="panel-body">
+        <p class="subtitle">
+            Workers you asked to stop that have not confirmed. Athena cannot signal a
+            process — it records the request, and the worker learns of it on its next
+            heartbeat. A worker that goes quiet is <em>stale</em>, not stopped; one
+            still reporting after acknowledging is not honoring the request.
+        </p>
+        <table class="issues-table">
+            <thead>
+                <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for worker in unanswered_kills %}
+                <tr>
+                    <td>
+                        <strong>{{ worker.node_label or worker.worker_key }}</strong>
+                        <div class="muted">last reported {{ worker.age_seconds }}s ago</div>
+                    </td>
+                    <td>{{ worker.agent_name }}</td>
+                    <td>{{ worker.kill_requested_at }} UTC</td>
+                    <td>
+                        {% if worker.kill_state == "acknowledged_but_reporting" %}
+                        <span class="chip" data-tone="danger">acknowledged, still reporting</span>
+                        {% else %}
+                        <span class="chip" data-tone="warning">awaiting acknowledgement</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if worker.kill_state == "requested" %}
+                        <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form">
+                            {% include "partials/csrf.html" %}
+                            <input type="hidden" name="cancel" value="1">
+                            <button type="submit" class="button secondary small">Withdraw</button>
+                        </form>
+                        {% else %}
+                        <span class="muted">already acknowledged</span>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
 {% endif %}
 
 {% if pending_approvals %}
-<section class="dashboard-card" aria-labelledby="pending-approvals-heading">
-    <h2 id="pending-approvals-heading">
-        Waiting on you <span class="badge">{{ pending_approvals|length }}</span>
-    </h2>
-    <p class="subtitle">
-        Actions an agent asked to take and cannot take without your decision.
-        Approving opens the gate for exactly one retry by that agent against that
-        target — it does not perform the action, and the retry re-checks
-        everything. Rejecting tells the agent to stop rather than wait.
-    </p>
-    <table class="issues-table">
-        <thead>
-            <tr><th>Requested</th><th>Action</th><th>Target</th><th>Run</th><th>Decision</th></tr>
-        </thead>
-        <tbody>
-        {% for approval in pending_approvals %}
-            <tr>
-                <td>
-                    <strong>{{ approval.requested_by_name }}</strong>
-                    <div class="muted">{{ approval.created_at }} UTC</div>
-                </td>
-                <td><code>{{ approval.action_kind }}</code></td>
-                <td>
-                    {% if approval.target_kind == "issue" %}
-                    <a href="/aegis/issues/{{ approval.target_id }}">issue #{{ approval.target_id }}</a>
-                    {% else %}
-                    {{ approval.target_kind }} #{{ approval.target_id }}
-                    {% endif %}
-                </td>
-                <td>
-                    {% if approval.run_id %}<code class="checkin-run-id">{{ approval.run_id }}</code>
-                    {% else %}<span class="muted">untagged</span>{% endif %}
-                </td>
-                <td>
-                    <form method="post" action="/admin/approvals/{{ approval.id }}/decision" class="agent-budget-form">
-                        {% include "partials/csrf.html" %}
-                        <label class="visually-hidden" for="approval-note-{{ approval.id }}">Note</label>
-                        <input id="approval-note-{{ approval.id }}" type="text" name="note" placeholder="note (optional)">
-                        <button type="submit" name="decision" value="approve" class="button">Approve</button>
-                        <button type="submit" name="decision" value="reject" class="button danger">Reject</button>
-                    </form>
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+<section class="panel" aria-labelledby="pending-approvals-heading">
+    <div class="panel-head">
+        <h2 id="pending-approvals-heading">
+            Waiting on you <span class="chip" data-tone="danger">{{ pending_approvals|length }}</span>
+        </h2>
+    </div>
+    <div class="panel-body">
+        <p class="subtitle">
+            Actions an agent asked to take and cannot take without your decision.
+            Approving opens the gate for exactly one retry by that agent against that
+            target — it does not perform the action, and the retry re-checks
+            everything. Rejecting tells the agent to stop rather than wait.
+        </p>
+        <table class="issues-table">
+            <thead>
+                <tr><th>Requested</th><th>Action</th><th>Target</th><th>Run</th><th>Decision</th></tr>
+            </thead>
+            <tbody>
+            {% for approval in pending_approvals %}
+                <tr>
+                    <td>
+                        <strong>{{ approval.requested_by_name }}</strong>
+                        <div class="muted">{{ approval.created_at }} UTC</div>
+                    </td>
+                    <td><code>{{ approval.action_kind }}</code></td>
+                    <td>
+                        {% if approval.target_kind == "issue" %}
+                        <a href="/aegis/issues/{{ approval.target_id }}">issue #{{ approval.target_id }}</a>
+                        {% else %}
+                        {{ approval.target_kind }} #{{ approval.target_id }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if approval.run_id %}<code class="checkin-run-id">{{ approval.run_id }}</code>
+                        {% else %}<span class="muted">untagged</span>{% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="/admin/approvals/{{ approval.id }}/decision" class="agent-budget-form">
+                            {% include "partials/csrf.html" %}
+                            <label class="visually-hidden" for="approval-note-{{ approval.id }}">Note</label>
+                            <input id="approval-note-{{ approval.id }}" type="text" name="note" placeholder="note (optional)">
+                            <button type="submit" name="decision" value="approve" class="button">Approve</button>
+                            <button type="submit" name="decision" value="reject" class="button danger">Reject</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+{% if answerability %}
+<section class="panel" aria-labelledby="answerability-heading">
+    <div class="panel-head"><h2 id="answerability-heading">Answerability</h2></div>
+    <div class="panel-body">
+        <p class="muted">
+            What was asked of each agent, and what was answered — facts per lane,
+            never a score. "Expired" means the clock ran out on an unanswered ask;
+            "reversed" counts events an undo compensated. Athena records asks and
+            answers; only you can judge why a number is what it is.
+        </p>
+        <table class="issues-table">
+            <thead>
+                <tr>
+                    <th>Agent</th>
+                    <th><a href="/admin/run-controls">Run controls</a></th>
+                    <th>Worker kills</th>
+                    <th>Approvals</th>
+                    <th>Reversed</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in answerability %}
+                <tr>
+                    <td>
+                        <strong>{{ row.agent_name }}</strong>
+                        {% if row.paused %}<span class="chip" data-tone="warning">paused</span>{% endif %}
+                    </td>
+                    <td>
+                        {{ row.run_controls.open }} open ·
+                        {{ row.run_controls.expired_unanswered }} expired unanswered ·
+                        {{ row.run_controls.completed }} completed ·
+                        {{ row.run_controls.declined }} declined
+                    </td>
+                    <td>
+                        {{ row.worker_kills.told_to_stop }} told to stop ·
+                        {{ row.worker_kills.confirmed }} confirmed
+                    </td>
+                    <td>
+                        {{ row.approvals.pending }} pending ·
+                        {{ row.approvals.approved }} approved ·
+                        {{ row.approvals.rejected }} rejected
+                    </td>
+                    <td>{{ row.reversed_events }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </section>
 {% endif %}
 
 {% if onboarded %}
-<div class="form-container">
+<div class="panel">
     <h3>Agent onboarded: {{ onboarded.user.name }}</h3>
     <p class="note-small">
-        The token below is shown once and never again. Paste the MCP config into
-        the agent's client (Claude Desktop, Claude Code, or any MCP runner) to
-        connect it with exactly the scopes you granted.
+        Handle: <code>{{ onboarded.user.email }}</code>. The token below is shown
+        once and never again. Paste the MCP config into the agent's client
+        (Grok, Claude Code, Codex, or any MCP runner) to connect it with exactly
+        the scopes you granted. Agents do not use a password.
     </p>
     <pre class="token-secret">{{ onboarded.token.token }}</pre>
     <pre class="token-secret">{{ onboarded.config_json }}</pre>
 </div>
 {% endif %}
 
-<details class="form-container">
-    <summary>Onboard an agent</summary>
+<section class="panel" aria-labelledby="onboard-heading">
+    <div class="panel-head"><h2 id="onboard-heading">Onboard an agent</h2></div>
+    <div class="panel-body">
+    <p class="subtitle">
+        An agent is a teammate with a scoped token, not a person with a login.
+        Name it, say what it may do, and Athena mints the credential. No
+        password and no role — it always acts as a member through the token.
+    </p>
     <form method="post" action="/admin/agents/onboard" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
-            <label for="onboard-name">Name</label>
-            <input id="onboard-name" type="text" name="name" required placeholder="e.g. Sol">
+            <label for="onboard-name">Agent name</label>
+            <input id="onboard-name" type="text" name="name" required placeholder="e.g. Grok" autocomplete="off">
+            <p class="field-help">Shown on the trail and on the desk. Handle becomes <code>name@agents.local</code>.</p>
         </div>
         <div class="form-group">
-            <label for="onboard-email">Email</label>
-            <input id="onboard-email" type="email" name="email" required placeholder="sol@agents.local">
+            <label>What it may do</label>
+            <label><input type="checkbox" name="scope_read" value="1" checked> Read the workspace</label>
+            <label><input type="checkbox" name="scope_issue_write" value="1" checked> Write issues (Aegis)</label>
+            <label><input type="checkbox" name="scope_docs_write" value="1"> Write docs (Mentor)</label>
+            <label><input type="checkbox" name="scope_admin" value="1"> Admin (onboard others, budgets, approvals)</label>
+            <p class="field-help">Least privilege. Most agents need read + issue writes. Admin is almost never right.</p>
         </div>
         <div class="form-group">
-            <label for="onboard-token-name">Token name</label>
-            <input id="onboard-token-name" type="text" name="token_name" placeholder="defaults to the agent's name">
-        </div>
-        <div class="form-group">
-            <label>Token scopes (least privilege — grant only what the agent needs)</label>
-            <label><input type="checkbox" name="scope_read" value="1" checked> Read</label>
-            <label><input type="checkbox" name="scope_issue_write" value="1"> Aegis writes</label>
-            <label><input type="checkbox" name="scope_docs_write" value="1"> Mentor writes</label>
-            <label><input type="checkbox" name="scope_admin" value="1"> Admin</label>
+            <label for="onboard-token-name">Token label <span class="muted">(optional)</span></label>
+            <input id="onboard-token-name" type="text" name="token_name" placeholder="defaults to the agent name" autocomplete="off">
         </div>
         <div class="form-actions">
-            <button type="submit" class="button">Create agent + token</button>
+            <button type="submit" class="button">Onboard agent</button>
         </div>
     </form>
-</details>
+    </div>
+</section>
 
 {% if agents %}
 <div class="agent-admin-list">
     {% for agent in agents %}
-    <section class="agent-admin-card">
-        <header class="agent-admin-card-header">
-            <div>
-                <h2>{{ agent.user.name }} <span class="agent-badge">agent</span>{% if agent.user.paused_at %} <span class="agent-badge">paused</span>{% endif %}</h2>
-                <p class="muted">
-                    {{ agent.user.email }} &middot; {{ agent.user.role }} &middot; created {{ agent.user.created_at }}
-                    {% if agent.last_activity_at %} &middot; last active {{ agent.last_activity_at }}{% endif %}
-                </p>
-            </div>
+    <section class="panel">
+        <div class="panel-head">
+            <h2>{{ agent.user.name }} <span class="chip" data-tone="agent">agent</span>{% if agent.user.paused_at %} <span class="chip" data-tone="warning">paused</span>{% endif %}</h2>
+        </div>
+        <div class="panel-body">
+            <p class="muted">
+                {{ agent.user.email }} &middot; {{ agent.user.role }} &middot; created {{ agent.user.created_at }}
+                {% if agent.last_activity_at %} &middot; last active {{ agent.last_activity_at }}{% endif %}
+            </p>
             <div class="agent-admin-counts">
-                <span class="pill">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
-                <span class="pill">{{ agent.revoked_token_count }} revoked</span>
+                <span class="chip" data-tone="neutral">{{ agent.live_token_count }} live token{{ "s" if agent.live_token_count != 1 }}</span>
+                <span class="chip" data-tone="neutral">{{ agent.revoked_token_count }} revoked</span>
                 {% if agent.budget %}
-                <span class="pill">
+                <span class="chip" data-tone="neutral">
                     {{ agent.budget.action_used }}/{{ agent.budget.action_limit }} actions this {{ agent.budget.window }}
                 </span>
-                {% if agent.budget.remaining == 0 %}<span class="badge">budget spent</span>{% endif %}
+                {% if agent.budget.remaining == 0 %}<span class="chip" data-tone="danger">budget spent</span>{% endif %}
                 {% else %}
-                <span class="pill">unbudgeted</span>
+                <span class="chip" data-tone="neutral">unbudgeted</span>
                 {% endif %}
                 {% for kind in agent.gated_actions %}
-                <span class="pill">{{ kind }} needs approval</span>
+                <span class="chip" data-tone="info">{{ kind }} needs approval</span>
                 {% endfor %}
             </div>
             {% if agent.workers %}
@@ -197,19 +263,19 @@
                     {% for worker in agent.workers %}
                     <li class="activity-item">
                         <strong>{{ worker.node_label or worker.worker_key }}</strong>
-                        <span class="pill">{{ worker.reporting_state.replace("_", " ") }}</span>
+                        <span class="chip" data-tone="{{ worker.reporting_state | checkin_tone }}">{{ worker.reporting_state.replace("_", " ") }}</span>
                         <span class="muted">{{ worker.age_seconds }}s ago</span>
                         {% for capability in worker.capabilities %}
-                        <span class="pill">{{ capability }}</span>
+                        <span class="chip" data-tone="neutral">{{ capability }}</span>
                         {% endfor %}
                         {% if worker.kill_state == "stopped" %}
-                        <span class="badge">reported stopped</span>
+                        <span class="chip" data-tone="success">reported stopped</span>
                         {% elif worker.kill_state == "acknowledged_but_reporting" %}
-                        <span class="badge">told to stop, still reporting</span>
+                        <span class="chip" data-tone="danger">told to stop, still reporting</span>
                         {% elif worker.kill_state == "acknowledged" %}
-                        <span class="badge">acknowledged the stop request</span>
+                        <span class="chip" data-tone="info">acknowledged the stop request</span>
                         {% elif worker.kill_state == "requested" %}
-                        <span class="badge">asked to stop</span>
+                        <span class="chip" data-tone="warning">asked to stop</span>
                         {% endif %}
                         {% if worker.kill_state == "none" %}
                         <form method="post" action="/admin/workers/{{ worker.id }}/kill" class="inline-form"
@@ -284,15 +350,13 @@
                     <button type="submit" class="button danger">Offboard</button>
                 </form>
             </div>
-        </header>
-
         <div class="agent-admin-grid">
             <div class="agent-admin-section">
                 <h3>Tokens</h3>
                 {% if agent.token_warnings %}
                 <div class="agent-token-posture" aria-label="Token posture warnings">
                     {% for warning in agent.token_warnings %}
-                    <span class="agent-token-warning {{ warning.severity }}" title="{{ warning.detail }}">{{ warning.label }}</span>
+                    <span class="chip chip--sm" data-tone="{{ warning.severity | token_tone }}" title="{{ warning.detail }}">{{ warning.label }}</span>
                     {% endfor %}
                 </div>
                 {% endif %}
@@ -355,29 +419,29 @@
                     <li>
                         <a href="/aegis/issues/{{ issue.id }}">{{ issue.key or "#" ~ issue.id }}</a>
                         {{ issue.title }}
-                        <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
-                        <span class="status {{ issue.status }}">{{ issue.status }}</span>
+                        <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span>
+                        <span class="chip" data-tone="{{ issue.status | status_tone }}">{{ issue.status }}</span>
                         <div class="muted">
                             Accountable: {{ issue.assignee_name or "not assigned" }}
                             &middot; delegated by {{ item.delegated_by.name }}
                             <time datetime="{{ item.delegated_at }}">{{ item.delegated_at }}</time>
                         </div>
                         {% if not item.visible_to_subject %}
-                        <span class="agent-token-warning danger">Agent cannot access this issue's project</span>
+                        <span class="chip chip--sm" data-tone="danger">Agent cannot access this issue's project</span>
                         {% endif %}
                         {% if "empty_description" in item.warnings %}
-                        <span class="agent-token-warning warning">No description</span>
+                        <span class="chip chip--sm" data-tone="warning">No description</span>
                         {% endif %}
                         {% if "no_accountable_assignee" in item.warnings %}
-                        <span class="agent-token-warning warning">No accountable assignee</span>
+                        <span class="chip chip--sm" data-tone="warning">No accountable assignee</span>
                         {% endif %}
                         {% if "visible_open_blockers" in item.warnings %}
-                        <span class="agent-token-warning warning">
+                        <span class="chip chip--sm" data-tone="warning">
                             {{ item.visible_open_blocker_count }} agent-visible open blocker{{ "s" if item.visible_open_blocker_count != 1 }}
                         </span>
                         {% endif %}
                         {% if item.open_claim_handoff %}
-                        <span class="agent-token-warning danger">Handoff awaiting acknowledgment</span>
+                        <span class="chip chip--sm" data-tone="danger">Handoff awaiting acknowledgment</span>
                         <div class="muted">
                             Blocked question: {{ item.open_claim_handoff.blocking_question }}
                         </div>
@@ -408,13 +472,14 @@
             {% include "aegis/partials/activity_list.html" %}
             {% endwith %}
         </div>
+        </div>
     </section>
     {% endfor %}
 </div>
 {% else %}
 <p class="empty-state">
-    No agent accounts yet. Mark a user as an agent from <a href="/admin/users">Admin users</a>
-    when you issue tokens for automation.
+    No agent accounts yet. Use <strong>Onboard an agent</strong> above — do not
+    create a human user and tick a box.
 </p>
 {% endif %}
 {% endblock %}

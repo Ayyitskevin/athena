@@ -39,6 +39,59 @@ _EXT_RE = re.compile(r"\.([A-Za-z0-9]{1,12})$")
 _STORED_NAME_RE = re.compile(r"^[0-9a-f]{32}(?:\.[a-z0-9]{1,12})?$")
 _HASH_CHUNK_BYTES = 1024 * 1024
 
+#: Image types Athena will serve INLINE, keyed by their magic bytes. Closed on
+#: purpose, and deliberately WITHOUT image/svg+xml: an SVG is a document that can
+#: carry script, so serving one inline would turn an upload into stored XSS. Every
+#: type here is a raster format a browser decodes as pixels and nothing else.
+_IMAGE_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+INLINE_CONTENT_TYPES = frozenset(content_type for _, content_type in _IMAGE_MAGIC) | {
+    "image/webp"
+}
+
+
+def stored_content_type(declared: str | None, data: bytes) -> str:
+    """The content type Athena will record for these bytes.
+
+    Three rules, in order. Bytes that ARE a known raster image are recorded as
+    that image, so a mislabelled or unlabelled upload still displays. Bytes that
+    merely CLAIM to be one are recorded as an opaque download instead — a claim
+    must never be able to buy inline rendering, which is exactly how an uploaded
+    document becomes stored XSS. Everything else keeps the uploader's label,
+    which is display metadata and nothing more.
+    """
+    sniffed = sniff_image_type(data)
+    if sniffed is not None:
+        return sniffed
+    claimed = (declared or "").split(";")[0].strip().lower()
+    if claimed in INLINE_CONTENT_TYPES:
+        return "application/octet-stream"
+    return declared or "application/octet-stream"
+
+
+def sniff_image_type(data: bytes) -> str | None:
+    """The image type these BYTES actually are, or None for anything else.
+
+    The uploader's declared content type is a claim by whoever posted the file:
+    it can be absent, wrong, or a lie, and Athena stores it verbatim for display.
+    Anything that decides how a file is SERVED must come from the bytes instead —
+    otherwise a caller could label a document `image/png` and have it rendered
+    inline, which is the shape of a stored-XSS bug.
+
+    RIFF/WEBP needs both halves of its header checked: the container alone is
+    also used by audio and video.
+    """
+    for magic, content_type in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return content_type
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 
 @dataclass(frozen=True, slots=True)
 class AttachmentBlobReference:
@@ -311,7 +364,7 @@ def insert_and_publish(
                 target_kind,
                 target_id,
                 display,
-                (content_type or "application/octet-stream"),
+                stored_content_type(content_type, data),
                 len(data),
                 hashlib.sha256(data).hexdigest(),
                 stored,

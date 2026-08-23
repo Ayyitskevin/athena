@@ -116,6 +116,32 @@ def _refuse_paused(
     raise HTTPException(status_code=403, detail="account is paused")
 
 
+def _anonymous_reads_allowed() -> bool:
+    """Whether a credential-less caller may read anything at all.
+
+    Read at call time, not import time, so a test (or a reload) sees the live flag.
+    """
+    return config.ANONYMOUS_READS
+
+
+def bootstrap_optional_actor(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_athena_actor: str | None = Header(default=None, alias=ACTOR_HEADER),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | None:
+    """`optional_actor` WITHOUT the anonymous-reads gate, for the one route that
+    cannot have it: creating the first user.
+
+    A fresh database has no actor to authenticate as, so gating this would make an
+    instance with `ATHENA_ANONYMOUS_READS=0` impossible to bootstrap — the flag would
+    lock the operator out of their own empty box. The route is not a read and is not
+    ungoverned: it demands the one-time bootstrap credential, and refuses outright
+    once any user exists.
+    """
+    return _resolve_optional_actor(request, authorization, x_athena_actor, conn)
+
+
 def optional_actor(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -124,16 +150,36 @@ def optional_actor(
 ) -> dict | None:
     """Resolve the acting user the same way as `current_actor`, but return None
     instead of raising when authentication is absent or invalid. The caller
-    decides whether a missing actor is acceptable (used by the first-user
-    bootstrap path)."""
+    decides whether a missing actor is acceptable.
+
+    Unless `ATHENA_ANONYMOUS_READS=0`, in which case there is nothing to decide: an
+    unauthenticated caller is refused here with the same opaque 401 `current_actor`
+    raises. This one dependency is the whole REST half of the fail-closed switch —
+    every optional-identity read in aegis, mentor, sprints, embeds, work-context,
+    fleet-metrics and attachments resolves its caller through it, so closing it
+    closes all of them at once, and a route added tomorrow inherits the gate by
+    using the same dependency rather than by remembering a rule.
+    """
+    actor = _resolve_optional_actor(request, authorization, x_athena_actor, conn)
+    if actor is None and not _anonymous_reads_allowed():
+        raise HTTPException(status_code=401, detail="authentication required")
+    return actor
+
+
+def _resolve_optional_actor(
+    request: Request,
+    authorization: str | None,
+    x_athena_actor: str | None,
+    conn: sqlite3.Connection,
+) -> dict | None:
     try:
         return current_actor(request, authorization, x_athena_actor, conn)
     except HTTPException as exc:
         if exc.status_code != 401:
             raise
-        # No valid credential: this is an anonymous request. Throttle it by client IP so
-        # a credential-free caller can't hammer these public reads — the per-token limiter
-        # only guards authenticated paths, leaving anonymous reads otherwise unbounded.
+        # No valid credential: this is an anonymous request. Throttle this
+        # optional-identity REST dependency by client IP. This is deliberately
+        # narrower than a global browser-request ceiling.
         # An INVALID BEARER was already charged inside current_actor (it bounds the
         # revoked-token recording there), so charging again here would count one
         # request twice; only charge the truly credential-less case.
@@ -201,9 +247,9 @@ def enforce_anon_rate_limit(request: Request) -> None:
     """Charge the anonymous per-IP limiter, raising 429 when the caller is over
     budget. No-op when no limiter is configured (the limit defaults off).
 
-    Used for credential-free reads (optional_actor) and invalid-bearer floods
-    (current_actor). Signed machine-inbound routes are charged earlier by the
-    outer ASGI perimeter, before body or session work."""
+    Used for optional-identity REST reads (optional_actor) and invalid-bearer
+    floods (current_actor). Signed machine-inbound routes are charged earlier by
+    the outer ASGI perimeter, before body or session work."""
     limiter: rate_limits.FixedWindowRateLimiter | None = getattr(
         request.app.state, "anon_rate_limiter", None
     )

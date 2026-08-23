@@ -10,11 +10,12 @@
     </div>
 </div>
 
-<div class="form-container">
-    <h3>Visibility</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Visibility</h3></div>
+    <div class="panel-body">
     {% if space.visibility == "private" %}
     <p class="note-small">
-        <span class="badge badge-private">🔒 Private</span>
+        <span class="chip" data-tone="neutral">🔒 Private</span>
         Only its members, you, and admins can see this space and its pages.
     </p>
     <form method="post" action="/mentor/spaces/{{ space.id }}/visibility">
@@ -24,7 +25,7 @@
     </form>
     {% else %}
     <p class="note-small">
-        <span class="badge badge-public">Public</span>
+        <span class="chip" data-tone="info">Public</span>
         Anyone, signed in or not, can read this space and its pages.
     </p>
     <form method="post" action="/mentor/spaces/{{ space.id }}/visibility"
@@ -34,10 +35,12 @@
         <button type="submit" class="button">Make private</button>
     </form>
     {% endif %}
-</div>
+    </div>
+</section>
 
-<div class="form-container">
-    <h3>Members</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Members</h3></div>
+    <div class="panel-body">
     {% if space.visibility == "public" %}
     <p class="note-small">Membership takes effect once the space is private. You can add
         members now so they're ready when you flip it.</p>
@@ -52,7 +55,7 @@
         <li>
             <span class="member-name">{{ m.name }}{% if m.is_agent %} <span class="muted">(agent)</span>{% endif %}</span>
             <form method="post" action="/mentor/spaces/{{ space.id }}/members/{{ m.user_id }}/delete"
-                  data-confirm="Remove {{ m.name }} from {{ space.name }}?" style="display:inline">
+                  data-confirm="Remove {{ m.name }} from {{ space.name }}?" class="inline">
                 {% include "partials/csrf.html" %}
                 <button type="submit" class="button danger small">Remove</button>
             </form>
@@ -77,5 +80,6 @@
     {% else %}
     <p class="note-small">Everyone is already a member.</p>
     {% endif %}
-</div>
+    </div>
+</section>
 {% endblock %}

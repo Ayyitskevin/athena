@@ -96,6 +96,74 @@ def test_rate_limit_window_resets_and_prunes_stale_state():
     assert 1 in limiter._windows
 
 
+def _count_sweeps(limiter: rate_limits.FixedWindowRateLimiter) -> list[float]:
+    """Record each real sweep, returning the list that accumulates them."""
+    sweeps: list[float] = []
+    real_prune = limiter._prune
+
+    def counting_prune(now: float) -> None:
+        sweeps.append(now)
+        real_prune(now)
+
+    limiter._prune = counting_prune  # type: ignore[method-assign]
+    return sweeps
+
+
+def test_prune_is_amortized_not_per_call():
+    # WHY: the sweep is O(keys). Running it on every check() made per-request cost
+    # scale with the number of distinct callers seen — worst precisely under the
+    # flood the limiter exists to absorb, so the throttle was quietly an
+    # amplifier. This pins that a burst inside one window sweeps ONCE, not once
+    # per call. Without the throttle this test sees 500 sweeps.
+    now = {"t": 1000.0}
+    limiter = rate_limits.TokenRateLimiter(10_000, clock=lambda: now["t"])
+    sweeps = _count_sweeps(limiter)
+
+    for key in range(500):
+        limiter.check(key)
+
+    assert len(sweeps) == 1, f"expected one sweep inside a window, got {len(sweeps)}"
+
+    # A new window earns exactly one more sweep, not one per call.
+    now["t"] += rate_limits.WINDOW_SECONDS + 1
+    for key in range(500):
+        limiter.check(key)
+    assert len(sweeps) == 2, f"expected one sweep per window, got {len(sweeps)}"
+
+
+def test_prune_size_escape_hatch_fires_inside_a_window():
+    # WHY: throttling to one sweep per window is only safe if a pathological burst
+    # of distinct keys cannot sit unswept until the interval elapses. The size
+    # escape hatch is what keeps "amortized" from becoming "unbounded"; if someone
+    # removes it, this fails.
+    now = {"t": 1000.0}
+    limiter = rate_limits.TokenRateLimiter(10_000, clock=lambda: now["t"])
+    sweeps = _count_sweeps(limiter)
+
+    # Stay inside one window, but push past the escape threshold.
+    for key in range(rate_limits._PRUNE_SIZE_ESCAPE + 5):
+        limiter.check(key)
+
+    assert len(sweeps) > 1, "size escape hatch never fired inside the window"
+
+
+def test_bounded_growth_survives_the_throttle():
+    # WHY: the whole point of pruning is that the map cannot accumulate a
+    # permanent entry per caller ever seen. The throttle delays a sweep; it must
+    # not cancel one. Abandoned keys still have to disappear.
+    now = {"t": 1000.0}
+    limiter = rate_limits.TokenRateLimiter(5, clock=lambda: now["t"])
+    for key in range(50):
+        limiter.check(key)
+    assert len(limiter._windows) == 50
+
+    # Well past the retention horizon, one more call sweeps every abandoned key.
+    now["t"] += rate_limits.WINDOW_SECONDS * 3
+    limiter.check("survivor")
+    assert len(limiter._windows) == 1
+    assert "survivor" in limiter._windows
+
+
 def test_actor_header_bootstrap_path_is_not_token_limited(tmp_path):
     app = create_app(tmp_path / "header.db", token_rate_limit_per_minute=1)
     with TestClient(app) as client:

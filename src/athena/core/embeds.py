@@ -36,7 +36,16 @@ import re
 
 #: What an embed can show. Closed on purpose: an unknown kind renders a visible
 #: refusal naming it, never an empty space that reads as "no results".
-KINDS = ("issues", "count", "issue")
+KINDS = ("issues", "count", "issue", "rollup")
+
+#: The kinds that name ONE issue with `issue:` instead of querying with `q:`.
+#: Kept as a set so the parser and its refusal messages stay in step: when a new
+#: issue-targeting kind arrives, the "'issue:' only applies to ..." message must
+#: name it too, or the error text becomes a lie.
+_ISSUE_TARGETED = frozenset({"issue", "rollup"})
+_ISSUE_TARGETED_LABEL = " or ".join(
+    f"'kind: {kind}'" for kind in sorted(_ISSUE_TARGETED)
+)
 
 #: Keys a directive may set. Unknown keys are refused rather than ignored — a
 #: silently dropped `limt: 5` would render a differently-sized embed than the
@@ -117,12 +126,12 @@ def parse_directive(body: str) -> Directive:
 
     title = fields.get("title", "")[:MAX_TITLE_CHARS]
 
-    if kind == "issue":
+    if kind in _ISSUE_TARGETED:
         issue_ref = fields.get("issue", "")
         if not issue_ref:
-            raise DirectiveError("'kind: issue' needs an 'issue:' id or key")
+            raise DirectiveError(f"'kind: {kind}' needs an 'issue:' id or key")
         if fields.get("q"):
-            raise DirectiveError("'kind: issue' takes an 'issue:', not a 'q:'")
+            raise DirectiveError(f"'kind: {kind}' takes an 'issue:', not a 'q:'")
         return Directive(kind=kind, issue_ref=issue_ref, title=title)
 
     raw_limit = fields.get("limit", "")
@@ -140,7 +149,9 @@ def parse_directive(body: str) -> Directive:
         # it approximately, while saying so, beats refusing the whole embed.
         limit = min(limit, MAX_LIMIT)
     if fields.get("issue"):
-        raise DirectiveError(f"'issue:' only applies to 'kind: issue', not {kind!r}")
+        raise DirectiveError(
+            f"'issue:' only applies to {_ISSUE_TARGETED_LABEL}, not {kind!r}"
+        )
     return Directive(kind=kind, query=fields.get("q", ""), limit=limit, title=title)
 
 
@@ -163,6 +174,10 @@ def describe() -> dict[str, object]:
             "issues": "a table of issues matching 'q'",
             "count": "how many issues match 'q', as a single number",
             "issue": "one issue, named by 'issue:' (id or project key)",
+            "rollup": (
+                "live progress of one issue's sub-issues, named by 'issue:' — "
+                "counts by status category, computed on every read"
+            ),
         },
         "keys": list(KEYS),
         "limits": {

@@ -3,26 +3,173 @@
 This page records the evidence behind the `0.1.0a1` milestone. It is a checklist,
 not a declaration that Athena is production-ready. The supported deployment
 remains one Python 3.12 process/worker on a trusted local machine or tailnet;
-direct public-internet, hostile multi-tenant, multi-process, and HA use remain
-outside the security claim — **with one named exception since Stage P**: the
-forge delivery route (`POST /forge/{source_name}`) is built to be reached by a
-public forge through a tunnel or reverse proxy scoped to that route alone (see
-[FORGE.md](FORGE.md)). Everything else stays tailnet-only.
+direct public-internet, proxy-terminated, hostile multi-tenant, multi-process,
+and HA use remain outside the security claim. The forge delivery route
+(`POST /forge/{source_name}`) is hardened for untrusted signed input, but Athena
+does not yet ship a supported public edge that makes it reachable from a
+public forge; see [FORGE.md](FORGE.md).
 
 ## Decision
 
 **Status: `HOLD` for a public production release; `PASS` for the local/tailnet
 alpha the project actually claims to be.**
 
-Re-affirmed 2026-07-30 after the Stage M–P expansion, the adversarial review of
-the merged tree (grade 7/10 — see OPUS_REMEDIATION_GUIDE_ATHENA.md), and the
-H-0/H-1/H-2 remediation waves that followed it. Every required repository gate
-passes locally at the named commit. The remaining blockers below are **not
-waived by green tests** — they are supply-chain, deployment-shape, and
-repository-settings items, and accepting them is a human release owner's
-decision, not something a test can make.
+Re-affirmed 2026-08-22 after the security-governance and runtime-provenance
+baseline, and before that 2026-08-08 after the Final Sprint and depth cycle (the section
+below), and before that 2026-07-31 after the Stage M–P expansion, the
+adversarial review of the merged tree (grade 7/10 — see
+docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md), the H-0/H-1/H-2 remediation waves, and the
+release-candidate evidence hardening described below. The 2026-07-30
+full-product gate passes locally at its named commit; the candidate evidence
+section explicitly distinguishes its local draft rehearsal from pending hosted
+verification. The remaining blockers below are **not waived by green tests** —
+they are supply-chain, deployment-shape, and repository-settings items, and
+accepting them is a human release owner's decision, not something a test can
+make.
 
-## Evidence (2026-07-30, refreshed)
+### 2026-08-08 depth-cycle refresh
+
+Twelve pull requests (#327–#338) merged between the 2026-07-31 baseline and
+this entry: the Final Sprint (the desk orientation read, playbooks, space
+subscriptions, workspace search, the field guide, browser If-Match forms),
+scope-filtered MCP registration, command-owned authorization for the last
+three trusting command families, nested playbook checklists, related-items
+co-citation, and the issue draft store. Two security movements deserve
+naming: a read-scoped token could start a playbook and advance the desk
+cursor (both fixed with regression tests when the scope audit found them),
+and `cryptography` was pinned up to 50.0.0 after PYSEC-2026-3552 turned the
+CI audit job red at `dfa0a25` — exactly what that gate exists to catch. The
+risk-acceptance list shrank by one: "authorization still in some transports"
+is repaired, not accepted.
+
+Evidence commit: `1e06ac393a99270a3a7b05302b85845eea14647d` (the #338 squash
+merge). Environment: Linux, CPython 3.12, exact `constraints/ci-py312.txt`
+graph. Local evidence time: `2026-08-08T07:00Z`.
+
+The exact required gate passed at that commit: Ruff check and format check,
+mypy over all **172** runtime modules, all three architecture checkers (172
+import-contract modules; write ownership including the new
+`issue_drafts`/`page_drafts` personal-state entries; imported_at guards), the
+process smoke, and the full coverage-gated suite — **3,394 passed, 0
+skipped**; line 92.93600% (20,287/21,829), branch 83.47431% (5,329/6,384),
+combined 90.79502% (25,616/28,213), above every configured floor
+(92.6/82.3/90.3), excluded lines exactly 2. The schema is at migration
+**0074**; the MCP server registers **124** tools on an unlimited token and
+**58** on a read-scoped one (scope-filtered registration is presentation —
+the REST layer remains the boundary).
+
+Hosted verification during the cycle: run
+[`31239730553`](https://github.com/Ayyitskevin/athena/actions/runs/31239730553)
+passed both the test and audit jobs at `49fdb90` (the first full run after
+the cryptography pin bump), and the #338 PR head `542bc00` passed all six
+checks including the three CodeQL analyses (run
+[`31241783889`](https://github.com/Ayyitskevin/athena/actions/runs/31241783889)).
+Checklist item B1 — hosted CI green at the exact commit to be tagged — must
+still be re-checked at tag time, not inherited from this entry.
+
+### 2026-07-31 deployment-hardening baseline
+
+The deployment hardening now on `main` narrows the supported runtime to an
+executable contract rather than a runbook convention:
+`athena-serve` permits only direct numeric loopback or explicit Tailscale binds,
+preflights exact `Host` authorities and durable administrator recovery, refuses
+legacy actor-header trust and bootstrap credentials during normal startup, fixes
+Uvicorn to one worker with proxy-header trust disabled, and installs the same
+socket/authority boundary outside all application work. It rejects oversized
+requests before cookie-controlled SQLite work and requires the live logical
+schema to equal the packaged migration result. Bootstrap is loopback-only,
+rehearses migration on an in-memory copy before writing the real file, and
+requires the first administrator to set a bounded password before the normal
+launcher can succeed.
+
+Implementation commit:
+`1596270e408692760f01828fbd089bcb8fe1b78c`
+(`codex/deployment-preflight-hardening`).
+Environment: Linux, CPython 3.12.3, exact
+`constraints/ci-py312.txt` graph in fresh venv
+`/tmp/athena-deployment-gate.K9CbwR/venv`.
+Local evidence time: `2026-07-31T08:26Z`.
+
+The exact required gate passed: dependency check and freeze diff, Ruff check and
+format check (374 files), mypy (149 source files), all three architecture
+checkers, and 2,833 tests. Coverage was 92.76827% line
+(17,446/18,806), 83.03030% branch (4,658/5,610), and 90.53080%
+combined (22,104/24,416), above every configured floor. The one previously
+documented FastAPI/Pydantic alias warning remains.
+
+The sdist-derived wheel was verified from both the checkout and extracted source:
+69 migrations, 4 static assets, 49 templates, the required console script, and
+149 import-contract modules. After installation outside the checkout, it passed
+the real two-lifecycle bootstrap/restart smoke and the 22-step HTTP field
+exercise. Artifact SHA-256:
+
+- sdist: `d622cfe47df1e6ef231dd2c2b33b37e0eec0130978f23f3efcec6ceab6f61d07`
+- wheel: `a946bb1733b635ac44d17806e38b3545550b690fa5dcc2e05b1f25a9058793d5`
+
+Independent architecture and adversarial reviews both returned `PASS` with no
+blocking finding. The adversarial authority matrix found no parser acceptance
+among 69,156 libc legacy-IPv4 forms and no mismatch across 18,294 accepted DNS
+names checked against Node's WHATWG URL parser. Exact-head Actions run
+[`30616489205`](https://github.com/Ayyitskevin/athena/actions/runs/30616489205)
+then passed every required step on evidence commit
+`ef1b91e82bf2b21bb2d9b47636dee4b2f32ff869` in 17m14s, including coverage
+evidence upload, the sdist-derived wheel build/install, and the external wheel
+boot. That historical run emitted one non-failing maintenance annotation because
+the then-pinned `actions/upload-artifact` v4.6.2 revision declared a Node 20
+runtime and GitHub forced it onto Node 24. The merged hardening uses the official,
+signature-verified v6.0.0 commit
+`b7c566a772e6b6bfb58ed0dc250532a479d7789f`, whose immutable `action.yml`
+declares `node24`; the existing artifact name, path, missing-file policy, hidden
+file inclusion, retention, and workflow permissions are unchanged. Exact
+PR-head CI remains the behavioral proof for both the uploaded archive and the
+absence of that annotation. That evidence does not authorize a public release.
+The public-release decision remains `HOLD`: Athena cannot observe whether a
+proxy, tunnel, NAT rule, container publication, or Tailscale Funnel exposes an
+otherwise allowed listener.
+
+## Candidate evidence gate (2026-07-31, draft)
+
+The release-evidence draft makes the required test job a prerequisite for one
+candidate job. That job creates a 32-distribution hash-verified evidence/build
+environment, audits the toolchain itself, retains the existing 63-subject
+CI/build/bootstrap input SBOM, and builds exactly one sdist plus one wheel from
+that sdist with `build --no-isolation`. The job snapshots the sdist once before
+extraction and carries its SHA-256 through bundle promotion. Bounded raw and
+semantic archive inspection rejects unsafe, duplicate, noncanonical, oversized,
+or excessively compressed members—including hidden tar control metadata—and
+requires one correctly named sdist root. Its `PKG-INFO`, pinned setuptools build
+configuration, and complete installable `src/athena` payload must agree with the
+wheel.
+
+Fresh Linux/CPython 3.12 base and `[mcp]` environments then install that exact
+wheel under `constraints/ci-py312.txt`. Athena verifies byte-identical installed
+wheel metadata, pip's `direct_url.json` wheel path and SHA-256, the recursively
+evaluated installed dependency closure (including propagated dependency extras),
+the constrained versions, and the absence of unrelated installed packages. In
+the local clean-room rehearsal, the base profile contained 29 third-party
+runtime distributions and the MCP profile contained 41. `pip-audit` reported no
+known advisories for either exact set.
+
+Athena creates one CycloneDX 1.4 document per runtime profile with the
+application root bound to the wheel SHA-256 and dependency edges bound to the
+verified closure. The final allowlisted candidate directory contains exactly
+seven regular files: the sdist, wheel, input SBOM, two runtime SBOMs, candidate
+manifest, and `SHA256SUMS`. Final verification rechecks the input SBOM, both
+installed environments, both runtime SBOMs, the wheel's complete `RECORD`, and
+every manifest/checksum identity. The SBOM retains the exact producer Python
+patch as provenance while the standalone verifier accepts another canonical
+CPython patch within the wheel's declared Python 3.12 range on the same
+platform. Both candidate environments must match that verifier's implementation,
+exact patch, and platform. CI then force-reinstalls the copied bundle wheel into
+both environments and runs the standalone verifier against those environments
+before the directory is uploaded.
+
+This is branch-local evidence until hosted CI succeeds for the final draft-PR
+head. It is not a release attestation: runtime downloads remain version-pinned
+rather than artifact-hash-locked, the candidate assertions are unsigned, and no
+tag, publication, provenance attestation, or first-party code scan exists.
+
+## Evidence (2026-07-30, full-product gate)
 
 This run supersedes the Stage L evidence (2026-07-26, quoted below for the
 record) — the tree has since gained Stages M–P (query grammar, live embeds,
@@ -144,7 +291,8 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Area | Evidence | Status |
 |---|---|---|
 | Configuration | Strict booleans, finite/ranged numerics, known log levels, all-or-none OIDC; malformed configuration aborts startup | PASS |
-| Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; `/readyz` fails closed without leaking detail | PASS |
+| Supported deployment | Candidate `athena-serve` contract: direct local/tailnet bind policy, exact accepted-socket and `Host` boundary, fixed single-worker server settings, durable-admin recovery, installed two-process bootstrap/restart smoke, independent architecture/adversarial review, and exact-head Actions `30616489205` | PASS |
+| Schema/readiness | 69 contiguous packaged migrations, exact applied prefix and SHA-256 ledger checks; deployment doctor/launcher additionally require exact logical-schema equality; bootstrap dry-runs migration before the real write; `/readyz` fails closed without leaking detail | PASS |
 | Restore | Candidate `quick_check`, private stages, file/directory sync, atomic replacement, sidecar-cleanup rollback, retained recovery on double failure | PASS |
 | Attachments | Private atomic publication, metadata+audit transaction, no-follow descriptor download, observable attempt-all cleanup, deterministic reconciliation | PASS |
 | Exports | Private unique JSON stage, file/directory sync, atomic replace, bounded portability snapshot | PASS |
@@ -152,66 +300,79 @@ hide the same class of warning if it ever appeared on a field Athena does own.
 | Lifecycle | Both background tasks are cancelled and awaited; non-cancellation failures surface | PASS |
 | Egress | SSRF guard (scheme, address class, DNS pin, no redirects) on every outbound POST; private-address egress is opt-in per exact hostname via `ATHENA_EGRESS_PRIVATE_HOSTS`, empty by default | PASS |
 | Forge inbound | Signature verified before the payload is parsed on a route that declares no body model; bad/missing signature and unknown source collapse to one 401 (unknown sources pay the same HMAC work); the anonymous per-IP limiter is charged before any source lookup or body read; a closed three-event vocabulary; landed events are imported history, excluded from undo, lifecycle facts, handoffs, assignee facts, fleet metrics, the attention rollup, security counters, and the automation event scan | PASS |
-| Command ownership | Every durable write in the Aegis project surface has a command owner; remaining debt — including transport-side authorization on the mentor page/comment, issue-comment, and event-source commands — is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
+| Command ownership | Every durable write in the Aegis project surface has a command owner, and the once-trusting command families (issue-comment, mentor page/comment, event-source) now authorize inside their own transactions; the remaining debt is enumerated in [`COMMAND_MIGRATION.md`](COMMAND_MIGRATION.md) | PASS |
 | Workflow permissions | Top-level CI `contents: read`; job permissions scoped; checkout credentials disabled | PASS |
 | Direct action references | Every workflow `uses:` reference pinned to a full commit SHA; actionlint passes | PASS |
-| Dependency/security scan | Hash-locked `pip-audit` 2.10.1 scans the 61-package CI graph, pinned pip, and pinned setuptools backend; the isolated scanner lock is also audited; no ignores or soft pass | PASS |
-| GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were disabled when last inspected; settings changes are out of scope for a code change | NOT CONFIGURED |
-| SBOM / signing / provenance | The advisory gate emits and semantically verifies an exact 63-component CycloneDX input SBOM; no released-wheel SBOM, signature, or provenance attestation exists | PARTIAL |
+| Dependency/security scan | The 32-distribution hash-locked evidence/build toolchain audits itself; `pip-audit` scans the exact 63 CI/build/bootstrap inputs and the verified 29-package base / 41-package MCP third-party runtime closures; no ignores or soft pass | PASS (local draft) |
+| GitHub security settings | Private vulnerability reporting, Dependabot security updates, secret scanning, and push protection were enabled when verified 2026-08-22. Branch governance remains weak: only `test` and `container` are required, administrator enforcement is off, approving reviews are zero, and no repository ruleset requires CodeQL. | PARTIAL |
+| SBOM / signing / provenance | The gate retains the exact 65-component input SBOM plus base/MCP CycloneDX graphs rooted at the candidate wheel SHA-256; the candidate remains unsigned, unattested, unpublished, and does not represent a first-party code scan | PARTIAL |
 
 ### Python supply-chain evidence (2026-07-31)
 
-A fresh Linux/Python 3.12 environment installed pip 26.1.2 and the
-`pip-audit` 2.10.1 toolchain exclusively from the repository's hash-locked
-requirement files. `pip check` passed, the scanner's own complete 29-package
-lock reported no known vulnerabilities, and the application-input scan
-reported zero known vulnerabilities across exactly 63 subjects: 61 CI
-dependency pins, pip, and the setuptools build backend.
+A fresh Linux/Python 3.12 environment installed pip 26.1.2, `pip-audit` 2.10.1,
+`build` 1.5.0, setuptools 83.0.0, and their transitive tool dependencies
+exclusively from the repository's 32-distribution hash-locked requirement file.
+`pip check` passed, the toolchain self-audit reported no known vulnerabilities,
+and the application-input scan reported zero known vulnerabilities across
+exactly 65 subjects: 63 CI dependency pins, pip, and the setuptools build
+backend.
 
-`scripts/check_supply_chain.py` then independently verified the generated
-CycloneDX 1.4 document structure against that complete normalized name/version
-set and required no reported vulnerability entries. The SBOM stays a
-point-in-time record: its UUID, timestamp, and generated `bom-ref` values are
-intentionally not treated as reproducible bytes, and a later run may correctly
-fail when PyPI publishes new advisory data.
+`scripts/check_supply_chain.py` independently verified that input CycloneDX 1.4
+document against the complete normalized name/version set.
+`scripts/check_wheel_evidence.py` then verified the exact sdist-derived wheel,
+its installed base and MCP closures, and the corresponding 29- and
+41-component third-party advisory results before creating the two
+wheel-SHA-rooted runtime SBOMs and seven-file candidate bundle. The documents
+remain point-in-time records: UUIDs and timestamps vary, and a later run may
+correctly fail when PyPI publishes new advisory data.
 
 ## Remaining blockers and residual risk
 
 These are the reasons the decision above is `HOLD` for public production. None is
 resolved by a green test run.
 
-- **Supply chain.** The repository now has a fail-closed advisory gate and an
-  exact input SBOM, but the application constraint graph is version-pinned
-  rather than hash-locked. No released-wheel SBOM, artifact signature,
-  provenance attestation, or published release exists. The pinned
+- **Supply chain.** The repository now has a fail-closed advisory gate, an exact
+  input SBOM, and candidate-wheel-bound base/MCP dependency evidence, but the
+  application constraint graph and runtime downloads are version-pinned rather
+  than artifact-hash-locked. The SBOMs and checksums are unsigned assertions;
+  no signature, provenance attestation, published release, or first-party code
+  scan exists. The pinned
   `anomalyco/opencode` composite action resolves the latest OpenCode release at
   runtime, invokes `actions/cache@v4` by a mutable tag, and pipes an unpinned
   remote installer into Bash — the repository reference is immutable, its
   transitive execution is not reproducible.
-- **Repository security automation is off.** Private vulnerability reporting,
-  Dependabot, secret scanning, and push protection were disabled when inspected.
-- **Deployment shape.** Public-internet exposure, hostile multi-tenancy, multiple
-  workers/processes, leader election, and HA recovery are unsupported. Rate limits
-  are in-process.
-- **The project now has its first unauthenticated public endpoint** (Stage P).
-  `POST /forge/{source_name}` is designed to be reached by a stranger — that is
-  the feature — so HMAC verification is the *entire* gate, and the assumptions
-  around it are new: the anonymous per-IP limiter that brakes unsigned bursts is
-  **off by default** (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`), there is deliberately
-  no signature replay window (a valid redelivery lands again), and event-source
+- **Repository security automation is enabled, but merge governance is incomplete.**
+  Private vulnerability reporting, Dependabot security updates, secret scanning,
+  and push protection were enabled when inspected on 2026-08-22. Code scanning is
+  active but is not a required merge check; administrator enforcement is off,
+  approving reviews are zero, and no repository ruleset exists. Changing those
+  controls is a separate repository-owner gate, not part of this code candidate.
+- **Deployment shape.** The supported launcher now fails closed to direct
+  loopback or explicit tailnet listeners, but it cannot infer external
+  publication. Public-internet exposure, proxy termination, hostile
+  multi-tenancy, multiple workers/processes, leader election, and HA recovery
+  remain unsupported. Rate limits are in-process.
+- **The project has an unauthenticated signed-inbound route** (Stage P).
+  `POST /forge/{source_name}` is engineered to receive stranger-controlled bytes,
+  but the repository does not yet provide a supported public edge for it. If a
+  release owner creates an external exception, HMAC verification becomes the
+  route's gate and the assumptions are substantial: there is deliberately no
+  signature replay window (a valid redelivery lands again), and event-source
   secrets are stored **plaintext** because HMAC needs the shared value — a
   database leak that would expose only token hashes elsewhere exposes live source
-  secrets here. The adversarial review already broke two of this surface's
-  documented guarantees by execution (an enumeration oracle; automation firing on
-  imported history); both are fixed in wave H-0 with regression tests, but the
-  route has not yet survived a second hostile pass.
-- **Authorization still lives in some transports.** The mentor page and
-  page-comment commands, the issue-comment commands, and the event-source
-  commands take a bare actor id and trust the route's guards; the command owns
-  the write and its audit, not the gate (enumerated in
-  [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md)). Every shipped transport applies
-  the checks — the debt is that a *future* caller of those commands inherits no
-  enforcement, and the migration rules say the gate belongs inside.
+  secrets here. The adversarial review already broke two documented guarantees
+  by execution (an enumeration oracle; automation firing on imported history);
+  both are fixed in wave H-0 with regression tests, but public operation has not
+  had a supported deployment review.
+- **Authorization moved inside the commands — reviewed once, not hardened.**
+  The issue-comment, mentor page, mentor page-comment, and event-source
+  commands each take a resolved actor and check visibility/ownership (or the
+  admin gate) inside their own write transaction now; a direct caller inherits
+  the enforcement instead of bypassing it (the closed debt is recorded in
+  [COMMAND_MIGRATION.md](COMMAND_MIGRATION.md), and each family carries
+  no-transport authorization tests). The residual honesty note: the moved gates
+  have had one review pass, and wire-status parity rests on the pinned route
+  tests.
 - **Stages M–P landed after the original gate run.** The query grammar, live
   embeds, the knowledge graph, and the forge integration were built after the
   2026-07-26 evidence below was recorded, and the 7/10 adversarial review is the
@@ -230,9 +391,34 @@ resolved by a green test run.
 - **The executor contract has exactly one implementation.** Dispatch is proven
   against `examples/icarus_executor.py`, written alongside it. A contract with one
   counterparty is usually still wrong in ways only a second one reveals.
-- **No production deployment has occurred.** All evidence here comes from
-  synthetic temporary databases and loopback processes. No real operator data, no
-  second host, no disaster-recovery rehearsal.
+- **One real deployment now exists, and it is small.** Since 2026-08-17 a single
+  operator has run Athena on a tailnet host, driving it with five agent seats
+  through scoped tokens and the MCP surface. As of 2026-08-21 that instance holds
+  24 issues, 4 pages, 94 activity events, 8 users, and 8 tokens across a 900KB
+  database. It has served continuously for three days, survived restarts, and its
+  activity hash chain verifies end to end (`athena-doctor`: 94 entries, head
+  matches) — including from a restored backup.
+
+  What that evidences: the operator loop works against real agent traffic rather
+  than a seeded fixture; the tailnet deployment boundary holds; backup, restore,
+  and trail verification work on a live database.
+
+  What it does NOT evidence, and these are the honest limits: **the data is three
+  orders of magnitude smaller than the benchmark shape** the performance work is
+  stated against (10k issues / 100k events), so no read ceiling in this document
+  has been observed under real load. There is still no second host, no
+  disaster-recovery rehearsal beyond a restore-into-scratch drill, no
+  multi-operator use, and no public exposure. One instance run by the person who
+  wrote it is the weakest possible form of production evidence — it is not
+  nothing, and it is not much.
+
+  The first deployment also immediately produced a finding, which is the argument
+  for this bullet existing at all: the instance had been started through raw
+  `uvicorn` rather than `athena-serve`, and therefore ran for three days with
+  `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` unset — a value `core/deployment.py`
+  requires positive in tailnet mode and that only the launcher's preflight checks.
+  Switching to the supported launcher surfaced it in one refusal. Synthetic
+  evidence had not, and structurally could not.
 
 ## Promotion checklist
 

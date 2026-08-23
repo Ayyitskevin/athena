@@ -307,22 +307,26 @@ def test_one_way_and_trapdoor_verbs_are_refused_with_a_reason(tmp_path):
 
 def test_imported_history_cannot_be_undone(tmp_path):
     # An imported row describes something that happened in ANOTHER system (0041).
-    # Compensating it here would invent a local write nobody made.
+    # Compensating it here would invent a local write nobody made. The row is
+    # recorded through the single writer exactly as the portability import does
+    # — a chained row cannot be retagged as foreign after the fact (0072), which
+    # is itself part of the contract this test leans on.
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         issue = _issue(c)
-        c.post(f"/issues/{issue['id']}/archive", headers=H1)
-        archived = _event(c, "archived")
         conn = db.connect(db_file)
-        conn.execute(
-            "UPDATE activity SET imported_at = datetime('now') WHERE id = ?",
-            (archived["id"],),
+        imported = activity.record(
+            conn,
+            actor_id=1,
+            verb="archived",
+            target_kind="issue",
+            target_id=issue["id"],
+            imported_at="2026-01-01 00:00:00",
         )
-        conn.commit()
         conn.close()
 
-        refused = _undo(c, archived["id"])
+        refused = _undo(c, imported["id"])
         assert refused.status_code == 422
         assert refused.json()["code"] == "undo_imported_event"
 

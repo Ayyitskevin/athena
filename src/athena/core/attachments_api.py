@@ -5,10 +5,14 @@ Upload + list live on the OWNING module's routers (an issue attachment under
 exists, and core/ must not import aegis/mentor. Download and delete only touch the
 attachments table, so they live here in core/ and serve both kinds.
 
-Download is an open read (like every other read), but always served as an
-ATTACHMENT (never inline) with the global nosniff header, so an uploaded HTML/SVG
-can't execute in the browser. Delete is uploader-only and requires the write scope
-that matches the attachment's kind.
+Download is an open read (like every other read). Raster images whose type was
+SNIFFED FROM THE BYTES at upload (the closed allowlist in
+``attachments.INLINE_CONTENT_TYPES`` — deliberately excluding SVG, which is a
+scriptable document) are served inline so a ``![…](/attachments/N)`` displays;
+everything else is served as an ATTACHMENT. Both paths carry the global nosniff
+header and a type that never comes from the uploader's claim, so an uploaded
+HTML/SVG cannot execute in the browser. Delete is uploader-only and requires
+the write scope that matches the attachment's kind.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from pydantic import BaseModel
 
 from athena import config
 from athena.core import access, attachment_commands, attachments, tokens
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor, require_token_scope, write_actor
 
@@ -65,7 +70,7 @@ class AttachmentOut(BaseModel):
 
 @router.get("/{attachment_id}")
 def download(
-    attachment_id: int,
+    attachment_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
@@ -88,11 +93,19 @@ def download(
         ) from exc
     # Open by descriptor before constructing the response. A symlink or pathname
     # swap can no longer redirect the download after the visibility check.
+    # Images are served INLINE so a `![alt](/attachments/N)` in a body actually
+    # displays; everything else stays an explicit download. The type driving this
+    # was sniffed from the bytes at upload, never taken from the uploader's claim,
+    # and the allowlist excludes SVG — serving a scriptable document inline is how
+    # an upload becomes stored XSS. `nosniff` stays on either way, so a browser
+    # never gets to guess a different type than the one declared here.
+    inline = att["content_type"] in attachments.INLINE_CONTENT_TYPES
+    kind = "inline" if inline else "attachment"
     encoded_filename = quote(att["filename"])
     if encoded_filename == att["filename"]:
-        disposition = f'attachment; filename="{att["filename"]}"'
+        disposition = f'{kind}; filename="{att["filename"]}"'
     else:
-        disposition = f"attachment; filename*=utf-8''{encoded_filename}"
+        disposition = f"{kind}; filename*=utf-8''{encoded_filename}"
     return StreamingResponse(
         _stream_blob(handle),
         media_type=att["content_type"],
@@ -105,7 +118,7 @@ def download(
 
 @router.delete("/{attachment_id}", status_code=204)
 def remove(
-    attachment_id: int,
+    attachment_id: RowIdPath,
     actor: dict = Depends(write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

@@ -173,7 +173,7 @@ Athena forwarding capability names it has never heard of and cannot reason about
 | `ATHENA_ICARUS_SECRET` | *(unset)* | Shared HMAC secret, both directions |
 | `ATHENA_ICARUS_TIMEOUT_SECONDS` | 10 | Per-request outbound timeout |
 | `ATHENA_EGRESS_PRIVATE_HOSTS` | *(empty)* | Exact hostnames Athena may POST to even though they resolve private/loopback (see below) |
-| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Shared direct-peer-IP limit for anonymous paths, including every callback attempt |
+| `ATHENA_ANON_RATE_LIMIT_PER_MINUTE` | `0` (off) | Shared direct-peer-IP limit for optional-identity REST reads and every callback attempt; not a global browser-request ceiling |
 
 Both the URL and the secret must be set. A URL without a secret would mean sending
 unsigned work to an unauthenticated endpoint.

@@ -25,10 +25,13 @@ from athena.aegis import (
     dependencies,
     fleet_attention,
     issue_commands,
+    issue_drafts,
+    issue_etags,
     issue_history,
     issue_search,
     issues,
     projects,
+    rollups,
     sprints,
     statuses,
 )
@@ -48,8 +51,14 @@ from athena.core import (
     users,
 )
 from athena.core.deps import get_conn
+from athena.web import live
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_comment, render_snippet
+from athena.web.render import (
+    MAX_PREVIEW_CHARS,
+    render_comment,
+    render_issue_body,
+    render_snippet,
+)
 
 router = APIRouter()
 
@@ -154,12 +163,13 @@ def _statuses_in_use(conn, visible_project_ids: set[int] | None = None) -> list[
     means no gating (an admin's god view), a set restricts to those projects (plus the
     backlog). Without it a private project's CUSTOM status name would leak into the
     dropdown for someone who can't see that project (the rows are gated, but the option
-    set was not)."""
+    set was not).
+
+    The distinct set comes from the data layer (one DISTINCT over the gated rows), not
+    from collecting statuses off a full unpaged read — building a dropdown was the
+    second unbounded fetch on every issue-list and board render."""
     cat_rank = {"todo": 0, "doing": 1, "done": 2}
-    names = {
-        i["status"]
-        for i in issues.list_issues(conn, visible_project_ids=visible_project_ids)
-    }
+    names = issues.statuses_in_use(conn, visible_project_ids=visible_project_ids)
     return sorted(
         names, key=lambda n: (cat_rank.get(statuses.global_category(conn, n), 1), n)
     )
@@ -183,13 +193,6 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     from aegis.delegations, so this route only lays them out. Open to read, like the
     issue list."""
     user = getattr(request.state, "user", None)
-    # Every number is counted only over the projects this viewer may see (admins all;
-    # the backlog is always in). recent_activity is gated the same way: actor=user
-    # makes list_activity drop events whose target the viewer can't see.
-    vis = access.visible_project_filter(conn, user)
-    delegation_inbox = (
-        delegations.list_delegations(conn, user, limit=8) if user else None
-    )
     # The steer-by-exception rollup, admin-only because every input is already an
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.
@@ -198,10 +201,33 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
         if user is not None and identity.is_admin(user)
         else None
     )
+    live_refresh = live.build(request, live.FLEET_ATTENTION)
+    # The attention card refreshes itself, and answers here before the rest of the
+    # dashboard is built: a poll wants one card, and every ten seconds is the wrong
+    # cadence at which to also count the whole board and read a delegation inbox
+    # nobody is looking at. The gate is the same one the page uses — a non-admin
+    # has `attention = None`, renders no card and so has no poll to fire, and asking
+    # for the panel directly gets the same nothing rather than the card.
+    if live.wants_panel(request, live.FLEET_ATTENTION):
+        if attention is None:
+            return HTMLResponse("")
+        return get_templates().TemplateResponse(
+            request=request,
+            name="aegis/partials/fleet_attention.html",
+            context={"fleet_attention": attention, "live": live_refresh},
+        )
+    # Every number is counted only over the projects this viewer may see (admins all;
+    # the backlog is always in). recent_activity is gated the same way: actor=user
+    # makes list_activity drop events whose target the viewer can't see.
+    vis = access.visible_project_filter(conn, user)
+    delegation_inbox = (
+        delegations.list_delegations(conn, user, limit=8) if user else None
+    )
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/dashboard.html",
         context={
+            "live": live_refresh,
             "totals": dashboard.totals(conn, vis),
             "status_counts": dashboard.status_counts(conn, vis),
             "priority_counts": dashboard.priority_counts(conn, vis),
@@ -483,39 +509,48 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # only does the presentation concerns — sort + pagination — on the result.
     ids = labels.issue_ids_for_label(conn, label_filter) if label_filter else None
     user = getattr(request.state, "user", None)
-    filtered = issues.list_issues(
-        conn,
-        status=status_filter,
-        priority=priority_filter or None,
-        assignee_id=assignee_id,
-        search=search,
-        project_id=project_id,
-        backlog=backlog,
-        sprint_id=sprint_id,
-        include_archived=include_archived,
-        ids=ids,
-        visible_project_ids=access.visible_project_filter(conn, user),
-    )
-    _attach_labels(conn, filtered)  # one bulk query; paged slice carries its chips
+    # Resolved once and reused: every dropdown below is gated by the same set, and
+    # each call re-reads the membership tables.
+    visible_project_ids = access.visible_project_filter(conn, user)
 
-    # Sort in web layer (presentation concern) – safe since we don't own data.
-    # sort is whitelisted above, so x.get(sort) is a real column; coalesce to ""
-    # so a NULL (e.g. an unset priority) sorts as empty rather than raising on the
-    # str/None comparison Python 3 forbids.
-    reverse = order == "desc"
-    filtered = sorted(filtered, key=lambda x: x.get(sort) or "", reverse=reverse)
-
-    # Simple pagination (server-side slice). A non-numeric page/per_page in the
-    # query string is the only failure here; fall back to the defaults for that.
+    # Paging is decided BEFORE the read, because the read is what it bounds. A
+    # non-numeric page/per_page in the query string is the only failure here; fall
+    # back to the defaults for that.
     try:
         page = max(1, int(request.query_params.get("page", 1)))
         per_page = max(5, min(50, int(request.query_params.get("per_page", 20))))
     except (TypeError, ValueError):
         page, per_page = 1, 20
 
-    total = len(filtered)
-    start = (page - 1) * per_page
-    paged = filtered[start : start + per_page]  # labels already attached
+    # One filter set, used for both the count and the page, so the "N issues" label
+    # can never describe a different query than the rows under it.
+    issue_filters: dict = {
+        "status": status_filter,
+        "priority": priority_filter or None,
+        "assignee_id": assignee_id,
+        "search": search,
+        "project_id": project_id,
+        "backlog": backlog,
+        "sprint_id": sprint_id,
+        "include_archived": include_archived,
+        "ids": ids,
+        "visible_project_ids": visible_project_ids,
+    }
+    # Sort and page in SQL, through the same data-access path the API uses. This
+    # handler used to fetch EVERY matching issue, attach every issue's labels, sort
+    # the whole list in Python and slice twenty rows out of it — 74 ms per page view
+    # at 10k issues against 0.2 ms for the bounded read. Sorting after the slice is
+    # not an option either: it would only reorder the rows that reached the page.
+    total = issues.count_issues(conn, **issue_filters)
+    paged = issues.list_issues(
+        conn,
+        **issue_filters,
+        sort=sort,
+        order=order,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
+    _attach_labels(conn, paged)  # one bulk query over this page's rows
 
     def page_url(page_num: int, *, sort_by: str = sort, order_by: str = order) -> str:
         return _issues_url(
@@ -548,9 +583,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     # Sprint-filter options. A sprint belongs to one project, so each option is
     # labelled with its project's key to disambiguate same-named sprints across
     # projects (e.g. "ATH · Sprint 1"). One pass over projects builds the key map.
-    all_projects = projects.list_projects(
-        conn, access.visible_project_filter(conn, user)
-    )
+    all_projects = projects.list_projects(conn, visible_project_ids)
     project_keys = {p["id"]: p["key"] for p in all_projects}
     # project_keys holds exactly the projects this viewer may see, so keeping only
     # sprints whose project is in it drops sprints in private projects the viewer can't
@@ -586,9 +619,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
-            "all_statuses": _statuses_in_use(
-                conn, access.visible_project_filter(conn, user)
-            ),
+            "all_statuses": _statuses_in_use(conn, visible_project_ids),
             "priority_filter": priority_filter,
             "priorities": issues.PRIORITIES,
             "assignee_filter": assignee_raw,
@@ -743,8 +774,51 @@ def edit_issue_form(
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_edit.html",
-        context={"issue": issue},
+        context=_issue_edit_context(
+            conn,
+            issue,
+            user,
+            restored=request.query_params.get("restore") == "1",
+            notice=request.query_params.get("notice", ""),
+        ),
     )
+
+
+def _issue_edit_context(
+    conn: sqlite3.Connection,
+    issue: dict,
+    user: dict,
+    *,
+    restored: bool = False,
+    notice: str = "",
+    conflict: dict | None = None,
+) -> dict:
+    """The issue edit form's context, built in one place so opening the form and
+    the losing side of a concurrent save cannot disagree about the baseline.
+
+    ``issue`` is always the REAL current row, because the ETag is derived from
+    it — the form now shows the saved issue in every case, exactly as the page
+    editor does, because the author's own text is safe in ``issue_drafts``
+    (0074). An unsaved draft is OFFERED, never applied: ``restored`` re-renders
+    the fields with the draft's text, and nothing is written until Save."""
+    draft = issue_drafts.get_draft(conn, issue_id=issue["id"], owner_id=user["id"])
+    if draft is not None and not issue_drafts.differs_from(draft, issue):
+        # Identical to the saved issue: not unsaved work, so offering to restore
+        # it would just make an author wonder what they had forgotten.
+        draft = None
+    return {
+        "issue": issue,
+        "body_html": render_issue_body(conn, issue["body"] or "", actor=user),
+        "issue_etag": issue_etags.current_etag(conn, issue),
+        "draft": draft,
+        "restored": restored and draft is not None,
+        "draft_is_stale": draft is not None
+        and issue_drafts.is_stale(draft, issue_etags.current_etag(conn, issue)),
+        "notice": notice,
+        # The author's unsaved text, shown for comparison when this render is a
+        # refusal — the page editor's shape, now that issues have a draft store.
+        "conflict": conflict,
+    }
 
 
 @router.post("/aegis/issues/{issue_id}/edit", dependencies=[Depends(verify_csrf)])
@@ -753,11 +827,17 @@ def edit_issue(
     issue_id: int,
     title: str = Form(""),
     body: str = Form(""),
+    if_match: str = Form(""),
+    based_on: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Save edits to an issue's title and body from the edit form. Gated on the
     session user (same actor rule as every write), rejects an empty title, then
-    303-redirects back to the issue so it reloads with the new content."""
+    303-redirects back to the issue so it reloads with the new content.
+
+    The form carries the issue's ETag as rendered, so a save that would land on
+    top of someone else's is refused rather than silently winning — the browser
+    half of the optimistic lock REST and MCP already had."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -767,13 +847,183 @@ def edit_issue(
     _, err = _authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
+    # An empty if_match means a form rendered before this field existed (a tab
+    # left open across the upgrade). Those keep the old last-write-wins behavior
+    # rather than being refused over a field their author cannot see or fix.
     try:
         issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, title=title, body=body
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            title=title,
+            body=body,
+            if_match=[if_match] if if_match.strip() else None,
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
+        if exc.kind == "precondition_failed":
+            return _issue_conflict_response(
+                conn,
+                request,
+                issue_id,
+                user,
+                title=title,
+                body=body,
+                based_on=based_on,
+            )
+        if exc.kind in ("invalid_precondition", "precondition_too_large"):
+            # A tampered or malformed hidden field is not an authorization
+            # signal; treat it as no precondition rather than walling an author
+            # out of their own issue.
+            try:
+                issue_commands.update_issue(
+                    conn, actor=user, issue_id=issue_id, title=title, body=body
+                )
+            except issue_commands.IssueCommandError as retry_exc:
+                return _issue_command_response(retry_exc)
+        else:
+            return _issue_command_response(exc)
+    # The text IS the issue now, so the author's draft of it is a stale copy of
+    # something that finally has a real home on the trail. Dropping it is what
+    # makes "you have unsaved work" mean it the next time it appears.
+    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+def _issue_conflict_response(
+    conn: sqlite3.Connection,
+    request: Request,
+    issue_id: int,
+    user: dict,
+    *,
+    title: str,
+    body: str,
+    based_on: str,
+) -> HTMLResponse:
+    """The losing editor's answer for an issue — the PAGE editor's answer now.
+
+    This path used to invert the page equivalent because issues had no draft
+    store: the loser's text stayed in the fields, admitted to being unstored,
+    and navigating away lost it. ``issue_drafts`` (0074) erases that asymmetry.
+    The loser's text is written to their own draft first, the fields show the
+    winner's version — the issue as it stands — and restoring is one click.
+    Nothing is overwritten, nothing is merged, and nothing is lost.
+
+    The draft keeps the baseline the author was editing FROM (the form's
+    ``based_on``), never the issue's new tag — stamping today's tag would mark
+    stale work fresh and silence the warning at the one moment it exists for.
+    The re-rendered form carries the CURRENT tag, so saving again deliberately
+    overwrites instead of looping on the same refusal.
+    """
+    current = issues.get_issue(conn, issue_id)
+    if current is None:
+        # It was deleted, not edited, between the precondition and this read.
+        return HTMLResponse(
+            '<div class="error">Issue not found.</div>', status_code=404
+        )
+    issue_drafts.save_draft(
+        conn,
+        issue_id=issue_id,
+        owner_id=user["id"],
+        title=title,
+        body=body,
+        based_on=based_on,
+    )
+    # The fields show what won; `conflict` carries what the author typed.
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/issue_edit.html",
+        context=_issue_edit_context(
+            conn,
+            current,
+            user,
+            conflict={"title": title, "body": body},
+        ),
+        status_code=409,
+    )
+
+
+@router.post("/aegis/issues/{issue_id}/draft", dependencies=[Depends(verify_csrf)])
+def autosave_issue_draft(
+    request: Request,
+    issue_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    based_on: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Record where this author has got to, without touching the issue.
+
+    The mentor autosave's Aegis twin: nothing here writes to ``issues`` — no
+    activity event, no watcher notified, no lifecycle fact. A crashed browser
+    should cost nothing, and the trail should still say nothing happened until
+    a human decides something did. Gated exactly like the edit form itself
+    (creator or current assignee), because a draft OF a write belongs only to
+    someone who could perform the write.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    issue, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    try:
+        saved = issue_drafts.save_draft(
+            conn,
+            issue_id=issue_id,
+            owner_id=user["id"],
+            title=title,
+            body=body,
+            # The etag the EDITOR RENDERED WITH, carried by the form — never
+            # re-read here. Stamping the current etag at autosave time would
+            # mark a draft fresh the moment someone else saved, which is the
+            # exact moment the stale warning exists for. Blank only for a
+            # cached pre-upgrade form; falling back to the current etag there
+            # restores the old (weaker) behavior instead of refusing the save.
+            based_on=based_on.strip() or issue_etags.current_etag(conn, issue),
+        )
+    except issue_drafts.DraftTooLarge:
+        # Fixed literals from the module's own bounds, not the exception's text:
+        # the message is identical in substance, and nothing exception-derived
+        # reaches the response (CodeQL's stack-trace-exposure rule, honored the
+        # strict way rather than suppressed).
+        return HTMLResponse(
+            '<div class="error">Draft not held — too large. Titles cap at '
+            f"{issue_drafts.MAX_TITLE_CHARS} characters and bodies at "
+            f"{issue_drafts.MAX_BODY_CHARS:,}.</div>",
+            413,
+        )
+    return HTMLResponse(
+        f'<span class="draft-saved">Draft held {html.escape(saved["updated_at"])}</span>'
+    )
+
+
+@router.post(
+    "/aegis/issues/{issue_id}/draft/discard", dependencies=[Depends(verify_csrf)]
+)
+def discard_issue_draft(
+    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Throw away this author's draft of this issue. Affects nobody else."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
+            status_code=401,
+        )
+    _, err = _authorize_issue_write(conn, issue_id, user)
+    if err is not None:
+        return err
+    issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
+    # int() is redundant to FastAPI's own path coercion, but that coercion is
+    # invisible to the URL-redirection taint analysis; making it explicit proves
+    # the Location header cannot carry anything but digits.
+    return RedirectResponse(
+        f"/aegis/issues/{int(issue_id)}/edit?notice=Draft+discarded.",
+        status_code=303,
+    )
 
 
 @router.post("/aegis/issues/{issue_id}/status", dependencies=[Depends(verify_csrf)])
@@ -878,6 +1128,34 @@ def change_issue_priority(
     except issue_commands.IssueCommandError as exc:
         return _issue_command_response(exc)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
+
+
+@router.post("/aegis/issues/preview", dependencies=[Depends(verify_csrf)])
+def preview_issue_body(
+    request: Request,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Render unsaved issue text exactly as the issue view will render it.
+
+    Calls ``render_issue_body`` — the SAME function the issue page calls — so the
+    two cannot drift. That includes the parts an author might wish were
+    different: embeds are not resolved on issues, so a directive previews as its
+    "not rendered here" box, because showing a live embed here would promise
+    something the saved issue will not deliver.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to'
+            " preview.</div>",
+            status_code=401,
+        )
+    if len(body) > MAX_PREVIEW_CHARS:
+        return HTMLResponse(
+            '<div class="error">Too long to preview.</div>', status_code=413
+        )
+    return HTMLResponse(str(render_issue_body(conn, body, actor=user)))
 
 
 @router.get("/aegis/issues/{issue_id}/graph", response_class=HTMLResponse)
@@ -1038,7 +1316,7 @@ def _render_issue_detail(
 
     context = {
         "issue": issue,
-        "body_html": render_body(conn, issue["body"], actor=user),
+        "body_html": render_issue_body(conn, issue["body"], actor=user),
         # "Referenced by" hides sources in projects/spaces the viewer can't see.
         "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
         # Typed dependencies, gated like the backlinks: a blocks/relates edge to an
@@ -1047,6 +1325,10 @@ def _render_issue_detail(
         "links": dependencies.list_links(conn, issue_id, actor=user),
         "comments": comment_rows,
         "attachments": attachments.list_for(conn, "issue", issue_id),
+        # The types the download route serves inline — the template offers a
+        # thumbnail and an embed snippet for exactly these, so the affordance
+        # and the actual behaviour come from one list.
+        "inline_image_types": attachments.INLINE_CONTENT_TYPES,
         "is_watching": user is not None
         and notifications.is_watching(conn, user["id"], "issue", issue_id),
         "users": users.list_users(conn),
@@ -1076,8 +1358,10 @@ def _render_issue_detail(
             else None
         ),
         "children": children,
-        "children_done": sum(
-            1 for c in children if statuses.is_done(conn, c["project_id"], c["status"])
+        # One owner for the number: the same rollup the embed resolves, so the
+        # page and a dashboard-in-a-page can never disagree about progress.
+        "rollup": rollups.child_rollup(
+            conn, issue_id, visible_project_ids=visible_project_ids
         ),
         "can_modify": can_modify,
         "can_write": can_write,
@@ -1653,9 +1937,7 @@ def add_issue_comment(
         )
 
     # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
-    comment_commands.create_comment(
-        conn, actor_id=user["id"], issue_id=issue_id, body=body
-    )
+    comment_commands.create_comment(conn, actor=user, issue_id=issue_id, body=body)
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
@@ -1717,7 +1999,7 @@ def edit_issue_comment(
     try:
         comment_commands.edit_comment(
             conn,
-            actor_id=user["id"],
+            actor=user,
             issue_id=issue_id,
             comment_id=comment_id,
             body=body,
@@ -1762,7 +2044,7 @@ def delete_issue_comment(
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
     # vanished in a race records nothing and 404s.
     if not comment_commands.delete_comment(
-        conn, actor_id=user["id"], issue_id=issue_id, comment_id=comment_id
+        conn, actor=user, issue_id=issue_id, comment_id=comment_id
     ):
         return HTMLResponse(
             '<div class="error">Comment not found.</div>', status_code=404

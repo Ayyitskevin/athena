@@ -10,7 +10,7 @@
     </div>
 </div>
 
-<div class="form-container">
+<div class="panel">
     <form method="post" action="/aegis/projects/{{ project.id }}/edit" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
@@ -40,7 +40,7 @@
     </form>
 </div>
 
-<div class="form-container">
+<div class="panel">
     <h3>Statuses</h3>
     <p class="note-small">The workflow for this project's issues. Category drives the
         board column and whether an issue counts as closed.</p>
@@ -54,7 +54,7 @@
             <span class="note-small">— {{ used }} issue{{ "s" if used != 1 }}</span>
             {% elif statuses|length > 1 %}
             <form method="post" action="/aegis/projects/{{ project.id }}/statuses/{{ s.name }}/delete"
-                  data-confirm="Remove status {{ s.name }}?" style="display:inline">
+                  data-confirm="Remove status {{ s.name }}?" class="inline">
                 {% include "partials/csrf.html" %}
                 <button type="submit" class="button danger small">Remove</button>
             </form>
@@ -74,19 +74,19 @@
     </form>
 </div>
 
-<div class="form-container">
+<div class="panel">
     <h3>Access</h3>
     <p class="note-small">
         {% if project.visibility == "private" %}
-        <span class="badge badge-private">🔒 Private</span> — only members, you, and admins can see it.
+        <span class="chip" data-tone="neutral">🔒 Private</span> — only members, you, and admins can see it.
         {% else %}
-        <span class="badge badge-public">Public</span> — anyone can read this project.
+        <span class="chip" data-tone="info">Public</span> — anyone can read this project.
         {% endif %}
     </p>
     <a href="/aegis/projects/{{ project.id }}/access" class="button secondary">Manage access &amp; members</a>
 </div>
 
-<div class="form-container danger-zone">
+<div class="panel danger-zone">
     <h3>Delete project</h3>
     {% if issue_count > 0 %}
     <p class="note-small">

@@ -35,6 +35,7 @@ filter that names a label since deleted.
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import NamedTuple
 
 # --- the closed vocabulary --------------------------------------------------
 
@@ -129,16 +130,38 @@ class Query:
         )
 
 
-def _tokenize(raw: str) -> list[str]:
+class _Token(NamedTuple):
+    """One whitespace-separated token, and where its field separator was.
+
+    ``colon`` is the index within ``text`` of the first colon that appeared
+    OUTSIDE quotes, or -1 when there was none. Carrying it is what lets a quoted
+    phrase containing a colon stay a phrase: the quotes are gone from ``text`` by
+    the time the parser sees it, so "was this colon quoted?" cannot be recovered
+    later.
+    """
+
+    text: str
+    colon: int
+
+
+def _tokenize(raw: str) -> list[_Token]:
     """Split on whitespace, honoring double-quoted phrases.
 
     Hand-rolled rather than regex or ``shlex``: ``shlex`` raises on an unbalanced
     quote and has POSIX escaping rules nobody typing in a search box expects. An
     unterminated quote here simply runs to end of input, which is what every
     search box on the internet does.
+
+    Quotes protect a colon, which is the whole reason this records where the
+    separator was. QUERY.md documents a quoted phrase as a substring search, but
+    the parser used to strip quotes and then split on the first colon it found —
+    so searching for ``"Error: timeout"`` answered ``unknown search field
+    'error'`` instead of searching. A field with a quoted VALUE
+    (``assignee:"John Doe"``) is unaffected: that colon is outside the quotes.
     """
-    tokens: list[str] = []
+    tokens: list[_Token] = []
     current: list[str] = []
+    colon = -1
     quoted = False
     for char in raw:
         if char == '"':
@@ -146,12 +169,14 @@ def _tokenize(raw: str) -> list[str]:
             continue
         if char.isspace() and not quoted:
             if current:
-                tokens.append("".join(current))
-                current = []
+                tokens.append(_Token("".join(current), colon))
+                current, colon = [], -1
             continue
+        if char == ":" and not quoted and colon < 0:
+            colon = len(current)
         current.append(char)
     if current:
-        tokens.append("".join(current))
+        tokens.append(_Token("".join(current), colon))
     return tokens
 
 
@@ -172,14 +197,17 @@ def parse(raw: str | None) -> Query:
     sort_seen = False
 
     for token in _tokenize(raw):
-        negated = token.startswith("-") and len(token) > 1
-        body = token[1:] if negated else token
-        if ":" not in body:
-            # A bare word is text. A lone "-" or a stray negation of nothing is
+        negated = token.text.startswith("-") and len(token.text) > 1
+        body = token.text[1:] if negated else token.text
+        # The separator's index shifts by one when a leading "-" was consumed.
+        split = token.colon - 1 if negated else token.colon
+        if split < 0:
+            # A bare word is text, and so is a quoted phrase whose only colons
+            # were inside the quotes. A lone "-" or a stray negation of nothing is
             # text too — refusing it would fail queries containing a hyphen.
-            words.append(token)
+            words.append(token.text)
             continue
-        field, _, value = body.partition(":")
+        field, value = body[:split], body[split + 1 :]
         field = field.lower()
         if field not in FIELDS:
             raise QueryError(f"unknown search field '{field}'", atom=field)

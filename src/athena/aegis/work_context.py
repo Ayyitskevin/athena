@@ -12,7 +12,15 @@ import sqlite3
 from typing import Any
 
 from athena.aegis import claim_handoffs, issue_etags, issues, statuses
-from athena.core import access, activity, db, etag
+from athena.core import (
+    access,
+    activity,
+    db,
+    etag,
+    fleet_roster,
+    graph,
+    runbook_hints,
+)
 
 
 SCHEMA = "athena.issue_work_context.v1"
@@ -432,6 +440,27 @@ def _backlinks(
     )
 
 
+def _related(
+    conn: sqlite3.Connection, issue_id: int, actor: dict | None
+) -> dict[str, Any]:
+    """The co-citation shortlist, reshaped to the packet's disclosed-bound idiom.
+
+    ``graph.related_items`` owns the semantics (shared-neighbour count over the
+    undirected link graph, direct neighbours excluded, invisible nodes neither
+    counted nor conducting); this wrapper only renames its ``total`` to the
+    packet's ``visible_total`` so every bounded group here reads the same way.
+    """
+    related = graph.related_items(
+        conn, kind="issue", node_id=issue_id, actor=actor, limit=REFERENCE_LIMIT
+    )
+    return {
+        "items": related["items"],
+        "shown": related["shown"],
+        "visible_total": related["total"],
+        "truncated": related["truncated"],
+    }
+
+
 def _recent_activity(
     conn: sqlite3.Connection, issue_id: int, actor: dict | None
 ) -> dict[str, Any]:
@@ -537,6 +566,22 @@ def build_work_context(
                 "labels": public_issue["labels"],
             },
             "issue_etag": issue_etag,
+            "seat_slug": fleet_roster.seat_slug_for_email(
+                None if actor is None else actor.get("email")
+            ),
+            "protocol": {
+                "claim_one_issue": True,
+                "do_not_touch_other_work": True,
+                "complete_does_not_close_issue": True,
+            },
+            "how_to_claim": {
+                "header": "If-Match",
+                "from": "issue_etag",
+                "not": "the work-context packet's top-level _etag",
+                "paths": "optional repo-relative POSIX paths to fence files",
+            },
+            "runbook": runbook_hints.runbook_narration(conn, issue["id"], actor=actor),
+            "complete_does_not_close_issue": True,
             "warnings": [],
             "hierarchy": _hierarchy(conn, issue, actor, visible_project_ids),
             "dependencies": dependencies,
@@ -557,6 +602,11 @@ def build_work_context(
                     visible_space_ids,
                 ),
             },
+            # Co-citation, not links: what cites what this cites without an
+            # edge to it yet. Direct neighbours live in `references` above;
+            # this is the cluster the references cannot show. Derived at read
+            # time by core/graph, same visibility rules, bound disclosed.
+            "related": _related(conn, issue["id"], actor),
             "recent_activity": _recent_activity(conn, issue["id"], actor),
             "claim_handoffs": handoff_history,
         }

@@ -13,8 +13,9 @@
     </div>
 </div>
 
-<section class="dashboard-card" aria-labelledby="metrics-filter-heading">
-    <h2 id="metrics-filter-heading">Period and filters</h2>
+<section class="panel" aria-labelledby="metrics-filter-heading">
+    <div class="panel-head"><h2 id="metrics-filter-heading">Period and filters</h2></div>
+    <div class="panel-body">
     <form method="get" action="/aegis/fleet-metrics" class="fleet-metrics-filter">
         <div class="form-group">
             <label for="metrics-start">Start date (UTC, included)</label>
@@ -55,24 +56,25 @@
         {% endfor %}
         · bounds are <code>[start, end)</code>, maximum 90 days.
     </p>
+    </div>
 </section>
 
 <section aria-labelledby="flow-heading">
     <h2 id="flow-heading">Flow</h2>
     <div class="stat-row">
-        <div class="stat-card">
+        <div class="stat">
             <span class="stat-number">{{ metrics.flow.created }}</span>
             <span class="stat-label">Issues created</span>
         </div>
-        <div class="stat-card">
+        <div class="stat">
             <span class="stat-number">{{ metrics.flow.completed }}</span>
             <span class="stat-label">Completion events</span>
         </div>
-        <div class="stat-card">
+        <div class="stat">
             <span class="stat-number">{% if metrics.flow.net > 0 %}+{% endif %}{{ metrics.flow.net }}</span>
             <span class="stat-label">Net flow (created − completed)</span>
         </div>
-        <div class="stat-card">
+        <div class="stat">
             <span class="stat-number">
                 {% if metrics.cycle_time.median_seconds is none %}
                 Unavailable
@@ -101,18 +103,21 @@
 </section>
 
 <div class="dashboard-grid">
-    <section class="dashboard-card">
-        <h2>Who completed work</h2>
+    <section class="panel">
+        <div class="panel-head"><h2>Who completed work</h2></div>
+        <div class="panel-body">
         <dl class="fleet-metrics-breakdown">
             <div><dt>Human events</dt><dd>{{ metrics.completion_by_actor_type.human }}</dd></div>
             <div><dt>Agent events</dt><dd>{{ metrics.completion_by_actor_type.agent }}</dd></div>
             <div><dt>Unknown type</dt><dd>{{ metrics.completion_by_actor_type.unknown }}</dd></div>
         </dl>
         <p class="note-small">Type is snapped at event time; attribution is to the performer, not the assignee.</p>
+        </div>
     </section>
 
-    <section class="dashboard-card">
-        <h2>Evidence coverage</h2>
+    <section class="panel">
+        <div class="panel-head"><h2>Evidence coverage</h2></div>
+        <div class="panel-body">
         <p>
             {% if metrics.coverage.complete %}
             Complete for visible typed evidence.
@@ -133,11 +138,13 @@
                 <div><dt>Cycle samples excluded</dt><dd>{{ metrics.coverage.cycle_samples_excluded }}</dd></div>
             </dl>
         </details>
+        </div>
     </section>
 </div>
 
-<section class="dashboard-card" aria-labelledby="actor-table-heading">
-    <h2 id="actor-table-heading">Completion events by actor</h2>
+<section class="panel" aria-labelledby="actor-table-heading">
+    <div class="panel-head"><h2 id="actor-table-heading">Completion events by actor</h2></div>
+    <div class="panel-body">
     {% if metrics.actors %}
     <div class="agent-checkin-table-region"
          role="region"
@@ -178,10 +185,12 @@
         actor rows. Totals above remain complete.
     </p>
     {% endif %}
+    </div>
 </section>
 
-<section class="dashboard-card" aria-labelledby="definitions-heading">
-    <h2 id="definitions-heading">Definitions and limits</h2>
+<section class="panel" aria-labelledby="definitions-heading">
+    <div class="panel-head"><h2 id="definitions-heading">Definitions and limits</h2></div>
+    <div class="panel-body">
     <dl class="fleet-metrics-definitions">
         <dt>Created</dt><dd>{{ metrics.definitions.created }}</dd>
         <dt>Completed</dt><dd>{{ metrics.definitions.completed }}</dd>
@@ -193,5 +202,6 @@
         Archived issues remain eligible. Imported, legacy-untyped, orphaned, and
         incomplete lifecycle evidence is never guessed into the metrics.
     </p>
+    </div>
 </section>
 {% endblock %}

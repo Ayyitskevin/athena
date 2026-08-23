@@ -12,15 +12,16 @@ import sqlite3
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from athena import config
 from athena.core import agent_commands, approvals, budgets, user_commands, users
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import (
     admin_actor,
     current_actor,
-    optional_actor,
+    bootstrap_optional_actor,
     require_admin,
 )
 from athena.mcp.config import claude_mcp_config
@@ -68,8 +69,8 @@ def _bootstrap_token_matches(presented: str | None) -> bool:
 
 
 class UserCreate(BaseModel):
-    email: str
-    name: str
+    email: str = Field(min_length=1, max_length=users.MAX_EMAIL_CHARS)
+    name: str = Field(min_length=1, max_length=users.MAX_NAME_CHARS)
     # Optional: set it to enable browser login. Omit for agent/API-only users.
     password: str | None = None
     # Bootstrap ignores this and always creates the first user as admin.
@@ -132,11 +133,13 @@ class OffboardOut(BaseModel):
 
 
 class AgentOnboard(BaseModel):
-    email: str
     name: str
     # REQUIRED: an agent's first credential must say what it may do — the same
     # least-privilege rule as POST /tokens (no omitted-scopes fail-open).
     scopes: list[Literal["read", "issue:write", "docs:write", "admin"]]
+    # Optional unique handle. Omitted → ``{slug}@agents.local``. Agents do not
+    # sign in with a mailbox; this is only the users-table uniqueness key.
+    email: str | None = None
     # Defaults to the agent's name.
     token_name: str | None = None
 
@@ -176,7 +179,7 @@ def create(
     payload: UserCreate,
     request: Request,
     bootstrap_token: str | None = Header(default=None, alias=BOOTSTRAP_TOKEN_HEADER),
-    actor: dict | None = Depends(optional_actor),
+    actor: dict | None = Depends(bootstrap_optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     # Bootstrap exception: there is no existing actor on a fresh database, so the
@@ -208,6 +211,13 @@ def create(
             # whether the database is empty or a bootstrap credential is configured.
             # Duplicate or proxy-coalesced credential headers fail the same way.
             raise HTTPException(status_code=401, detail="authentication required")
+        if config.BOOTSTRAP_PASSWORD_REQUIRED and (
+            not payload.password or not payload.password.strip()
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="athena-serve bootstrap requires an administrator password",
+            )
     else:
         if actor is None:
             raise HTTPException(status_code=401, detail="authentication required")
@@ -304,8 +314,8 @@ def onboard_agent(
         result = agent_commands.onboard_agent(
             conn,
             actor=actor,
-            email=payload.email,
             name=payload.name,
+            email=payload.email,
             scopes=payload.scopes,
             token_name=payload.token_name,
         )
@@ -323,7 +333,7 @@ def onboard_agent(
 
 @router.get("/{user_id}", response_model=UserOut)
 def show(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -337,7 +347,7 @@ def show(
 
 @router.put("/{user_id}/role", response_model=UserOut)
 def update_role(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserRoleUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -354,7 +364,7 @@ def update_role(
 
 @router.put("/{user_id}/agent", response_model=UserOut)
 def update_agent(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserAgentUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -374,7 +384,7 @@ def update_agent(
 
 @router.put("/{user_id}/password", response_model=UserOut)
 def reset_password(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserPasswordReset,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -398,7 +408,7 @@ def reset_password(
 
 @router.get("/{user_id}/budget", response_model=BudgetOut | None)
 def read_budget(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | None:
@@ -418,7 +428,7 @@ def read_budget(
 
 @router.put("/{user_id}/budget", response_model=BudgetOut)
 def set_budget(
-    user_id: int,
+    user_id: RowIdPath,
     payload: BudgetUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -448,7 +458,7 @@ def set_budget(
 
 @router.delete("/{user_id}/budget", status_code=204)
 def clear_budget(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -462,7 +472,7 @@ def clear_budget(
 
 @router.put("/{user_id}/paused", response_model=UserOut)
 def update_paused(
-    user_id: int,
+    user_id: RowIdPath,
     payload: UserPausedUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -480,7 +490,7 @@ def update_paused(
 
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)
 def revoke_user_tokens(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -498,7 +508,7 @@ def revoke_user_tokens(
 
 @router.post("/{user_id}/offboard", response_model=OffboardOut)
 def offboard(
-    user_id: int,
+    user_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:

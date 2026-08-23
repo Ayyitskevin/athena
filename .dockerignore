@@ -1,0 +1,9 @@
+# The build stage needs pyproject/README/LICENSE, src/ and constraints/ — nothing
+# else. Keeping the context small is not only speed: a stray athena.db or an
+# attachments/ directory copied into an image layer would ship someone's data.
+*
+!pyproject.toml
+!README.md
+!LICENSE
+!src/
+!constraints/

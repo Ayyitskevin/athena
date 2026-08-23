@@ -17,6 +17,7 @@ _SPEC.loader.exec_module(verify_wheel)
 def _source_tree(root: Path) -> set[str]:
     files = {
         "core/migrations/0001_initial.sql",
+        "field_guide/01_your_desk.md",
         "static/styles.css",
         "templates/home.html",
         "templates/aegis/issues.html",
@@ -28,12 +29,24 @@ def _source_tree(root: Path) -> set[str]:
     return files
 
 
-def _wheel(path: Path, files: set[str]) -> None:
+def _wheel(
+    path: Path,
+    files: set[str],
+    *,
+    entry_points: str | None = (
+        "[console_scripts]\nathena-serve = athena.ops:serve_main\n"
+    ),
+) -> None:
     with ZipFile(path, "w") as archive:
         for relative in files:
             archive.writestr(f"athena/{relative}", relative)
         archive.writestr("athena/__init__.py", "")
         archive.writestr("athena-0.0.1.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+        if entry_points is not None:
+            archive.writestr(
+                "athena-0.0.1.dist-info/entry_points.txt",
+                entry_points,
+            )
 
 
 def test_verify_runtime_manifest_accepts_an_exact_wheel(tmp_path):
@@ -46,6 +59,7 @@ def test_verify_runtime_manifest_accepts_an_exact_wheel(tmp_path):
         wheel_path, package_root=package_root
     ) == {
         "core/migrations": 1,
+        "field_guide": 1,
         "static": 1,
         "templates": 2,
     }
@@ -81,3 +95,45 @@ def test_verify_runtime_manifest_rejects_duplicate_wheel_members(tmp_path):
         verify_wheel.verify_runtime_manifest(wheel_path, package_root=package_root)
 
     assert "duplicates:\n  static/styles.css" in str(exc_info.value)
+
+
+def test_verify_console_scripts_accepts_exact_safe_launcher_mapping(tmp_path):
+    wheel_path = tmp_path / "athena.whl"
+    _wheel(wheel_path, set())
+
+    verify_wheel.verify_console_scripts(wheel_path)
+
+
+@pytest.mark.parametrize(
+    ("entry_points", "message"),
+    [
+        (None, "exactly one"),
+        ("[other]\nathena-serve = athena.ops:serve_main\n", "console_scripts"),
+        ("[console_scripts]\n", "got missing"),
+        (
+            "[console_scripts]\nathena-serve = athena.main:app\n",
+            "athena.ops:serve_main",
+        ),
+    ],
+)
+def test_verify_console_scripts_rejects_missing_or_wrong_mapping(
+    tmp_path, entry_points, message
+):
+    wheel_path = tmp_path / "athena.whl"
+    _wheel(wheel_path, set(), entry_points=entry_points)
+
+    with pytest.raises(RuntimeError, match=message):
+        verify_wheel.verify_console_scripts(wheel_path)
+
+
+def test_verify_console_scripts_rejects_ambiguous_metadata(tmp_path):
+    wheel_path = tmp_path / "athena.whl"
+    _wheel(wheel_path, set())
+    with ZipFile(wheel_path, "a") as archive:
+        archive.writestr(
+            "other-0.0.1.dist-info/entry_points.txt",
+            "[console_scripts]\nathena-serve = athena.ops:serve_main\n",
+        )
+
+    with pytest.raises(RuntimeError, match="exactly one"):
+        verify_wheel.verify_console_scripts(wheel_path)

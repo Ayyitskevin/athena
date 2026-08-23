@@ -228,3 +228,33 @@ def test_disabled_rule_and_loop_guard(tmp_path):
         # Without the guard, the same kind of event fires.
         client.post("/issues", json={"title": "z"}, headers=H1)
         assert automation.process_pending(conn, executor=ex) == 1 and calls == [1]
+
+
+def test_buzz_message_action_params_validation():
+    # Every param is optional — {} is a valid buzz_message rule (assign channel,
+    # no mention, no note). What IS given must be well-formed at the boundary,
+    # never a rule whose every firing fails at the CLI.
+    base = dict(trigger_verb="created", action_type="buzz_message", conditions={})
+    assert automation.validate_rule(**base, action_params={}) is None
+    assert (
+        automation.validate_rule(
+            **base,
+            action_params={
+                "channel": "e29bb951-d272-4822-a8e5-ffac2f9462f2",
+                "mention": "ab" * 32,
+                "note": "P0 filed — needs eyes.",
+            },
+        )
+        is None
+    )
+    assert "channel" in automation.validate_rule(
+        **base, action_params={"channel": "not-a-uuid"}
+    )
+    assert "channel" in automation.validate_rule(
+        **base, action_params={"channel": "E29BB951-D272-4822-A8E5-FFAC2F9462F2"}
+    )  # relay grammar is lowercase
+    assert "mention" in automation.validate_rule(
+        **base, action_params={"mention": "npub1notahexkey"}
+    )
+    assert "note" in automation.validate_rule(**base, action_params={"note": "x" * 501})
+    assert "note" in automation.validate_rule(**base, action_params={"note": 7})

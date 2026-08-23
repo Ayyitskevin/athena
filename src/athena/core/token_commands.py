@@ -27,12 +27,14 @@ VERB_REVOKED_TOKEN = "revoked_token"
 
 
 class TokenCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (422
-    for an invalid scope) without the command having to know about HTTP."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND``, so the
+    command layer states what went wrong and the transport decides how to say
+    it — the same shape every command module written since uses."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def mint_token(
@@ -54,7 +56,7 @@ def mint_token(
                 conn, user_id=actor_id, name=name, scopes=scopes, commit=False
             )
         except ValueError as exc:
-            raise TokenCommandError(str(exc), status_code=422) from exc
+            raise TokenCommandError("invalid", str(exc)) from exc
         activity.record(
             conn,
             actor_id=actor_id,

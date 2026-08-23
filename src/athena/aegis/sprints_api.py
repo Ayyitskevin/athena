@@ -17,10 +17,19 @@ from pydantic import BaseModel
 
 from athena.aegis import projects, sprint_commands, sprints
 from athena.core import access
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor, optional_actor
 
 router = APIRouter(tags=["aegis"])
+
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 
 
 class SprintOut(BaseModel):
@@ -83,7 +92,7 @@ def _sprint_for_write(conn: sqlite3.Connection, sprint_id: int, actor: dict) -> 
 
 @router.get("/projects/{project_id}/sprints", response_model=list[SprintOut])
 def list_project_sprints(
-    project_id: int,
+    project_id: RowIdPath,
     state: str | None = Query(None, description="filter to one state"),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -103,7 +112,7 @@ def list_project_sprints(
     "/projects/{project_id}/sprints", response_model=SprintOut, status_code=201
 )
 def create_sprint(
-    project_id: int,
+    project_id: RowIdPath,
     payload: SprintCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -126,7 +135,7 @@ def create_sprint(
 
 @router.get("/sprints/{sprint_id}", response_model=SprintOut)
 def show_sprint(
-    sprint_id: int,
+    sprint_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -140,7 +149,7 @@ def show_sprint(
 
 @router.patch("/sprints/{sprint_id}", response_model=SprintOut)
 def update_sprint(
-    sprint_id: int,
+    sprint_id: RowIdPath,
     payload: SprintEdit,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -159,12 +168,14 @@ def update_sprint(
             conn, actor_id=actor["id"], sprint_id=sprint_id, fields=fields
         )
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/sprints/{sprint_id}/start", response_model=SprintOut)
 def start_sprint(
-    sprint_id: int,
+    sprint_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -176,12 +187,14 @@ def start_sprint(
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/sprints/{sprint_id}/complete", response_model=SprintOut)
 def complete_sprint(
-    sprint_id: int,
+    sprint_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -193,12 +206,14 @@ def complete_sprint(
     except sprints.SprintStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/sprints/{sprint_id}", status_code=204)
 def delete_sprint(
-    sprint_id: int,
+    sprint_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

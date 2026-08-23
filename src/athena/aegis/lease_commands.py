@@ -24,6 +24,7 @@ from athena.aegis import (
     contributors as contributors_data,
     issue_activity,
     leases,
+    statuses,
 )
 from athena.aegis.issue_commands import (
     IssueCommandError,
@@ -49,6 +50,8 @@ CLAIM_PRECONDITION_REQUIRED_DETAIL = (
 LEASE_GENERATION_REQUIRED_DETAIL = (
     "the exact current lease generation is required for this operation"
 )
+MAX_DECLARED_PATHS = 32
+MAX_DECLARED_PATH_CHARS = 256
 
 
 def _claimant_or_reject(conn: sqlite3.Connection, issue: dict, actor: dict) -> None:
@@ -97,6 +100,70 @@ def _matching_lease_generation(existing: dict, generation: object | None) -> str
     return normalized
 
 
+def normalize_declared_paths(raw: object) -> list[str]:
+    """Repo-relative POSIX paths. Empty means issue-fence only."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise IssueCommandError("invalid", "paths must be a list of strings")
+    if len(raw) > MAX_DECLARED_PATHS:
+        raise IssueCommandError(
+            "invalid",
+            f"at most {MAX_DECLARED_PATHS} declared paths",
+        )
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            raise IssueCommandError("invalid", "paths must be a list of strings")
+        text = item.strip().replace("\\", "/")
+        if not text or "\x00" in text:
+            raise IssueCommandError("invalid", "declared path is empty or invalid")
+        if text.startswith("/"):
+            raise IssueCommandError("invalid", "declared paths must be relative")
+        parts: list[str] = []
+        for part in text.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                raise IssueCommandError(
+                    "invalid", "declared paths may not contain '..'"
+                )
+            parts.append(part)
+        if not parts:
+            raise IssueCommandError("invalid", "declared path is empty or invalid")
+        normalized = "/".join(parts)
+        if len(normalized) > MAX_DECLARED_PATH_CHARS:
+            raise IssueCommandError(
+                "invalid",
+                f"declared path must be at most {MAX_DECLARED_PATH_CHARS} characters",
+            )
+        if normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return out
+
+
+def paths_overlap(left: str, right: str) -> bool:
+    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
+
+
+def _refuse_overlapping_paths(
+    conn: sqlite3.Connection, *, issue_id: int, paths: list[str]
+) -> None:
+    if not paths:
+        return
+    for other in leases.list_active_leases(conn, except_issue_id=issue_id):
+        for mine in paths:
+            for theirs in other.get("declared_paths") or []:
+                if paths_overlap(mine, theirs):
+                    raise IssueCommandError(
+                        "conflict",
+                        f"declared path '{mine}' overlaps '{theirs}' on issue "
+                        f"{other['issue_id']} held by {other['holder_name']}",
+                    )
+
+
 def claim_issue(
     conn: sqlite3.Connection,
     *,
@@ -105,6 +172,7 @@ def claim_issue(
     if_match: list[str] | None = None,
     generation: object | None = None,
     lease_seconds: int = leases.DEFAULT_LEASE_SECONDS,
+    paths: object = None,
 ) -> dict:
     """Take the exclusive lease on an issue (accept). Returns the lease
     {issue_id, holder_id, holder_name, claimed_at, expires_at, active}.
@@ -158,12 +226,15 @@ def claim_issue(
             required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
             exact=True,
         )
+        declared_paths = normalize_declared_paths(paths)
+        _refuse_overlapping_paths(conn, issue_id=issue_id, paths=declared_paths)
         lease = leases.upsert_lease(
             conn,
             issue_id,
             actor["id"],
             lease_seconds,
             generation=current_generation,
+            declared_paths=declared_paths,
             commit=False,
         )
         issue_activity.record_issue_claimed(
@@ -421,7 +492,7 @@ def complete_claim(
     actor: dict | None,
     issue_id: int,
     generation: object | None,
-) -> None:
+) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the ACTIVE lease (an admin may release anyone's,
     a moderation lever). Rejects with IssueCommandError('conflict') if there is no active
@@ -461,6 +532,19 @@ def complete_claim(
             generation=current_generation,
             commit=False,
         )
+        still_open = (
+            statuses.category_of(conn, issue.get("project_id"), issue["status"])
+            != "done"
+        )
+        return {
+            "released": True,
+            "issue_id": issue_id,
+            "issue_status": issue["status"],
+            "issue_still_open": still_open,
+            "next": (
+                "complete_claim released the lease only; issue status is unchanged"
+            ),
+        }
 
 
 def decline_delegation(

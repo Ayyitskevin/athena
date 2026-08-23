@@ -10,23 +10,123 @@
     </div>
 </div>
 
-<div class="form-container">
+<div class="panel">
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
+{% if conflict %}
+{# The losing editor — the page editor's answer, now that issues have a draft
+   store (0074). Every sentence here has to be true: nothing of theirs was
+   overwritten, nothing was merged, and their text still exists — as their
+   draft, one click away. #}
+<div class="warning">
+    <strong>Someone else saved this issue while you were editing</strong>
+    <p class="note-small">
+        Your save was refused, so <strong>nothing was overwritten and nothing was
+        merged</strong>. The form below now holds <strong>their</strong> version —
+        the issue as it stands. Your text was kept as your draft: read both, then
+        either edit the form directly or press <strong>Restore draft</strong> to
+        put your version back in the fields and save it over theirs.
+    </p>
+    <details open>
+        <summary>Your version — kept as your draft</summary>
+        <p class="muted">Title: {{ conflict.title }}</p>
+        <pre class="conflict-text">{{ conflict.body }}</pre>
+    </details>
+</div>
+{% endif %}
+
+{% if draft %}
+{# An unsaved draft is OFFERED, never applied. The form below still shows the
+   SAVED issue, so nothing an author sees here is a surprise — restoring is a
+   button they press, and discarding throws away only their own copy. #}
+<div class="warning">
+    <strong>You have unsaved work on this issue</strong>
+    <span class="muted">held {{ draft.updated_at }}</span>
+    {% if draft_is_stale %}
+    <p class="note-small">
+        The issue has been saved by someone else since you last typed. Restoring
+        replaces what is in the form with your draft — read both before saving,
+        or their changes will be lost when you save.
+    </p>
+    {% endif %}
+    <div class="form-actions">
+        <form method="post" action="/aegis/issues/{{ issue.id }}/draft/discard"
+              data-confirm="Discard your unsaved draft of this issue?" class="inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small">Discard draft</button>
+        </form>
+        {# Restoring is a READ: it re-renders this form with the draft's text in
+           the fields. Nothing is written until the author presses Save. #}
+        {% if not restored %}
+        <a href="/aegis/issues/{{ issue.id }}/edit?restore=1" class="button small">Restore draft</a>
+        {% else %}
+        <a href="/aegis/issues/{{ issue.id }}/edit" class="button secondary small">Show saved issue</a>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if restored %}
+<div class="success">
+    The form below holds your draft, not the saved issue. Save to make it the issue.
+</div>
+{% endif %}
+
     <form method="post" action="/aegis/issues/{{ issue.id }}/edit" class="issue-form">
         {% include "partials/csrf.html" %}
+        {# The baseline this editing session started from, carried through every
+           autosave so the draft records the issue the author actually SAW.
+           Restoring a draft continues the session that produced it, so the
+           draft's own baseline rides along — not today's etag, which would
+           quietly mark stale work fresh. #}
+        <input type="hidden" name="based_on" value="{{ draft.based_on if restored else issue_etag }}">
+        {# The save precondition, and deliberately NOT the same value as based_on
+           above. based_on follows the editing SESSION (a restored draft keeps its
+           own baseline, so stale work stays marked stale); this one is always the
+           issue as this form was rendered, because that is what the save is being
+           checked against. Sharing one field would make restoring a draft refuse
+           every subsequent save. #}
+        <input type="hidden" name="if_match" value="{{ issue_etag }}">
         <div class="form-group">
             <label for="title">Title</label>
-            <input type="text" id="title" name="title" required value="{{ issue.title }}">
+            <input type="text" id="title" name="title" required value="{{ draft.title if restored else issue.title }}">
         </div>
 
         <div class="form-group">
             <label for="body">Description</label>
-            <textarea id="body" name="body" rows="8"
-                      placeholder="Details, steps to reproduce, acceptance criteria...">{{ issue.body }}</textarea>
+            {# Side-by-side preview, filled by the SAME function the issue view
+               uses — including its limits, so an embed directive previews as the
+               "not rendered here" box the saved issue will show. Without
+               JavaScript the editor behaves exactly as before. #}
+            <div class="editor-split">
+                <textarea id="body" name="body" rows="8"
+                          placeholder="Details, steps to reproduce, acceptance criteria..."
+                          hx-post="/aegis/issues/preview"
+                          hx-trigger="keyup changed delay:300ms"
+                          hx-target="#body-preview"
+                          hx-include="closest form"
+                          hx-sync="this:replace">{{ draft.body if restored else issue.body }}</textarea>
+                <div class="panel">
+                    <div class="panel-body">
+                        <div class="editor-preview-label">Preview</div>
+                        <div id="body-preview" class="prose">{{ body_html }}</div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="form-actions">
             <button type="submit" class="button">Save Changes</button>
             <a href="/aegis/issues/{{ issue.id }}" class="button secondary">Cancel</a>
+            {# Autosave reports itself here. It writes to the author's own draft
+               row and never to the issue, so this line is the only thing on the
+               screen that changes while typing. #}
+            <span id="draft-status" class="note-small"
+                  hx-post="/aegis/issues/{{ issue.id }}/draft"
+                  hx-trigger="keyup changed delay:2s from:closest form"
+                  hx-include="closest form"
+                  hx-swap="innerHTML"
+                  hx-sync="this:replace"></span>
         </div>
     </form>
 </div>

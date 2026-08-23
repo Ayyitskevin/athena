@@ -27,14 +27,16 @@
             <td class="issue-title">
                 <a href="/aegis/issues?project={{ p.id }}">{{ p.name }}</a>
                 {% if p.visibility == "private" %}
-                <span class="badge badge-private" title="Private — members only">🔒</span>
+                <span class="chip" data-tone="neutral" title="Private — members only">🔒</span>
                 {% endif %}
             </td>
             <td class="muted"><code>{{ p.key }}</code></td>
             <td class="muted">{{ p.description or "—" }}</td>
             <td class="muted">{{ counts[p.id] }}</td>
             <td class="muted">
-                <a href="/aegis/projects/{{ p.id }}/sprints">Sprints</a>
+                <a href="/aegis/projects/{{ p.id }}/floor">Floor</a>
+                · <a href="/aegis/projects/{{ p.id }}/sprints">Sprints</a>
+                · <a href="/aegis/projects/{{ p.id }}/timeline">Timeline</a>
                 {% if can_write and request.state.user.id == p.created_by %}
                 · <a href="/aegis/projects/{{ p.id }}/edit">Edit</a>
                 {% endif %}
@@ -50,7 +52,7 @@
 <p class="empty-state">No projects yet.</p>
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
     {% if can_write %}
     <h3>New Project</h3>
     <form method="post" action="/aegis/projects" class="issue-form">

@@ -12,24 +12,30 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena.aegis import (
+    issue_commands,
     issues,
+    office,
     project_commands,
+    room_commands,
     project_etags,
     projects,
     sprint_commands,
     sprints,
     status_commands,
     statuses,
+    timeline,
 )
-from athena.core import access, identity, users
+from athena.core import access, fleet_roster, identity, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.router import _readonly_response, get_templates
+from athena.workflows import fleet_assign_commands
 
 router = APIRouter()
 
@@ -63,6 +69,221 @@ def projects_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)
             "is_admin": user is not None and identity.is_admin(user),
         },
     )
+
+
+@router.get("/aegis/projects/{project_id}/floor", response_class=HTMLResponse)
+def project_floor(
+    request: Request,
+    project_id: int,
+    assigned: str | None = Query(None),
+    seat: str | None = Query(None),
+    radio: str | None = Query(None),
+    error: str | None = Query(None),
+    room: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """The branch office: one project, many chairs. Open read like the issue list."""
+    user = getattr(request.state, "user", None)
+    floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
+    if floor is None:
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    notice = None
+    if assigned:
+        notice = f"Sat {seat or 'a seat'} in {assigned}."
+        if radio == "sent":
+            notice += " Radio posted to command-deck."
+        elif radio == "skipped":
+            notice += " Radio skipped."
+        elif radio == "failed":
+            notice += " Radio failed; the chair assignment still landed."
+    can_assign = user is not None and identity.can_write(user)
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/floor.html",
+        context={
+            "floor": floor,
+            "project": floor["project"],
+            "assignable": (
+                fleet_roster.athena_assignable_seats(conn) if can_assign else []
+            ),
+            "can_assign": can_assign,
+            "notice": notice,
+            "error": error,
+            "room_filter": room,
+        },
+    )
+
+
+@router.post(
+    "/aegis/projects/{project_id}/floor/assign",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_assign(
+    request: Request,
+    project_id: int,
+    issue_id: int = Form(...),
+    seat_slug: str = Form(...),
+    note: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Sit a declared seat in this chair. Same command as Admin → Fleet assign."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to assign a chair.</div>',
+            status_code=401,
+        )
+    if not identity.can_write(user):
+        return _readonly_response()
+    floor = office.build_floor(conn, project_id=project_id, actor=user)
+    if floor is None:
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    on_floor = {int(chair["issue_id"]) for chair in floor["chairs"]}
+    if int(issue_id) not in on_floor:
+        return get_templates().TemplateResponse(
+            request=request,
+            name="aegis/floor.html",
+            context={
+                "floor": floor,
+                "project": floor["project"],
+                "assignable": fleet_roster.athena_assignable_seats(conn),
+                "can_assign": True,
+                "notice": None,
+                "error": "that chair is not on this floor",
+            },
+            status_code=400,
+        )
+    try:
+        result = fleet_assign_commands.assign_issue_to_seat(
+            conn,
+            actor=user,
+            issue_id=issue_id,
+            seat_slug=seat_slug,
+            note=note,
+        )
+    except fleet_assign_commands.AssignError as exc:
+        return get_templates().TemplateResponse(
+            request=request,
+            name="aegis/floor.html",
+            context={
+                "floor": floor,
+                "project": floor["project"],
+                "assignable": fleet_roster.athena_assignable_seats(conn),
+                "can_assign": True,
+                "notice": None,
+                "error": exc.detail,
+            },
+            status_code=400,
+        )
+    except issue_commands.IssueCommandError as exc:
+        return get_templates().TemplateResponse(
+            request=request,
+            name="aegis/floor.html",
+            context={
+                "floor": floor,
+                "project": floor["project"],
+                "assignable": fleet_roster.athena_assignable_seats(conn),
+                "can_assign": True,
+                "notice": None,
+                "error": str(exc.detail),
+            },
+            status_code=400,
+        )
+    radio = (result.get("radio") or {}).get("status") or "skipped"
+    return RedirectResponse(
+        f"/aegis/projects/{project_id}/floor"
+        f"?assigned={result['issue_key']}&seat={result['seat']}&radio={radio}",
+        status_code=303,
+    )
+
+
+@router.post(
+    "/aegis/projects/{project_id}/rooms",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_add_room(
+    request: Request,
+    project_id: int,
+    name: str = Form(""),
+    blurb: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    try:
+        room_commands.create_room(
+            conn, actor=user, project_id=project_id, name=name, blurb=blurb
+        )
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/rooms/stock",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_stock_rooms(
+    request: Request,
+    project_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    try:
+        room_commands.stock_starter_rooms(conn, actor=user, project_id=project_id)
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.post(
+    "/aegis/projects/{project_id}/floor/place",
+    response_class=HTMLResponse,
+    dependencies=[Depends(verify_csrf)],
+)
+def project_floor_place(
+    request: Request,
+    project_id: int,
+    issue_id: int = Form(...),
+    room_id: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    chosen = int(room_id) if room_id.strip().isdigit() else None
+    try:
+        room_commands.place_issue(conn, actor=user, issue_id=issue_id, room_id=chosen)
+    except room_commands.RoomCommandError as exc:
+        return RedirectResponse(
+            f"/aegis/projects/{project_id}/floor?error={quote(exc.detail)}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/aegis/projects/{project_id}/floor", status_code=303)
+
+
+@router.get("/aegis/projects/{project_id}/floor.json")
+def project_floor_json(
+    request: Request,
+    project_id: int,
+    room: str | None = Query(None),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    user = getattr(request.state, "user", None)
+    floor = office.build_floor(conn, project_id=project_id, actor=user, room_slug=room)
+    if floor is None:
+        return JSONResponse({"detail": "no such project"}, status_code=404)
+    return floor
 
 
 @router.post(
@@ -546,6 +767,39 @@ def _authorize_sprint_write(conn, sprint_id: int, user: dict):
     if err is not None:
         return None, err
     return sprint, None
+
+
+@router.get("/aegis/projects/{project_id}/timeline", response_class=HTMLResponse)
+def project_timeline(
+    request: Request, project_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """A project's roadmap — sprints as lanes, issues placed in them, dependencies
+    drawn between them. Open read like the sprint list, and read-only: moving an
+    issue happens through the sprint-assignment form on the issue itself, which
+    already owns that write and its audit event.
+
+    A separate route rather than a panel on the project page, for the same reason
+    the graph has one: a layout pass over every issue in the project is per-view
+    work that ordinary reading should not pay for."""
+    user = getattr(request.state, "user", None)
+    project = projects.get_project(conn, project_id)
+    # A private project the viewer can't see is a 404, like a missing one.
+    if project is None or not access.can_see_project(conn, user, project_id):
+        return HTMLResponse(
+            '<div class="error">No such project.</div>', status_code=404
+        )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="aegis/timeline.html",
+        context={
+            "project": project,
+            "timeline": timeline.project_timeline(
+                conn,
+                project_id=project_id,
+                visible_project_ids=access.visible_project_filter(conn, user),
+            ),
+        },
+    )
 
 
 @router.get("/aegis/projects/{project_id}/sprints", response_class=HTMLResponse)

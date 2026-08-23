@@ -42,7 +42,7 @@
                 </form>
             </td>
             <td>
-                {% if u.is_agent %}<span class="agent-badge">agent</span>{% else %}<span class="muted">human</span>{% endif %}
+                {% if u.is_agent %}<span class="chip" data-tone="agent">agent</span>{% else %}<span class="muted">human</span>{% endif %}
                 <form method="post" action="/admin/users/{{ u.id }}/agent" class="inline-form">
                     {% include "partials/csrf.html" %}
                     <input type="hidden" name="is_agent" value="{{ 0 if u.is_agent else 1 }}">
@@ -64,8 +64,13 @@
     </tbody>
 </table>
 
-<div class="form-container">
-    <h3>New User</h3>
+<div class="panel">
+    <h3>New person</h3>
+    <p class="subtitle">
+        Humans who sign in with email and password. To add an AI teammate, use
+        <a href="/admin/agents">Onboard an agent</a> — agents get a scoped token,
+        not a password.
+    </p>
     <form method="post" action="/admin/users" class="issue-form">
         {% include "partials/csrf.html" %}
         <div class="form-group">
@@ -88,11 +93,8 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="form-group form-check">
-            <label><input type="checkbox" name="is_agent" value="1"> This account is an agent</label>
-        </div>
         <div class="form-actions">
-            <button type="submit" class="button">Create User</button>
+            <button type="submit" class="button">Create person</button>
         </div>
     </form>
 </div>

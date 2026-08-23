@@ -434,15 +434,20 @@ class AthenaClient:
         if_match: str,
         generation: str | None = None,
         lease_seconds: int | None = None,
+        paths: list[str] | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Claim against the exact strong root issue ETag the caller reviewed."""
+        """Claim against the exact strong root issue ETag the caller reviewed.
+
+        ``paths`` optionally fences repo-relative files against other active leases.
+        """
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/claim",
             json=self._params(
                 lease_seconds=lease_seconds,
                 generation=generation,
+                paths=paths,
             ),
             if_match=if_match,
             idempotency_key=idempotency_key,
@@ -808,13 +813,14 @@ class AthenaClient:
     def onboard_agent(
         self,
         *,
-        email: str,
         name: str,
         scopes: list[str],
+        email: str | None = None,
         token_name: str | None = None,
     ) -> Any:
         """Admin: provision an agent (user + first scoped token) in one audited
         move. The response carries the one-time raw token and an MCP config block.
+        Email is optional — omitted becomes ``{slug}@agents.local``.
         Deliberately NO idempotency_key: the server refuses durable replay for
         endpoints that return a one-time secret (the raw token must never sit in
         the replay store)."""
@@ -877,6 +883,29 @@ class AthenaClient:
         base = "issues" if kind == "issue" else "pages"
         return self._result(
             self._client.get(f"/{base}/{node_id}/graph", params=params or None)
+        )
+
+    def related_items(self, kind: str, node_id: int, limit: int | None = None) -> Any:
+        """What cites what this cites, but is not linked to it yet — co-citation."""
+        params = {"limit": limit} if limit is not None else None
+        base = "issues" if kind == "issue" else "pages"
+        return self._result(
+            self._client.get(f"/{base}/{node_id}/related", params=params)
+        )
+
+    def project_timeline(
+        self,
+        project_id: int,
+        *,
+        max_per_lane: int | None = None,
+        max_items: int | None = None,
+    ) -> Any:
+        """One project's roadmap — sprint lanes, placed issues, dependency edges."""
+        return self._result(
+            self._client.get(
+                f"/projects/{project_id}/timeline",
+                params=self._params(max_per_lane=max_per_lane, max_items=max_items),
+            )
         )
 
     def unlinked_mentions(
@@ -1011,6 +1040,27 @@ class AthenaClient:
     def mark_all_notifications_read(self) -> Any:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")
+
+    def search_workspace(self, query: str, *, limit_per_kind: int | None = None) -> Any:
+        """One search across issues, pages, and comments, grouped by kind."""
+        return self._result(
+            self._client.get(
+                "/search/workspace",
+                params=self._params(q=query, limit_per_kind=limit_per_kind),
+            )
+        )
+
+    def watch(self, target_kind: str, target_id: int) -> Any:
+        """Subscribe the authenticated actor's inbox to a target (idempotent)."""
+        return self._mutate(
+            self._client.post,
+            "/watches",
+            json={"target_kind": target_kind, "target_id": target_id},
+        )
+
+    def unwatch(self, target_kind: str, target_id: int) -> Any:
+        """Unsubscribe the actor's inbox. 404 if they were not watching it."""
+        return self._mutate(self._client.delete, f"/watches/{target_kind}/{target_id}")
 
     def list_run_events(
         self, run_id: str, *, before_id: int | None = None, limit: int = 100
@@ -1212,6 +1262,71 @@ class AthenaClient:
             )
         )
 
+    def start_playbook(
+        self,
+        page_id: int,
+        *,
+        project_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Turn a playbook page's checklist into a parent issue and children."""
+        return self._mutate(
+            self._client.post,
+            f"/pages/{page_id}/start-playbook",
+            idempotency_key=idempotency_key,
+            json=self._params(project_id=project_id, title=title),
+        )
+
+    def my_desk(self) -> Any:
+        """Your desk: identity, what is asked of you, what you hold, and what
+        changed since your cursor. Includes `office` (the one-chair cubicle)."""
+        return self._result(self._client.get("/desk"))
+
+    def my_office(self) -> Any:
+        """Your cubicle: one chair, fenced paths, checkout hint."""
+        return self._result(self._client.get("/office"))
+
+    def get_project_floor(self, project_id: int) -> Any:
+        """One project as a floor of chairs."""
+        return self._result(self._client.get(f"/projects/{project_id}/floor"))
+
+    def advance_desk_cursor(self, *, after_id: int) -> Any:
+        """Move YOUR desk cursor forward to this activity id."""
+        return self._result(
+            self._client.post("/desk/cursor", json={"after_id": after_id})
+        )
+
+    def activity_chain_status(self) -> Any:
+        """Where the trail's hash chain stands — anchor, head hash, coverage
+        counts (admin only)."""
+        return self._result(self._client.get("/activity/chain"))
+
+    def verify_activity_chain(
+        self,
+        *,
+        after_id: int | None = None,
+        limit: int = 1000,
+    ) -> Any:
+        """Recompute a bounded window of the trail's hash chain (admin only).
+
+        Loop on the returned next_after until has_more is false for a full walk."""
+        return self._result(
+            self._client.get(
+                "/activity/chain/verify",
+                params=self._params(after_id=after_id, limit=limit),
+            )
+        )
+
+    def agent_answerability(self, *, agent_id: int | None = None) -> Any:
+        """The ask-and-answer ledger per agent — controls, kills, approvals,
+        reversals (admin only). Facts per lane, never a score."""
+        return self._result(
+            self._client.get(
+                "/fleet/answerability", params=self._params(agent_id=agent_id)
+            )
+        )
+
     def worker_heartbeat(
         self,
         *,
@@ -1259,6 +1374,92 @@ class AthenaClient:
         return self._mutate(
             self._client.delete,
             f"/workers/{worker_id}/kill",
+            idempotency_key=idempotency_key,
+        )
+
+    def create_run_control(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        payload: str | None = None,
+        worker_id: int | None = None,
+        ttl_seconds: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Admin: record a control request against a live run. Records the ask;
+        the bound agent answers or it expires.
+
+        The key rides both layers on purpose: in the body it becomes the
+        control's domain single-flight binding, and as the Idempotency-Key
+        header it gets the transport replay contract every other mutation has."""
+        return self._mutate(
+            self._client.post,
+            "/run-controls",
+            json=self._params(
+                run_id=run_id,
+                kind=kind,
+                payload=payload,
+                worker_id=worker_id,
+                ttl_seconds=ttl_seconds,
+                idempotency_key=idempotency_key,
+            ),
+            idempotency_key=idempotency_key,
+        )
+
+    def list_run_controls(
+        self,
+        *,
+        run_id: str | None = None,
+        state: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        """Every control for an admin; your own addressed controls otherwise."""
+        return self._result(
+            self._client.get(
+                "/run-controls",
+                params=self._params(run_id=run_id, state=state, limit=limit),
+            )
+        )
+
+    def get_run_control(self, control_id: int) -> Any:
+        """One control, for an admin or the agent it is addressed to."""
+        return self._result(self._client.get(f"/run-controls/{control_id}"))
+
+    def acknowledge_run_control(
+        self, control_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Record that YOU read this control. Receipt, nothing more."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/acknowledge",
+            idempotency_key=idempotency_key,
+        )
+
+    def decline_run_control(
+        self, control_id: int, *, reason: str, idempotency_key: str | None = None
+    ) -> Any:
+        """Record YOUR refusal of this control, with the reason."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/decline",
+            json={"reason": reason},
+            idempotency_key=idempotency_key,
+        )
+
+    def complete_run_control(
+        self,
+        control_id: int,
+        *,
+        summary: str | None = None,
+        handoff: dict | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Record YOUR completion claim for this control."""
+        return self._mutate(
+            self._client.post,
+            f"/run-controls/{control_id}/complete",
+            json=self._params(summary=summary, handoff=handoff),
             idempotency_key=idempotency_key,
         )
 

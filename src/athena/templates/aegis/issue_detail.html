@@ -10,10 +10,10 @@
     </div>
     <div class="header-actions">
         <a href="/aegis/issues/{{ issue.id }}/work-context" class="button secondary small">Agent work context</a>
-        <span class="status {{ issue.status }} large">{{ issue.status }}</span>
+        <span class="chip chip--lg" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span>
         {% if request.state.user %}
         <form method="post" action="/aegis/issues/{{ issue.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
-              style="display:inline">
+              class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button secondary small">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
         </form>
@@ -55,9 +55,9 @@
         <dt>Reason</dt><dd>{{ open_claim_handoff.reason }}</dd>
         <dt>Yielded by</dt>
         <dd>{{ open_claim_handoff.yielded.actor_name }} at {{ open_claim_handoff.yielded.created_at }}</dd>
-        <dt>Attempted work</dt><dd class="body-text">{{ open_claim_handoff.attempted_work }}</dd>
-        <dt>Blocked question</dt><dd class="body-text">{{ open_claim_handoff.blocking_question }}</dd>
-        <dt>Resume instructions</dt><dd class="body-text">{{ open_claim_handoff.resume_instructions }}</dd>
+        <dt>Attempted work</dt><dd class="prose">{{ open_claim_handoff.attempted_work }}</dd>
+        <dt>Blocked question</dt><dd class="prose">{{ open_claim_handoff.blocking_question }}</dd>
+        <dt>Resume instructions</dt><dd class="prose">{{ open_claim_handoff.resume_instructions }}</dd>
         <dt>Evidence</dt>
         <dd>
             {% if open_claim_handoff.evidence %}
@@ -79,14 +79,14 @@
 </div>
 {% endif %}
 
-<div class="issue-detail">
-    <div class="meta-sidebar">
+<div class="issue-layout">
+    <aside class="meta-rail" aria-label="Issue metadata">
         <div class="meta-item"><strong>Key</strong> {{ issue.key or "#" ~ issue.id }}</div>
-        <div class="meta-item"><strong>Status</strong> <span class="status {{ issue.status }} large">{{ issue.status }}</span></div>
+        <div class="meta-item"><strong>Status</strong> <span class="chip chip--lg" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span></div>
         {% if issue.archived_at %}
-        <div class="meta-item"><strong>Archived</strong> <span class="archived-badge" title="{{ issue.archived_at }}">archived</span></div>
+        <div class="meta-item"><strong>Archived</strong> <span class="chip" data-tone="neutral" title="{{ issue.archived_at }}">archived</span></div>
         {% endif %}
-        <div class="meta-item"><strong>Priority</strong> <span class="priority {{ issue.priority }}">{{ issue.priority }}</span></div>
+        <div class="meta-item"><strong>Priority</strong> <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span></div>
         <div class="meta-item"><strong>Created</strong> {{ issue.created_at }}</div>
         <div class="meta-item"><strong>Created By</strong> {{ issue.created_by }}</div>
         <div class="meta-item"><strong>Assignee</strong> {{ issue.assignee_name or "Unassigned" }}</div>
@@ -115,8 +115,8 @@
             <strong>Labels</strong>
             <div class="label-list">
                 {% for l in issue_labels %}
-                <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
-                    <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><span class="label label-c-{{ l.color[1:] }}">
+                    <a href="/aegis/labels/{{ l.name }}" class="inherit-color">{{ l.name }}</a>
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/labels/{{ l.id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}
@@ -144,7 +144,7 @@
             <div class="contributor-list">
                 {% for cb in contributors %}
                 <span class="contributor">
-                    {{ cb.name }}{% if cb.is_agent %} <span class="agent-badge">agent</span>{% endif %}
+                    {{ cb.name }}{% if cb.is_agent %} <span class="chip" data-tone="agent">agent</span>{% endif %}
                     {% if can_modify %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/contributors/{{ cb.user_id }}/delete" class="label-remove">
                         {% include "partials/csrf.html" %}
@@ -168,16 +168,57 @@
             <p class="note-small">The assignee stays accountable; contributors (people or agents) are added teammates.</p>
             {% endif %}
         </div>
-    </div>
+    </aside>
 
-    <div class="main-content">
-        <div class="body">
+    <div class="issue-main">
+        {# Supervision before human metadata: who holds this, under which run,
+           and when it last moved. Every figure is scoped to what THIS page
+           already loaded — the bounded activity window — and says so; a
+           fleet-wide claim would belong to Mission Control, not here. #}
+        {% set latest_run = (activity | selectattr("run_id") | list | first) if activity else none %}
+        <div class="supervision">
+            <div>
+                <span class="k">Claim</span>
+                {% if open_claim_handoff %}
+                <span class="v">yielded</span>
+                <div class="sub">handoff open · {{ open_claim_handoff.reason }}</div>
+                {% elif issue.assignee_name %}
+                <span class="v">{{ issue.assignee_name }}</span>
+                <div class="sub">{{ "agent" if issue.assignee_is_agent else "human" }} assignee</div>
+                {% else %}
+                <span class="v">unclaimed</span>
+                <div class="sub">no assignee</div>
+                {% endif %}
+            </div>
+            <div>
+                <span class="k">Run</span>
+                {% if latest_run %}
+                <span class="v"><span class="run-id">{{ latest_run.run_id }}</span></span>
+                <div class="sub"><a href="/aegis/activity/runs/{{ latest_run.run_id }}/lineage">latest tagged event → lineage</a></div>
+                {% else %}
+                <span class="v">—</span>
+                <div class="sub">no tagged run in the loaded window</div>
+                {% endif %}
+            </div>
+            <div>
+                <span class="k">Last event</span>
+                {% if activity %}
+                <span class="v">{{ activity[0].created_at }}</span>
+                <div class="sub">newest of {{ activity | length }} loaded</div>
+                {% else %}
+                <span class="v">—</span>
+                <div class="sub">no visible events</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div>
             <h3>Description
             {% if can_modify %}
                 <a href="/aegis/issues/{{ issue.id }}/edit" class="muted edit-link">Edit</a>
             {% endif %}
             </h3>
-            <div class="body-text">{% if issue.body %}{{ body_html }}{% else %}No description provided.{% endif %}</div>
+            <div class="prose">{% if issue.body %}{{ body_html }}{% else %}No description provided.{% endif %}</div>
         </div>
 
         <div class="backlinks">
@@ -221,7 +262,7 @@
                         {% for it in items %}
                         <li>
                             <a href="/aegis/issues/{{ it.id }}" class="xref">{{ it.key or "#" ~ it.id }} {{ it.title }}</a>
-                            <span class="status {{ it.status }}">{{ it.status }}</span>
+                            <span class="chip" data-tone="{{ it.status | status_tone }}">{{ it.status }}</span>
                             {% if can_modify %}
                             <form method="post" action="/aegis/issues/{{ issue.id }}/links/{{ relation }}/{{ it.id }}/delete" class="rel-remove">
                                 {% include "partials/csrf.html" %}
@@ -254,16 +295,54 @@
 
         <div class="sub-issues">
             <h3>Sub-issues
-                {% if children %}
-                <span class="count">({{ children_done }}/{{ children | length }} done)</span>
+                {% if rollup.total %}
+                <span class="count">({{ rollup.done }}/{{ rollup.total }} done)</span>
                 {% endif %}
             </h3>
+            {% if rollup.has_children %}
+            {# Live rollup: computed from the children on every read, never stored.
+               Buckets come from each child's own project status categories, so a
+               project whose finished state is called "shipped" fills the bar the
+               same way one calling it "done" does. Segment widths arrive already
+               computed — this template places them, it does not do arithmetic. #}
+            <div class="rollup" role="group"
+                 aria-label="Sub-issue progress: {{ rollup.done }} of {{ rollup.total }} done">
+                {% if rollup.total %}
+                <div class="rollup-bar">
+                    {% for segment in rollup.segments %}
+                    <span class="rollup-seg rollup-{{ segment.bucket }} rollup-w-{{ segment.percent | round | int }}"
+                          title="{{ segment.count }} {{ segment.bucket }}"></span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <p class="note-small">
+                    {% if rollup.total %}
+                    {{ rollup.percent_done }}% done ·
+                    {{ rollup.counts.done }} done, {{ rollup.counts.doing }} in progress,
+                    {{ rollup.counts.todo }} to do{% if rollup.archived_excluded %} ·
+                    {{ rollup.archived_excluded }} archived
+                    {{ "child is" if rollup.archived_excluded == 1 else "children are" }}
+                    not counted{% endif %}.
+                    {% else %}
+                    {# Not "no sub-issues": there are some, and every one is archived.
+                       Reporting 0% with no explanation would read as untouched work. #}
+                    Every sub-issue is archived
+                    ({{ rollup.archived_excluded }}), so there is no live progress
+                    to report.
+                    {% endif %}
+                </p>
+            </div>
+            {% endif %}
             {% if children %}
             <ul class="child-list">
                 {% for c in children %}
                 <li>
-                    <span class="status {{ c.status }}">{{ c.status.replace("_", " ").title() }}</span>
+                    <span class="chip" data-tone="{{ c.status_category | category_tone }}">{{ c.status.replace("_", " ").title() }}</span>
                     <a href="/aegis/issues/{{ c.id }}">{{ c.key or "#" ~ c.id }} {{ c.title }}</a>
+                    {# Archived children are listed but not counted above, so say
+                       which ones they are — otherwise the header's total and the
+                       length of this list disagree with nothing to explain it. #}
+                    {% if c.archived_at %}<span class="muted">archived</span>{% endif %}
                 </li>
                 {% endfor %}
             </ul>
@@ -278,11 +357,20 @@
             <ul class="attachment-list">
                 {% for a in attachments %}
                 <li>
+                    {# An image shows itself and offers the markdown that embeds
+                       it — otherwise the inline-image capability is invisible. #}
+                    {% if a.content_type in inline_image_types %}
+                    <a href="/attachments/{{ a.id }}"><img src="/attachments/{{ a.id }}"
+                         alt="{{ a.filename }}" class="attachment-thumb"></a>
+                    {% endif %}
                     <a href="/attachments/{{ a.id }}">{{ a.filename }}</a>
                     <span class="muted">({{ a.byte_size }} bytes)</span>
+                    {% if a.content_type in inline_image_types %}
+                    <code class="attachment-embed">![{{ a.filename }}](/attachments/{{ a.id }})</code>
+                    {% endif %}
                     {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
                     <form method="post" action="/aegis/issues/{{ issue.id }}/attachments/{{ a.id }}/delete"
-                          data-confirm="Remove {{ a.filename }}?" style="display:inline">
+                          data-confirm="Remove {{ a.filename }}?" class="inline">
                         {% include "partials/csrf.html" %}
                         <button type="submit" class="button danger small">Remove</button>
                     </form>

@@ -1,0 +1,14 @@
+name: Athena CodeQL configuration
+
+queries:
+  - uses: security-extended
+
+paths:
+  - .github
+  - examples
+  - scripts
+  - src
+
+paths-ignore:
+  - tests
+  - src/athena/static/htmx.min.js

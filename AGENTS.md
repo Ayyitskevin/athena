@@ -81,16 +81,17 @@ Therefore:
   `"invalid"`, `"conflict"`, ...) plus a human `detail` — never an HTTP status
   code. The adapter owns the kind→status mapping (`_STATUS_BY_KIND` tables in
   the route module), so the same refusal can be a 422 in REST and a 400 in a
-  form without the command knowing a transport exists. `issue_commands`,
-  `page_commands`, `worker_commands`, `agent_run_commands`, and
-  `event_source_commands`, and `user_commands` carry the target shape; command
-  modules that still
-  raise `status_code`-carrying errors (e.g. `space_commands`,
-  `comment_commands`, `sprint_commands`, `agent_commands`,
-  `token_commands`, `webhook_commands`, `automation_commands`,
-  `status_commands`, `attachment_commands`, `page_comment_commands`) are
-  migration debt — migrate them when you touch them, do not copy the shape into
-  anything new.
+  form without the command knowing a transport exists. Most command modules
+  carry the target shape now (`issue_commands`, `page_commands`,
+  `worker_commands`, `agent_run_commands`, `event_source_commands`,
+  `user_commands`, `space_commands`, `comment_commands`, `sprint_commands`,
+  `token_commands`, `webhook_commands`, `page_comment_commands`, and
+  `project_commands`' policy errors); the modules that still raise
+  `status_code`-carrying errors (`automation_commands`, `status_commands`,
+  `agent_commands`, `attachment_commands`, and `project_commands`' access
+  errors) are migration debt — migrate them when you touch them, do not copy
+  the shape into anything new. (This inventory drifts as debt is paid; trust
+  `grep -l status_code src/athena/*/*commands*.py` over this sentence.)
 - If the endpoint you need doesn't exist, that is a **blocker to flag**, not a
   reason to fake it. Stop and say so (see "When scope grows").
 - One concept, one owner. Two code paths that both "create an issue" is a bug,
@@ -110,6 +111,7 @@ Therefore:
 | **aegis** | `src/athena/aegis/` | issues/projects/statuses/boards — data access + REST API |
 | **mentor** | `src/athena/mentor/` | spaces, pages, versions — knowledge module |
 | **web** | `src/athena/web/` | Jinja templates + HTMX — **thin client over the API only** |
+| **workflows** | `src/athena/workflows/` | commands that span BOTH modules (read one, write the other) — the only place that may import `aegis` and `mentor` together |
 
 Touch your assigned area. Don't refactor a neighbor's module to make your change
 fit — flag the friction instead. If two agents must change the same file (e.g.
@@ -137,10 +139,14 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 1. `ruff check .`, `python scripts/check_import_contracts.py`,
    `python scripts/check_write_ownership.py`,
-   `python scripts/check_imported_at_guards.py`, and `pytest -q`
+   `python scripts/check_imported_at_guards.py`,
+   `python scripts/check_template_styles.py`,
+   `python scripts/check_template_routes.py`, and `pytest -q`
    are **green** — no skipped or mocked-away tests passed off as passing.
-2. You **ran it**: the app boots and the feature works against the real DB
-   (`uvicorn athena.main:app`, hit the route). "Should work" is not "works."
+2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
+   boots against a real DB, and the feature works over real HTTP. The retained
+   `scripts/smoke_app.py` lifecycle is the minimum release-path proof; hit the
+   changed route too. "Should work" is not "works."
 3. **No stray data stores** — grep your diff for in-memory lists/dicts standing
    in for the database. There should be none (see the cardinal rule).
 4. Tests encode *why* the behavior matters, not just that a route returns 200.
@@ -162,19 +168,25 @@ cheap; a hidden assumption shipped to `main` is expensive.
 
 ```
 src/athena/
-  core/      db + migrations + (later) auth/users/tokens/search/cross-link
+  core/      db + migrations + auth/users/tokens/search/cross-link/deployment
   aegis/     work module (issues.py = SQL, issue_commands.py = audited writes,
              api.py = HTTP)
   mentor/    spaces, pages, versions — knowledge module
   web/       templates + HTMX — thin client over the API
   config.py  env-driven settings (ATHENA_DB, ...)
-  main.py    app factory: create_app(), /healthz, migrate-on-startup, wiring
+  main.py    app factory: create_app(), deployment boundary, health, wiring
+  ops.py     athena-serve and the retained operator CLIs
 tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
 
 Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`,
 `python scripts/check_write_ownership.py`,
-`python scripts/check_imported_at_guards.py`, and `pytest -q -n 4` (plain
+`python scripts/check_imported_at_guards.py`,
+`python scripts/check_template_styles.py`,
+`python scripts/check_template_routes.py`, and `pytest -q -n 4` (plain
 `pytest -q` remains valid).
-Run the app: `uvicorn athena.main:app --reload`.
+Run the app: configure the absolute storage paths and bootstrap/start through
+`athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
+unsupported development escape hatch and intentionally has no authority unless
+one is configured explicitly.

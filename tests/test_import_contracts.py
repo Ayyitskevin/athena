@@ -16,7 +16,14 @@ def _package(tmp_path: Path, modules: dict[str, str]) -> Path:
     package_root = tmp_path / "src" / "athena"
     packages = (
         package_root,
-        *(package_root / area for area in ("core", "aegis", "mentor", "web")),
+        # Every contracted area in the checker's LAYERS, because the checker
+        # fails closed on a missing one — a deleted `__init__.py` must never
+        # silently drop an area from analysis, so the synthetic tree mirrors
+        # the real set rather than a subset of it.
+        *(
+            package_root / area
+            for area in ("core", "aegis", "mentor", "workflows", "web")
+        ),
     )
     for package in packages:
         package.mkdir(parents=True, exist_ok=True)

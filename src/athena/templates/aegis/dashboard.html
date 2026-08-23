@@ -11,75 +11,47 @@
 </div>
 
 <div class="stat-row">
-    <div class="stat-card">
+    <div class="stat">
         <span class="stat-number">{{ totals.active_issues }}</span>
         <span class="stat-label">Active issues</span>
     </div>
-    <div class="stat-card">
+    <div class="stat">
         <span class="stat-number">{{ totals.projects }}</span>
         <span class="stat-label">Projects</span>
     </div>
-    <div class="stat-card">
+    <div class="stat">
         <span class="stat-number">{{ totals.active_sprints }}</span>
         <span class="stat-label">Active sprints</span>
     </div>
 </div>
 
 {% if fleet_attention %}
-{# Steer by exception: one card for everything asking for a human, each number
-   linking to the surface that owns it. Counts only — this card computes nothing,
-   so it cannot disagree with the page it sends you to. #}
-<section class="dashboard-card" aria-labelledby="fleet-attention-heading">
-    <h3 id="fleet-attention-heading">
-        Fleet attention
-        {% if fleet_attention.total %}<span class="badge">{{ fleet_attention.total }}</span>{% endif %}
-    </h3>
-    {% if fleet_attention.total %}
-    <ul class="dashboard-list">
-        {% for signal in fleet_attention.signals %}
-        {% if signal.count %}
-        <li>
-            <a href="{{ signal.href }}">{{ signal.label }}</a>
-            <strong>{{ signal.count }}</strong>
-            <span class="muted">{{ signal.scope }}</span>
-        </li>
-        {% endif %}
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p class="muted">
-        Nothing is asking for you right now. That is what the last
-        {{ fleet_attention.window_hours }} hours recorded — not a promise that every
-        agent is healthy.
-    </p>
-    {% endif %}
-    <p class="muted">
-        <a href="/admin/agents/runs">Mission Control</a> ·
-        <a href="/admin/security">Security signals</a>
-    </p>
-</section>
+{% include "aegis/partials/fleet_attention.html" %}
 {% endif %}
 
 <div class="dashboard-grid">
     {% if request.state.user %}
-    <section class="dashboard-card">
-        <h3>My open issues</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>My open issues</h3></div>
+        <div class="panel-body">
         {% if my_issues %}
         <ul class="dashboard-list">
             {% for i in my_issues %}
             <li>
                 <a href="/aegis/issues/{{ i.id }}">{{ i.key or "#" ~ i.id }} — {{ i.title }}</a>
-                <span class="status {{ i.status }}">{{ i.status }}</span>
+                <span class="chip" data-tone="{{ i.status_category | category_tone }}">{{ i.status }}</span>
             </li>
             {% endfor %}
         </ul>
         {% else %}
         <p class="note-small">Nothing assigned to you is open. Clear desk.</p>
         {% endif %}
+        </div>
     </section>
 
-    <section class="dashboard-card">
-        <h3>Delegated to me</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>Delegated to me</h3></div>
+        <div class="panel-body">
         {% if my_delegation_inbox["items"] %}
         <ul class="dashboard-list">
             {% for item in my_delegation_inbox["items"] %}
@@ -93,18 +65,18 @@
                         <time datetime="{{ item.delegated_at }}">{{ item.delegated_at }}</time>
                     </div>
                     {% if "empty_description" in item.warnings %}
-                    <span class="agent-token-warning warning">No description</span>
+                    <span class="chip" data-tone="warning">No description</span>
                     {% endif %}
                     {% if "no_accountable_assignee" in item.warnings %}
-                    <span class="agent-token-warning warning">No accountable assignee</span>
+                    <span class="chip" data-tone="warning">No accountable assignee</span>
                     {% endif %}
                     {% if "visible_open_blockers" in item.warnings %}
-                    <span class="agent-token-warning danger">
+                    <span class="chip" data-tone="danger">
                         {{ item.visible_open_blocker_count }} visible open blocker{{ "s" if item.visible_open_blocker_count != 1 }}
                     </span>
                     {% endif %}
                     {% if item.open_claim_handoff %}
-                    <span class="agent-token-warning danger">Handoff awaiting acknowledgment</span>
+                    <span class="chip" data-tone="danger">Handoff awaiting acknowledgment</span>
                     <div class="note-small">
                         Blocked question: {{ item.open_claim_handoff.blocking_question }}
                     </div>
@@ -117,8 +89,8 @@
                     {% endif %}
                 </div>
                 <div>
-                    <span class="priority {{ issue.priority }}">{{ issue.priority }}</span>
-                    <span class="status {{ issue.status }}">{{ issue.status }}</span>
+                    <span class="chip" data-tone="{{ issue.priority | priority_tone }}">{{ issue.priority }}</span>
+                    <span class="chip" data-tone="{{ issue.status_category | category_tone }}">{{ issue.status }}</span>
                 </div>
             </li>
             {% endfor %}
@@ -130,16 +102,18 @@
         <p class="note-small">No open contributor assignments.</p>
         {% endif %}
         <p class="note-small">Pickup context only; this does not claim work or report agent liveness.</p>
+        </div>
     </section>
     {% endif %}
 
-    <section class="dashboard-card">
-        <h3>By status</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>By status</h3></div>
+        <div class="panel-body">
         {% if status_counts %}
         <ul class="dashboard-bars">
             {% for s in status_counts %}
             <li>
-                <a href="/aegis/issues?status={{ s.status | urlencode }}"><span class="status {{ s.status }}">{{ s.status }}</span></a>
+                <a href="/aegis/issues?status={{ s.status | urlencode }}"><span class="chip" data-tone="{{ s.status | status_tone }}">{{ s.status }}</span></a>
                 <span class="bar-count">{{ s.count }}</span>
             </li>
             {% endfor %}
@@ -147,22 +121,26 @@
         {% else %}
         <p class="note-small">No issues yet.</p>
         {% endif %}
+        </div>
     </section>
 
-    <section class="dashboard-card">
-        <h3>By priority</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>By priority</h3></div>
+        <div class="panel-body">
         <ul class="dashboard-bars">
             {% for p in priority_counts %}
             <li>
-                <a href="/aegis/issues?priority={{ p.priority | urlencode }}"><span class="priority {{ p.priority }}">{{ p.priority }}</span></a>
+                <a href="/aegis/issues?priority={{ p.priority | urlencode }}"><span class="chip" data-tone="{{ p.priority | priority_tone }}">{{ p.priority }}</span></a>
                 <span class="bar-count">{{ p.count }}</span>
             </li>
             {% endfor %}
         </ul>
+        </div>
     </section>
 
-    <section class="dashboard-card">
-        <h3>By project</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>By project</h3></div>
+        <div class="panel-body">
         <ul class="dashboard-bars">
             {% for p in projects %}
             <li>
@@ -175,10 +153,12 @@
                 <span class="bar-count">{{ backlog_count }}</span>
             </li>
         </ul>
+        </div>
     </section>
 
-    <section class="dashboard-card">
-        <h3>In flight</h3>
+    <section class="panel">
+        <div class="panel-head"><h3>In flight</h3></div>
+        <div class="panel-body">
         {% if active_sprints %}
         <ul class="dashboard-list">
             {% for s in active_sprints %}
@@ -191,14 +171,17 @@
         {% else %}
         <p class="note-small">No active sprints right now.</p>
         {% endif %}
+        </div>
     </section>
 
-    <section class="dashboard-card dashboard-activity">
-        <h3>Recent activity</h3>
+    <section class="panel dashboard-activity">
+        <div class="panel-head"><h3>Recent activity</h3></div>
+        <div class="panel-body">
         {% with events = recent_activity, show_target = True %}
         {% include "aegis/partials/activity_list.html" %}
         {% endwith %}
         <p class="note-small"><a href="/aegis/activity">Full activity feed →</a></p>
+        </div>
     </section>
 </div>
 {% endblock %}

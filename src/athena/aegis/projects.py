@@ -12,6 +12,7 @@ import re
 import secrets
 import sqlite3
 
+from athena import config
 from athena.aegis import statuses
 
 # A valid issue-key prefix: a leading letter, then up to 9 more letters/digits.
@@ -68,6 +69,12 @@ def create_project(
     )
     project_id = cur.lastrowid
     assert project_id is not None
+    # Born private when the operator asked for that posture. The column's schema
+    # default is 'public' (today's behavior), so this only writes when the deployment
+    # has opted in — and it writes through set_visibility rather than the INSERT
+    # above, keeping exactly one writer of projects.visibility.
+    if config.DEFAULT_VISIBILITY == "private":
+        set_visibility(conn, project_id, "private", commit=False)
     # Give the new project the default status set, so it has a working lifecycle
     # immediately and can be customized from there.
     statuses.seed_defaults(conn, project_id, commit=False)

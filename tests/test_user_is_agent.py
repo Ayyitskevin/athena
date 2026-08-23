@@ -137,7 +137,11 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
             "/users", json={"email": "m@e.com", "name": "Member"}, headers=H1
         ).json()
 
-        # The create form's agent checkbox marks a brand-new account.
+        # New User is for people. An is_agent tick on that form is ignored so
+        # operators cannot accidentally mint a password-user and call it an agent.
+        page = client.get("/admin/users")
+        assert "This account is an agent" not in page.text
+        assert "/admin/agents" in page.text
         client.post(
             "/admin/users",
             data={"email": "bot@e.com", "name": "Botty", "is_agent": "1"},
@@ -145,7 +149,9 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
         )
         conn = db.connect(db_path)
         try:
-            assert users.get_user_by_email(conn, "bot@e.com")["is_agent"] is True
+            created = users.get_user_by_email(conn, "bot@e.com")
+            assert created is not None
+            assert created["is_agent"] is False
         finally:
             conn.close()
 
@@ -157,7 +163,7 @@ def test_admin_users_page_toggles_and_badges_agent(tmp_path):
         )
         assert marked.status_code == 303, marked.text
         page = client.get("/admin/users")
-        assert 'class="agent-badge"' in page.text
+        assert 'data-tone="agent">agent</span>' in page.text
 
         # And toggling back to human sticks.
         client.post(
@@ -194,5 +200,7 @@ def test_agent_contributor_is_badged_on_issue(tmp_path):
         page = client.get(f"/aegis/issues/{issue['id']}")
         assert page.status_code == 200
         # The agent contributor carries the badge, and the delegate select marks them.
-        assert re.search(r"Botty\s*<span class=\"agent-badge\">agent</span>", page.text)
+        assert re.search(
+            r'Botty\s*<span class="chip" data-tone="agent">agent</span>', page.text
+        )
         assert "Botty (agent)" in page.text

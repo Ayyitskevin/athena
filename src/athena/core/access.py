@@ -436,17 +436,27 @@ def _event_project_scope_clause(
     )
 
 
-def event_visibility_clause(
+def event_visibility_arms(
     conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
-) -> tuple[str, list]:
-    """Return the shared, single-statement event visibility predicate.
+) -> list[tuple[str, str, list]] | None:
+    """The event visibility predicate, split into the disjoint arms it is an OR of.
 
-    Every current-container and event-scope membership check is correlated inside the
-    caller's SELECT/UPDATE. That makes authorization and data access one SQLite
-    snapshot instead of materializing visible ids before a later statement.
+    Returns ``[(target_kind, clause, params), ...]`` — one entry per event target kind
+    a non-admin can ever see. ``None`` means "no gate at all" (an admin), which is NOT
+    the same as an empty list (a gate that admits nothing); callers must tell those
+    two apart or an admin would see nothing.
+
+    Why the split exists: the arms are mutually exclusive, because each one opens by
+    pinning `target_kind` to a different literal. A feed read can therefore ask each
+    arm for its OWN newest N rows through an index and merge four bounded lists,
+    instead of handing SQLite one big OR that it answers by evaluating every arm
+    against essentially every row and sorting the survivors through a temp B-tree
+    before LIMIT. `event_visibility_clause` below still joins them back into the
+    single predicate every non-paged caller wants; this is the same authorization,
+    expressed so that it can be asked one kind at a time (see core/activity.py).
     """
     if _is_admin(actor):
-        return "", []
+        return None
 
     current_project_access, current_project_params = _container_access_clause(
         "current_project",
@@ -477,36 +487,65 @@ def event_visibility_clause(
         alias, actor
     )
 
-    clause = (
-        f"(({alias}.target_kind = 'issue' "
-        f"AND {alias}.visibility_restricted = 0 "
-        f"AND EXISTS (SELECT 1 FROM issues i "
-        f"WHERE i.id = {alias}.target_id "
-        f"AND (i.project_id IS NULL OR EXISTS (SELECT 1 FROM projects current_project "
-        f"WHERE current_project.id = i.project_id AND {current_project_access}))) "
-        f"AND {issue_scope_access}) "
-        f"OR ({alias}.target_kind = 'page' AND EXISTS ("
-        f"SELECT 1 FROM pages pg JOIN spaces page_space "
-        f"ON page_space.id = pg.space_id WHERE pg.id = {alias}.target_id "
-        f"AND {page_space_access})) "
-        f"OR ({alias}.target_kind = 'space' AND EXISTS ("
-        f"SELECT 1 FROM spaces target_space "
-        f"WHERE target_space.id = {alias}.target_id AND {target_space_access})) "
-        f"OR ({alias}.target_kind = 'project' "
-        f"AND {alias}.visibility_restricted = 0 "
-        f"AND EXISTS (SELECT 1 FROM projects target_project "
-        f"WHERE target_project.id = {alias}.target_id "
-        f"AND {target_project_access}) "
-        f"AND {project_scope_access}))"
-    )
-    params = [
-        *current_project_params,
-        *issue_scope_params,
-        *page_space_params,
-        *target_space_params,
-        *target_project_params,
-        *project_scope_params,
+    return [
+        (
+            "issue",
+            f"{alias}.target_kind = 'issue' "
+            f"AND {alias}.visibility_restricted = 0 "
+            f"AND EXISTS (SELECT 1 FROM issues i "
+            f"WHERE i.id = {alias}.target_id "
+            f"AND (i.project_id IS NULL OR EXISTS ("
+            f"SELECT 1 FROM projects current_project "
+            f"WHERE current_project.id = i.project_id AND {current_project_access}))) "
+            f"AND {issue_scope_access}",
+            [*current_project_params, *issue_scope_params],
+        ),
+        (
+            "page",
+            f"{alias}.target_kind = 'page' AND EXISTS ("
+            f"SELECT 1 FROM pages pg JOIN spaces page_space "
+            f"ON page_space.id = pg.space_id WHERE pg.id = {alias}.target_id "
+            f"AND {page_space_access})",
+            [*page_space_params],
+        ),
+        (
+            "space",
+            f"{alias}.target_kind = 'space' AND EXISTS ("
+            f"SELECT 1 FROM spaces target_space "
+            f"WHERE target_space.id = {alias}.target_id AND {target_space_access})",
+            [*target_space_params],
+        ),
+        (
+            "project",
+            f"{alias}.target_kind = 'project' "
+            f"AND {alias}.visibility_restricted = 0 "
+            f"AND EXISTS (SELECT 1 FROM projects target_project "
+            f"WHERE target_project.id = {alias}.target_id "
+            f"AND {target_project_access}) "
+            f"AND {project_scope_access}",
+            [*target_project_params, *project_scope_params],
+        ),
     ]
+
+
+def event_visibility_clause(
+    conn: sqlite3.Connection, actor: dict | None, *, alias: str = "a"
+) -> tuple[str, list]:
+    """Return the shared, single-statement event visibility predicate.
+
+    Every current-container and event-scope membership check is correlated inside the
+    caller's SELECT/UPDATE. That makes authorization and data access one SQLite
+    snapshot instead of materializing visible ids before a later statement.
+
+    This is exactly `event_visibility_arms` OR-joined — one predicate, one authority.
+    A caller that wants one bounded page per kind uses the arms directly; everything
+    that just needs "can this actor see this event" uses this.
+    """
+    arms = event_visibility_arms(conn, actor, alias=alias)
+    if arms is None:
+        return "", []
+    clause = "((" + ") OR (".join(clause for _, clause, _ in arms) + "))"
+    params = [param for _, _, arm_params in arms for param in arm_params]
     return clause, params
 
 

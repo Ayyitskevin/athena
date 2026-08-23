@@ -1,0 +1,66 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "47 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a run on the DEFAULT BRANCH. A main-branch analysis is the
+  # BASELINE every pull request's "new alert" comparison is measured against;
+  # cancelling one to save a minute leaves that baseline stale, after which a
+  # pre-existing alert on a line a PR happens to touch reports as new and the
+  # PR author is sent hunting a defect their diff did not introduce.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+      - name: Analyze
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: always
+          wait-for-processing: true
+          output: sarif-results
+
+      # The findings, readable without the code-scanning UI. An alert that only
+      # exists behind a page some contributors (and every automated one) cannot
+      # open is an alert nobody can act on: the results check says "1 high
+      # severity" and names neither the rule nor the file. The SARIF says both.
+      # Kept on always() so a red analysis is the case it helps most.
+      - name: Upload SARIF findings as an artifact
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: sarif-results/*.sarif
+          if-no-files-found: warn
+          retention-days: 14

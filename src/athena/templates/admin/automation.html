@@ -56,15 +56,17 @@
                     add label “{{ rule.action_params.label }}”
                 {% elif rule.action_type == "comment" %}
                     comment “{{ rule.action_params.body }}”
+                {% elif rule.action_type == "buzz_message" %}
+                    buzz message → {{ rule.action_params.channel or "assign channel" }}{% if rule.action_params.mention %} @{{ rule.action_params.mention[:12] }}…{% endif %}
                 {% else %}
                     {{ rule.action_type }}
                 {% endif %}
             </td>
             <td>
                 {% if rule.trigger_type == "schedule" %}
-                    <span class="{{ 'badge-active' if rule.schedule_status in ('scheduled', 'due', 'processing', 'completed') else 'badge' }}">{{ rule.schedule_status }}</span>
+                    <span class="chip" data-tone="{{ 'success' if rule.schedule_status in ('scheduled', 'due', 'processing', 'completed') else 'neutral' }}">{{ rule.schedule_status }}</span>
                 {% elif rule.enabled %}
-                    <span class="badge-active">enabled</span>
+                    <span class="chip" data-tone="success">enabled</span>
                 {% else %}
                     <span class="muted">paused</span>
                 {% endif %}
@@ -76,15 +78,15 @@
             </td>
             <td>
                 {% if rule.configuration_error %}
-                    <div><span class="badge">malformed</span></div>
+                    <div><span class="chip" data-tone="danger">malformed</span></div>
                     <div class="muted small">{{ rule.configuration_error }}</div>
                 {% endif %}
                 {% if rule.failure_count %}
-                    <span class="badge" title="{{ rule.last_error }}">⚠ {{ rule.failure_count }} failed</span>
+                    <span class="chip" data-tone="danger" title="{{ rule.last_error }}">⚠ {{ rule.failure_count }} failed</span>
                     {% if rule.last_error_at %}<div class="muted small">last: {{ rule.last_error_at }} UTC</div>{% endif %}
                 {% else %}
                     {% if rule.trigger_type == "schedule" and (rule.schedule_failed_count or rule.last_schedule_state == "failed") %}
-                        <span class="badge">Scheduled slot failed.</span>
+                        <span class="chip" data-tone="danger">Scheduled slot failed.</span>
                     {% elif rule.trigger_type == "schedule" %}
                         <span class="muted">No action failures.</span>
                     {% else %}
@@ -126,7 +128,7 @@
 <p class="empty-state">No automation rules yet.</p>
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
     <h3>New rule</h3>
     <p class="note-small">Choose an event trigger or a fixed UTC schedule. Each rule performs one bounded action as the Automation user; schedule catch-up is bounded and visible below.</p>
     <form method="post" action="/admin/automation" class="issue-form">
@@ -214,6 +216,18 @@
         <div class="form-group">
             <label for="rule-body">↳ comment — body</label>
             <textarea id="rule-body" name="action_body" rows="2" placeholder="Thanks for filing — we'll take a look."></textarea>
+        </div>
+        <div class="form-group">
+            <label for="rule-buzz-channel">↳ buzz message — channel uuid (blank = assign channel)</label>
+            <input id="rule-buzz-channel" type="text" name="action_buzz_channel" placeholder="{{ default_assign_channel }}">
+        </div>
+        <div class="form-group">
+            <label for="rule-buzz-mention">↳ buzz message — mention pubkey (optional, 64-char hex)</label>
+            <input id="rule-buzz-mention" type="text" name="action_buzz_mention" placeholder="2bee90a8…">
+        </div>
+        <div class="form-group">
+            <label for="rule-buzz-note">↳ buzz message — note (optional, appended verbatim)</label>
+            <input id="rule-buzz-note" type="text" name="action_buzz_note" placeholder="P0 filed — needs eyes.">
         </div>
         <div class="form-actions">
             <button type="submit" class="button">Create rule</button>

@@ -234,19 +234,18 @@ def test_idempotency_key_is_refused_so_the_secret_never_enters_the_replay_store(
     conn.close()
 
 
-def test_blank_email_or_name_is_422_on_every_surface(tmp_path):
+def test_blank_name_is_422_blank_email_is_derived(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
-        for payload in (
-            {"email": "   ", "name": "Sol"},
-            {"email": "sol@e.com", "name": ""},
-        ):
-            r = _onboard(c, **payload)
-            assert r.status_code == 422
-            assert "email and name are required" in r.json()["detail"]
+        missing_name = _onboard(c, email="sol@e.com", name="")
+        assert missing_name.status_code == 422
+        assert "agent name is required" in missing_name.json()["detail"]
+        derived = _onboard(c, email="   ", name="Sol")
+        assert derived.status_code == 201, derived.text
+        assert derived.json()["user"]["email"] == "sol@agents.local"
     conn = db.connect(db_file)
-    assert conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 2
     conn.close()
 
 
@@ -301,6 +300,50 @@ def test_web_cockpit_onboarding_shows_token_and_config_once(tmp_path):
     ).fetchone()
     conn.close()
     assert row is not None and row["role"] == "member" and row["is_agent"] == 1
+
+
+def test_onboard_without_email_uses_name_handle(tmp_path):
+    """Operators name the agent. They do not invent a fake inbox."""
+    app, _ = _app(tmp_path, name="onboard-handle.db")
+    with TestClient(app) as c:
+        _bootstrap(c)
+        r = c.post(
+            "/users/onboard_agent",
+            json={"name": "Claude Code", "scopes": ["read"]},
+            headers=H1,
+        )
+        assert r.status_code == 201, r.text
+        body = r.json()
+        assert body["user"]["name"] == "Claude Code"
+        assert body["user"]["email"] == "claude-code@agents.local"
+        assert body["user"]["is_agent"] is True
+        assert body["user"]["role"] == "member"
+        assert "password" not in body["user"]
+
+
+def test_web_onboard_form_is_agent_not_human(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        c.post(
+            "/login",
+            data={"email": "ann@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
+        page = c.get("/admin/agents")
+        assert page.status_code == 200
+        assert "Agent name" in page.text
+        assert "What it may do" in page.text
+        assert 'name="password"' not in page.text
+        assert "user-role" not in page.text
+        r = c.post(
+            "/admin/agents/onboard",
+            data={"name": "Grok", "scope_read": "1", "scope_issue_write": "1"},
+        )
+        assert r.status_code == 201, r.text
+        assert "ath_" in r.text
+        assert "grok@agents.local" in r.text
 
 
 def test_web_cockpit_onboarding_requires_scopes_and_admin(tmp_path):

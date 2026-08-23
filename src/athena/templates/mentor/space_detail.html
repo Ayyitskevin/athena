@@ -9,11 +9,29 @@
         <h1>{{ space.name }} <code class="muted">{{ space.key }}</code></h1>
         {% if space.description %}<p class="subtitle">{{ space.description }}</p>{% endif %}
     </div>
-    {% if can_write %}
     <div>
+        {# Subscribing to a space means every page event inside it lands in your
+           inbox — deliberately loud, because a shared notebook is only useful if
+           you hear it move. Unwatch is the only volume control there is. #}
+        {% if request.state.user %}
+        <form method="post" action="/mentor/spaces/{{ space.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
+              class="inline">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary small"
+                    title="{{ 'Stop receiving notifications for pages in this space'
+                              if is_watching else
+                              'Get notified about every page change in this space' }}">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
+        </form>
+        {% endif %}
+        {# The human-readable exit: one self-contained file, no server needed to
+           read it. Open to anyone who can read the space — leaving is not a
+           privilege. #}
+        <a href="/mentor/spaces/{{ space.id }}/export.html" class="button secondary"
+           title="Download this space as one standalone HTML file">Export HTML</a>
+        {% if can_write %}
         <a href="/mentor/spaces/{{ space.id }}/edit" class="button secondary">Edit</a>
+        {% endif %}
     </div>
-    {% endif %}
 </div>
 
 <p class="filter-bar muted">
@@ -32,10 +50,10 @@
     <tbody>
     {% for p in tree %}
         <tr>
-            <td class="issue-title" style="padding-left: {{ 1 + p.depth * 1.5 }}rem;">
+            <td class="issue-title tree-indent-{{ [p.depth, 9] | min }}">
                 {% if p.depth %}<span class="muted">└ </span>{% endif %}
                 <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
-                {% if p.archived_at %}<span class="badge">Archived</span>{% endif %}
+                {% if p.archived_at %}<span class="chip" data-tone="neutral">Archived</span>{% endif %}
             </td>
             <td class="muted">{{ p.updated_at }}</td>
         </tr>
@@ -47,8 +65,9 @@
 {% endif %}
 
 {% if can_write %}
-<div class="form-container">
-    <h3>Daily note</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Daily note</h3></div>
+    <div class="panel-body">
     <p class="note-small">
         Today's page in this space, created from the
         <code>Daily Note Template</code> if there is one. Opening it twice opens
@@ -58,11 +77,13 @@
         {% include "partials/csrf.html" %}
         <button type="submit" class="button">Open today's note</button>
     </form>
-</div>
+    </div>
+</section>
 
 {% if templates %}
-<div class="form-container">
-    <h3>New page from template</h3>
+<section class="panel">
+    <div class="panel-head"><h3>New page from template</h3></div>
+    <div class="panel-body">
     <p class="note-small">
         A template is any page in this space carrying the <code>template</code>
         label. The new page copies the body — never the label.
@@ -87,11 +108,13 @@
             <button type="submit" class="button">Create from template</button>
         </div>
     </form>
-</div>
+    </div>
+</section>
 {% endif %}
 {% endif %}
 
-<div class="form-container">
+<div class="panel">
+    <div class="panel-body">
     {% if can_write %}
     <h3>New Page</h3>
     <form method="post" action="/mentor/spaces/{{ space.id }}/pages" class="issue-form">
@@ -122,18 +145,22 @@
     {% else %}
     <p class="note-small"><a href="/login">Sign in</a> to create a page.</p>
     {% endif %}
+    </div>
 </div>
 
-<div class="form-container">
-    <h3>Activity</h3>
+<section class="panel">
+    <div class="panel-head"><h3>Activity</h3></div>
+    <div class="panel-body">
     {% with events = activity, show_target = False %}
     {% include "aegis/partials/activity_list.html" %}
     {% endwith %}
-</div>
+    </div>
+</section>
 
 {% if can_delete %}
-<div class="form-container danger-zone">
-    <h3>Delete space</h3>
+<section class="panel danger-zone">
+    <div class="panel-head"><h3>Delete space</h3></div>
+    <div class="panel-body">
     {% if page_count > 0 %}
     <p class="note-small">
         This space has {{ page_count }} page{{ "s" if page_count != 1 }}.
@@ -148,7 +175,8 @@
         <button type="submit" class="button danger">Delete Space</button>
     </form>
     {% endif %}
-</div>
+    </div>
+</section>
 {% endif %}
 
 <p class="note">Data from the Mentor pages API.</p>

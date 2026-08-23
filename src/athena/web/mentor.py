@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import html
 import sqlite3
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from athena import config
-from athena.aegis import embed_data
 from athena.core import (
     access,
     activity,
@@ -38,6 +38,8 @@ from athena.core import (
 from athena.core.deps import get_conn
 from athena.mentor import (
     page_commands,
+    page_drafts,
+    page_etags,
     page_templates,
     page_comment_commands,
     page_comments,
@@ -45,8 +47,11 @@ from athena.mentor import (
     space_commands,
     spaces,
 )
+from markupsafe import escape
+
+from athena.web import html_export
 from athena.web.csrf import verify_csrf
-from athena.web.render import render_body, render_comment
+from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.router import _readonly_response, get_templates
 
 router = APIRouter()
@@ -197,7 +202,7 @@ def link_page_mention(
             status_code=409,
         )
     try:
-        page_commands.edit_page(conn, actor_id=user["id"], page_id=page_id, body=body)
+        page_commands.edit_page(conn, actor=user, page_id=page_id, body=body)
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     back = (
@@ -605,6 +610,8 @@ def space_detail(
             and can_write
             and user["id"] == space["created_by"],
             "page_count": len(page_rows),
+            "is_watching": user is not None
+            and notifications.is_watching(conn, user["id"], "space", space_id),
             "include_archived": include_archived,
             "activity": activity.list_activity(
                 conn, target_kind="space", target_id=space_id
@@ -634,9 +641,14 @@ def open_daily_note(
         return HTMLResponse(
             '<div class="error">Space not found.</div>', status_code=404
         )
-    page, _created = page_commands.ensure_daily_page(
-        conn, actor_id=user["id"], space_id=space_id
-    )
+    try:
+        page, _created = page_commands.ensure_daily_page(
+            conn, actor=user, space_id=space_id
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
@@ -671,7 +683,7 @@ def create_page_from_template(
     try:
         page = page_commands.create_page_from_template(
             conn,
-            actor_id=user["id"],
+            actor=user,
             space_id=space_id,
             template_id=template_id,
             title=title,
@@ -735,14 +747,19 @@ def create_page(
 
     # The command owns the atomic insert AND its 'page_created' event (auto-watch +
     # mentions).
-    page = page_commands.create_page(
-        conn,
-        actor_id=user["id"],
-        space_id=space_id,
-        title=title,
-        body=body.strip() or "",
-        parent_id=parent,
-    )
+    try:
+        page = page_commands.create_page(
+            conn,
+            actor=user,
+            space_id=space_id,
+            title=title,
+            body=body.strip() or "",
+            parent_id=parent,
+        )
+    except page_commands.PageCommandError:
+        return HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
     return RedirectResponse(f"/mentor/pages/{page['id']}", status_code=303)
 
 
@@ -802,18 +819,17 @@ def page_detail(
             # that member could already see, and nothing is cached between
             # viewers, because a cache keyed on the page would serve one reader's
             # visibility to another.
-            "body_html": render_body(
-                conn,
-                page["body"],
-                actor=user,
-                embed_results=embed_data.resolve_body(conn, page["body"], actor=user),
-            ),
+            "body_html": render_page_body(conn, page["body"], actor=user),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
             "all_labels": labels.list_labels(
                 conn
             ),  # the shared vocabulary, for autocomplete
             "attachments": attachments.list_for(conn, "page", page_id),
+            # The types the download route serves inline — the template offers a
+            # thumbnail and an embed snippet for exactly these, so the affordance
+            # and the actual behaviour come from one list.
+            "inline_image_types": attachments.INLINE_CONTENT_TYPES,
             "is_watching": user is not None
             and notifications.is_watching(conn, user["id"], "page", page_id),
             "backlinks": links.backlinks(conn, "page", page_id, actor=user),
@@ -835,6 +851,38 @@ def page_detail(
     )
 
 
+@router.get("/mentor/spaces/{space_id}/export.html")
+def export_space_html(
+    request: Request,
+    space_id: int,
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Download this space as one standalone HTML file — the human-readable exit.
+
+    A read, gated exactly like the space itself: a space you cannot see is the
+    same 404 a missing one gives. The file contains only what YOU could see when
+    you asked for it, and says so in its own footer.
+    """
+    user = getattr(request.state, "user", None)
+    document = html_export.build_space_html(conn, space_id, actor=user)
+    if document is None:
+        return HTMLResponse('<div class="error">No such space.</div>', status_code=404)
+    space = spaces.get_space(conn, space_id)
+    assert space is not None  # build_space_html already refused a missing space
+    name = f"athena-{space['key'].lower()}.html"
+    encoded = quote(name)
+    disposition = (
+        f'attachment; filename="{name}"'
+        if encoded == name
+        else f"attachment; filename*=utf-8''{encoded}"
+    )
+    return Response(
+        document,
+        media_type="text/html; charset=utf-8",
+        headers={"content-disposition": disposition},
+    )
+
+
 @router.get("/mentor/pages/{page_id}/edit", response_class=HTMLResponse)
 def edit_page_form(
     request: Request, page_id: int, conn: sqlite3.Connection = Depends(get_conn)
@@ -846,6 +894,7 @@ def edit_page_form(
     err = _write_required(user, "edit pages")
     if err is not None:
         return err
+    assert user is not None  # _write_required refused a missing user above
 
     page = pages.get_page(conn, page_id)
     # Can't edit (or even see the form for) a page in a space you can't read — 404,
@@ -855,7 +904,223 @@ def edit_page_form(
     return templates.TemplateResponse(
         request=request,
         name="mentor/page_edit.html",
-        context={"page": page, "space": spaces.get_space(conn, page["space_id"])},
+        context=_edit_form_context(
+            conn,
+            request,
+            page,
+            user,
+            restored=request.query_params.get("restore") == "1",
+            notice=(request.query_params.get("notice") or "").strip(),
+        ),
+    )
+
+
+def _conflict_response(
+    conn: sqlite3.Connection,
+    request: Request,
+    page_id: int,
+    user: dict,
+    *,
+    title: str,
+    body: str,
+    based_on: str,
+) -> HTMLResponse:
+    """The losing editor's answer: refused, nothing lost, both texts in front of you.
+
+    Three things this deliberately does NOT do. It does not overwrite — that is the
+    refusal that brought us here. It does not merge, because Athena does not claim
+    to have resolved something a person has to read to resolve. And it does not
+    throw the author's text away, which is the failure mode of a bare 412 page:
+    the browser's back button is not a durable store, and telling someone their
+    work is "still in the form" is only true until they navigate.
+
+    So the submitted text is written to the author's own draft — the store that
+    already exists for exactly this, owner-scoped and offered-never-applied — and
+    the form re-renders showing THEIR version, with yours beside it and one click
+    ('Restore draft') to put yours back in the fields. The author reconciles; the
+    tool reports.
+
+    409, because it is a conflict with state the caller already had a view of.
+    """
+    page = pages.get_page(conn, page_id)
+    if page is None:
+        # It was deleted, not edited, between the precondition and this read.
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    # Keep their work under the baseline they were editing FROM — the tag the form
+    # submitted — never the page's new one. Stamping today's tag would mark stale
+    # work fresh and silence the stale-draft warning the next time they open the
+    # form, which is the one moment that warning exists for.
+    page_drafts.save_draft(
+        conn,
+        page_id=page_id,
+        owner_id=user["id"],
+        title=title,
+        body=body,
+        based_on=based_on,
+    )
+    return get_templates().TemplateResponse(
+        request=request,
+        name="mentor/page_edit.html",
+        context=_edit_form_context(
+            conn,
+            request,
+            page,
+            user,
+            conflict={"title": title, "body": body},
+        ),
+        status_code=409,
+    )
+
+
+def _edit_form_context(
+    conn: sqlite3.Connection,
+    request: Request,
+    page: dict,
+    user: dict,
+    *,
+    restored: bool = False,
+    notice: str = "",
+    conflict: dict | None = None,
+) -> dict:
+    """The edit form's context, built in one place.
+
+    Two routes render this form: opening it, and the losing side of a concurrent
+    save. They must agree about what the author is looking at — especially the
+    baseline, since a conflict re-render that stamped a stale tag would refuse the
+    author's next save too, forever."""
+    draft = page_drafts.get_draft(conn, page_id=page["id"], owner_id=user["id"])
+    if draft is not None and not page_drafts.differs_from(draft, page):
+        # Identical to the saved page: not unsaved work, so offering to restore
+        # it would just make an author wonder what they had forgotten.
+        draft = None
+    return {
+        "page": page,
+        "space": spaces.get_space(conn, page["space_id"]),
+        # The preview starts populated rather than blank: an author opening
+        # an existing page sees it as readers do before touching a key.
+        "body_html": render_page_body(conn, page["body"], actor=user),
+        # An unsaved draft is OFFERED, never applied: the form still shows
+        # the saved page, and restoring is a decision the author makes. A
+        # draft that merely matches the page is not offered at all.
+        "draft": draft,
+        # Restoring is a read: the form renders the draft's text instead of
+        # the page's. Nothing is written until the author presses Save.
+        "restored": restored and draft is not None,
+        "draft_is_stale": draft is not None
+        and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
+        # The baseline this editing session starts FROM. The form carries it
+        # through every autosave, so a draft records the page the author
+        # actually saw — not whatever the page had become by the time the
+        # autosave timer fired (which would defeat the stale-draft warning).
+        "page_etag": page_etags.current_etag(conn, page),
+        "notice": notice,
+        # The text the author just tried to save, when someone else got there
+        # first. Shown beside theirs; never merged into it.
+        "conflict": conflict,
+    }
+
+
+@router.post("/mentor/pages/preview", dependencies=[Depends(verify_csrf)])
+def preview_page_body(
+    request: Request,
+    body: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Render unsaved page text exactly as the page view will render it.
+
+    This calls ``render_page_body`` — the SAME function the page itself calls —
+    so the preview cannot drift from the display. It renders against the signed-in
+    viewer, which matters: cross-links and embeds resolve per reader, so a preview
+    rendered as anyone else would be a preview of someone else's page.
+
+    Nothing is written. A preview is a read of text the author has in hand.
+    """
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return _signin_required("preview")
+    if len(body) > MAX_PREVIEW_CHARS:
+        return HTMLResponse(
+            '<div class="error">Too long to preview.</div>', status_code=413
+        )
+    return HTMLResponse(str(render_page_body(conn, body, actor=user)))
+
+
+@router.post("/mentor/pages/{page_id}/draft", dependencies=[Depends(verify_csrf)])
+def autosave_page_draft(
+    request: Request,
+    page_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    based_on: str = Form(""),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """Record where this author has got to, without touching the page.
+
+    Nothing here writes to ``pages``: no version is cut, no activity event is
+    recorded, no watcher is notified. That is the entire point — a crashed
+    browser should cost nothing, and the trail should still say nothing happened
+    until a human decides something did.
+
+    Answers a small fragment the editor swaps in, so the author can see their
+    work is held without the page moving under them.
+    """
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
+    assert user is not None
+    page, err = _page_visible_or_response(conn, page_id, user)
+    if err is not None:
+        return err
+    assert page is not None
+    try:
+        saved = page_drafts.save_draft(
+            conn,
+            page_id=page_id,
+            owner_id=user["id"],
+            title=title,
+            body=body,
+            # The etag the EDITOR RENDERED WITH, carried by the form — never
+            # re-read here. Stamping the current etag at autosave time would
+            # mark a draft fresh the moment someone else saved, which is the
+            # exact moment the stale warning exists for. Blank only for a
+            # cached pre-upgrade form; falling back to the current etag there
+            # restores the old (weaker) behavior instead of refusing the save.
+            based_on=based_on.strip() or page_etags.current_etag(conn, page),
+        )
+    except page_drafts.DraftTooLarge:
+        # Fixed literals from the module's own bounds, not the exception's text
+        # — mirrored from the issue autosave, where CodeQL's
+        # stack-trace-exposure rule flagged the exception-derived variant.
+        return HTMLResponse(
+            '<div class="error">Draft not held — too large. Titles cap at '
+            f"{page_drafts.MAX_TITLE_CHARS} characters and bodies at "
+            f"{page_drafts.MAX_BODY_CHARS:,}.</div>",
+            413,
+        )
+    return HTMLResponse(
+        f'<span class="draft-saved">Draft held {escape(saved["updated_at"])}</span>'
+    )
+
+
+@router.post(
+    "/mentor/pages/{page_id}/draft/discard", dependencies=[Depends(verify_csrf)]
+)
+def discard_page_draft(
+    request: Request, page_id: int, conn: sqlite3.Connection = Depends(get_conn)
+):
+    """Throw away this author's draft of this page. Affects nobody else."""
+    user = getattr(request.state, "user", None)
+    err = _write_required(user, "edit pages")
+    if err is not None:
+        return err
+    assert user is not None
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
+    # Explicit int() for the URL-redirection taint analysis, mirroring the
+    # issue-side discard; FastAPI's own coercion is invisible to it.
+    return RedirectResponse(
+        f"/mentor/pages/{int(page_id)}/edit?notice=Draft+discarded.",
+        status_code=303,
     )
 
 
@@ -865,11 +1130,17 @@ def edit_page(
     page_id: int,
     title: str = Form(""),
     body: str = Form(""),
+    if_match: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Save edits to a page's title/body. Gated on the session user; empty title is
     rejected. update_page snapshots the prior revision into history before
-    overwriting (see mentor/pages.py), then we 303 back to the page."""
+    overwriting (see mentor/pages.py), then we 303 back to the page.
+
+    The form carries the page's ETag as it was RENDERED, so a save that would land
+    on top of someone else's is refused instead of silently winning. What happens
+    next is the whole point of this route (see ``_conflict_response``): nothing is
+    overwritten, nothing is merged, and nothing the author typed is thrown away."""
     user = getattr(request.state, "user", None)
     err = _write_required(user, "edit pages")
     if err is not None:
@@ -885,16 +1156,53 @@ def edit_page(
             '<div class="error">Title is required.</div>', status_code=400
         )
 
-    # The command owns the atomic snapshot+overwrite and its 'page_edited' event; the
-    # browser form carries no If-Match, so this stays last-write-wins (the optimistic
-    # lock is a REST/MCP concern for concurrent agents). A page that vanished between
-    # the visibility check and the write (a race) 404s rather than 500s.
+    # The command owns the atomic snapshot+overwrite, its 'page_edited' event, and
+    # the precondition — compared inside the same write lock, so two browsers
+    # holding the same tag cannot both pass it. A page that vanished between the
+    # visibility check and the write (a race) 404s rather than 500s.
+    #
+    # An empty if_match means a form rendered before this field existed (a tab left
+    # open across the upgrade). Those keep the old last-write-wins behavior rather
+    # than being refused on a technicality the author cannot see or fix.
     try:
         page_commands.edit_page(
-            conn, actor_id=user["id"], page_id=page_id, title=title, body=body.strip()
+            conn,
+            actor=user,
+            page_id=page_id,
+            title=title,
+            body=body.strip(),
+            if_match=[if_match] if if_match.strip() else None,
         )
-    except page_commands.PageCommandError:
-        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    except page_commands.PageCommandError as exc:
+        if exc.kind == "precondition_failed":
+            return _conflict_response(
+                conn,
+                request,
+                page_id,
+                user,
+                title=title,
+                body=body.strip(),
+                based_on=if_match,
+            )
+        if exc.kind in ("invalid_precondition", "precondition_too_large"):
+            # A tampered or malformed hidden field. Treat it as no precondition at
+            # all rather than blocking the author out of their own page: the field
+            # is a concurrency aid, not an authorization check.
+            page_commands.edit_page(
+                conn,
+                actor=user,
+                page_id=page_id,
+                title=title,
+                body=body.strip(),
+            )
+        else:
+            return HTMLResponse(
+                '<div class="error">Page not found.</div>', status_code=404
+            )
+    # The text IS the page now, so the author's draft of it is a stale copy of
+    # something that finally has a real home and a version row. Dropping it is
+    # what makes "you have unsaved work" mean it the next time it appears.
+    page_drafts.discard_draft(conn, page_id=page_id, owner_id=user["id"])
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -934,7 +1242,7 @@ def move_page(
     # (another space, self, a descendant) comes back as PageCommandError('invalid').
     try:
         page_commands.move_page(
-            conn, actor_id=user["id"], page_id=page_id, new_parent_id=new_parent
+            conn, actor=user, page_id=page_id, new_parent_id=new_parent
         )
     except page_commands.PageCommandError as exc:
         if exc.kind == "not_found":
@@ -962,21 +1270,19 @@ def delete_page(
         return err
     assert user is not None, "_write_required accepted a missing user"
 
-    page, err = _page_visible_or_response(conn, page_id, user)
-    if err is not None:
-        return err
-    if pages.count_child_pages(conn, page_id) > 0:
-        return HTMLResponse(
-            '<div class="error">Move or delete its child pages first.</div>',
-            status_code=409,
-        )
-    space_id = page["space_id"]
-    # The command owns the atomic delete AND its 'page_deleted' event, then the
-    # post-commit blob unlink + index maintenance.
-    page_commands.delete_page(
-        conn, actor_id=user["id"], page_id=page_id, title=page["title"]
-    )
-    return RedirectResponse(f"/mentor/spaces/{space_id}", status_code=303)
+    # The command owns the atomic delete, its 'page_deleted' event, the visibility
+    # check, and the no-cascade children rule — then the post-commit blob unlink +
+    # index maintenance. It returns the page as it was, for the redirect home.
+    try:
+        page = page_commands.delete_page(conn, actor=user, page_id=page_id)
+    except page_commands.PageCommandError as exc:
+        if exc.kind == "conflict":
+            return HTMLResponse(
+                '<div class="error">Move or delete its child pages first.</div>',
+                status_code=409,
+            )
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
+    return RedirectResponse(f"/mentor/spaces/{page['space_id']}", status_code=303)
 
 
 @router.post("/mentor/pages/{page_id}/archive", dependencies=[Depends(verify_csrf)])
@@ -998,7 +1304,7 @@ def archive_page(
         return err
     try:
         page_commands.set_page_archived(
-            conn, actor_id=user["id"], page_id=page_id, archived=True
+            conn, actor=user, page_id=page_id, archived=True
         )
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
@@ -1023,7 +1329,7 @@ def unarchive_page(
         return err
     try:
         page_commands.set_page_archived(
-            conn, actor_id=user["id"], page_id=page_id, archived=False
+            conn, actor=user, page_id=page_id, archived=False
         )
     except page_commands.PageCommandError:
         return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
@@ -1117,6 +1423,64 @@ def remove_page_attachment(
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
+def _space_visible_or_response(conn, space_id: int, user):
+    """(space, None) when this user may read the space, (None, 404 response) otherwise —
+    the space twin of _page_visible_or_response, so "private" and "missing" stay
+    indistinguishable to someone who may not see it.
+
+    The message is a fixed string, like the page twin's: echoing the requested id back
+    into HTML puts a request-derived value in a response body for no benefit, and the
+    reply is more honest without it — naming the id would confirm which id was asked
+    about, which is the one thing a not-found is supposed to stay quiet about."""
+    space = spaces.get_space(conn, space_id)
+    if space is None or not access.can_see_space(conn, user, space_id):
+        return None, HTMLResponse(
+            '<div class="error">Space not found.</div>', status_code=404
+        )
+    return space, None
+
+
+@router.post("/mentor/spaces/{space_id}/watch", dependencies=[Depends(verify_csrf)])
+def watch_space(request: Request, space_id: int, conn=Depends(get_conn)):
+    """Subscribe to a space: every page event inside it lands in your inbox (any
+    signed-in user — a personal subscription, like watching a page)."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
+            status_code=401,
+        )
+    # You can't watch what you can't see — a hidden space is "not found", exactly as
+    # for pages, so a subscription can never become a side channel for its existence.
+    space, err = _space_visible_or_response(conn, space_id, user)
+    if err is not None:
+        return err
+    assert space is not None
+    # Redirect to the id off the SPACE ROW, not the path parameter — the same shape
+    # the create route uses. The value is identical; the provenance is not, and a
+    # redirect target that came out of the database cannot carry anything a request
+    # put into it.
+    notifications.watch(conn, user["id"], "space", space["id"])
+    return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
+
+
+@router.post("/mentor/spaces/{space_id}/unwatch", dependencies=[Depends(verify_csrf)])
+def unwatch_space(request: Request, space_id: int, conn=Depends(get_conn)):
+    """Stop watching a space."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    space, err = _space_visible_or_response(conn, space_id, user)
+    if err is not None:
+        return err
+    assert space is not None
+    notifications.unwatch(conn, user["id"], "space", space["id"])
+    return RedirectResponse(f"/mentor/spaces/{space['id']}", status_code=303)
+
+
 @router.post("/mentor/pages/{page_id}/watch", dependencies=[Depends(verify_csrf)])
 def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
     """Start watching a page (any signed-in user — a personal subscription)."""
@@ -1179,7 +1543,7 @@ def restore_version(
     # page/version comes back as PageCommandError('not_found').
     try:
         page_commands.restore_page_version(
-            conn, actor_id=user["id"], page_id=page_id, version=version
+            conn, actor=user, page_id=page_id, version=version
         )
     except page_commands.PageCommandError:
         return HTMLResponse(
@@ -1214,10 +1578,14 @@ def add_page_comment(
         return HTMLResponse(
             '<div class="error">Comment cannot be empty.</div>', status_code=400
         )
-    # The command owns the insert AND its atomic 'page_commented' event (auto-watch + mentions).
-    page_comment_commands.create_page_comment(
-        conn, actor_id=user["id"], page_id=page_id, body=body
-    )
+    # The command owns the insert AND its atomic 'page_commented' event (auto-watch +
+    # mentions), plus the visibility gate re-checked inside its transaction.
+    try:
+        page_comment_commands.create_page_comment(
+            conn, actor=user, page_id=page_id, body=body
+        )
+    except page_comment_commands.PageCommentCommandError:
+        return HTMLResponse('<div class="error">Page not found.</div>', status_code=404)
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
 
@@ -1277,7 +1645,7 @@ def edit_page_comment(
     # path previously rewrote the body with NO audit trail at all.
     try:
         page_comment_commands.edit_page_comment(
-            conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id, body=body
+            conn, actor=user, page_id=page_id, comment_id=comment_id, body=body
         )
     except page_comment_commands.PageCommentCommandError:
         # vanished between the author check and the write (a race) — 404, not a
@@ -1315,9 +1683,13 @@ def delete_page_comment(
         return err
     # The command owns the delete AND its atomic 'page_comment_deleted' event; a comment
     # that vanished in a race records nothing and 404s.
-    if not page_comment_commands.delete_page_comment(
-        conn, actor_id=user["id"], page_id=page_id, comment_id=comment_id
-    ):
+    try:
+        removed = page_comment_commands.delete_page_comment(
+            conn, actor=user, page_id=page_id, comment_id=comment_id
+        )
+    except page_comment_commands.PageCommentCommandError:
+        removed = False
+    if not removed:
         return HTMLResponse(
             '<div class="error">Comment not found.</div>', status_code=404
         )
@@ -1357,7 +1729,7 @@ def add_page_label(
     # route (which 404s) rather than erroring here.
     try:
         page_commands.attach_page_label_by_name(
-            conn, actor_id=user["id"], page_id=page_id, name=name
+            conn, actor=user, page_id=page_id, name=name
         )
     except page_commands.PageCommandError:
         pass
@@ -1390,7 +1762,7 @@ def remove_page_label(
     # rather than 404, the same forgiveness the issue-label form gives.
     try:
         page_commands.detach_page_label(
-            conn, actor_id=user["id"], page_id=page_id, label_id=label_id
+            conn, actor=user, page_id=page_id, label_id=label_id
         )
     except page_commands.PageCommandError:
         pass

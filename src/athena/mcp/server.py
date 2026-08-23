@@ -21,6 +21,7 @@ from functools import wraps
 import json
 import os
 import secrets
+import sys
 from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -34,8 +35,15 @@ from athena.aegis import (
     issues,
     lease_commands,
 )
-from athena.core import dispatch, run_context
+from athena.core import (
+    dispatch,
+    run_context,
+    run_control_commands,
+    run_controls,
+    tokens,
+)
 from athena.mcp.client import AthenaClient, AthenaError
+from athena.workflows import workspace_search
 
 
 IdempotencyKey = Annotated[
@@ -137,11 +145,259 @@ AutomationScheduleInterval = Annotated[
         le=automation.MAX_SCHEDULE_INTERVAL_SECONDS,
     ),
 ]
+RunControlKind = Literal["steer", "request_cancel", "request_fresh_context"]
+RunControlStateFilter = Literal[
+    "requested", "acknowledged", "completed", "declined", "expired", "open"
+]
+RunControlId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+RunControlPayload = Annotated[
+    str, Field(max_length=run_control_commands.MAX_PAYLOAD_CHARS)
+]
+RunControlSummary = Annotated[
+    str, Field(min_length=1, max_length=run_control_commands.MAX_RESULT_SUMMARY_CHARS)
+]
+RunControlTtl = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=run_control_commands.MIN_TTL_SECONDS,
+        le=run_control_commands.MAX_TTL_SECONDS,
+    ),
+]
+RunControlListLimit = Annotated[
+    int, Field(strict=True, ge=1, le=run_controls.MAX_LIST_LIMIT)
+]
+# Spelled out rather than derived from notifications.WATCHABLE_KINDS because a
+# Literal must be static for the type checker. test_mcp_client asserts the two are
+# the same set, so adding a watchable kind without exposing it here fails CI — the
+# drift guard is a test, not a runtime import.
+WorkspaceSearchLimit = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=workspace_search.MIN_LIMIT_PER_KIND,
+        le=workspace_search.MAX_LIMIT_PER_KIND,
+    ),
+]
+WatchKind = Literal["issue", "page", "space"]
+WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+
+# --- tool scopes -------------------------------------------------------------
+#
+# What each tool needs from the token, mirroring the REST layer's enforcement —
+# this is the entire authorization POLICY on one screen, audited against the
+# route dependencies (and, where a route checks inside its command, against
+# that command: dispatch and the worker kill are the two).
+#
+# Vocabulary:
+#   "read"  — any authenticated token (reads gate on authentication, not scope)
+#   "write" — any write scope (the personal-state rule: a read-only token must
+#             never mutate anything, its own rows included)
+#   a scope constant — that scope, with admin implying all of them, exactly as
+#             identity.token_has_scope decides
+#
+# This drives PRESENTATION, not authorization: build_server registers only the
+# tools the session's token can actually use, so a read-scoped agent does not
+# carry ~10k tokens of mutation docstrings it can never call. The REST layer
+# remains the boundary — a wrong entry here shows or hides a tool; it can never
+# permit a call the server would refuse.
+#
+# Fail-closed against drift: registering a tool with no entry here raises at
+# build time, so a new tool cannot ship unmapped.
+ANY_WRITE_SCOPE = "write"
+READ_ONLY = "read"
+TOOL_SCOPES: dict[str, str] = {
+    # reads — any authenticated token
+    "search": READ_ONLY,
+    "search_workspace": READ_ONLY,
+    "list_issues": READ_ONLY,
+    "search_work": READ_ONLY,
+    "count_work": READ_ONLY,
+    "read_page_embeds": READ_ONLY,
+    "resolve_embeds": READ_ONLY,
+    "embed_help": READ_ONLY,
+    "link_graph": READ_ONLY,
+    "related_items": READ_ONLY,
+    "project_timeline": READ_ONLY,
+    "unlinked_mentions": READ_ONLY,
+    "query_help": READ_ONLY,
+    "list_my_delegated_work": READ_ONLY,
+    "get_fleet_active_work": READ_ONLY,
+    "get_issue": READ_ONLY,
+    "get_issue_work_context": READ_ONLY,
+    "get_fleet_metrics": READ_ONLY,
+    "list_issue_comments": READ_ONLY,
+    "get_issue_state": READ_ONLY,
+    "recent_events": READ_ONLY,
+    "whoami": READ_ONLY,
+    "list_notifications": READ_ONLY,
+    "begin_run": READ_ONLY,
+    "current_run": READ_ONLY,
+    "get_agent_run_health": READ_ONLY,
+    "list_automation_rules": READ_ONLY,
+    "get_automation_rule": READ_ONLY,
+    "list_automation_failures": READ_ONLY,
+    "list_activity_runs": READ_ONLY,
+    "list_run_events": READ_ONLY,
+    "get_run_lineage": READ_ONLY,
+    "get_run_replay": READ_ONLY,
+    "get_run_fork_contract": READ_ONLY,
+    "list_dispatches": READ_ONLY,
+    "get_issue_runbook": READ_ONLY,
+    "my_desk": READ_ONLY,
+    "my_office": READ_ONLY,
+    "get_project_floor": READ_ONLY,
+    "activity_chain_status": READ_ONLY,
+    "verify_activity_chain": READ_ONLY,
+    "list_workers": READ_ONLY,
+    "list_run_controls": READ_ONLY,
+    "get_run_control": READ_ONLY,
+    "get_agent_budget": READ_ONLY,
+    "get_issue_lease": READ_ONLY,
+    "list_subtasks": READ_ONLY,
+    "list_issue_links": READ_ONLY,
+    "list_sprints": READ_ONLY,
+    "get_sprint": READ_ONLY,
+    "list_labels": READ_ONLY,
+    "list_projects": READ_ONLY,
+    "list_spaces": READ_ONLY,
+    "list_pages": READ_ONLY,
+    "get_page": READ_ONLY,
+    "find_pages_by_title": READ_ONLY,
+    "page_backlinks": READ_ONLY,
+    "page_outgoing_links": READ_ONLY,
+    "list_page_versions": READ_ONLY,
+    "get_page_version": READ_ONLY,
+    # personal state and agent lifecycle — any write scope
+    "mark_notifications_read": ANY_WRITE_SCOPE,
+    "watch": ANY_WRITE_SCOPE,
+    "unwatch": ANY_WRITE_SCOPE,
+    "advance_desk_cursor": ANY_WRITE_SCOPE,
+    "heartbeat_agent_run": ANY_WRITE_SCOPE,
+    "worker_heartbeat": ANY_WRITE_SCOPE,
+    "acknowledge_run_control": ANY_WRITE_SCOPE,
+    "decline_run_control": ANY_WRITE_SCOPE,
+    "complete_run_control": ANY_WRITE_SCOPE,
+    "undo_action": ANY_WRITE_SCOPE,
+    # writes EITHER module depending on source_kind; the route still enforces
+    # the precise scope, this only decides presentation
+    "link_mention": ANY_WRITE_SCOPE,
+    # Aegis writes
+    "create_issue": tokens.ISSUE_WRITE_SCOPE,
+    "update_issue": tokens.ISSUE_WRITE_SCOPE,
+    "set_issue_placement": tokens.ISSUE_WRITE_SCOPE,
+    "assign_issue": tokens.ISSUE_WRITE_SCOPE,
+    "delegate_issue": tokens.ISSUE_WRITE_SCOPE,
+    "claim_issue": tokens.ISSUE_WRITE_SCOPE,
+    "yield_claim": tokens.ISSUE_WRITE_SCOPE,
+    "resume_claim_handoff": tokens.ISSUE_WRITE_SCOPE,
+    "complete_claim": tokens.ISSUE_WRITE_SCOPE,
+    "decline_delegation": tokens.ISSUE_WRITE_SCOPE,
+    "comment_on_issue": tokens.ISSUE_WRITE_SCOPE,
+    "archive_issue": tokens.ISSUE_WRITE_SCOPE,
+    "unarchive_issue": tokens.ISSUE_WRITE_SCOPE,
+    "bulk_update_issues": tokens.ISSUE_WRITE_SCOPE,
+    "set_issue_parent": tokens.ISSUE_WRITE_SCOPE,
+    "link_issues": tokens.ISSUE_WRITE_SCOPE,
+    "unlink_issues": tokens.ISSUE_WRITE_SCOPE,
+    "create_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "update_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "start_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "complete_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "delete_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "set_issue_sprint": tokens.ISSUE_WRITE_SCOPE,
+    "create_label": tokens.ISSUE_WRITE_SCOPE,
+    "attach_label": tokens.ISSUE_WRITE_SCOPE,
+    "detach_label": tokens.ISSUE_WRITE_SCOPE,
+    "start_playbook": tokens.ISSUE_WRITE_SCOPE,
+    "dispatch_to_icarus": tokens.ISSUE_WRITE_SCOPE,
+    # Mentor writes
+    "create_page": tokens.DOCS_WRITE_SCOPE,
+    "update_page": tokens.DOCS_WRITE_SCOPE,
+    "archive_page": tokens.DOCS_WRITE_SCOPE,
+    "unarchive_page": tokens.DOCS_WRITE_SCOPE,
+    "label_page": tokens.DOCS_WRITE_SCOPE,
+    "unlabel_page": tokens.DOCS_WRITE_SCOPE,
+    "restore_page_version": tokens.DOCS_WRITE_SCOPE,
+    "record_run_learning": tokens.DOCS_WRITE_SCOPE,
+    # operator/admin surfaces (admin-gated reads included, so a non-admin
+    # session does not carry tools that can only answer 403)
+    "list_security_events": tokens.ADMIN_SCOPE,
+    "agent_answerability": tokens.ADMIN_SCOPE,
+    "list_approvals": tokens.ADMIN_SCOPE,
+    "list_users": tokens.ADMIN_SCOPE,
+    "onboard_agent": tokens.ADMIN_SCOPE,
+    "pause_agent": tokens.ADMIN_SCOPE,
+    "resume_agent": tokens.ADMIN_SCOPE,
+    "revoke_agent_tokens": tokens.ADMIN_SCOPE,
+    "offboard_agent": tokens.ADMIN_SCOPE,
+    "create_automation_rule": tokens.ADMIN_SCOPE,
+    "set_automation_rule_enabled": tokens.ADMIN_SCOPE,
+    "delete_automation_rule": tokens.ADMIN_SCOPE,
+    "request_worker_kill": tokens.ADMIN_SCOPE,
+    "cancel_worker_kill": tokens.ADMIN_SCOPE,
+    "create_run_control": tokens.ADMIN_SCOPE,
+    "decide_approval": tokens.ADMIN_SCOPE,
+    "set_approval_policy": tokens.ADMIN_SCOPE,
+    "set_agent_budget": tokens.ADMIN_SCOPE,
+    "clear_agent_budget": tokens.ADMIN_SCOPE,
+}
+
+_WRITE_SCOPES = frozenset(
+    {tokens.ISSUE_WRITE_SCOPE, tokens.DOCS_WRITE_SCOPE, tokens.ADMIN_SCOPE}
+)
 
 
-def build_server(client: AthenaClient) -> FastMCP:
+def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
+    """Whether a tool with this requirement belongs in this session's surface.
+
+    Mirrors ``identity.token_has_scope``: admin implies every scope, and a None
+    scope set (auth that is not scope-limited) sees everything."""
+    if scopes is None or required == READ_ONLY:
+        return True
+    if tokens.ADMIN_SCOPE in scopes:
+        return True
+    if required == ANY_WRITE_SCOPE:
+        return bool(scopes & _WRITE_SCOPES)
+    return required in scopes
+
+
+def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
+    """Ask Athena what the session's token may do, failing OPEN to the full
+    surface. Filtering is ergonomics; the REST layer is the boundary — so an
+    unreachable server at MCP startup must not change which tools exist, only
+    who answers 403 later.
+
+    Called by ``main()`` — the stdio entry point — and deliberately NOT by
+    ``build_server`` itself: a probe hidden inside the builder would prepend a
+    surprise whoami to every test harness and every embedding caller. The one
+    place that wants the probe wires it."""
+    if os.environ.get("ATHENA_MCP_ALL_TOOLS") == "1":
+        return None
+    try:
+        scopes = client.whoami().get("scopes")
+    except Exception:  # noqa: BLE001 — startup probe; the boundary is REST
+        print(
+            "athena-mcp: could not read token scopes at startup; "
+            "presenting the full tool surface",
+            file=sys.stderr,
+        )
+        return None
+    return None if scopes is None else frozenset(scopes)
+
+
+def build_server(
+    client: AthenaClient, *, scopes: frozenset[str] | None = None
+) -> FastMCP:
     """Build the MCP server, binding every tool to a pre-built Athena client.
-    Separated from main() so tests can inject a TestClient-backed AthenaClient."""
+    Separated from main() so tests can inject a TestClient-backed AthenaClient.
+
+    ``scopes`` narrows registration to the tools that token class can use
+    (``TOOL_SCOPES``): a read-scoped agent gets the read surface, not ~70
+    mutation tools that could only answer 403. None — the default — registers
+    everything, so embedding callers and tests get the full deterministic
+    surface unless they opt in; ``main()`` opts in by wiring ``probe_scopes``."""
+    token_scopes = scopes
     mcp = FastMCP("athena")
 
     idempotency_guidance = (
@@ -170,12 +426,29 @@ def build_server(client: AthenaClient) -> FastMCP:
 
         return guarded
 
+    def _required_scope(function) -> str:
+        """The tool's declared scope — refusing to register an unmapped tool.
+        Fail-closed on purpose: a new tool with no ``TOOL_SCOPES`` entry breaks
+        the build (and every test that builds a server), so the policy screen
+        above cannot silently fall behind the tool list."""
+        try:
+            return TOOL_SCOPES[function.__name__]
+        except KeyError:
+            raise RuntimeError(
+                f"MCP tool {function.__name__!r} has no TOOL_SCOPES entry; "
+                "every tool must declare what its token needs"
+            ) from None
+
     def tool(function):
         """Register a tool with the shared structured-error contract."""
+        if not _tool_visible(_required_scope(function), token_scopes):
+            return function
         return mcp.tool()(preserve_athena_errors(function))
 
     def mutation_tool(function):
         """Register a write tool with the shared retry-key contract."""
+        if not _tool_visible(_required_scope(function), token_scopes):
+            return function
         guarded = preserve_athena_errors(function)
         guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{idempotency_guidance}"
         return mcp.tool()(guarded)
@@ -187,6 +460,27 @@ def build_server(client: AthenaClient) -> FastMCP:
         """Full-text search across Aegis issues and Mentor pages. Optionally narrow
         to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
         return client.search(query, kind=kind)
+
+    @tool
+    def search_workspace(
+        query: str, limit_per_kind: WorkspaceSearchLimit | None = None
+    ) -> dict:
+        """One ask across issues, pages, AND comments — use this when you do not
+        already know which module holds the answer.
+
+        The work query grammar works here: `is:open label:infra project:ATH`
+        filters issues structurally, and any bare words in the same query are
+        full-text searched across pages and comments. Plain words alone
+        full-text search all three. An unknown atom (`labl:infra`) is an ERROR
+        naming the atom, never an empty result — so a typo cannot read as "no
+        such work".
+
+        Results are GROUPED BY KIND, not globally ranked: two engines with two
+        orders cannot be interleaved into one honest relevance score, so compare
+        within a group, not across them. Each group reports `clipped` when its
+        bound cut the list. A pure-grammar query leaves the page and comment
+        groups empty — `query.text` shows exactly what was text-searched."""
+        return client.search_workspace(query, limit_per_kind=limit_per_kind)
 
     @tool
     def list_issues(
@@ -290,6 +584,51 @@ def build_server(client: AthenaClient) -> FastMCP:
         Use it to orient before editing: what already references this runbook, and
         what does it reach."""
         return client.link_graph(kind, id, depth, max_nodes)
+
+    @tool
+    def related_items(kind: str, id: int, limit: int | None = None) -> dict:
+        """What cites what this cites, but is NOT linked to it yet.
+
+        `kind` is "issue" or "page". Co-citation over the same links the graph
+        walks, derived at read time: each item shares at least one
+        link-neighbour with the focus, ranked by how many (`shared`), and
+        everything already linked directly is deliberately absent — backlinks
+        and outgoing links answer that. This answers the question they cannot:
+        what belongs to the same cluster with no edge saying so yet.
+
+        Bounded (10 by default); `truncated`/`total` disclose what the bound
+        cut. Nodes you cannot see are absent AND do not raise anyone's score.
+
+        Use it before starting work an issue describes: the runbook nobody
+        linked, the sibling issue solving the same subsystem."""
+        return client.related_items(kind, id, limit)
+
+    @tool
+    def project_timeline(
+        project_id: ProjectId,
+        max_per_lane: int | None = None,
+        max_items: int | None = None,
+    ) -> dict:
+        """A project's roadmap: sprint lanes, the issues in them, and the declared
+        dependencies between those issues — as positioned data, the same picture
+        the browser draws.
+
+        Lanes run in date order (sprints with dates first, then undated ones, then
+        the backlog), but lane WIDTH is not a duration — sprint dates are optional,
+        so the order is the only time claim made. Each card carries its issue's
+        status and category, so you can see what is done without another lookup.
+
+        Bounded on purpose: each lane draws its first few issues and the whole
+        picture has a ceiling. `truncated` and the per-lane `shown`/`total` say
+        what was left out, and `edges_outside` counts dependencies whose other end
+        is not on this picture — nothing is silently dropped. Issues you cannot
+        see, and archived ones, are absent.
+
+        This is a read. To move an issue between sprints use the issue's own
+        sprint assignment; nothing here schedules or reorders work."""
+        return client.project_timeline(
+            project_id, max_per_lane=max_per_lane, max_items=max_items
+        )
 
     @tool
     def unlinked_mentions(kind: str, id: int, limit: int | None = None) -> dict:
@@ -448,6 +787,30 @@ def build_server(client: AthenaClient) -> FastMCP:
         cleared count). Do this after acting on the inbox, so the next read
         surfaces only what is genuinely new."""
         return client.mark_all_notifications_read()
+
+    @mutation_tool
+    def watch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
+        """Subscribe YOUR inbox to a target so you learn it changed without
+        re-reading it.
+
+        'space' is the one to reach for when a space is your fleet's shared
+        memory: it delivers the space's own lifecycle events AND every event on
+        every page inside it — created, edited, archived, commented, deleted.
+        That is a firehose by design, and `unwatch` is the only volume control;
+        Athena has no digest and no daily rollup. 'page' follows one document,
+        'issue' one work item.
+
+        Watching twice is a no-op. Watching something you cannot see subscribes
+        you to nothing you can read: the inbox filters by visibility at read
+        time, so the notifications simply never surface."""
+        return client.watch(target_kind, target_id)
+
+    @mutation_tool
+    def unwatch(target_kind: WatchKind, target_id: WatchTargetId) -> None:
+        """Unsubscribe YOUR inbox from a target you are watching. Errors 404 if
+        you were not watching it — the refusal distinguishes "stopped" from
+        "was never subscribed", which a silent success would blur."""
+        return client.unwatch(target_kind, target_id)
 
     @tool
     def heartbeat_agent_run(run_id: RunId) -> dict:
@@ -614,18 +977,18 @@ def build_server(client: AthenaClient) -> FastMCP:
 
     @mutation_tool
     def onboard_agent(
-        email: str,
         name: str,
         scopes: list[str],
+        email: str | None = None,
         token_name: str | None = None,
     ) -> dict:
         """Admin: provision a NEW agent teammate in one audited move — create its
         user account (member role, token-only) and mint its first scoped token.
         Scopes are required (least privilege: e.g. ["read", "issue:write"]).
-        Returns the user, the one-time raw token, and a ready-to-paste MCP config
-        block for connecting the agent. Requires an admin token."""
+        Email is optional; omitted becomes {slug}@agents.local. Returns the user,
+        the one-time raw token, and a ready-to-paste MCP config. Requires admin."""
         return client.onboard_agent(
-            email=email, name=name, scopes=scopes, token_name=token_name
+            name=name, email=email, scopes=scopes, token_name=token_name
         )
 
     @mutation_tool
@@ -759,6 +1122,136 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.list_security_events(verb=verb, since=since, limit=limit)
 
     @mutation_tool
+    def start_playbook(
+        page_id: int,
+        project_id: int | None = None,
+        title: str | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Turn a playbook page's checklist into REAL WORK: one parent issue
+        plus one child per unchecked `- [ ]` step. Indented steps NEST — the
+        checklist's shape comes back as the issue tree, each indented step a
+        child of the issue its enclosing step became.
+
+        The page must carry the `playbook` label. Checked (`- [x]`) steps are
+        counted and skipped, never created — ticking a box before starting is
+        the author saying it is already done. A checked step's unchecked
+        sub-steps still become work, attached to the nearest created ancestor.
+
+        Every created issue cites the page with a `[[page:N]]` wikilink, so the
+        page's backlinks show the work it started and a `rollup` embed there
+        counts its progress, with no extra step from you.
+
+        A TEMPLATE IS NOT A LIVE MIRROR: this snapshots the page. Editing it
+        afterwards changes nothing already created, and starting it again makes
+        a second independent instantiation (which is what templates are for).
+        Pass idempotency_key if you need a retry to be safe."""
+        return client.start_playbook(
+            page_id,
+            project_id=project_id,
+            title=title,
+            idempotency_key=idempotency_key,
+        )
+
+    @tool
+    def my_desk() -> dict:
+        """START HERE. Your desk: who you are, what is asked of you, what you
+        are holding, and what changed since you last looked.
+
+        Replaces the whoami + delegations + controls + notifications + budget
+        round trip with one bounded read. Lanes: `identity` (role, scopes,
+        budget, action kinds needing approval), `asks` (open run controls
+        addressed to you, kill requests on your workers, claim handoffs you
+        have not acknowledged), `work` (your delegation inbox, the leases you
+        hold — `active` is the clock's verdict at THIS read, not a stored
+        state), `signals` (unread notifications, and how many visible events
+        sit past your cursor).
+
+        The loop: `my_desk()` -> act -> drain `recent_events(after=...)` from
+        your cursor -> `advance_desk_cursor(after_id=<last id you handled>)`.
+
+        The desk RESERVES NOTHING. It is a snapshot, not a lock, a lease, or a
+        queue: seeing work here does not claim it, and two agents can read the
+        same contents at once. Claim work through the delegation/lease tools."""
+        return client.my_desk()
+
+    @tool
+    def my_office() -> dict:
+        """Your cubicle. Athena's unique seat: at most one chair (one active
+        lease), fenced paths, and a checkout branch hint. START HERE if you
+        already know who you are and only need the job.
+
+        `seated` is true only when you hold exactly one active lease. `chair`
+        names the issue, generation, declared_paths, and `checkout_hint`
+        (a branch name — Athena does not create git remotes). `next_to_sit`
+        is the first delegated issue when you are standing.
+
+        RESERVES NOTHING. Claim through claim_issue. complete_claim stands
+        you up; it does not close the issue."""
+        return client.my_office()
+
+    @tool
+    def get_project_floor(project_id: int) -> dict:
+        """A project's floor: every open issue is a chair. Occupied chairs
+        have a sitting agent and optional fenced paths. Empty chairs still
+        need a body. `blocked_by` lists open blockers; there is no 'ready'
+        flag. RESERVES NOTHING."""
+        return client.get_project_floor(project_id)
+
+    @mutation_tool
+    def advance_desk_cursor(after_id: int) -> dict:
+        """Record that you have handled every visible event up to `after_id`.
+
+        Your cursor is personal bookkeeping — it emits no activity event and
+        tells nobody else anything. It moves FORWARD only: acknowledging the
+        same id twice is a harmless no-op, and a lower id is refused (409),
+        because unsaying an acknowledgement would be a claim about history.
+
+        Pass the id of the last event you actually processed, not the newest
+        one you saw — the desk's `signals.latest_visible_event_id` is what a
+        fully drained reader would use."""
+        return client.advance_desk_cursor(after_id=after_id)
+
+    @tool
+    def activity_chain_status() -> dict:
+        """Where the audit trail's hash chain stands (admin only).
+
+        Returns the ANCHOR (the first chained event — rows below it predate the
+        chain and are counted, never claimed), the HEAD (the newest entry's
+        hash — note it somewhere outside Athena to make even a full-chain
+        rebuild detectable), and coverage counts. The chain proves the recorded
+        trail has not been rewritten; it does not prove what an agent's process
+        actually did off the record."""
+        return client.activity_chain_status()
+
+    @tool
+    def verify_activity_chain(
+        after_id: int | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Recompute a bounded window of the audit trail's hash chain (admin only).
+
+        Each call rehashes at most `limit` entries; loop on the returned
+        `next_after` until `has_more` is false to walk the whole chain. On a
+        break it reports the FIRST mismatching event id and reason — a finding
+        to investigate, never something Athena repairs. `ok: true` means the
+        WINDOW verified, not the whole trail."""
+        return client.verify_activity_chain(after_id=after_id, limit=limit)
+
+    @tool
+    def agent_answerability(agent_id: int | None = None) -> dict:
+        """The per-agent ask-and-answer ledger (admin only).
+
+        For each agent: run controls addressed to it (open / expired-unanswered
+        / completed / declined), kill requests to its workers (told-to-stop vs
+        confirmed), approvals its gated actions raised (pending / approved /
+        rejected), and how many of its events an undo reversed. Facts per lane,
+        derived at read time from the owning tables — deliberately NOT a score:
+        an expired control means the clock ran out, and only the operator can
+        judge why. Narrow with agent_id."""
+        return client.agent_answerability(agent_id=agent_id)
+
+    @mutation_tool
     def worker_heartbeat(
         worker_key: str,
         node_label: str | None = None,
@@ -821,6 +1314,100 @@ def build_server(client: AthenaClient) -> FastMCP:
         return client.cancel_worker_kill(worker_id, idempotency_key=idempotency_key)
 
     @mutation_tool
+    def create_run_control(
+        run_id: RunId,
+        kind: RunControlKind,
+        payload: RunControlPayload | None = None,
+        worker_id: int | None = None,
+        ttl_seconds: RunControlTtl | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Admin: record a control request against a live run.
+
+        'steer' hands the run's agent bounded guidance (payload required);
+        'request_cancel' asks it to wind this run down cooperatively;
+        'request_fresh_context' asks it to close out with a structured handoff a
+        fresh context can continue from. This RECORDS A REQUEST; it does not
+        change what any process is doing. Only the agent bound to the run can
+        read and settle it, and an unanswered request reads as expired after
+        ttl_seconds (default one hour). Requires an admin token."""
+        return client.create_run_control(
+            run_id=run_id,
+            kind=kind,
+            payload=payload,
+            worker_id=worker_id,
+            ttl_seconds=ttl_seconds,
+            idempotency_key=idempotency_key,
+        )
+
+    @tool
+    def list_run_controls(
+        run_id: str | None = None,
+        state: RunControlStateFilter | None = None,
+        limit: RunControlListLimit = 50,
+    ) -> list:
+        """Run controls — operator requests on live runs and how their agents
+        answered. Admins see everything; anyone else sees only controls addressed
+        to them. state='open' is YOUR inbox: unsettled, not yet expired — poll it
+        while you work and answer what you find. `state` reports what was
+        actually said; 'expired' means the clock ran out, never that anything
+        stopped."""
+        return client.list_run_controls(run_id=run_id, state=state, limit=limit)
+
+    @tool
+    def get_run_control(control_id: RunControlId) -> dict:
+        """One run control, for an admin or the agent it is addressed to."""
+        return client.get_run_control(control_id)
+
+    @mutation_tool
+    def acknowledge_run_control(
+        control_id: RunControlId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Record that YOU read a control addressed to your run.
+
+        Receipt, nothing more — follow up with decline_run_control or
+        complete_run_control when you have actually acted. Re-acknowledging is a
+        no-op. Refused once the control is settled or expired."""
+        return client.acknowledge_run_control(
+            control_id, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def decline_run_control(
+        control_id: RunControlId,
+        reason: RunControlSummary,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Decline a control addressed to your run, with the reason the operator
+        will read. An answer, not an error — say why you will not comply."""
+        return client.decline_run_control(
+            control_id, reason=reason, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def complete_run_control(
+        control_id: RunControlId,
+        summary: RunControlSummary | None = None,
+        handoff: dict | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Complete a control addressed to your run.
+
+        For steer and request_cancel, pass a bounded summary of what you actually
+        did. For request_fresh_context, pass handoff instead: an object with
+        summary (required), unresolved_questions, athena_refs, evidence_refs —
+        bounded lists of short strings; never transcripts or hidden reasoning.
+        Completion is YOUR CLAIM, recorded as such — it does not prove any
+        process-level effect."""
+        return client.complete_run_control(
+            control_id,
+            summary=summary,
+            handoff=handoff,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
     def undo_action(
         event_id: int,
         idempotency_key: IdempotencyKey | None = None,
@@ -839,7 +1426,7 @@ def build_server(client: AthenaClient) -> FastMCP:
         instead), a destroyed row is a trapdoor. Refused too when the event was
         already undone, was imported from another system, or when its effect is no
         longer in force (someone already changed it back). Find event ids with
-        `list_events` or `list_activity`."""
+        `recent_events(...)`."""
         return client.undo_action(event_id, idempotency_key=idempotency_key)
 
     @tool
@@ -1028,22 +1615,21 @@ def build_server(client: AthenaClient) -> FastMCP:
         if_match: str,
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
+        paths: list[str] | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Claim or renew an issue only against the exact root issue revision reviewed.
-        First call get_issue and copy its _etag, or copy issue_etag from
-        get_issue_work_context; never use the work-context packet's top-level _etag.
-        Omit generation to acquire only a free/expired lease. To renew your current
-        active lease, pass its exact generation; stale generations never acquire new
-        work. Missing or non-exact issue tags fail, stale tags return 412 with the
-        current tag, and a different live holder remains a 409. lease_seconds defaults
-        to 30 minutes. A successful response includes open_claim_handoff when prior
-        work yielded continuation context; acknowledge it explicitly before completion."""
+        Copy `issue_etag` from my_desk() or get_issue_work_context — never the
+        work-context packet's top-level `_etag`. Optional `paths` is a file fence:
+        repo-relative POSIX paths; overlap with another active lease is 409.
+        Omit generation to acquire only a free/expired lease. lease_seconds defaults
+        to 30 minutes."""
         return client.claim_issue(
             issue_id,
             if_match=if_match,
             generation=generation,
             lease_seconds=lease_seconds,
+            paths=paths,
             idempotency_key=idempotency_key,
         )
 
@@ -1103,10 +1689,10 @@ def build_server(client: AthenaClient) -> FastMCP:
         generation: LeaseGeneration,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Release the lease you hold on an issue by completing the claimed work (complete)
-        — it frees the issue for the next claimant. This releases the coordination lease
-        only; change the issue's status through update_issue as usual. An open claim
-        handoff returns 409 until this exact leaseholder explicitly resumes it."""
+        """Release the lease you hold. This does NOT mark the issue done.
+        The 200 body repeats issue_status and issue_still_open; PATCH the issue
+        to `done` separately if the work is finished. An open claim handoff
+        returns 409 until this exact leaseholder explicitly resumes it."""
         return client.complete_claim(
             issue_id,
             generation=generation,
@@ -1547,4 +2133,6 @@ def main() -> None:
     client = AthenaClient(
         base_url=base_url, token=token, run_id=run_id, parent_run_id=parent_run_id
     )
-    build_server(client).run()
+    # The session-defining call: one whoami decides which tools this token's
+    # session carries. Fails open; ATHENA_MCP_ALL_TOOLS=1 skips entirely.
+    build_server(client, scopes=probe_scopes(client)).run()

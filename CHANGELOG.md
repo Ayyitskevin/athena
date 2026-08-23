@@ -10,6 +10,553 @@ the newest one and for what tagging still requires.
 
 ## [Unreleased]
 
+### Security
+
+- **A long number between brackets could take down a write.** Python raises
+  `ValueError` from `int(str)` past 4300 digits, and every one of Athena's
+  bracket grammars captured `\d+` with no bound — so a body containing
+  `[[issue:<4301 digits>]]` crashed `links.extract_refs`, which runs inside
+  `sync_links`, which runs on **every issue and page write**. An authenticated
+  author could 500 their own write by typing a long number, and the same shape
+  reached `[[KEY-N]]`, `[[user:N]]` (both the notify and the render copy), and the
+  forge key linkifier — where the text arrives from a signed-inbound webhook rather
+  than a person. Four grammars, five sites, one bug. All of them now bound the run
+  through a single `links.ID_DIGITS` (19 digits, the width of a SQLite rowid), so
+  an over-long run stops matching and stays literal text like any other
+  non-reference — no caller has to defend against a number it was handed. Found by
+  the property tests below, which is the whole argument for them: no hand-written
+  example contains a 4301-digit number, because nobody thinks to write one.
+
+  The mention grammar was two identical literals in `core/notifications.py` and
+  `web/render.py`, under a comment asserting they were shared — a claim source code
+  cannot keep on its own. `render.py` now imports the one in `notifications.py`,
+  so a future edit cannot make the thing that notifies and the thing that renders
+  disagree about what a mention is.
+
+- **Credential stuffing is bounded per account, not just per IP.** Login
+  throttling was per-IP only, which bounds one peer and not one account —
+  credential stuffing is distributed by construction, so a thousand hosts
+  guessing ten passwords each at one address stayed under every ceiling while
+  making ten thousand attempts on that account. A second fixed-window limiter
+  (`ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE`, default 5/min, 0 disables)
+  closes that axis, checked before the password hash like the first. It is keyed
+  by the **submitted email, not the resolved account**, which is the design and
+  not an implementation detail: keying by user id would make a real address
+  return 429 while an unknown one returned 401 — a free membership test that
+  would undo the opacity `verify_credentials`' dummy PBKDF2 and the
+  background-task audit write exist to provide. A throttled attempt against a
+  real account lands on the trail under its own `login_throttled` verb, which
+  joins the closed `SECURITY_VERBS` set and so reaches Admin → Security, the
+  zero-filled counts and the attention rollup without any surface learning a new
+  name. SECURITY.md documents the denial-of-service trade the feature makes and
+  why the window is one minute rather than a lockout.
+
+- **A fail-closed switch for anonymous reads.** Projects and spaces are public
+  by default, which is right on loopback and wrong the moment the box is
+  reachable — an accidental tunnel, a Funnel left on, a port-forward that
+  outlived its reason. Per-container visibility does not help there: the
+  containers really are public. `ATHENA_ANONYMOUS_READS=0` requires an
+  authenticated actor for every read regardless of visibility, applied at two
+  choke points rather than route by route — `identity.optional_actor` (the one
+  dependency behind all 55 optional-identity REST reads) and the session
+  middleware for browsers. Two things stay open deliberately, because a switch
+  that locks the operator out of their own login page or their own empty
+  database is an outage and not a control: the sign-in path, and creating the
+  first user, which uses a separate `bootstrap_optional_actor` dependency so the
+  exemption is greppable and a test pins that exactly one route uses it. Bearer
+  callers are unaffected — the middleware refuses only a caller presenting
+  nothing, and answers in the caller's idiom (sign-in page vs 401 JSON).
+  `ATHENA_DEFAULT_VISIBILITY=private` is the ergonomics half: new containers are
+  born private. Both default to today's behavior.
+
+- **`style-src` no longer allows `'unsafe-inline'`.** The exception existed for
+  styles that genuinely depend on data — a label's stored hex, a rollup bar's
+  percentage, a page's nesting depth, a generated SVG's width — and it covered
+  34 inline `style=` attributes across 15 templates and two Python emitters, not
+  the handful the review estimated. They needed three different answers, because
+  a CSP nonce does **not** license inline style *attributes* (only `<style>`
+  elements), so there was no way to permit the hard cases and convert the rest:
+  static declarations became utility classes; bounded numbers (bar percentages,
+  tree depth) became stepped classes, which is also what lets `web/render.py`
+  keep working since it builds embed HTML outside any template and has no nonce
+  to use; and genuinely arbitrary values became tiny nonce-carrying `<style>`
+  elements, with the nonce minted per response and spent in that response's own
+  policy. `web/html_export.py` keeps its inline style deliberately: that export
+  is downloaded as an attachment and opened from `file://`, where no CSP of ours
+  applies and the document has to render without Athena.
+
+- **Webhook egress now refuses CGNAT and IPv6 site-local targets.** The address
+  policy behind `is_safe_url` and the delivery-time pinned connect relied on
+  `ipaddress`' `is_private`/`is_reserved` family, and neither covers
+  100.64.0.0/10 (RFC 6598 shared address space) or the deprecated-but-routable
+  fec0::/10 — so a webhook URL resolving there was deliverable without the
+  `ATHENA_EGRESS_PRIVATE_HOSTS` opt-in every other private target requires.
+  CGNAT is the range Tailscale assigns, which made the gap sharpest on the
+  supported tailnet shape: an admin-registered URL could reach another tailnet
+  node directly. Both ranges are now named in the one policy owner
+  (`_address_blocked`), the IPv4-embedded IPv6 decode still runs first so
+  `::ffff:100.64.0.1` cannot smuggle what the bare form refuses, and regression
+  tests pin the range edges so the block cannot silently widen into
+  100.0.0.0/8. Exact-hostname exemptions keep working — the opt-in is the
+  point.
+
+- **The vendored htmx bundle is hash-pinned.** `static/htmx.min.js` was the one
+  executable dependency shipped by content alone — vendored (so no
+  `integrity` attribute exists), excluded from CodeQL's paths, and served to
+  every browser session. Its SHA-256 was verified against the official
+  bigskysoftware/htmx v1.9.12 release artifact and is now asserted by
+  `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
+  build and an htmx upgrade names the new version and digest in the same diff.
+
+### Added
+
+- **A standing prune ledger, and the tooling that makes it runnable.** VISION says
+  *when a proposed feature doesn't serve the picture, cut it or reshape it*, and
+  nothing visible has ever been cut — against a surface of **362 routes, 124 MCP
+  tools, 65 tables and ~46,600 lines** that the external review called the project's
+  biggest long-term risk. `docs/PRUNE_LEDGER.md` is the first quarterly review, with
+  every verdict deliberately **unset**: deciding to cut or park a subsystem is a
+  promise to users, not an agent's call.
+
+  The durable half is `scripts/prune_evidence.py`, which produces the ledger's
+  evidence column from a real database (read-only, `immutable=1`, safe against a
+  live deployment). That column cannot come from the repository: source proves a
+  feature *exists*, only a database somebody worked in shows whether anyone reached
+  for it.
+
+  Building it surfaced three ways such a report lies, each now closed. Verb names
+  were **guessed** in the first draft, and reported zero events for agent
+  supervision against a database that plainly exercises it — an argument to cut the
+  fleet loop, from a typo; a test now pins every verb against the vocabulary the
+  code actually writes, extracted by AST because `verb="lease_renewed" if renewed
+  else "claimed"` defeats a regex. **Forge inbound** lands its events as imported
+  history by design, and the default query excludes imported rows, so it read as
+  never-used however much it was used — now a flagged exception with its own test.
+  And **migration-seeded singleton tables** can never read zero, so they were
+  dropped from the map: a count with a floor measures nothing.
+
+  The report also refuses to collapse `n/a` into `0`. A pure read surface — the
+  graph view, the answerability page, search, export, recovery — writes nothing and
+  is invisible to this tooling *by construction*; saying so plainly matters because
+  two of the three subsystems the guide names as candidates are in that category,
+  and a reviewer skimming a column of zeroes would not stop to notice.
+
+  **The ledger's first finding is about the project, not any subsystem.** F-3.4 asks
+  when each subsystem was last used in the dogfood deployment; there is no dogfood
+  deployment, and RELEASE_READINESS.md has always said so — *"no production
+  deployment has occurred"*. So that column cannot be filled by anyone, and the
+  question changes from "what has gone quiet" (nothing has ever spoken) to "what was
+  built on demonstrated need rather than a guess". The ledger answers it with the
+  evidence that does exist: the two artifacts encoding what Athena's author believes
+  the product is — the demo seed and the 25-step field exercise. Not usage evidence,
+  but intent evidence, and it discriminates. **Six measurable subsystems are touched
+  by neither story** — automation rules, outbound webhooks, attachments, saved
+  filters, desk cursors and OIDC login — while forge inbound, one of the guide's
+  three pre-named candidates, IS exercised by the field exercise, which is evidence
+  in its favour.
+
+- **A container image, built and proved in CI — and not published.** A
+  `Dockerfile` (python:3.12-slim, two stages so no build tooling or source tree
+  reaches the runtime image, non-root uid 10001, one volume holding the SQLite file
+  and the attachment blobs together), a `compose.yaml`, and `docs/DOCKER.md`. CI
+  builds it and then checks the things that would make it a liability: that it does
+  not run as root, that a fresh volume is still **refused** without an explicit
+  `--bootstrap` (an image that quietly migrated an empty volume would undo the gate
+  the launcher exists to hold), that its declared `HEALTHCHECK` actually reports
+  healthy, that the database lands in the volume owned by the non-root user, and
+  that it restarts on an existing database with no bootstrap token.
+
+  What the compose file deliberately does **not** contain is a `ports:` mapping.
+  `ATHENA_NETWORK_MODE=local` permits binding loopback and nothing else — there is
+  no `public` mode, in a container or out of one — so a published port maps to an
+  address the process is not on, and the failure looks like a hang rather than a
+  refusal. `docs/DOCKER.md` names the shapes that do reach the app (`docker exec`,
+  host networking with a tailnet address, a Tailscale sidecar) and the ones that
+  remain unsupported. Publishing the image is a separate decision and stays open.
+
+- **Release mechanics, up to the point a human takes over.** `RELEASING.md` names
+  the exact order; `.github/workflows/publish.yml` does the mechanical part. It
+  runs only on a pushed `v*` tag or on a manual dispatch that can reach TestPyPI
+  and nothing else, and it sits behind a GitHub Environment so approval is the
+  owner's. Before anything is built, a guard job refuses a tag that does not name
+  the packaged version, a commit that is not an ancestor of `main`, and — the one
+  RELEASE_READINESS.md's checklist asks for and nothing previously enforced — a
+  commit whose `test`, `audit` and `container` checks are not green. Build and
+  publish are one job on purpose: an artifact handoff would mean a second
+  third-party action to pin and a window in which the thing published is not
+  provably the thing verified. The sdist is built first and the wheel from *that*
+  sdist, verified by both the checkout's `verify_wheel.py` and the sdist's own
+  copy, so a tampered sdist cannot supply the verifier that blesses it.
+
+  Nothing is tagged and nothing is published. The workflow cannot run at all until
+  the `pypi`/`testpypi` environments and PyPI trusted publishers exist, which is
+  the correct state for a project that has never released.
+
+- **`docs/DECISIONS_PENDING.md`** — a brief for each of the three open
+  `[OPERATOR DECISION]` items (a supported TLS shape, recovery portability vs
+  documented Linux-only, publishing the image): what is true today, each option's
+  real cost, what it commits Athena to, and a recommendation that is explicitly not
+  the decision. Writing them turned up a correction worth having: the guide's
+  proposed portable fallback for recovery, `os.link` + unlink, **cannot work** —
+  every call site publishes a *directory*, and no mainstream platform lets you
+  hardlink one. That moves F-3.3's option (a) from "a day of work" to a design
+  change that trades away an atomicity guarantee.
+
+### Added
+
+- **Floor rooms as flavor.** Optional rooms per project (Warehouse,
+  Accounting, Sales, Annex, or your own). They group and filter the floor
+  only. Claim, lease, and status stay untouched. Unplaced chairs sit in
+  The Annex.
+
+- **Sit someone from the floor.** Empty chairs carry an assign form for
+  writers. Same command as Admin → Fleet (assignee + delegate + optional
+  radio). Floor blocker/occupant lookups are batched — no per-chair
+  query storm.
+
+- **The project floor.** A project is a branch office:
+  `GET /aegis/projects/{id}/floor` (HTML), `GET /projects/{id}/floor` (REST /
+  `get_project_floor`). Every open issue is a chair. Occupied means an
+  active lease. `blocked_by` is listed; there is no ready flag. Fun stays
+  in the HTML. The JSON stays boring.
+
+- **The Office — one chair per agent.** `GET /office` and MCP `my_office()`
+  are Athena's cubicle: at most one active lease, fenced paths, and a
+  checkout branch hint (`athena/<key>-<seat>`). The desk includes the same
+  packet as `office`. Admin → Fleet shows who is sitting. The office
+  reserves nothing and does not create git remotes.
+
+- **Desk packet names the seat and the work rules.** `my_desk()` identity
+  carries `seat_slug` when the account is a declared fleet seat (same slug as
+  Buzz / systemd / drift-check). `work.protocol` states claim-one-issue, do
+  not touch other fenced files, and complete-does-not-close. Work-context
+  repeats both so an agent does not need a second document.
+
+- **Admin → Fleet assign.** One form on `/admin/fleet` sets assignee, delegates
+  the agent, and optionally radios command-deck with `ATHENA_ASSIGN` (new
+  assignment, not a steer). Radio needs `ATHENA_BUZZ_CLI`,
+  `ATHENA_BUZZ_KEY_FILE`, and `ATHENA_BUZZ_RELAY_URL`. A radio miss does not
+  undo the desk assignment.
+
+- **Admin → Fleet roster.** A read-only page (`/admin/fleet`, JSON twin
+  `/admin/fleet.json`) lists the declared mickey seats (operator + ACP units),
+  this host's `systemctl --user` verdict, and whether each seat has an Athena
+  account or a worker heartbeat. It never says alive or killed. Undeclared
+  Athena agents show up as drift.
+
+### Changed
+
+- **The desk loop now narrates the three things that kept the gremlin-hunt
+  scores at 8.** Delegation items and work-context carry `issue_etag`,
+  `how_to_claim`, and a `runbook` locator (existing page, or suggested
+  spaces). The first learning no longer 422s when the actor can see exactly
+  one space; several spaces still refuse, but the error lists them.
+  `complete_claim` still does not mark the issue done — that mix of
+  coordination and lifecycle stays forbidden — but it now returns 200 with
+  `issue_still_open` and a factual `next` line (not a PATCH recipe) instead
+  of an empty 204. Optional
+  `paths` on a claim fence repo-relative files across *active* leases
+  (exact or prefix overlap is 409). Empty paths keep the old issue-only
+  fence.
+
+- **Onboarding an agent is no longer "new user + agent checkbox."** Admin →
+  Agents now has a first-class form: name, what it may do (scopes), optional
+  token label. No password, no role. The handle is `{slug}@agents.local` unless
+  an API caller still sends an email. Admin → Users is for people who sign in;
+  a leftover `is_agent` tick on that form is ignored.
+
+- **The pinned dependency graph moved forward as a whole.** 21 packages, most of
+  them load-bearing: **fastapi 0.139.0 → 0.141.1**, **starlette 1.3.1 → 1.6.0**,
+  **ruff 0.15.21 → 0.16.3**, **mcp 1.28.1 → 1.29.0**, **uvicorn 0.51.0 → 0.52.3**,
+  **websockets 16.1 → 17.0.1**, plus pydantic-settings, coverage, mypy, certifi
+  and the rest. This is the refresh deliberately kept *out* of the property-test
+  change that first surfaced it, so the graph move is one commit a bisect can land
+  on rather than a framework upgrade riding inside a testing diff.
+
+  The sharp edge was Starlette: Athena imports `starlette._utils.get_route_path`,
+  a private module, across a three-minor jump. It survived, and is now exercised
+  by the whole suite on the new pin — but a private import is a standing liability
+  that a version bump is the natural moment to notice. Ruff 0.16's new rules found
+  nothing to change; mypy is clean on 174 files. One new warning appears in the
+  test run and is third-party, not Athena's: pydantic-settings 2.15 warns about an
+  unresolved forward reference in `mcp.server.fastmcp`'s own settings model.
+
+### Fixed
+
+- **Quotes protect a colon in a work query.** QUERY.md documents a
+  `"quoted phrase"` as a substring search of title or body, but the tokenizer
+  stripped the quotes and *then* split on the first colon it found — so searching
+  for `"Error: timeout"` answered `unknown search field 'error'`. The parser
+  contradicted its own documentation, and it did so on exactly the strings an
+  operator is most likely to hunt for, since a colon is ordinary punctuation in a
+  log line. The tokenizer now records where the field separator was rather than
+  rediscovering it after the quotes are gone, which is the only point at which
+  "was this colon quoted?" is still answerable. A field with a quoted **value** is
+  untouched — that colon is outside the quotes, so `assignee:"Ada Lovelace"` is
+  still an assignee filter. Found by the property tests added alongside them and
+  deferred at the time as a semantics question; it turned out to be a plain
+  contradiction of the spec, which is a bug.
+
+### Added
+
+- **Generative tests over the hand-rolled parsers.** The suite was curated-case
+  excellent and had no property testing, against a codebase carrying four
+  hand-rolled grammars over untrusted text. `hypothesis` is now in the dev extras
+  with `tests/test_parser_properties.py` covering the `[[ref]]` link grammar, the
+  mention grammar, the work-query grammar and the forge key linkifier: parse never
+  raises anything but its declared error, what it returns is well-formed (closed
+  vocabularies stay closed, results stay deduplicated, every ref it claims is
+  really in the text), references round-trip through a rendered body, re-parsing a
+  query's own `raw` is stable — which is what makes a saved filter mean the same
+  thing the second time it is opened — and an error about an atom always names
+  that atom, which is QUERY.md's promise.
+
+  It paid for itself immediately: see the digit-bound crash under Security. The
+  property that found it fails against the old code and passes against the new,
+  which is the only way to know a regression test is one.
+
+  Configured once in `tests/conftest.py` with `derandomize=True` and
+  `database=None`. A property test that picks fresh inputs every run can fail on a
+  commit that changed nothing, and that is the worst kind of red build — the honest
+  response ("re-run it") is indistinguishable from ignoring a real regression.
+  Deterministic inputs mean a failure reproduces and a green run means the same
+  thing twice, including under `pytest -n 4`.
+
+- **The cockpit updates itself.** VISION promises the operator can see what each
+  agent is doing right now, against a UI that only changed when someone pressed
+  reload — so the dashboard's fleet-attention card, Mission Control's active
+  claimed work, and the recorded run controls each re-ask their own page for
+  their own markup every `ATHENA_LIVE_REFRESH_SECONDS` (default 10; `0` turns
+  polling off entirely). htmx is already vendored, so this is three attributes on
+  elements that already existed — no SSE (which fights the one-process model), no
+  websockets, no JS build chain.
+
+  The design point is that **the poll is the page**. A refresh re-enters the same
+  route behind the same admin gate, carrying the same query string, so a filtered
+  view stays filtered and there is no partial-only endpoint that could be given a
+  weaker gate than the page it mirrors. A viewer who may not see a surface has no
+  polling markup to fire, because that markup lives inside the surface they were
+  refused; a paused admin is treated as signed out and so polls nothing, which
+  matters because pause exists to cut off exactly this state. Each panel also
+  prints when it was read and how often it rebuilds — a refresh that has quietly
+  died (polling off, a suspended tab, a network the browser gave up on) is then
+  visibly stale instead of silently wrong.
+
+  The interval is held to 0 or 5–3600 seconds rather than taken as typed. That
+  floor is a load statement, not taste: the nav rollup measures ~0.5 ms for a real
+  fleet, so a 10s poll costs a watching admin ~0.05 ms of server time per second,
+  and a 1s interval would multiply that tenfold without a human eye noticing the
+  difference. This is the item the performance guide expected to depend on a
+  rollup cache; the measurement that removed the cache also removed the need.
+
+### Changed
+
+- **One SQLite connection per request, down from two to five.** The session
+  middleware opened one to resolve the cookie, the route dependency opened
+  another, and an idempotent write opened three more (identity, reserve, publish).
+  The cost is not where it looks: `sqlite3.connect` is lazy and costs ~0.03 ms,
+  but the **first statement that touches the database file pays ~2.2 ms to
+  attach** — per connection, and holding another one open does not help, while
+  reusing an already-open connection costs 0.004 ms. So a browser page spent
+  ~4.4 ms and an idempotent write ~11 ms simply reaching the data, against a whole
+  fleet-attention rollup that measures ~0.5 ms.
+
+  A request now carries one lazily-opened connection (`core/deps.RequestConnection`),
+  created by a middleware registered outside the session layer so it also spans
+  what runs *after* the route returns — the idempotency publish, an exception
+  handler recording a refusal. That is why the route dependency could not own the
+  lifetime: it has already exited by then. Lazily, so `/static` still opens zero,
+  keeping the skip added for browser caching.
+
+  Measured end to end: **`GET /aegis/dashboard` 14.97 ms → 9.81 ms**, **`GET
+  /issues` 15.22 ms → 10.20 ms**, **`POST /issues` with an idempotency key
+  35.32 ms → 19.19 ms** — a third off every page and REST read, and nearly half off
+  an agent's idempotent write.
+
+  Sharing is safe only if a borrower returns the connection with no transaction
+  open, and that is enforced rather than assumed: `db.transaction` chooses between
+  a real transaction and a savepoint by reading `conn.in_transaction`, so a layer
+  that left one open would silently turn the next writer's commit into a savepoint
+  released without ever committing — a lost write with no error and no log. Every
+  handoff checks, rolls back, and logs which layer misbehaved. The
+  Barrier-coordinated race tests (161 of them) still pass unchanged.
+
+- **Packaged assets are browser-cacheable, and fetching one no longer runs the
+  session.** `_apply_private_cache_policy` marked every cookie-carrying response
+  `private, no-store` — including `/static/*` — so a signed-in browser
+  re-fetched the stylesheet, the htmx bundle and the confirm script on every
+  page load. The costly half was the session middleware, which ran for those
+  fetches too: for an **admin** each asset request opened SQLite, resolved the
+  session, and built the entire fleet-attention rollup, so a page with three
+  assets paid the rollup four times, and the no-store policy guaranteed it
+  happened again on the next page. Static requests now return before session
+  resolution and before the private-cache policy, and serve
+  `public, max-age=31536000, immutable`. Correctness under a year-long
+  `immutable` comes from a cache-buster, not revalidation: a sha256 over every
+  static file's path **and** bytes, computed once at startup, truncated to 12
+  characters and appended as `?v=` by the templates — no build chain
+  (`ATHENA` ships no JS toolchain and won't). The path is inside the hash so
+  renaming a file busts the cache even when its bytes are unchanged.
+  Authenticated pages are untouched and keep `private, no-store`.
+
+- **The admin attention badge stays live; it is deliberately not cached.** The
+  planned follow-up to the 0075 index was a short-TTL cache for the nav rollup,
+  on the strength of a 12.9 ms measurement. Re-measured after 0075, on a
+  10k-issue / 100k-event fixture with no ANALYZE: `build_attention` costs
+  **0.11 ms with no fleet, 0.50 ms at 5 agents, 1.21 ms at 25 and 3.81 ms at
+  100** — it scales with the size of the fleet, not the length of the trail,
+  which is what the index bought. For the one-person fleet Athena is for that is
+  half a millisecond, and a cache would trade a live count for it. The number
+  whose whole job is "look at this now" is the wrong place to accept staleness,
+  so there is no cache, and `main.py` now carries the measurements, the fixture
+  and that reasoning in place of a stale `~0.1 ms measured` comment that
+  predated any data. A test pins the property the decision rests on — the
+  rollup's activity inputs seek `idx_activity_verb_window` rather than scanning
+  — since if that regresses the cost grows with the log again and the trade
+  flips.
+
+- **The gated activity feed reads one page instead of the whole trail (0076).**
+  `access.event_visibility_clause` is an OR across four target-kind arms, and a
+  gated feed page asked SQLite that whole OR with `ORDER BY a.id DESC LIMIT 50`
+  on top. With no ANALYZE statistics — which is every real Athena database,
+  since nothing in the product runs ANALYZE — SQLite answered it by MULTI-INDEX
+  OR across the arms, evaluated the correlated membership subqueries, and
+  sorted every survivor through a temp B-tree before the LIMIT applied. The
+  LIMIT was inert: a 10-row page cost what a 50-row page cost, and both cost
+  the entire trail. Measured at 100k events: 233 ms for a 10-row page, 229 ms
+  for a 50-row page, against 0.2 ms for the same read ungated. The predicate is
+  unchanged — it is now also available as its disjoint arms
+  (`access.event_visibility_arms`), and `core/activity.py` asks each arm for its
+  own bounded page and merges four short lists, with
+  `idx_activity_kind_id (target_kind, id)` as the seek that lets an arm walk its
+  own kind in id order and stop when its page is full. After: **0.25 ms (10-row)
+  and 0.71 ms (50-row)**, and `GET /events` backfill 226 ms → 1.17 ms. Admin and
+  internal ungated reads keep the plain single-statement path unchanged. Same
+  rows, same order — pinned against a reference implementation of the previous
+  shape across the actor/filter matrix, plus a full cursor walk that proves per-arm
+  limits cannot drop or duplicate a row at a page boundary.
+
+- **The web issue list and board page in SQL.** The issue-list handler fetched
+  every matching issue, attached labels to all of them, sorted the whole list in
+  Python and sliced twenty rows out of it; `_statuses_in_use` then ran a second
+  unbounded fetch just to collect the status dropdown's options, and the board
+  did the same with no bound at all. Measured at 10k issues: 99 ms for the
+  unbounded fetch and 44 ms for the dropdown. Paging, sorting and counting now
+  happen in the data layer (`issues.count_issues`, `issues.statuses_in_use`, and
+  a `sort`/`order` pair on `list_issues` drawn from a closed vocabulary), so a
+  page view reads a page: **7.0 ms** (1.6 ms count + 5.4 ms sorted page) and
+  **2.9 ms** for the dropdown. The board caps its render at 500 cards and says
+  "Showing N of M" when the cap bites, rather than presenting a prefix as the
+  whole picture. Residual, left as follow-up: the default `created_at` sort has
+  no index, so it still sorts the matched set before the page — the 5.4 ms above.
+
+- **Sorting by priority means most-urgent-first everywhere.** The web issue list
+  sorted priority as text, which reads urgent, medium, low, high; the work-query
+  grammar ranked it properly with a CASE. There were two copies of that ordering
+  and only one was right. The rank now lives once, in the module that owns the
+  issues table (`issues.PRIORITY_RANK_SQL`), and `issue_query` uses it — with a
+  test pinning that `sort:priority-desc` in a query and the web list's priority
+  sort return one identical ordering rather than two that merely agree on the
+  first column.
+
+- **The verb-windowed activity scans are indexed (0075).** The admin attention
+  rollup runs on every authenticated admin request, and two of its inputs —
+  the security refusal counts and the budget-exhaustion count — filter
+  activity by `verb` within a time window. No index led with `verb`, so both
+  walked the whole append-only table on every request (~13 ms at 100k events,
+  growing linearly with the trail). `idx_activity_verb_window (verb,
+  created_at, imported_at)` turns both into bounded index seeks; plan-pinning
+  tests assert the planner actually uses it, mirroring `test_activity_actor_index`.
+
+### Fixed
+
+- **`mcp` is bounded below 2.0 in the project metadata.** MCP SDK 2.0 removed
+  `mcp.server.fastmcp`, which `athena.mcp.server` imports, so any install that
+  skipped `-c constraints/ci-py312.txt` (the README quickstart already uses it;
+  a bare `pip install athena[mcp]` would not) resolved the new major and got an
+  `athena-mcp` that crashed on import. CI never saw the break because it always
+  installs under the constraints file — the bound moves the protection into the
+  metadata every installer reads. The constrained graph is unchanged
+  (`mcp==1.28.1` satisfies `>=1.2,<2`).
+
+- **AGENTS.md's command-error-dialect inventory matches the code again.** Six
+  command modules it listed as `status_code`-carrying migration debt
+  (`space_commands`, `comment_commands`, `sprint_commands`, `token_commands`,
+  `webhook_commands`, `page_comment_commands`) migrated to the kind dialect
+  long ago, and `project_commands` — which does still carry `status_code`
+  errors in its access family — was missing from the list entirely. The
+  contributor contract now names the five modules that actually remain and
+  tells the reader which grep to trust over the sentence.
+
+### Security
+
+- **`cryptography` pinned up to 50.0.0.** PYSEC-2026-3552 was published against
+  the pinned 49.0.0 after it was frozen, which turned CI's
+  audit-the-pinned-inputs step red — exactly what that gate is for. The only
+  consumer in the graph is `PyJWT[crypto]` (OIDC RS256/ES256 verification,
+  `>=3.4.0`), and the OIDC/JWT suite passes against 50.0.0 unchanged.
+
+- **The last three trusting command families now own their authorization.**
+  Mentor's page commands (eleven entry points), its page-comment commands, and
+  the event-source commands took a bare actor id and relied on checks the routes
+  ran beforehand — so a caller reaching a command directly (undo, a workflow, a
+  script) was trusted, and a transport-side check and the write it guarded could
+  straddle a transaction boundary. Each now takes a resolved actor and checks
+  inside its own write transaction: page/space visibility for every page write
+  (hidden reads as missing, never 403, so a write path confirms nothing);
+  author-ownership for page comments, with the delete-only admin moderation
+  override (rewriting words is not moderation); and the admin role + admin token
+  scope for event sources, exactly as run controls already did. Page delete also
+  owns the no-cascade children rule and takes the audit title from the row under
+  its own lock instead of trusting the caller's copy, and a refused
+  attach-label-by-name now rolls back its find-or-create so a hidden page cannot
+  grow the label vocabulary. Wire statuses are unchanged and pinned; the checks
+  just moved to where a direct caller cannot skip them. `page_undo`'s
+  compensators — which re-applied the boundary's checks precisely because the
+  commands did not — now delegate visibility to the commands and keep only the
+  role/scope half. This erases the "authorization still in some transports" line
+  from the release risk list.
+
+- **A read-scoped token could reach two writes.** The rule is that a token
+  minted with only the `read` scope must never mutate anything, and two routes
+  had drifted from it: `POST /playbooks/{page_id}/start` ran on plain
+  authentication, letting a read-only token create a parent issue and its
+  children, and `POST /desk/cursor` did the same for the reader's own desk
+  cursor — personal state, but still a durable write. The playbook route now
+  requires `issue:write` (it creates issues; it needs what issue creation
+  needs) and the cursor route requires any write scope, matching every other
+  personal-state write. Regression tests pin both refusals and both grants.
+  Found by auditing every route dependency while building the scope map below —
+  the audit the map now makes permanent.
+
+- **Supported deployments now start through a fail-closed launcher.**
+  `athena-serve` preflights absolute storage paths, SQLite and attachment
+  integrity, an active administrator's durable recovery credential, direct
+  numeric loopback or explicit Tailscale binds, exact `Host` authorities, and
+  positive tailnet-facing limits before Athena/Uvicorn accepts traffic. It
+  refuses wildcard, LAN, public, link-local, and hostname binds; legacy actor-header trust;
+  bootstrap credentials during normal startup; HTTPS-only cookies on its
+  direct-HTTP server; proxy-header trust; reload; and additional workers.
+  Bootstrap is a separate loopback-only mode whose first administrator must set
+  a nonblank, bounded password. The launcher also rejects a body cap too small
+  to carry the supported bootstrap/login envelope and validates observable OIDC
+  recovery URL/callback coherence. Valid legacy password hashes retain the prior
+  1 MiB request envelope until a verified login records whether the credential
+  is bounded; incompatible bootstrap migrations are rehearsed and rejected on
+  an in-memory copy before the real file is written.
+
+- **The application enforces the declared deployment boundary before doing
+  request work.** An outer ASGI guard requires an allowed accepted-socket address
+  and listener port plus exactly one allowlisted `Host` authority for every HTTP
+  or WebSocket request, ignoring forwarded host/address claims and failing before
+  body, session, limiter, route, or database work. The installed-wheel smoke now
+  proves bootstrap, stop, credential removal, normal restart, browser login,
+  packaged assets, and bounded shutdown over the same parent-held listener.
+  The body cap also sits outside browser-session resolution, so an oversized
+  request with an attacker-controlled cookie cannot force a SQLite lookup.
+  Public and proxy-terminated exposure remain explicitly unsupported because
+  Athena cannot infer external publication.
+
 ### Fixed
 
 - **First-admin bootstrap now requires an explicit one-time credential.** An empty
@@ -36,12 +583,432 @@ the newest one and for what tagging still requires.
 
 ### Added
 
+- **The demo seeds supervision state, so the tour shows the differentiator.**
+  `athena-demo` seeded a tracker and a wiki and nothing else, so every Intervene
+  and Trust surface rendered its empty state on the five-minute tour and the
+  product read as a small Notion. The workspace now arrives mid-flight: Sol holds
+  a live claim with a run check-in, a worker heartbeats in the registry, an hourly
+  budget carries real consumption, one `issue.close` approval is pending, and one
+  steer against Sol's live run is unanswered. The dashboard's fleet-attention card
+  shows three non-zero counts, each naming the surface it lives on. Every state is
+  seeded through the real commands as Sol, holding Sol's own bearer token resolved
+  the way the HTTP layer resolves it — the approval is pending because Sol
+  genuinely attempted a gated close and was genuinely refused, so the issue is
+  still open. Nothing is inserted to look populated; `demo.py`'s rule that a demo
+  which oversells is worse than one that is thin still holds.
+
+- **A runtime recipe that closes the operator loop for a real user.**
+  `docs/RUNTIME_RECIPE.md` plus `examples/desk_loop.md`: the operator-side pair
+  that takes a reader from "installed" to "an agent completed a delegated issue
+  and the trail shows it" — onboarding an agent, pasting the MCP config Athena
+  prints, running a desk loop (`my_desk` → claim → work → record a learning →
+  complete the claim), and interrupting it mid-flight with a run control. Athena
+  ships no agent runtime on purpose, and the recipe says so plainly rather than
+  implying one. It is pinned against the code it describes: every MCP tool it
+  names must exist in the server's registry, every config block must parse and
+  match what Athena emits, every curled endpoint must be a registered route, and
+  every relative link must resolve — so drift fails the build instead of the
+  reader.
+
+- **A benchmark seeder, so performance claims are reproducible.**
+  `scripts/seed_benchmark.py` builds the data shape the performance work is
+  stated against (10k issues / 100k events, mixed public and private
+  containers), writing through the real recorders so the hash chain, the
+  visibility envelope and the per-event project scope rows are all present.
+  It deliberately does NOT run ANALYZE, and says why at length: no Athena
+  database ever has statistics, and seeding with them makes the gated feed
+  measure 0.4 ms where production measures 229 ms — an earlier throwaway version
+  of this script did exactly that and nearly retired a real ceiling as a
+  non-issue. `--analyze` exists for deliberate comparison and labels itself.
+
+- **Issues have a draft store, and the conflict asymmetry is gone.**
+  `issue_drafts` (0074) is `page_drafts`' twin down to its bounds: one
+  owner-private row per (issue, author), autosaved by the editor without
+  touching the issue, the trail, or any watcher — a crashed browser costs
+  nothing, and the trail still says nothing happened until a human decides
+  something did. Drafts are offered, never applied; staleness is flagged from
+  the session's own baseline (`based_on` rides separately from the save's
+  `if_match`, so restoring a draft can never refuse every subsequent save);
+  and nothing but its owner or a successful save ever discards one.
+
+  The payoff is the losing editor's screen. An issue conflict used to keep
+  your text in the form and admit it was **not saved anywhere** — the honest
+  wording for a missing store, documented in EDITING.md as the asymmetry this
+  feature was waiting on. Both editors now answer a conflict identically: the
+  fields show the winner's version, your text is kept as your durable draft,
+  and restoring it is one click. Autosave is gated exactly like the edit
+  itself (creator or current assignee) — a draft OF a write belongs only to
+  someone who could perform the write.
+
+- **Related items: zero-dependency relevance from the links you already have.**
+  `GET /issues/{ref}/related`, `GET /pages/{id}/related`, MCP `related_items`,
+  and a `related` section in the issue work-context packet all answer the same
+  question: *what cites what this cites, but is not linked to it yet?*
+  Co-citation over the existing `links` rows, derived at read time — an item is
+  related when it shares link-neighbours with the focus, ranked by how many,
+  deterministic ties, no embeddings, no stored score, no migration. Direct
+  neighbours are deliberately absent (backlinks already answer them), hidden
+  things neither appear nor conduct (a hidden bridge must not raise anyone's
+  score), and the bound is disclosed like every other bounded read.
+
+- **Playbook checklists nest.** An indented `- [ ]` step now instantiates as a
+  child of the issue its enclosing step became, so a checklist with sub-steps
+  produces the same issue tree a hand would build — one `set_issue_parent` per
+  child, through the same command, with its same audit event. Nesting is
+  relative (two spaces or a tab both read as "deeper"), siblings return to
+  their level, and a ticked step's unchecked sub-steps promote to the nearest
+  ancestor that became work instead of vanishing with their parent or
+  resurrecting it. Reported children now carry their real `parent_id` (it was
+  the pre-nesting `None` before). Flat checklists — including the shipped
+  example playbook — instantiate exactly as they always did.
+
+- **The MCP server registers only the tools its token can use.** A session used
+  to carry all ~123 tools regardless of scopes — a read-scoped agent hauled
+  roughly 10k tokens of mutation docstrings whose only possible answer was 403.
+  At startup `athena-mcp` asks `whoami` for the token's scopes and registers
+  the matching surface: a `read` token gets the 57 reads, an `issue:write`
+  token adds Aegis writes and personal state, `docs:write` adds Mentor's, and
+  `admin` sees everything — including the admin-gated reads that are otherwise
+  hidden, because a tool that can only answer 403 is not a capability, it is
+  noise.
+
+  This is **presentation, not authorization** — the REST layer remains the
+  boundary, and a wrong map entry can hide a tool but never permit a call the
+  server would refuse. That is why the probe **fails open**: if Athena is
+  unreachable at MCP startup the full surface is presented, and the tools
+  answer 403 later exactly as before. `ATHENA_MCP_ALL_TOOLS=1` skips the probe
+  for the same full surface on purpose. The map itself is fail-closed at build
+  time — registering a tool with no declared scope raises, so every
+  server-building test doubles as a completeness check.
+
+- **`athena-field-guide --check` reports whether a seeded guide has drifted.**
+  The guide ships as package data and is seeded once, and re-seeding refuses so
+  an operator's edits are never overwritten — which meant an upgraded install
+  silently kept a guide describing an older product, with no signal and no path.
+
+  The check keeps **two facts apart**: whether *Athena's* guide changed since you
+  seeded (shipped text vs the seeded text) and whether *you* edited a page
+  (current text vs the seeded text). Collapsing them would let the tool call an
+  operator's own writing stale. A page that is both is reported as both — the
+  case where an automatic update would destroy work.
+
+  Both are **derived at read time with no new table and no migration**:
+  `update_page` snapshots the superseded revision into `page_versions` and numbers
+  them from 1 without pruning, so version 1 is the seeded text, and a page with no
+  versions has never been edited. It reports only — it never rewrites a page, and
+  exits 0 even when drifted, because drift is information rather than a failure.
+
+### Fixed
+
+- **A browser could silently overwrite another browser's ISSUE edit.** The page
+  editor was fixed first; this closes the same gap on the other half of the
+  product. The issue edit form now carries the issue's ETag as rendered, and a
+  save that would land on someone else's is refused instead of winning.
+
+  The refusal renders the **opposite way round from a page**, because of a
+  missing store rather than a change of mind: a page puts the winner's text in
+  the fields since the loser's copy is safe in `page_drafts`, but issues have no
+  draft store, so doing that would leave the loser hand-copying out of a `<pre>`.
+  On an issue your text stays in the fields, theirs is shown beside it, and the
+  notice states the part that is genuinely worse — it is not saved anywhere, and
+  leaving the page loses it. Giving issues a draft store would let the two match;
+  that is the change this asymmetry waits on.
+
+  Note the collision this actually protects: issue writes are gated to the
+  creator or current assignee, so the realistic pair is those two editing one
+  description. See [`docs/EDITING.md`](docs/EDITING.md#issues-differ-on-purpose).
+
+- **Seeding the Field Guide could wedge on a partial run.** Found in the sprint's
+  adversarial pass: seeding is nine committed writes and re-running refuses if the
+  space exists — each rule right, but together a failure partway through left a
+  partial space that the retry then refused, so recovery meant deleting a space by
+  hand. Content is now read before the first write, so the one failure this code
+  can cause (package data that did not ship) creates nothing at all. It is still
+  not a transaction: a database failure mid-seed can still leave a partial guide.
+
+- **A browser could silently overwrite another browser's page edit (Stage F-6).**
+  The Mentor edit form carried no precondition, so when two people edited one
+  page the second save simply won and the first author's work vanished with no
+  notice and no trace. The form now carries the page's ETag as rendered, and
+  `page_commands.edit_page` compares it inside the same write lock the edit runs
+  in — the optimistic lock REST and MCP have always had.
+
+  The refusal is where the design lives. **Nothing is overwritten** (that is what
+  the refusal means), **nothing is merged** (Athena will not claim to have
+  resolved something a person has to read to resolve), and **nothing the author
+  typed is thrown away** — their text is written to their own draft, because a
+  bare 412 leaves work living only in a browser buffer and "it is still in the
+  form" stops being true the moment they navigate. The form re-renders with
+  *their* version in the fields, *yours* displayed beside it, and one click to
+  put yours back.
+
+  The draft is recorded against the baseline the author was editing **from**, not
+  the page's new tag, so it stays marked stale and the warning survives a closed
+  tab — and it is theirs alone, since drafts are owner-scoped personal state.
+
+  Two deliberate softenings, both because the hidden field is a concurrency aid
+  rather than an authorization check: a form rendered before the field existed
+  sends no tag and keeps the old behavior instead of being refused over something
+  its author cannot see, and a malformed tag is treated as no precondition rather
+  than becoming a wall between an author and their own page. See
+  [`docs/EDITING.md`](docs/EDITING.md#two-people-one-page).
+
+### Added
+
+- **The Field Guide: the workspace documents itself (Stage F-5).**
+  `athena-field-guide <db>` seeds nine pages into a `GUIDE` space, addressed to
+  the agents who work here: your desk, claiming and yielding work, recording
+  learnings, answering a run control, playbooks, searching the workspace,
+  watching shared memory, what the trail proves — plus a real playbook you can
+  instantiate, so F-2 is demonstrable out of the box rather than described.
+
+  They are **ordinary pages**. Readable through the same MCP tools, findable
+  through the same search, linkable from issues, exportable as HTML, editable.
+  The guide is a space, not a special surface, so everything true of a space is
+  true of it. The content ships as package data (`field_guide/*.md`, the same
+  shape `core/migrations` uses) and the existing wheel-manifest gate pins it, so
+  a build that drops a page fails rather than seeding a manual with a hole.
+
+  Seeding goes through the real commands as a real author, so every page carries
+  genuine provenance and lands on the activity chain. It is **idempotent by
+  refusal**: a second run refuses rather than overwriting, because once an
+  operator has edited these they are theirs. `--as EMAIL` names the author;
+  otherwise the earliest administrator is used, and the command prints who it
+  attributed the pages to — an attribution is somebody's name, so it is never
+  silent.
+
+  `athena-demo --field-guide` seeds the same content into a throwaway workspace.
+  One seeding implementation, two entry points: the demo tool's contract is a
+  NEW database, and every other operator command works on one you already have.
+
+- **Workspace search: one ask, everything you may see (Stage F-4).**
+  `GET /search/workspace?q=&limit_per_kind=` (MCP `search_workspace`) answers
+  across issues, pages, and comments in one call, so an agent no longer has to
+  know which module holds the answer before it can ask.
+
+  **The work query grammar works here.** Atoms (`is:open label:infra`) filter
+  issues through the issue query compiler; bare words in the same query go to
+  full-text search across all three kinds — so `is:open zebra` filters the work
+  *and* finds the page that says zebra. Which path applies is decided by the
+  parser the issue list already uses (`work_query.parse`), never a second notion
+  of "grammar-shaped". An unknown atom is still an error naming the atom, not an
+  empty result set.
+
+  Two honesty rules in the shape: results are **grouped by kind, never globally
+  ranked** (two engines with two orders cannot be interleaved without inventing
+  a score, and the payload says so), and **every group discloses its bound** —
+  `clipped` is measured by fetching one row past the limit rather than inferred.
+  A pure-grammar query leaves the page and comment groups empty and echoes
+  `query.text` so the silence reads as "nothing was text-searched", not "nothing
+  matched". Every group is gated by the caller's own visibility.
+
+  It composes the two searches that already exist and adds no third: no new
+  index, no ranking invention, no migration. It lives in `workflows/` because it
+  reads Aegis's grammar and core's full-text search together, and neither module
+  may import the other — the layer added in F-2 is what made this stage possible
+  at all. `QUERY.md` records what this deliberately is *not*: the grammar is
+  still issue-only, so `label:infra` will not find a labelled page.
+
+- **Space subscriptions: shared memory that says when it moved (Stage F-3).**
+  `space` joins `issue` and `page` as a watchable kind, and a space watch is a
+  subscription to the whole container: the space's own lifecycle events *and*
+  every event on every page inside it — created, edited, archived, restored,
+  labelled, moved, commented, deleted. A fleet can now treat one space as
+  shared memory and hear it change without polling its page tree. REST is the
+  existing `POST /watches` / `DELETE /watches/{kind}/{id}`; MCP gains `watch`
+  and `unwatch` (there were none before); the space page gains a Watch toggle;
+  the Desk already reports the unread count, so the loop closes with no new
+  read.
+
+  **No migration** — `watches` has been polymorphic since 0023 and the
+  vocabulary was always code-level. The indirect fan-out lives inside
+  `notifications.notify_watchers`, the single place an event becomes inbox
+  rows, so there is no second call site to drift: one indexed lookup per page
+  event, and `UNIQUE (user_id, event_id)` means watching both a page and its
+  space delivers one notification, not two. Your own action still never
+  notifies you, on either path.
+
+  It is deliberately loud, and `unwatch` is the only volume control: no digest
+  and no rollup, because a quieter second summary of what happened is a second
+  source of truth. Notifications stay written ungated and gated at read, so a
+  watcher who cannot see the space renders nothing from it.
+
+  **Fixed on the way:** deleting a page notified *nobody* — not even an admin.
+  `purge_page` dropped the page row and its watches before `page_deleted` was
+  recorded, so both routes to a watcher were gone by the time the event existed.
+  The event is now recorded first, inside the same transaction; the ordering is
+  invisible from outside. What *renders* is bounded by the existing access
+  model: the inbox proves a page event's visibility by looking the page up, so
+  once the row is gone the gate fails closed and only an admin's ungated read
+  shows the deletion. Documented as a limit, not papered over — making it
+  legible to non-admins needs an event-time visibility envelope for page
+  targets, which pages do not have and this change does not invent. See
+  [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+
+- **Playbooks: docs that start work (Stage F-2).** A Mentor page carrying the
+  `playbook` label turns its markdown checklist into real work —
+  `POST /pages/{id}/start-playbook` (MCP `start_playbook`) creates one parent
+  issue plus one child per unchecked `- [ ]` step. Ticked steps are counted and
+  skipped, never created: a tick is the author saying it is already done.
+
+  This completes the loop between the modules. Embeds already let docs SHOW
+  work and run learnings let work WRITE BACK to docs; playbooks let docs START
+  work — and the tie-together costs no new machinery, because every created
+  issue cites the page with an ordinary `[[page:N]]` wikilink. The existing
+  indexer builds the backlinks, so the page shows the work it started and a
+  `kind: rollup` embed there counts its progress, with nothing in the playbook
+  command knowing what a link or an embed is.
+
+  A template is not a live mirror: instantiation SNAPSHOTS the page, later
+  edits change nothing already created, and starting again makes a second
+  independent instantiation. Retry-safety reuses the `Idempotency-Key` contract
+  `/pages` already honors rather than inventing a second replay mechanism.
+  Bounded at 50 steps (429 above), one transaction, and every write goes
+  through `issue_commands` so a playbook is not a second way to create an
+  issue. See [`docs/PLAYBOOKS.md`](docs/PLAYBOOKS.md).
+
+- **A `workflows/` layer, for commands that span both modules.** Aegis and
+  Mentor are peers — neither may import the other — and `web/` may not own
+  authorization, so a command that must read a page and write issues had no
+  legal home. `src/athena/workflows/` is that home, enforced by
+  `check_import_contracts.py`: workflows may import both modules and core, and
+  nothing below may import workflows. Playbooks are its first inhabitant.
+
+- **The Desk — one call, full orientation (Stage F-1).** An agent starting a
+  session had to discover its own situation through five or six reads, none of
+  which said what changed while it was away. `GET /desk` (MCP `my_desk()`) now
+  answers all of it at once: identity with scopes/budget/approval-gated kinds;
+  the asks addressed to you (open run controls, unconfirmed kill requests on
+  your workers, unacknowledged claim handoffs); the work you hold (delegation
+  inbox, leases with the clock's `active` verdict and their 0057 generation);
+  and signals (unread notifications, how many visible events sit past your
+  cursor). Every lane is the owning surface's own read with the caller's
+  visibility, so the desk cannot show more than the tool that owns it and
+  cannot disagree with it.
+
+  A durable per-reader **events cursor** (migration 0073) makes "since I last
+  looked" real: `POST /desk/cursor` records how far you have drained, moves
+  forward only (a lower id is refused 409, and the trigger refuses it again
+  below the command), and records no activity event — a read receipt is
+  personal state, not fleet history. Two distinctions the desk refuses to blur:
+  an unset cursor reads `null`, never `0` ("never looked" is not "nothing
+  new"), and the since-count stops at 500 and says it is capped rather than
+  reporting a precise-looking total it did not compute. See
+  [`docs/DESK.md`](docs/DESK.md).
+
+- **The trail can prove itself.** Every activity row recorded after migration
+  0072 gets a same-transaction hash-chain entry (`activity_chain`): SHA-256
+  over the row's stored facts plus the previous entry's hash, genesis-anchored,
+  with DB triggers making the chain itself immutable and side branches
+  unappendable, and the entry's foreign key making chained rows undeletable
+  (edits are detected by verification, deliberately not trigger-blocked —
+  prevention would be theater against a writer holding the file). Bounded,
+  resumable verification reports the FIRST broken link — `GET /activity/chain`
+  and `/activity/chain/verify` (admin), MCP `activity_chain_status` /
+  `verify_activity_chain`, a full walk in `athena-doctor`, and a tail check on
+  `/admin/security`. Imported history is chained *as* imported history
+  (`imported_at` is hashed). Rows recorded before adoption sit below the anchor
+  and are reported as such, never claimed. Adapted from Buzz's signed event
+  log, deliberately without signatures — the honest boundary (rebuild and tip
+  truncation detectable only against an externally noted head hash) is
+  documented in [`docs/TRAIL_INTEGRITY.md`](docs/TRAIL_INTEGRITY.md).
+
+- **Run controls joined the exception surfaces.** The dashboard's
+  fleet-attention rollup now counts **Run controls awaiting an agent** —
+  standing, never window-bounded, using the identical `open` predicate the new
+  admin-only `/admin/run-controls` page lists by, so the count cannot disagree
+  with the page it links to. The page shows every recorded control fleet-wide
+  with its truthful state wording, each row linking back to the run's lineage
+  panel that owns creation and settlement detail. Closes the "controls live
+  only on lineage pages an operator must already know about" limitation
+  recorded when Run Controls v1 shipped.
+
+- **Answerability: asks and answers per agent, never a score.** A derived,
+  admin-only ledger (`core/answerability.py`, zero tables) lays each agent's
+  recorded asks beside their answers: run controls (open / expired-unanswered /
+  completed / declined, by the controls page's own predicates), worker kill
+  requests (told-to-stop vs confirmed — a worker acknowledging while still
+  reporting running stays *unconfirmed*), approvals its gated actions raised,
+  and how many of its events an undo reversed. `GET /fleet/answerability`
+  (+ `agent_id` filter), MCP `agent_answerability`, and an Answerability
+  section on `/admin/agents`. Adapted from Buzz's web-of-trust idea minus the
+  reputation scalar, on purpose; the non-claims are in
+  [`docs/ANSWERABILITY.md`](docs/ANSWERABILITY.md).
+
+- **Run controls: steering a live run by recorded request.** Between "let it
+  run" and "kill the worker" there was nothing. An admin can now record a
+  bounded control against a live run — `steer` with guidance, `request_cancel`
+  for cooperative wind-down, or `request_fresh_context` for a structured
+  handoff — which only the run's bound agent can read and settle (acknowledge,
+  decline, or complete; unanswered requests expire by the server clock, an
+  observation rather than an event). One row per control (migration 0070) with
+  transition-only triggers, at-most-one-live per (run, kind), domain
+  idempotency keys, and fail-closed admission resolving the run's owner from
+  its binding or sole check-in. REST under `/run-controls`, six MCP tools, a
+  panel on the run lineage page, and the same epistemic honesty as the worker
+  kill: acknowledgement proves receipt, completion is the agent's claim,
+  nothing proves an OS effect (see [`docs/RUN_CONTROLS.md`](docs/RUN_CONTROLS.md)).
+
+- **Editing that keeps its promises, and a way out that needs no Athena.** Page
+  and issue editors gained a live side-by-side preview rendered by the same
+  function the view itself uses (`render_page_body` / `render_issue_body`), so a
+  preview cannot drift from what readers get — including where the two surfaces
+  differ, since embeds stay unresolved on issues and preview as the box the
+  saved issue will show. Page editors now autosave **drafts**: user-private
+  state in their own table (migration 0071) that writes no activity event, is
+  visible only to its author, is never exported, and becomes a page only through
+  the ordinary audited save, which then clears it; a draft left behind by
+  someone else's save is flagged rather than silently restored over their work.
+  Attachment **images render inline**, served from a type sniffed out of the
+  bytes rather than the uploader's claim, with SVG deliberately excluded because
+  it can carry script, and image attachments now show a thumbnail and the
+  markdown that embeds them. A space **exports to one self-contained HTML file**
+  with images inlined, rendered through the same renderer, in which every embed
+  is visibly dead and carries the directive it came from — plus a footer naming
+  what was left out. See [`docs/EDITING.md`](docs/EDITING.md).
+
+- **A project timeline, and live parent rollups.** `/aegis/projects/{id}/timeline`
+  draws a project's sprints as lanes in date order (undated ones after dated,
+  the backlog last), places each issue in its sprint, and draws the declared
+  dependencies between drawn issues — a solid arrow for *blocks*, a dashed line
+  for *relates*. Lane width is deliberately not a duration: sprint dates are
+  nullable and unvalidated, so order is the only time claim made, and the view
+  says so. It is read-only — placement still changes through the issue's own
+  sprint form — and it states what it left out, including a count of
+  dependencies whose other end is off the picture. The same structure is served
+  by `GET /projects/{id}/timeline` and the `project_timeline` MCP tool.
+  A parent issue now shows its sub-issues' status-category distribution as a
+  live bar computed on every read from `aegis/rollups.py`, with buckets taken
+  from each child's own project status configuration so a custom done state
+  counts correctly; archived children are excluded and said aloud, and children
+  the viewer cannot see are excluded silently so the bar cannot become an
+  existence oracle. The same computation is available in a page as a new
+  `kind: rollup` embed. Per-issue target dates were considered and deliberately
+  not built — see [`docs/PLANNING.md`](docs/PLANNING.md).
+
+- **Wheel-bound release-candidate evidence.** The required test gate now
+  precedes one fail-closed evidence job that builds a single source distribution
+  and its derived wheel with hash-locked tooling. It snapshots the sdist once
+  before extraction and carries that SHA-256 through promotion. Bounded raw and
+  semantic archive inspection rejects unsafe, noncanonical, or oversized visible
+  members and hidden control metadata, then binds the sdist's project metadata
+  and complete installable source payload to the wheel. Fresh Linux/CPython 3.12
+  base and MCP installs, resolved under
+  `constraints/ci-py312.txt`, must match the wheel's recursively evaluated
+  metadata closures, including dependency extras. `pip-audit` checks those exact
+  third-party name/version sets for known advisories; Athena's verifier then
+  creates CycloneDX documents rooted at the exact wheel SHA-256 with matching
+  dependency edges. The evidence job uploads its candidate bundle only after
+  every verification step passes; it does not sign, attest, tag, publish,
+  hash-lock runtime downloads, or claim that `pip-audit` analyzed Athena's
+  first-party code.
+
 - **Fail-closed Python supply-chain evidence.** CI now installs its package
-  installer from a hash-verified pin and runs an independent weekly and
-  per-change security job. A hash-locked `pip-audit` toolchain audits itself,
-  then scans the exact 61-package CI graph plus pip and the setuptools build
-  backend with no ignore list or soft-pass path. The resulting CycloneDX input
-  SBOM must contain exactly those 63 normalized name/version pairs and zero
+  installer from a hash-verified pin and runs the evidence job per change and
+  weekly after the required test gate. A hash-locked evidence toolchain audits
+  itself, then scans the exact 61-package CI graph plus pip and the setuptools
+  build backend with no ignore list or soft-pass path. The resulting CycloneDX
+  input SBOM must contain exactly those 63 normalized name/version pairs and zero
   reported vulnerabilities before it is retained as workflow evidence.
 
 - **Sprint lifecycle parity for MCP agents.** Agents can now read one sprint and
@@ -251,7 +1218,7 @@ the newest one and for what tagging still requires.
   callback protocol is documented explicitly.
 
 - **Wave H-2: documentation reconciliation, and one real bug found while
-  verifying it** (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  verifying it** (`docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - `POST /labels` answered 500 on a duplicate-name race: two concurrent creates
     both passed the pre-check, and the loser surfaced the UNIQUE-constraint
     `IntegrityError` unhandled. It now maps to the same 409 the pre-check would
@@ -271,7 +1238,7 @@ the newest one and for what tagging still requires.
     "Phase 3 (current)" marker and the phase-numbering collision with
     ROADMAP.md are resolved).
 - **Wave H-0: the five stop-ship defects from the adversarial review**
-  (`docs/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
+  (`docs/plans/OPUS_REMEDIATION_GUIDE_ATHENA.md`).
   - Event-source CRUD now enforces the admin **token scope** through the same
     `admin_actor` dependency as every parallel admin surface, not just the admin
     role — an admin's read-scoped token can no longer register a source and walk

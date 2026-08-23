@@ -1,66 +1,193 @@
-<!DOCTYPE html>
-<html lang="en">
+{# Athena base layout — Phosphor Ink shell. See docs/DESIGN_SYSTEM.md.
+   Replaces the flat 15-link nav row with the README's own operator loop:
+   Direct → Delegate → Observe → Intervene → Trust.
+
+   The theme cookie (athena_theme) and rail cookie (athena_rail) are written
+   by POST /settings/theme and /settings/rail; with no cookie the theme
+   follows prefers-color-scheme and the rail renders open — the buttons are
+   progressive enhancement over working defaults, and every control below is
+   a plain form. Each nav group is <details>/<summary> — opens with
+   JavaScript disabled. #}<!DOCTYPE html>
+<html lang="en"{% if request.cookies.get("athena_theme") in ("dark", "light") %} data-theme="{{ request.cookies.get('athena_theme') }}"{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
     <title>{% block title %}Athena{% endblock %}</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <script src="/static/htmx.min.js"></script>
-    <script src="/static/confirm.js"></script>
+    <link rel="stylesheet" href="/static/styles.css?v={{ static_version }}">
+    <script src="/static/htmx.min.js?v={{ static_version }}"></script>
+    <script src="/static/confirm.js?v={{ static_version }}"></script>
 </head>
 <body>
-    <header>
-        <div class="container">
-            <div class="brand">
-                <a href="/">Athena</a>
-            </div>
-            <nav>
-                {% block nav %}
-                <form method="get" action="/find" class="nav-search" role="search">
-                    <input type="search" name="q" placeholder="Search…" class="search-input"
-                           aria-label="Search issues and pages">
-                </form>
-                <a href="/aegis/dashboard">Dashboard</a>
-                <a href="/aegis/fleet-metrics">Throughput</a>
-                <a href="/aegis">Aegis</a>
-                <a href="/aegis/projects">Projects</a>
-                <a href="/aegis/activity">Activity</a>
-                <a href="/mentor">Mentor</a>
-                <a href="/aegis/labels">Labels</a>
-                {% if request.state.user %}
-                <a href="/inbox" class="nav-inbox">Inbox{% if request.state.unread_count %}
-                    <span class="badge">{{ request.state.unread_count }}</span>{% endif %}</a>
-                <a href="/settings/tokens">Tokens</a>
-                <a href="/settings/password">Password</a>
-                {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins</a>{% endif %}
-                {% if request.state.user.role == "admin" %}<a href="/admin/users">Admin</a>
-                <a href="/admin/agents">Agents</a>
-                <a href="/admin/agents/runs">Mission Control</a>
-                <a href="/admin/security">Security</a>
-                <a href="/admin/webhooks">Webhooks</a>
-                <a href="/admin/automation">Automation</a>{% endif %}
-                <span class="nav-user">{{ request.state.user.name }}</span>
-                <form method="post" action="/logout" class="nav-logout">
+<div class="app"{% if request.cookies.get("athena_rail") == "collapsed" %} data-rail="collapsed"{% endif %}>
+
+    <header class="app-bar">
+        {% if request.state.user %}
+        <form method="post" action="/settings/rail" class="inline-form">
+            {% include "partials/csrf.html" %}
+            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <input type="hidden" name="state" value="{{ 'open' if request.cookies.get('athena_rail') == 'collapsed' else 'collapsed' }}">
+            <button type="submit" class="button ghost small" aria-label="{{ 'Show' if request.cookies.get('athena_rail') == 'collapsed' else 'Hide' }} navigation rail">&#8801;</button>
+        </form>
+        {% endif %}
+        <a href="/" class="brand">
+            <span class="brand-mark" aria-hidden="true">A</span>
+            <span>Athena</span>
+        </a>
+
+        {% block nav %}
+        <nav class="nav" aria-label="Primary">
+
+            {# ── DIRECT ── what the fleet is pointed at ── #}
+            <details class="nav-group" name="athena-nav">
+                <summary>Direct <span aria-hidden="true">&#9662;</span></summary>
+                <div class="nav-menu">
+                    <p>Projects, issues, docs — what the fleet is pointed at.</p>
+                    <a href="/aegis/dashboard">Dashboard <span class="route">/aegis/dashboard</span></a>
+                    <a href="/aegis/boards">Boards <span class="route">/aegis/boards</span></a>
+                    <a href="/aegis">Issues <span class="route">/aegis</span></a>
+                    <a href="/aegis/projects">Projects <span class="route">/aegis/projects</span></a>
+                    <a href="/mentor">Mentor <span class="route">/mentor</span></a>
+                    <a href="/aegis/labels">Labels <span class="route">/aegis/labels</span></a>
+                    <a href="/aegis/filters">Filters <span class="route">/aegis/filters</span></a>
+                </div>
+            </details>
+
+            {# ── OBSERVE ── what happened, in the order it happened. Activity and
+                 Throughput are visible to anyone, signed in or not — same as the
+                 pre-migration nav; only the admin-only items below are gated. ── #}
+            <details class="nav-group" name="athena-nav">
+                <summary>Observe <span aria-hidden="true">&#9662;</span></summary>
+                <div class="nav-menu">
+                    <p>What happened, in the order it happened.</p>
+                    <a href="/aegis/activity">Activity <span class="route">/aegis/activity</span></a>
+                    <a href="/aegis/fleet-metrics">Throughput <span class="route">/aegis/fleet-metrics</span></a>
+                    {% if request.state.user and request.state.user.role == "admin" %}
+                    <a href="/admin/agents/runs">Mission Control <span class="route">/admin/agents/runs</span></a>
+                    <a href="/admin/webhooks">Webhooks <span class="route">/admin/webhooks</span></a>
+                    {% endif %}
+                </div>
+            </details>
+
+            {% if request.state.user %}
+            {# ── DELEGATE ── who may act, with what scope ── #}
+            <details class="nav-group" name="athena-nav">
+                <summary>Delegate <span aria-hidden="true">&#9662;</span></summary>
+                <div class="nav-menu">
+                    <p>Who may act, with what scope.</p>
+                    {% if request.state.user.role == "admin" %}
+                    <a href="/admin/agents">Agents <span class="route">/admin/agents</span></a>
+                    <a href="/admin/fleet">Fleet <span class="route">/admin/fleet</span></a>
+                    <a href="/admin/automation">Automation <span class="route">/admin/automation</span></a>
+                    {% endif %}
+                    <a href="/settings/tokens">Tokens <span class="route">/settings/tokens</span></a>
+                </div>
+            </details>
+
+            {# ── INTERVENE ── asking for a human right now. The badge is the
+                 fleet-attention total plus inbox unread — the number that
+                 decides whether you need to look does not live only on the
+                 dashboard. Attention is computed per-request for admins in
+                 the session middleware (counts only, ~0.1 ms measured) and is
+                 zero with no signals list for everyone else: the aggregate is
+                 admin-scoped and must not leak through a badge. #}
+            <details class="nav-group" name="athena-nav">
+                <summary>
+                    Intervene
+                    {% set intervene_total = request.state.unread_count + request.state.attention_total %}
+                    {% if intervene_total %}
+                    <span class="nav-count" aria-label="{{ intervene_total }} things asking for you">{{ intervene_total }}</span>
+                    {% endif %}
+                </summary>
+                <div class="nav-menu">
+                    <p>Asking for a human right now. Counts only — each links to the surface that owns it.</p>
+                    <a href="/inbox">Inbox{% if request.state.unread_count %} <span class="chip" data-tone="accent">{{ request.state.unread_count }}</span>{% endif %} <span class="route">/inbox</span></a>
+                    {% for signal in request.state.attention_signals %}{% if signal.count %}
+                    <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span></a>
+                    {% endif %}{% endfor %}
+                    {% if request.state.user.role == "admin" %}
+                    <a href="/admin/run-controls">Run controls <span class="route">/admin/run-controls</span></a>
+                    {% endif %}
+                </div>
+            </details>
+
+            {# ── TRUST ── evidence you can hand to someone else ── #}
+            {% if request.state.user.role == "admin" %}
+            <details class="nav-group" name="athena-nav">
+                <summary>Trust <span aria-hidden="true">&#9662;</span></summary>
+                <div class="nav-menu">
+                    <p>Evidence you can hand to someone else.</p>
+                    <a href="/admin/security">Security signals <span class="route">/admin/security</span></a>
+                    <a href="/admin/users">Users <span class="route">/admin/users</span></a>
+                </div>
+            </details>
+            {% endif %}
+            {% endif %}
+        </nav>
+
+        {# The work query language is the search box: docs/QUERY.md #}
+        <form method="get" action="/find" class="app-search" role="search">
+            <span aria-hidden="true">&#8981;</span>
+            <label class="visually-hidden" for="app-search-input">Search issues and pages</label>
+            <input id="app-search-input" type="search" name="q" placeholder="is:open label:infra assignee:@me">
+        </form>
+
+        {% if request.state.user %}
+        {# Account settings are not steps in the operator loop, so they live in
+           the user menu rather than making Trust a junk drawer. #}
+        <details class="nav-group" name="athena-nav">
+            <summary class="app-user">
+                <span class="avatar" aria-hidden="true">{{ request.state.user.name[:2] | upper }}</span>
+                {{ request.state.user.name }}
+            </summary>
+            <div class="nav-menu nav-menu-right">
+                <a href="/settings/password">Password <span class="route">/settings/password</span></a>
+                {% if request.state.oidc_enabled %}<a href="/settings/identities">Sign-ins <span class="route">/settings/identities</span></a>{% endif %}
+                {# Theme cycles system → dark → light → system; the label names
+                   what you are ON, the arrow what you get. #}
+                {% set current_theme = request.cookies.get("athena_theme") if request.cookies.get("athena_theme") in ("dark", "light") else "system" %}
+                <form method="post" action="/settings/theme" class="inline-form menu-form">
                     {% include "partials/csrf.html" %}
-                    <button type="submit">Sign out</button>
+                    <input type="hidden" name="next" value="{{ request.url.path }}">
+                    <input type="hidden" name="theme" value="{{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}">
+                    <button type="submit" class="button ghost small">Theme: {{ current_theme }} &#8594; {{ {'system': 'dark', 'dark': 'light', 'light': 'system'}[current_theme] }}</button>
                 </form>
-                {% else %}
-                <a href="/login">Sign in</a>
-                {% endif %}
-                {% endblock %}
-            </nav>
-        </div>
+                <form method="post" action="/logout" class="inline-form menu-form">
+                    {% include "partials/csrf.html" %}
+                    <button type="submit" class="button ghost small">Sign out</button>
+                </form>
+            </div>
+        </details>
+        {% else %}
+        <a href="/login" class="button secondary">Sign in</a>
+        {% endif %}
+        {% endblock %}
     </header>
 
-    <main class="container">
-        {% block content %}{% endblock %}
-    </main>
+    <div class="app-body">
+        {% block rail %}
+        {% if request.state.user %}
+        <nav class="rail" aria-label="Direct">
+            <a href="/aegis/dashboard" class="rail-item"{% if request.url.path == '/aegis/dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+            <a href="/aegis/boards" class="rail-item"{% if request.url.path == '/aegis/boards' %} aria-current="page"{% endif %}>Boards</a>
+            <a href="/aegis" class="rail-item"{% if request.url.path == '/aegis' %} aria-current="page"{% endif %}>Issues</a>
+            <a href="/aegis/projects" class="rail-item"{% if request.url.path == '/aegis/projects' %} aria-current="page"{% endif %}>Projects</a>
+            <a href="/mentor" class="rail-item"{% if request.url.path.startswith('/mentor') %} aria-current="page"{% endif %}>Mentor</a>
+            <a href="/aegis/labels" class="rail-item"{% if request.url.path == '/aegis/labels' %} aria-current="page"{% endif %}>Labels</a>
+        </nav>
+        {% endif %}
+        {% endblock %}
 
-    <footer>
-        <div class="container">
-            <small>Self-hosted for humans and agents.</small>
-        </div>
+        <main class="work" id="main">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <footer class="app-footer">
+        <small>Self-hosted for humans and agents.</small>
+        <small class="mono">{{ request.app.state.version }} · local alpha</small>
     </footer>
-    {% block scripts %}{% endblock %}
+</div>
+{% block scripts %}{% endblock %}
 </body>
 </html>

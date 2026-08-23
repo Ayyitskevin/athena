@@ -61,7 +61,7 @@ def test_create_rolls_back_the_page_when_audit_fails(tmp_path):
     try:
         try:
             page_commands.create_page(
-                conn, actor_id=1, space_id=sp["id"], title="Doomed", body="x"
+                conn, actor={"id": 1}, space_id=sp["id"], title="Doomed", body="x"
             )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
@@ -93,7 +93,7 @@ def test_move_rolls_back_the_reparent_when_audit_fails(tmp_path):
     try:
         try:
             page_commands.move_page(
-                conn, actor_id=1, page_id=child["id"], new_parent_id=parent["id"]
+                conn, actor={"id": 1}, page_id=child["id"], new_parent_id=parent["id"]
             )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
@@ -126,7 +126,7 @@ def test_restore_rolls_back_the_content_when_audit_fails(tmp_path):
     try:
         try:
             page_commands.restore_page_version(
-                conn, actor_id=1, page_id=page["id"], version=1
+                conn, actor={"id": 1}, page_id=page["id"], version=1
             )
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
@@ -165,9 +165,7 @@ def test_delete_rolls_back_the_page_and_dependents_when_audit_fails(tmp_path):
     page_activity.record_page_deleted = boom
     try:
         try:
-            page_commands.delete_page(
-                conn, actor_id=1, page_id=page["id"], title=page["title"]
-            )
+            page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
             raise AssertionError("expected the recorder failure to propagate")
         except RuntimeError:
             pass

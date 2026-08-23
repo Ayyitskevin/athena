@@ -15,10 +15,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from athena.core import webhook_commands, webhooks
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
 
 router = APIRouter(prefix="/webhooks", tags=["core"])
+
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 
 
 class WebhookCreate(BaseModel):
@@ -83,7 +92,7 @@ def create(
 
 @router.get("/{webhook_id}", response_model=WebhookOut)
 def show(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -95,7 +104,7 @@ def show(
 
 @router.patch("/{webhook_id}", response_model=WebhookOut)
 def update(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     payload: WebhookUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -108,12 +117,14 @@ def update(
             conn, actor_id=actor["id"], webhook_id=webhook_id, active=payload.active
         )
     except webhook_commands.WebhookCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/{webhook_id}", status_code=204)
 def remove(
-    webhook_id: int,
+    webhook_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:

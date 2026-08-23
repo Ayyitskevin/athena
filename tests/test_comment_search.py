@@ -25,6 +25,11 @@ from athena.mentor import (
 )
 
 
+#: The issue-comment commands take a resolved actor now: they authorize
+#: themselves rather than trusting a caller that already checked.
+ACTOR = {"id": 1, "role": "admin"}
+
+
 def _migrated_conn(db_file):
     conn = db.connect(db_file)
     db.migrate(conn)
@@ -46,7 +51,7 @@ def test_issue_comment_is_findable_and_borrows_parent(tmp_path):
     _seed_user(conn)
     iss = issues.create_issue(conn, title="Deploy runbook", body="", created_by=1)
     comment_commands.create_comment(
-        conn, actor_id=1, issue_id=iss["id"], body="rotate the zephyr token first"
+        conn, actor=ACTOR, issue_id=iss["id"], body="rotate the zephyr token first"
     )
     hits = search.search(conn, "zephyr")
     assert len(hits) == 1
@@ -62,7 +67,7 @@ def test_page_comment_is_findable_and_borrows_parent(tmp_path):
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Onboarding", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="the zephyr checklist lives here"
+        conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist lives here"
     )
     hits = search.search(conn, "zephyr")
     assert len(hits) == 1
@@ -77,11 +82,11 @@ def test_editing_a_comment_reindexes(tmp_path):
     _seed_user(conn)
     iss = issues.create_issue(conn, title="I", body="", created_by=1)
     c = comment_commands.create_comment(
-        conn, actor_id=1, issue_id=iss["id"], body="the zephyr note"
+        conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
     comment_commands.edit_comment(
         conn,
-        actor_id=1,
+        actor=ACTOR,
         issue_id=iss["id"],
         comment_id=c["id"],
         body="the borealis note",
@@ -95,10 +100,10 @@ def test_deleting_a_comment_removes_it_from_search(tmp_path):
     _seed_user(conn)
     iss = issues.create_issue(conn, title="I", body="", created_by=1)
     c = comment_commands.create_comment(
-        conn, actor_id=1, issue_id=iss["id"], body="the zephyr note"
+        conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
     comment_commands.delete_comment(
-        conn, actor_id=1, issue_id=iss["id"], comment_id=c["id"]
+        conn, actor=ACTOR, issue_id=iss["id"], comment_id=c["id"]
     )
     assert search.search(conn, "zephyr") == []
 
@@ -110,7 +115,7 @@ def test_page_hard_delete_clears_its_comment_index(tmp_path):
     sp = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Doc", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="the zephyr checklist"
+        conn, actor={"id": 1}, page_id=pg["id"], body="the zephyr checklist"
     )
     pages.delete_page(conn, pg["id"])
     assert search.search(conn, "zephyr") == []
@@ -130,7 +135,7 @@ def test_page_comment_hidden_from_non_member_of_private_space(tmp_path):
     sp = spaces.create_space(conn, key="SEC", name="Sec", created_by=1)
     pg = pages.create_page(conn, space_id=sp["id"], title="Secret", created_by=1)
     page_comment_commands.create_page_comment(
-        conn, actor_id=1, page_id=pg["id"], body="zephyr rotation steps"
+        conn, actor={"id": 1}, page_id=pg["id"], body="zephyr rotation steps"
     )
     space_commands.set_space_visibility(
         conn, actor_id=1, space_id=sp["id"], visibility="private"
@@ -148,7 +153,7 @@ def test_comment_on_archived_parent_drops_out(tmp_path):
     _seed_user(conn, role="admin")
     iss = issues.create_issue(conn, title="I", body="", created_by=1)
     comment_commands.create_comment(
-        conn, actor_id=1, issue_id=iss["id"], body="the zephyr note"
+        conn, actor=ACTOR, issue_id=iss["id"], body="the zephyr note"
     )
     admin = {"id": 1, "role": "admin"}
     assert [h["kind"] for h in search.search(conn, "zephyr", actor=admin)] == [
@@ -165,7 +170,7 @@ def test_kind_filter_excludes_comments(tmp_path):
     _seed_user(conn)
     iss = issues.create_issue(conn, title="zephyr build", body="", created_by=1)
     comment_commands.create_comment(
-        conn, actor_id=1, issue_id=iss["id"], body="another zephyr mention"
+        conn, actor=ACTOR, issue_id=iss["id"], body="another zephyr mention"
     )
     kinds = {h["kind"] for h in search.search(conn, "zephyr", kind="issue")}
     assert kinds == {"issue"}

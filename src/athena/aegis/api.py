@@ -43,6 +43,7 @@ from athena.aegis import (
     sprints,
     status_commands,
     statuses,
+    timeline,
 )
 from athena.core import (
     access,
@@ -55,11 +56,20 @@ from athena.core import (
     users,
     work_query,
 )
+from athena.core.ids import RowIdPath
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
+
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 # Labels are a top-level resource (shared vocabulary), not nested under an issue,
 # so they get their own router. Attaching a label TO an issue is a sub-resource
 # of /issues and lives on `router` below.
@@ -651,7 +661,7 @@ def query_count(
 
 
 @router.get("/query/help")
-def query_help() -> dict:
+def query_help(_actor: dict | None = Depends(optional_actor)) -> dict:
     """The query vocabulary, as data.
 
     Emitted from `work_query.describe()` rather than restated, so this endpoint,
@@ -731,7 +741,7 @@ def show(
 
 @router.get("/{issue_id}/backlinks", response_model=list[LinkOut])
 def backlinks(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -745,7 +755,7 @@ def backlinks(
 
 @router.get("/{issue_id}/graph")
 def issue_graph(
-    issue_id: int,
+    issue_id: RowIdPath,
     depth: int = graph.DEFAULT_DEPTH,
     max_nodes: int = graph.DEFAULT_MAX_NODES,
     actor: dict | None = Depends(optional_actor),
@@ -764,9 +774,26 @@ def issue_graph(
     )
 
 
+@router.get("/{issue_id}/related")
+def issue_related_items(
+    issue_id: RowIdPath,
+    limit: int = graph.DEFAULT_RELATED_LIMIT,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # "What cites what this issue cites, but is not linked to it yet?" — the
+    # Aegis twin of the page route: co-citation over the same links the graph
+    # walks, direct neighbours deliberately absent (they are /backlinks), the
+    # bound disclosed. 404 for missing and hidden alike.
+    _issue_for_read(conn, issue_id, actor)
+    return graph.related_items(
+        conn, kind="issue", node_id=issue_id, actor=actor, limit=limit
+    )
+
+
 @router.get("/{issue_id}/unlinked-mentions")
 def issue_unlinked_mentions(
-    issue_id: int,
+    issue_id: RowIdPath,
     limit: int = mentions.DEFAULT_LIMIT,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -788,7 +815,7 @@ class LinkMentionIn(BaseModel):
 
 @router.post("/{issue_id}/link-mention", response_model=IssueOut)
 def link_issue_mention(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LinkMentionIn,
     response: Response,
     actor: dict = Depends(issue_write_actor),
@@ -835,7 +862,7 @@ class IssueStateOut(BaseModel):
 
 @router.get("/{issue_id}/state", response_model=IssueStateOut)
 def issue_state(
-    issue_id: int,
+    issue_id: RowIdPath,
     as_of: int | None = Query(
         None,
         description="reconstruct state as of this activity event id (default: now)",
@@ -905,7 +932,7 @@ def _issue_for_read(
 
 @router.patch("/{issue_id}", response_model=IssueOut)
 def update(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: IssueUpdate,
     request: Request,
     response: Response,
@@ -930,7 +957,7 @@ def update(
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
 def set_assignee(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: AssigneeUpdate,
     request: Request,
     response: Response,
@@ -954,7 +981,7 @@ def set_assignee(
 
 @router.post("/{issue_id}/archive", response_model=IssueOut)
 def archive_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -972,7 +999,7 @@ def archive_issue(
 
 @router.post("/{issue_id}/unarchive", response_model=IssueOut)
 def unarchive_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1061,7 +1088,7 @@ def bulk_update(
 
 @router.put("/{issue_id}/sprint", response_model=IssueOut)
 def set_sprint(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: SprintAssign,
     request: Request,
     response: Response,
@@ -1085,7 +1112,7 @@ def set_sprint(
 
 @router.put("/{issue_id}/project", response_model=IssueOut)
 def set_project(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ProjectUpdate,
     request: Request,
     response: Response,
@@ -1109,7 +1136,7 @@ def set_project(
 
 @router.put("/{issue_id}/parent", response_model=IssueOut)
 def set_parent(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ParentUpdate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1129,7 +1156,7 @@ def set_parent(
 
 @router.get("/{issue_id}/children", response_model=list[IssueOut])
 def list_children(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1147,7 +1174,7 @@ def list_children(
 
 @router.post("/{issue_id}/comments", response_model=CommentOut, status_code=201)
 def add_comment(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: CommentCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1162,13 +1189,13 @@ def add_comment(
     # The command owns the insert AND its atomic 'commented' event (with the auto-watch
     # and any mentions), so a comment and its activity footprint land together.
     return comment_commands.create_comment(
-        conn, actor_id=actor["id"], issue_id=issue_id, body=body
+        conn, actor=actor, issue_id=issue_id, body=body
     )
 
 
 @router.get("/{issue_id}/comments", response_model=list[CommentOut])
 def list_comments(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1178,8 +1205,8 @@ def list_comments(
 
 def _author_comment_or_error(
     conn: sqlite3.Connection,
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict,
     *,
     allow_admin: bool = False,
@@ -1205,8 +1232,8 @@ def _author_comment_or_error(
 
 @router.patch("/{issue_id}/comments/{comment_id}", response_model=CommentOut)
 def edit_comment(
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     payload: CommentCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1221,19 +1248,21 @@ def edit_comment(
     try:
         return comment_commands.edit_comment(
             conn,
-            actor_id=actor["id"],
+            actor=actor,
             issue_id=issue_id,
             comment_id=comment_id,
             body=body,
         )
     except comment_commands.CommentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/{issue_id}/comments/{comment_id}", status_code=204)
 def delete_comment(
-    issue_id: int,
-    comment_id: int,
+    issue_id: RowIdPath,
+    comment_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -1242,7 +1271,7 @@ def delete_comment(
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
     # vanished in a race records nothing and 404s.
     if not comment_commands.delete_comment(
-        conn, actor_id=actor["id"], issue_id=issue_id, comment_id=comment_id
+        conn, actor=actor, issue_id=issue_id, comment_id=comment_id
     ):
         raise HTTPException(status_code=404, detail="no such comment")
 
@@ -1252,7 +1281,7 @@ def delete_comment(
 
 @router.post("/{issue_id}/attachments", response_model=AttachmentOut, status_code=201)
 def upload_issue_attachment(
-    issue_id: int,
+    issue_id: RowIdPath,
     file: UploadFile = File(...),
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1283,7 +1312,7 @@ def upload_issue_attachment(
 
 @router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])
 def list_issue_attachments(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1297,7 +1326,7 @@ def list_issue_attachments(
 
 @router.get("/{issue_id}/links", response_model=IssueLinksOut)
 def list_links(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1309,7 +1338,7 @@ def list_links(
 
 @router.post("/{issue_id}/links", response_model=IssueLinksOut, status_code=201)
 def add_link(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LinkCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1332,9 +1361,9 @@ def add_link(
 
 @router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
 def remove_link(
-    issue_id: int,
+    issue_id: RowIdPath,
     relation: str,
-    target_id: int,
+    target_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1440,7 +1469,7 @@ def create_project(
 
 @projects_router.get("/{project_id}", response_model=ProjectOut)
 def show_project(
-    project_id: int,
+    project_id: RowIdPath,
     response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1454,9 +1483,25 @@ def show_project(
     return _tagged_project(project, response)
 
 
+@projects_router.get("/{project_id}/floor")
+def project_floor(
+    project_id: RowIdPath,
+    room: str | None = None,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """One project as a floor of chairs. 404 if missing or hidden."""
+    from athena.aegis import office
+
+    floor = office.build_floor(conn, project_id=project_id, actor=actor, room_slug=room)
+    if floor is None:
+        raise HTTPException(status_code=404, detail="no such project")
+    return floor
+
+
 @projects_router.put("/{project_id}/policy", response_model=ProjectOut)
 def set_project_policy(
-    project_id: int,
+    project_id: RowIdPath,
     payload: ProjectPolicyUpdate,
     request: Request,
     response: Response,
@@ -1509,7 +1554,7 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
 
 @projects_router.patch("/{project_id}", response_model=ProjectOut)
 def update_project(
-    project_id: int,
+    project_id: RowIdPath,
     payload: ProjectEdit,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1552,7 +1597,7 @@ def update_project(
 
 @projects_router.delete("/{project_id}", status_code=204)
 def delete_project(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -1609,7 +1654,7 @@ def _project_for_privacy(
 
 @projects_router.put("/{project_id}/visibility", response_model=ProjectOut)
 def set_project_visibility(
-    project_id: int,
+    project_id: RowIdPath,
     payload: VisibilityUpdate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1636,7 +1681,7 @@ def set_project_visibility(
 
 @projects_router.get("/{project_id}/members", response_model=list[MemberOut])
 def list_project_members(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1653,7 +1698,7 @@ def list_project_members(
     "/{project_id}/members", response_model=list[MemberOut], status_code=201
 )
 def add_project_member(
-    project_id: int,
+    project_id: RowIdPath,
     payload: MemberAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1679,8 +1724,8 @@ def add_project_member(
     "/{project_id}/members/{user_id}", response_model=list[MemberOut]
 )
 def remove_project_member(
-    project_id: int,
-    user_id: int,
+    project_id: RowIdPath,
+    user_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1705,9 +1750,32 @@ def remove_project_member(
 # --- Per-project statuses: the configurable lifecycle ---------------------
 
 
+@projects_router.get("/{project_id}/timeline")
+def project_timeline(
+    project_id: RowIdPath,
+    max_per_lane: int = timeline.DEFAULT_MAX_PER_LANE,
+    max_items: int = timeline.DEFAULT_MAX_ITEMS,
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The project's roadmap as positioned data rather than markup — the same
+    # structure the browser draws, so an agent reads the plan the operator sees.
+    # A project the caller cannot see is the same 404 a missing one gives.
+    project = projects.get_project(conn, project_id)
+    if project is None or not access.can_see_project(conn, actor, project_id):
+        raise HTTPException(status_code=404, detail="no such project")
+    return timeline.project_timeline(
+        conn,
+        project_id=project_id,
+        visible_project_ids=access.visible_project_filter(conn, actor),
+        max_per_lane=max_per_lane,
+        max_items=max_items,
+    )
+
+
 @projects_router.get("/{project_id}/statuses", response_model=list[StatusOut])
 def list_project_statuses(
-    project_id: int,
+    project_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1724,7 +1792,7 @@ def list_project_statuses(
     "/{project_id}/statuses", response_model=list[StatusOut], status_code=201
 )
 def add_project_status(
-    project_id: int,
+    project_id: RowIdPath,
     payload: StatusCreate,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1746,7 +1814,7 @@ def add_project_status(
 
 @projects_router.delete("/{project_id}/statuses/{name}", response_model=list[StatusOut])
 def remove_project_status(
-    project_id: int,
+    project_id: RowIdPath,
     name: str,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1763,7 +1831,10 @@ def remove_project_status(
 
 
 @labels_router.get("", response_model=list[LabelOut])
-def list_all_labels(conn: sqlite3.Connection = Depends(get_conn)) -> list[dict]:
+def list_all_labels(
+    _actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[dict]:
     # Reading the vocabulary is open, like listing issues.
     return labels.list_labels(conn)
 
@@ -1796,7 +1867,7 @@ def create_label(
 
 @router.post("/{issue_id}/labels", response_model=IssueOut, status_code=201)
 def attach_label(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: LabelAttach,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1814,8 +1885,8 @@ def attach_label(
 
 @router.delete("/{issue_id}/labels/{label_id}", response_model=IssueOut)
 def detach_label(
-    issue_id: int,
-    label_id: int,
+    issue_id: RowIdPath,
+    label_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -1882,7 +1953,16 @@ class LeaseOut(BaseModel):
     expires_at: str
     generation: str
     active: bool
+    declared_paths: list[str] = []
     open_claim_handoff: ClaimHandoffOut | None = None
+
+
+class CompleteClaimOut(BaseModel):
+    released: bool
+    issue_id: int
+    issue_status: str
+    issue_still_open: bool
+    next: str
 
 
 HandoffEvidenceItem = Annotated[
@@ -1901,6 +1981,9 @@ class ClaimIn(BaseModel):
     # Omit to acquire a free/expired lease. Supply the current value to renew the
     # same active possession; a supplied stale value never becomes acquisition.
     generation: str | None = None
+    # Optional repo-relative POSIX paths this holder intends to touch. Empty or
+    # omitted = issue fence only. Overlap with another active lease is 409.
+    paths: list[str] | None = None
 
 
 class YieldClaimIn(BaseModel):
@@ -1957,7 +2040,7 @@ class ContributorAdd(BaseModel):
 
 @router.get("/{issue_id}/contributors", response_model=list[ContributorOut])
 def list_issue_contributors(
-    issue_id: int,
+    issue_id: RowIdPath,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -1971,7 +2054,7 @@ def list_issue_contributors(
     "/{issue_id}/contributors", response_model=list[ContributorOut], status_code=201
 )
 def add_issue_contributor(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ContributorAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -1990,7 +2073,7 @@ def add_issue_contributor(
     "/{issue_id}/delegate", response_model=list[ContributorOut], status_code=201
 )
 def delegate_issue_to_agent(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: ContributorAdd,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -2015,8 +2098,8 @@ def delegate_issue_to_agent(
     "/{issue_id}/contributors/{user_id}", response_model=list[ContributorOut]
 )
 def remove_issue_contributor(
-    issue_id: int,
-    user_id: int,
+    issue_id: RowIdPath,
+    user_id: RowIdPath,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
@@ -2038,7 +2121,7 @@ def remove_issue_contributor(
 
 @router.get("/{issue_id}/lease", response_model=LeaseOut | None)
 def get_issue_lease(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -2066,7 +2149,7 @@ def get_issue_lease(
     openapi_extra=_CLAIM_IF_MATCH_OPENAPI,
 )
 def claim_issue(
-    issue_id: int,
+    issue_id: RowIdPath,
     request: Request,
     response: Response,
     payload: ClaimIn | None = None,
@@ -2085,6 +2168,7 @@ def claim_issue(
             issue_id=issue_id,
             if_match=_if_match_values(request),
             generation=payload.generation if payload else None,
+            paths=payload.paths if payload else None,
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:
@@ -2097,7 +2181,7 @@ def claim_issue(
     status_code=201,
 )
 def yield_issue_claim(
-    issue_id: int,
+    issue_id: RowIdPath,
     payload: YieldClaimIn,
     response: Response,
     actor: dict = Depends(issue_write_actor),
@@ -2129,7 +2213,7 @@ def yield_issue_claim(
     response_model=ClaimHandoffOut,
 )
 def resume_issue_claim_handoff(
-    issue_id: int,
+    issue_id: RowIdPath,
     handoff_token: str,
     payload: ResumeClaimHandoffIn,
     response: Response,
@@ -2151,33 +2235,37 @@ def resume_issue_claim_handoff(
         return _issue_command_error_response(exc)
 
 
-@router.post("/{issue_id}/complete", status_code=204, response_model=None)
+@router.post(
+    "/{issue_id}/complete",
+    response_model=CompleteClaimOut,
+)
 def complete_issue_claim(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     payload: LeaseGenerationIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
-) -> None | JSONResponse:
+) -> dict | JSONResponse:
     # Complete: release the lease you hold (the issue is freed for the next claimant).
     # 409 if you don't hold an active lease. Releases the coordination lease only — status
-    # changes go through the ordinary status command.
+    # changes go through the ordinary status command. The body says so explicitly so
+    # an agent does not have to read source to learn the issue is still open.
     try:
-        lease_commands.complete_claim(
+        released = lease_commands.complete_claim(
             conn,
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
         )
         response.headers.update(_PRIVATE_LEASE_HEADERS)
-        return None
+        return released
     except issue_commands.IssueCommandError as exc:
         return _issue_command_error_response(exc)
 
 
 @router.post("/{issue_id}/decline", response_model=list[ContributorOut])
 def decline_issue_delegation(
-    issue_id: int,
+    issue_id: RowIdPath,
     response: Response,
     payload: DeclineDelegationIn | None = None,
     actor: dict = Depends(issue_write_actor),

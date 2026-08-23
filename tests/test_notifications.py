@@ -140,9 +140,17 @@ def test_watch_validation_and_unwatch(tmp_path):
         _bootstrap(client)
         assert (
             client.post(
-                "/watches", json={"target_kind": "space", "target_id": 1}, headers=H1
+                "/watches", json={"target_kind": "project", "target_id": 1}, headers=H1
             ).status_code
             == 422  # not a watchable kind
+        )
+        # 'space' IS one, since space subscriptions landed — the vocabulary is
+        # closed, not frozen, and this asserts which side of it 'space' is on.
+        assert (
+            client.post(
+                "/watches", json={"target_kind": "space", "target_id": 1}, headers=H1
+            ).status_code
+            == 204
         )
         assert (
             client.delete("/watches/issue/9", headers=H1).status_code == 404
@@ -199,7 +207,7 @@ def test_web_inbox_and_nav_badge(tmp_path):
             f"/issues/{issue['id']}/comments", json={"body": "hi"}, headers=H2
         )  # notifies user1
         # The nav badge shows on any page once there's an unread notification.
-        assert 'class="badge"' in client.get("/").text
+        assert 'data-tone="accent"' in client.get("/").text
         # The inbox page lists the event.
         inbox = client.get("/inbox").text
         assert "commented" in inbox and f"/aegis/issues/{issue['id']}" in inbox

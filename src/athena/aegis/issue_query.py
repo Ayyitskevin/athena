@@ -35,17 +35,10 @@ from athena.core.work_query import Query
 # Ordering, by sort key. Literals only — the key comes from work_query's closed
 # vocabulary, so an unknown key is impossible by the time it reaches here.
 #
-# Priority is an ordered concept stored as text, so it is ranked explicitly rather
-# than sorted alphabetically (which would read urgent, medium, low, high). The
-# CASE is generated from issues.PRIORITIES so adding one cannot silently sort it
-# to the bottom.
-_PRIORITY_RANK = (
-    "CASE i.priority "
-    + " ".join(
-        f"WHEN '{name}' THEN {index}" for index, name in enumerate(issues.PRIORITIES)
-    )
-    + f" ELSE {len(issues.PRIORITIES)} END"
-)
+# The priority ranking is issues.PRIORITY_RANK_SQL, not a second copy of the same
+# CASE: the web issue list ranks priority with the identical expression, and the two
+# surfaces disagreeing about what "sort by priority" means is a bug we already had.
+_PRIORITY_RANK = issues.PRIORITY_RANK_SQL
 
 _ORDER_BY: dict[str, str] = {
     "created-asc": "i.created_at ASC, i.id ASC",

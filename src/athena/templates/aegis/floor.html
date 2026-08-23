@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project.name }} — Floor — Aegis{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/projects" class="muted">← Projects</a>
+        <h1>{{ project.name }} floor</h1>
+        <p class="subtitle">
+            One project. Many chairs. Nobody shares a seat.
+            {{ floor.occupied_count }} sitting · {{ floor.empty_count }} empty.
+        </p>
+    </div>
+    <div class="page-header-actions">
+        <a href="/aegis/issues?project={{ project.id }}" class="button secondary">Issue list</a>
+        <a href="/admin/fleet" class="button secondary">Assign a seat</a>
+    </div>
+</div>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="success">{{ notice }}</div>{% endif %}
+
+<p class="note-small">
+    Occupancy is a lease, not a pulse. Rooms are flavor — they do not change
+    claim, status, or who may sit.
+</p>
+
+<nav class="floor-rooms" aria-label="Rooms">
+    <a href="/aegis/projects/{{ project.id }}/floor"{% if not room_filter %} class="is-current"{% endif %}>Whole floor</a>
+    {% for room in floor.rooms %}
+    <a href="/aegis/projects/{{ project.id }}/floor?room={{ room.slug }}"{% if room_filter == room.slug %} class="is-current"{% endif %}>{{ room.name }}</a>
+    {% endfor %}
+    <a href="/aegis/projects/{{ project.id }}/floor?room=unassigned"{% if room_filter == "unassigned" %} class="is-current"{% endif %}>The Annex</a>
+</nav>
+
+{% if can_assign %}
+<div class="panel">
+    <div class="panel-head"><h2>Rooms</h2></div>
+    <div class="panel-body">
+        <form method="post" action="/aegis/projects/{{ project.id }}/rooms" class="issue-form">
+            {% include "partials/csrf.html" %}
+            <div class="form-group">
+                <label for="room-name">New room</label>
+                <input id="room-name" type="text" name="name" required placeholder="Conference room">
+            </div>
+            <div class="form-group">
+                <label for="room-blurb">Blurb <span class="muted">(optional)</span></label>
+                <input id="room-blurb" type="text" name="blurb" placeholder="That's what she said.">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="button">Add room</button>
+            </div>
+        </form>
+        {% if not floor.rooms %}
+        <form method="post" action="/aegis/projects/{{ project.id }}/rooms/stock" class="issue-form">
+            {% include "partials/csrf.html" %}
+            <button type="submit" class="button secondary">Stock Warehouse, Accounting, Sales, Annex</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% if floor.sections %}
+{% for section in floor.sections %}
+<section class="floor-section" aria-labelledby="room-{{ section.slug }}">
+    <h2 id="room-{{ section.slug }}">{{ section.name }}</h2>
+    <p class="muted">{{ section.blurb }}</p>
+    {% if section.chairs %}
+    <div class="floor-grid">
+        {% for chair in section.chairs %}
+        <article class="panel floor-chair{% if chair.occupied %} is-occupied{% endif %}">
+            <div class="panel-head">
+                <h2>
+                    <a href="/aegis/issues/{{ chair.issue_id }}">{{ chair.issue_key or ('#' ~ chair.issue_id) }}</a>
+                </h2>
+                {% if chair.occupied %}
+                <span class="chip" data-tone="success">occupied</span>
+                {% else %}
+                <span class="chip" data-tone="neutral">empty</span>
+                {% endif %}
+            </div>
+            <div class="panel-body">
+                <p class="issue-title">{{ chair.issue_title }}</p>
+                {% if chair.occupied and chair.occupant %}
+                <p>
+                    <strong>{{ chair.occupant.seat_slug or chair.occupant.holder_name }}</strong>
+                    is sitting
+                    {% if chair.occupant.declared_paths %}
+                    · fenced
+                    {% for path in chair.occupant.declared_paths %}<code>{{ path }}</code> {% endfor %}
+                    {% else %}
+                    · issue fence only
+                    {% endif %}
+                </p>
+                {% elif chair.assignee_name %}
+                <p class="muted">Assigned to {{ chair.assignee_seat_slug or chair.assignee_name }} — not sitting yet.</p>
+                {% else %}
+                <p class="muted">This chair is open. Assign someone before they start a fire.</p>
+                {% endif %}
+                {% if chair.blocked_by %}
+                <p>
+                    Blocked by
+                    {% for b in chair.blocked_by %}
+                    <a href="/aegis/issues/{{ b.id }}">{{ b.key or ('#' ~ b.id) }}</a>{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                </p>
+                {% endif %}
+                {% if can_assign %}
+                <form method="post" action="/aegis/projects/{{ project.id }}/floor/place" class="issue-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="issue_id" value="{{ chair.issue_id }}">
+                    <div class="form-group">
+                        <label for="place-{{ chair.issue_id }}">Room</label>
+                        <select id="place-{{ chair.issue_id }}" name="room_id">
+                            <option value="">The Annex</option>
+                            {% for room in floor.rooms %}
+                            <option value="{{ room.id }}"{% if chair.room and chair.room.id == room.id %} selected{% endif %}>{{ room.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="button secondary">Move</button>
+                </form>
+                {% endif %}
+                {% if can_assign and assignable and not chair.occupied %}
+                <form method="post" action="/aegis/projects/{{ project.id }}/floor/assign" class="issue-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="hidden" name="issue_id" value="{{ chair.issue_id }}">
+                    <div class="form-group">
+                        <label for="seat-{{ chair.issue_id }}">Sit</label>
+                        <select id="seat-{{ chair.issue_id }}" name="seat_slug" required>
+                            {% for seat in assignable %}
+                            <option value="{{ seat.slug }}">{{ seat.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="button">Sit them down</button>
+                    </div>
+                </form>
+                {% endif %}
+                <p class="muted"><code>{{ chair.checkout_hint }}</code></p>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No chairs in this room.</p>
+    {% endif %}
+</section>
+{% endfor %}
+{% else %}
+<p class="empty-state">
+    The warehouse is empty. Open an issue or the Dundies get cancelled.
+</p>
+{% endif %}
+{% endblock %}

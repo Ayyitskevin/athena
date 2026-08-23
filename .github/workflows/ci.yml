@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "23 9 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,10 +15,23 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PIP_NO_INPUT: "1"
+
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Measured, not guessed: the suite runs 19m37s here at 3580 tests (PR #363,
+    # 2026-08-21) and 17m32s on a docs-only change. `ubuntu-latest` is a 2-vCPU
+    # runner, so coverage.sh's `-n 4` oversubscribes and coverage tracing adds
+    # its own overhead on top. At a 20-minute ceiling the job was passing with
+    # 23 seconds to spare — close enough that ordinary runner variance, not a
+    # real regression, would have started failing the gate and blocking merges.
+    # 30 leaves ~50% headroom for suite growth. If a run ever approaches THIS
+    # ceiling, shard the job rather than raising the number again: a timeout
+    # that only ever moves up stops being a signal.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -26,7 +42,11 @@ jobs:
       - name: Create isolated test environment
         run: python -m venv .venv
       - name: Install hash-verified package installer
-        run: .venv/bin/python -I -m pip install --require-hashes -r constraints/bootstrap-py312.txt
+        run: |
+          .venv/bin/python -I -m pip install \
+            --only-binary :all: \
+            --require-hashes \
+            -r constraints/bootstrap-py312.txt
       - name: Install test extras (including MCP)
         run: .venv/bin/python -I -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
       - name: Verify pinned dependency set
@@ -45,37 +65,213 @@ jobs:
         run: .venv/bin/python scripts/check_write_ownership.py
       - name: Check imported_at guards
         run: .venv/bin/python scripts/check_imported_at_guards.py
+      - name: Check template styles
+        run: .venv/bin/python scripts/check_template_styles.py
+      - name: Check template routes
+        run: .venv/bin/python scripts/check_template_routes.py
       - name: Run required tests with full-source branch coverage
         run: scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
       - name: Upload coverage evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-python-3.12
           path: ${{ runner.temp }}/athena-coverage
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 14
-      - name: Build and install through the source distribution
+
+  # Builds the image and proves it actually serves. Not gated on `test`: a broken
+  # Dockerfile is worth knowing about immediately, and this job shares no state with
+  # the suite. It does NOT push anywhere — publishing the image is an open operator
+  # decision (F-2.3), and a build-and-boot check does not presume it.
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build --tag athena:ci .
+      - name: Refuse to run as root
+        run: |
+          set -euo pipefail
+          user="$(docker run --rm --entrypoint id athena:ci -un)"
+          test "$user" = "athena" || { echo "image runs as $user"; exit 1; }
+      - name: A fresh volume is refused without an explicit bootstrap
+        run: |
+          set -euo pipefail
+          # The launcher's contract, which the image must not quietly relax: no
+          # database, no serve. An image that auto-migrated an empty volume would
+          # open first-admin bootstrap on every fresh deployment.
+          if docker run --rm athena:ci --host 127.0.0.1 --port 8000; then
+            echo "served without a database — the bootstrap gate is gone"; exit 1
+          fi
+      - name: Boot it on a named volume, and wait for its own HEALTHCHECK
+        run: |
+          set -euo pipefail
+          docker volume create athena-ci-data >/dev/null
+          token="$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+          # Carried to the next step explicitly rather than relying on `docker exec`
+          # inheriting the run-time environment. A throwaway CI credential.
+          echo "ATHENA_CI_BOOTSTRAP_TOKEN=$token" >> "$GITHUB_ENV"
+          docker run --detach --name athena-ci \
+            --volume athena-ci-data:/var/lib/athena \
+            --env "ATHENA_BOOTSTRAP_TOKEN=$token" \
+            athena:ci --bootstrap --host 127.0.0.1 --port 8000
+          # The image declares a HEALTHCHECK that asks /healthz over loopback from
+          # inside the namespace — the only place a local-mode bind lives. Waiting
+          # on Docker's verdict tests the app AND the healthcheck, rather than
+          # writing a second probe that could pass while the declared one is broken.
+          ./scripts/wait_for_container_health.sh athena-ci
+      - name: Data lands in the declared volume, owned by the non-root user
+        run: |
+          set -euo pipefail
+          docker exec athena-ci test -f /var/lib/athena/athena.db
+          owner="$(docker exec athena-ci stat -c '%U' /var/lib/athena/athena.db)"
+          test "$owner" = "athena" || { echo "database owned by $owner"; exit 1; }
+      - name: Create the first admin, the way an operator does
+        run: |
+          set -euo pipefail
+          # Not decoration: `athena-serve` refuses to start a database with no
+          # active administrator, so without this the container can never be
+          # restarted out of bootstrap mode. Doing it here means the job exercises
+          # the real first-run flow end to end rather than half of it.
+          admin="$(docker exec --env "ATHENA_BOOTSTRAP_TOKEN=$ATHENA_CI_BOOTSTRAP_TOKEN" \
+            athena-ci python -c "
+          import json, os, urllib.request
+          request = urllib.request.Request(
+              'http://127.0.0.1:8000/users',
+              data=json.dumps({
+                  'email': 'ci@example.com',
+                  'name': 'CI admin',
+                  'password': 'ci-password-000001',
+              }).encode(),
+              headers={
+                  'Content-Type': 'application/json',
+                  'X-Athena-Bootstrap-Token': os.environ['ATHENA_BOOTSTRAP_TOKEN'],
+              },
+          )
+          print(json.dumps(json.load(urllib.request.urlopen(request, timeout=10))))
+          ")"
+          echo "$admin"
+          python3 -c "
+          import json, sys
+          admin = json.loads(sys.argv[1])
+          assert admin['id'] == 1, admin
+          assert admin['role'] == 'admin', admin
+          " "$admin"
+      - name: A second container on the same volume starts with no bootstrap
+        run: |
+          set -euo pipefail
+          # The two-lifecycle check. It has to run against the VOLUME, not a
+          # committed image: `docker commit` captures the container filesystem and
+          # deliberately excludes volume contents, so an image-based version of this
+          # test would start from an empty database and prove nothing.
+          docker rm --force athena-ci >/dev/null
+          docker run --detach --name athena-ci2 \
+            --volume athena-ci-data:/var/lib/athena \
+            athena:ci --host 127.0.0.1 --port 8000
+          ./scripts/wait_for_container_health.sh athena-ci2
+          docker rm --force athena-ci2 >/dev/null
+          docker volume rm athena-ci-data >/dev/null
+      - name: The compose file is valid
+        run: docker compose -f compose.yaml config --quiet
+
+  audit:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Create isolated evidence and build environment
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -I -m venv "$RUNNER_TEMP/athena-evidence-venv"
+          echo "EVIDENCE_PYTHON=$RUNNER_TEMP/athena-evidence-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Install hash-verified evidence and build toolchain
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$EVIDENCE_PYTHON" -I -m pip install \
+            --only-binary :all: \
+            --require-hashes \
+            -r "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt"
+          "$EVIDENCE_PYTHON" -I -m pip install \
+            --only-binary :all: \
+            --require-hashes \
+            -r "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt"
+          "$EVIDENCE_PYTHON" -I -m pip check
+          "$EVIDENCE_PYTHON" -I -m pip --version
+          "$EVIDENCE_PYTHON" -I -m pip_audit --version
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" \
+            verify-environment
+      - name: Audit the evidence toolchain
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$EVIDENCE_PYTHON" -I -m pip_audit \
+            --strict \
+            --no-deps \
+            --disable-pip \
+            --progress-spinner off \
+            --timeout 30 \
+            --vulnerability-service pypi \
+            --require-hashes \
+            --requirement "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt"
+      - name: Audit pinned application inputs
+        working-directory: ${{ runner.temp }}
+        run: |
+          evidence_root="$RUNNER_TEMP/athena-input-evidence"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" run \
+            --auditor-python "$EVIDENCE_PYTHON" \
+            --output "$evidence_root/athena-ci-python.cdx.json"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_supply_chain.py" verify \
+            --sbom "$evidence_root/athena-ci-python.cdx.json"
+          echo "ATHENA_INPUT_SBOM=$evidence_root/athena-ci-python.cdx.json" >> "$GITHUB_ENV"
+      - name: Build one sdist and its one wheel
         run: |
           set -euo pipefail
           dist_root="$(mktemp -d "$RUNNER_TEMP/athena-dist.XXXXXX")"
-          .venv/bin/python -m build --sdist --outdir "$dist_root/artifacts" .
+          "$EVIDENCE_PYTHON" -I -m build \
+            --no-isolation \
+            --sdist \
+            --outdir "$dist_root/built" \
+            "$GITHUB_WORKSPACE"
           shopt -s nullglob
-          sdists=("$dist_root"/artifacts/*.tar.gz)
-          if (( ${#sdists[@]} != 1 )); then
+          built_sdists=("$dist_root"/built/*.tar.gz)
+          if (( ${#built_sdists[@]} != 1 )); then
             echo "expected exactly one source distribution" >&2
             exit 1
           fi
+          mkdir -p "$dist_root/snapshot"
+          sdist="$dist_root/snapshot/${built_sdists[0]##*/}"
+          install -m 0444 -- "${built_sdists[0]}" "$sdist"
+          sdist_sha256="$(sha256sum "$sdist")"
+          sdist_sha256="${sdist_sha256%% *}"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            inspect-sdist \
+            --sdist "$sdist" \
+            --expected-sha256 "$sdist_sha256"
           mkdir -p "$dist_root/source"
-          .venv/bin/python -c \
+          "$EVIDENCE_PYTHON" -I -c \
             'import pathlib, sys, tarfile; tarfile.open(sys.argv[1]).extractall(pathlib.Path(sys.argv[2]), filter="data")' \
-            "${sdists[0]}" "$dist_root/source"
+            "$sdist" "$dist_root/source"
           source_trees=("$dist_root"/source/athena-*)
           if (( ${#source_trees[@]} != 1 )); then
             echo "expected exactly one extracted source tree" >&2
             exit 1
           fi
-          .venv/bin/python -m build --wheel \
+          "$EVIDENCE_PYTHON" -I -m build \
+            --no-isolation \
+            --wheel \
             --outdir "$dist_root/artifacts" \
             "${source_trees[0]}"
           wheels=("$dist_root"/artifacts/*.whl)
@@ -89,18 +285,187 @@ jobs:
             echo "source distribution is missing its verification helpers" >&2
             exit 1
           fi
-          .venv/bin/python scripts/verify_wheel.py "${wheels[0]}"
-          .venv/bin/python \
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/verify_wheel.py" \
+            "${wheels[0]}"
+          "$EVIDENCE_PYTHON" -I \
             "${source_trees[0]}/scripts/verify_wheel.py" \
             "${wheels[0]}"
-          .venv/bin/python \
+          "$EVIDENCE_PYTHON" -I \
             "${source_trees[0]}/scripts/check_import_contracts.py"
-          echo "ATHENA_SDIST_SOURCE=${source_trees[0]}" >> "$GITHUB_ENV"
-          .venv/bin/python -I -m pip uninstall --yes athena
-          .venv/bin/python -I -m pip install --no-deps "${wheels[0]}"
-          .venv/bin/python -I -m pip check
-      - name: Boot the sdist-derived wheel outside the checkout
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            inspect-wheel \
+            --wheel "${wheels[0]}"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            inspect-sdist \
+            --sdist "$sdist" \
+            --wheel "${wheels[0]}" \
+            --tool-lock "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt" \
+            --expected-sha256 "$sdist_sha256"
+          checkout_commit="$(git -C "$GITHUB_WORKSPACE" rev-parse --verify HEAD)"
+          checkout_tree="$(git -C "$GITHUB_WORKSPACE" rev-parse --verify 'HEAD^{tree}')"
+          {
+            echo "ATHENA_SDIST=$sdist"
+            echo "ATHENA_SDIST_SHA256=$sdist_sha256"
+            echo "ATHENA_WHEEL=${wheels[0]}"
+            echo "ATHENA_SDIST_SOURCE=${source_trees[0]}"
+            echo "CHECKOUT_COMMIT=$checkout_commit"
+            echo "CHECKOUT_TREE=$checkout_tree"
+          } >> "$GITHUB_ENV"
+      - name: Install exact base and MCP wheel profiles
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          runtime_root="$(mktemp -d "$RUNNER_TEMP/athena-runtime.XXXXXX")"
+          python -I -m venv "$runtime_root/base"
+          python -I -m venv "$runtime_root/mcp"
+          base_python="$runtime_root/base/bin/python"
+          mcp_python="$runtime_root/mcp/bin/python"
+          for candidate_python in "$base_python" "$mcp_python"; do
+            "$candidate_python" -I -m pip install \
+              --only-binary :all: \
+              --require-hashes \
+              -r "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt"
+          done
+          "$base_python" -I -m pip install \
+            --only-binary :all: \
+            --constraint "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            "$ATHENA_WHEEL"
+          "$mcp_python" -I -m pip install \
+            --only-binary :all: \
+            --constraint "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            "${ATHENA_WHEEL}[mcp]"
+          "$base_python" -I -m pip check
+          "$mcp_python" -I -m pip check
+          {
+            echo "ATHENA_BASE_PYTHON=$base_python"
+            echo "ATHENA_MCP_PYTHON=$mcp_python"
+          } >> "$GITHUB_ENV"
+      - name: Boot the exact sdist-derived wheel outside the checkout
         working-directory: /tmp
         run: |
-          "$GITHUB_WORKSPACE/.venv/bin/python" -c 'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
-          "$GITHUB_WORKSPACE/.venv/bin/python" "$ATHENA_SDIST_SOURCE/scripts/smoke_app.py"
+          "$ATHENA_BASE_PYTHON" -I -c \
+            'from pathlib import Path; import athena, sys; assert Path(athena.__file__).resolve().is_relative_to(Path(sys.prefix).resolve()), athena.__file__'
+          "$ATHENA_BASE_PYTHON" -I "$ATHENA_SDIST_SOURCE/scripts/smoke_app.py"
+      - name: Audit and verify both wheel profiles
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          profile_root="$(mktemp -d "$RUNNER_TEMP/athena-profile-evidence.XXXXXX")"
+          base_raw="$profile_root/athena-runtime-base-pip-audit.cdx.json"
+          base_sbom="$profile_root/athena-runtime-base-python312.cdx.json"
+          mcp_raw="$profile_root/athena-runtime-mcp-pip-audit.cdx.json"
+          mcp_sbom="$profile_root/athena-runtime-mcp-python312.cdx.json"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            audit-profile \
+            --auditor-python "$EVIDENCE_PYTHON" \
+            --candidate-python "$ATHENA_BASE_PYTHON" \
+            --wheel "$ATHENA_WHEEL" \
+            --profile base \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --raw-output "$base_raw" \
+            --sbom-output "$base_sbom" \
+            --source-revision "$CHECKOUT_COMMIT"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            verify-profile \
+            --candidate-python "$ATHENA_BASE_PYTHON" \
+            --wheel "$ATHENA_WHEEL" \
+            --profile base \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --sbom "$base_sbom"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            audit-profile \
+            --auditor-python "$EVIDENCE_PYTHON" \
+            --candidate-python "$ATHENA_MCP_PYTHON" \
+            --wheel "$ATHENA_WHEEL" \
+            --profile mcp \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --raw-output "$mcp_raw" \
+            --sbom-output "$mcp_sbom" \
+            --source-revision "$CHECKOUT_COMMIT"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            verify-profile \
+            --candidate-python "$ATHENA_MCP_PYTHON" \
+            --wheel "$ATHENA_WHEEL" \
+            --profile mcp \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --sbom "$mcp_sbom"
+          {
+            echo "ATHENA_BASE_SBOM=$base_sbom"
+            echo "ATHENA_MCP_SBOM=$mcp_sbom"
+          } >> "$GITHUB_ENV"
+      - name: Finalize and verify the candidate bundle
+        working-directory: ${{ runner.temp }}
+        env:
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_EVENT: ${{ github.event_name }}
+          CANDIDATE_RUN_ID: ${{ github.run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          CANDIDATE_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          CANDIDATE_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          candidate_bundle="$RUNNER_TEMP/athena-candidate"
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            create-bundle \
+            --output "$candidate_bundle" \
+            --sdist "$ATHENA_SDIST" \
+            --sdist-sha256 "$ATHENA_SDIST_SHA256" \
+            --wheel "$ATHENA_WHEEL" \
+            --input-sbom "$ATHENA_INPUT_SBOM" \
+            --base-sbom "$ATHENA_BASE_SBOM" \
+            --mcp-sbom "$ATHENA_MCP_SBOM" \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --tool-lock "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt" \
+            --base-python "$ATHENA_BASE_PYTHON" \
+            --mcp-python "$ATHENA_MCP_PYTHON" \
+            --repository "$CANDIDATE_REPOSITORY" \
+            --event "$CANDIDATE_EVENT" \
+            --run-id "$CANDIDATE_RUN_ID" \
+            --run-attempt "$CANDIDATE_RUN_ATTEMPT" \
+            --checkout-commit "$CHECKOUT_COMMIT" \
+            --checkout-tree "$CHECKOUT_TREE" \
+            --pr-head "$CANDIDATE_PR_HEAD" \
+            --pr-base "$CANDIDATE_PR_BASE"
+          shopt -s nullglob
+          candidate_wheels=("$candidate_bundle"/*.whl)
+          if (( ${#candidate_wheels[@]} != 1 )); then
+            echo "candidate bundle does not contain exactly one wheel" >&2
+            exit 1
+          fi
+          for candidate_python in "$ATHENA_BASE_PYTHON" "$ATHENA_MCP_PYTHON"; do
+            "$candidate_python" -I -m pip install \
+              --no-index \
+              --no-deps \
+              --force-reinstall \
+              "${candidate_wheels[0]}"
+          done
+          "$ATHENA_BASE_PYTHON" -I -m pip check
+          "$ATHENA_MCP_PYTHON" -I -m pip check
+          "$EVIDENCE_PYTHON" -I \
+            "$GITHUB_WORKSPACE/scripts/check_wheel_evidence.py" \
+            verify-bundle \
+            --bundle "$candidate_bundle" \
+            --constraints "$GITHUB_WORKSPACE/constraints/ci-py312.txt" \
+            --bootstrap "$GITHUB_WORKSPACE/constraints/bootstrap-py312.txt" \
+            --tool-lock "$GITHUB_WORKSPACE/constraints/security-tools-py312.txt" \
+            --base-python "$ATHENA_BASE_PYTHON" \
+            --mcp-python "$ATHENA_MCP_PYTHON"
+      - name: Upload final candidate bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: athena-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/athena-candidate
+          if-no-files-found: error
+          retention-days: ${{ github.ref == 'refs/heads/main' && 30 || 14 }}

@@ -480,6 +480,7 @@ def test_exhausted_signed_inbound_limit_refuses_before_reading_the_body(
         "headers": [
             (b"content-length", b"1048576"),
             (b"cookie", f"{config.SESSION_COOKIE}=attacker".encode()),
+            (b"host", b"testserver"),
             (b"idempotency-key", b"attacker"),
         ],
         "client": ("testclient", 50000),
@@ -1614,7 +1615,7 @@ def test_concurrent_delivery_acceptances_are_first_writer_wins(tmp_path):
                     poster=poster,
                 )
             )
-        except BaseException as exc:  # pragma: no cover - asserted below
+        except BaseException as exc:  # noqa: BLE001 — thread target: captured so the main thread can assert on it; pragma: no cover - asserted below
             errors.append(exc)
         finally:
             conn.close()

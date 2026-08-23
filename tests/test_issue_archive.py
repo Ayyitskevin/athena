@@ -119,7 +119,7 @@ def test_web_archive_restore_and_list_toggle(tmp_path):
         assert "archive me" in client.get("/aegis/issues?archived=1").text
         # Detail now shows the archived badge and a Restore button.
         detail = client.get(f"/aegis/issues/{iid}").text
-        assert "archived-badge" in detail and "Restore" in detail
+        assert ">archived</span>" in detail and "Restore" in detail
 
         assert (
             client.post(

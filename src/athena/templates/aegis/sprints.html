@@ -7,7 +7,10 @@
     <div>
         <a href="/aegis/projects" class="muted">← Projects</a>
         <h1>Sprints</h1>
-        <p class="subtitle">{{ project.name }} <code>{{ project.key }}</code></p>
+        <p class="subtitle">
+            {{ project.name }} <code>{{ project.key }}</code> ·
+            <a href="/aegis/projects/{{ project.id }}/timeline">Timeline</a>
+        </p>
     </div>
 </div>
 
@@ -29,7 +32,7 @@
                 {{ s.name }}
                 {% if s.goal %}<div class="muted">{{ s.goal }}</div>{% endif %}
             </td>
-            <td><span class="sprint-state sprint-{{ s.state }}">{{ s.state }}</span></td>
+            <td><span class="chip" data-tone="{{ s.state | sprint_tone }}">{{ s.state }}</span></td>
             <td class="muted">{{ s.start_date or "—" }} → {{ s.end_date or "—" }}</td>
             <td class="muted">{{ counts[s.id] }}</td>
             {% if can_manage %}
@@ -62,7 +65,7 @@
 {% endif %}
 
 {% if can_manage %}
-<div class="form-container">
+<div class="panel">
     <h3>New sprint</h3>
     <form method="post" action="/aegis/projects/{{ project.id }}/sprints" class="issue-form">
         {% include "partials/csrf.html" %}

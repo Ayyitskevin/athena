@@ -1277,6 +1277,7 @@ async def _raw_streamed_keyed_request(app, body: bytes) -> tuple[int, bytes]:
             "query_string": b"",
             "headers": [
                 (b"content-type", b"application/json"),
+                (b"host", b"testserver"),
                 (b"idempotency-key", b"streamed-too-large"),
                 (b"x-athena-actor", b"1"),
             ],

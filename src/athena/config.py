@@ -11,6 +11,7 @@ from pathlib import Path
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
+_NETWORK_MODES = frozenset({"local", "tailnet"})
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -50,6 +51,32 @@ def _float_env(name: str, default: float, *, minimum: float, inclusive: bool) ->
 # The SQLite file Athena stores everything in. Override with the ATHENA_DB env var.
 DB_PATH = Path(os.environ.get("ATHENA_DB", "athena.db"))
 
+# Athena supports a direct loopback listener and an explicitly declared Tailscale
+# listener. It intentionally has no public mode: proxies, tunnels, NAT, container
+# publication, and Tailscale Funnel are external state Athena cannot infer.
+NETWORK_MODE = os.environ.get("ATHENA_NETWORK_MODE", "local").strip().lower()
+if NETWORK_MODE not in _NETWORK_MODES:
+    raise ValueError(
+        "ATHENA_NETWORK_MODE must be one of: " + ", ".join(sorted(_NETWORK_MODES))
+    )
+
+# Exact request Host authorities, including ports. The supported launcher derives
+# a strict loopback allowlist when this is empty in local mode; tailnet mode requires
+# explicit values. Raw ASGI startup with no launcher and no allowlist consequently
+# has no request authority and fails closed at the outer deployment boundary.
+_allowed_authorities_raw = os.environ.get("ATHENA_ALLOWED_AUTHORITIES", "")
+if _allowed_authorities_raw:
+    _allowed_authority_parts = _allowed_authorities_raw.split(",")
+    if any(not part.strip() for part in _allowed_authority_parts):
+        raise ValueError(
+            "ATHENA_ALLOWED_AUTHORITIES must contain nonempty comma-separated values"
+        )
+    ALLOWED_AUTHORITIES = tuple(part.strip() for part in _allowed_authority_parts)
+    del _allowed_authority_parts
+else:
+    ALLOWED_AUTHORITIES = ()
+del _allowed_authorities_raw
+
 # Athena loggers fail closed on typos instead of silently falling back to INFO.
 LOG_LEVEL = os.environ.get("ATHENA_LOG_LEVEL", "INFO").strip().upper()
 if LOG_LEVEL not in _LOG_LEVELS:
@@ -58,12 +85,10 @@ if LOG_LEVEL not in _LOG_LEVELS:
     )
 
 
-# Whether to trust the X-Athena-Actor header as a fallback identity when no
-# bearer token is presented. The header only CLAIMS an id, so it is safe only on
-# a trusted local/tailnet box. It defaults OFF: an unconfigured deploy that gets
-# exposed to the network must NOT accept a spoofable identity header. Turn it ON
-# (ATHENA_TRUST_ACTOR_HEADER=1) deliberately on a trusted box — typically just
-# long enough to mint the first bearer token, then turn it back off.
+# Legacy application-factory fallback identity when no bearer token is presented.
+# The header only CLAIMS an id, so it defaults off and the supported athena-serve
+# entrypoint refuses to start when it is enabled. Retained direct-factory users
+# must opt in explicitly and remain outside the supported deployment contract.
 TRUST_ACTOR_HEADER = _bool_env("ATHENA_TRUST_ACTOR_HEADER", False)
 
 # One-time credential for creating the first administrator through POST /users.
@@ -86,6 +111,12 @@ if BOOTSTRAP_TOKEN:
             "ATHENA_BOOTSTRAP_TOKEN must be 32-255 visible ASCII characters"
         )
     del bootstrap_token_bytes
+
+# The supported launcher sets this process-local invariant while running
+# ``athena-serve --bootstrap``. It is intentionally not an environment escape
+# hatch: a supported first administrator must have a credential that still works
+# after the one-time bootstrap token is removed.
+BOOTSTRAP_PASSWORD_REQUIRED = False
 
 # Maximum accepted request body size. This keeps accidental huge posts from
 # tying up the app process. Set to 0 to disable here when a trusted reverse proxy
@@ -137,6 +168,12 @@ AGENT_RUN_MAX_CHECKINS_PER_AGENT = _int_env(
 # Athena cannot observe and never claims.
 WORKER_STALE_SECONDS = _int_env("ATHENA_WORKER_STALE_SECONDS", 90, minimum=1)
 
+# How long a run control waits for the bound agent before it reads as expired,
+# when the operator does not choose a lifetime explicitly. Expiry is derived at
+# read time from the stored expires_at against the server clock — nothing sweeps,
+# nothing is written, and an expired control never claims the agent did anything.
+RUN_CONTROL_TTL_SECONDS = _int_env("ATHENA_RUN_CONTROL_TTL_SECONDS", 3600, minimum=60)
+
 # The external execution fleet Athena may hand work to. BOTH must be set for
 # dispatch to be available: a URL without a secret would mean sending unsigned work
 # to an unauthenticated endpoint, and a secret without a URL means nothing. Unset is
@@ -174,17 +211,57 @@ def icarus_configured() -> bool:
     return bool(ICARUS_URL and ICARUS_SECRET)
 
 
+def buzz_relay_url() -> str:
+    return os.environ.get("ATHENA_BUZZ_RELAY_URL", "").strip()
+
+
+def buzz_cli_path() -> str:
+    return os.environ.get("ATHENA_BUZZ_CLI", "").strip()
+
+
+def buzz_key_file() -> str:
+    return os.environ.get("ATHENA_BUZZ_KEY_FILE", "").strip()
+
+
+def buzz_assign_channel() -> str:
+    # command-deck on the mickey relay. Override if the channel is recreated.
+    default = "3fc2b270-cd0b-4a6b-afcd-f10471caffb2"
+    return os.environ.get("ATHENA_BUZZ_ASSIGN_CHANNEL", default).strip()
+
+
+def public_base_url() -> str:
+    return os.environ.get("ATHENA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+
+def buzz_radio_configured() -> bool:
+    """CLI + key file + relay. Channel has a built-in default."""
+    return bool(buzz_relay_url() and buzz_cli_path() and buzz_key_file())
+
+
 # One agent may run several workers (a box per node, a process per capability), but
 # not unboundedly many: a looping or compromised token can refresh the rows it has
 # forever and still never grow the registry past this ceiling.
 WORKER_MAX_PER_AGENT = _int_env("ATHENA_WORKER_MAX_PER_AGENT", 50, minimum=1)
 
-# Per-client-IP limit on ANONYMOUS traffic: optional_actor reads reached with no
-# valid credential, invalid-bearer attempts, and signed machine-inbound deliveries
-# that have no Athena actor. The per-token limiter never runs for these. Defaults
-# to 0 (OFF) for local/tailnet use; turn it on (e.g. 120) wherever anonymous reads
-# or inbound callbacks face an untrusted network. Keyed by the direct peer IP,
-# NOT X-Forwarded-For — account for a shared reverse proxy separately.
+# Requests slower than this are logged at WARNING with their route template,
+# method, status, and duration. 0 disables it.
+#
+# Athena has never measured request latency anywhere — uvicorn's access log records
+# method, path, and status but no timing, and nothing else in the tree times a
+# request. That is the gap this closes: the F-0.1 read regression (229ms per page,
+# on a feed that looked perfectly healthy in the access log) would have been
+# invisible to an operator until someone thought to profile it by hand.
+#
+# 1000ms is deliberately high. This is a "something is wrong" signal, not a
+# profiler: an operator who gets a warning per page load stops reading the
+# warnings. Lower it when hunting something specific.
+SLOW_REQUEST_LOG_MS = _int_env("ATHENA_SLOW_REQUEST_LOG_MS", 1000, minimum=0)
+
+# Per-client-IP limit used by optional-identity REST reads and signed machine-
+# inbound deliveries. It is not a global browser-request ceiling. The per-token
+# limiter never runs for these paths. Defaults to 0 (OFF) for local use; tailnet
+# deployment requires a positive value. Keyed by the direct peer IP, NOT
+# X-Forwarded-For — account for a shared reverse proxy separately.
 ANON_RATE_LIMIT_PER_MINUTE = _int_env("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", 0, minimum=0)
 
 # Per-client-IP limit on POST /login attempts. Password login is credential-free at the
@@ -197,6 +274,108 @@ ANON_RATE_LIMIT_PER_MINUTE = _int_env("ATHENA_ANON_RATE_LIMIT_PER_MINUTE", 0, mi
 LOGIN_RATE_LIMIT_PER_MINUTE = _int_env(
     "ATHENA_LOGIN_RATE_LIMIT_PER_MINUTE", 10, minimum=0
 )
+
+# The per-IP limit above bounds one peer; it does NOT bound one ACCOUNT. Credential
+# stuffing is a distributed attack by construction — a thousand hosts guessing ten
+# passwords each at one email stays under every per-IP ceiling while making ten
+# thousand attempts on that account. This caps attempts per SUBMITTED EMAIL per
+# minute, which is the axis the attacker cannot spread across.
+#
+# Keyed by the email exactly as submitted, NOT by the resolved user id: keying by the
+# account would mean a real email is throttled and an unknown one is not, and the
+# difference is observable — reintroducing the existence oracle that dummy_verify and
+# the background-task failure recording exist to close. Keying by the submitted string
+# makes locked, unknown and real behave identically. (users.email is case-SENSITIVE —
+# no COLLATE NOCASE — so varying the case reaches a different account too, and cannot
+# be used to reset the counter against a given one.)
+#
+# Defaults ON at 5/min: a human who has forgotten their password does not type five
+# attempts in sixty seconds, and the window is short enough that the lockout cannot be
+# used as a durable denial-of-service lever against a known address (see SECURITY.md).
+# Set 0 to disable.
+LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE = _int_env(
+    "ATHENA_LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE", 5, minimum=0
+)
+
+# --- exposure posture ------------------------------------------------------
+#
+# Projects and spaces are PUBLIC by default (core/access.py), which is the right
+# default for a single operator on loopback and the wrong one the moment the box is
+# reachable by anyone else. An accidental tunnel, a Tailscale Funnel left on, a
+# port-forward that outlived its reason — any of them expose every public container
+# to a caller with no credential at all.
+#
+# Two switches, doing different jobs:
+#
+# ATHENA_ANONYMOUS_READS=0 is the FAIL-CLOSED one. It requires an authenticated actor
+# for every read, regardless of any container's own visibility, so exposure stops
+# being a disclosure. It is the switch to reach for when the box might be reachable;
+# everything else here is defense in depth behind it.
+#
+# ATHENA_DEFAULT_VISIBILITY=private is ERGONOMICS. New projects and spaces are born
+# private instead of public, so the safe state is the one you get by not thinking
+# about it. It does nothing for containers that already exist, and nothing at all for
+# an instance whose reads are already closed.
+#
+# Both default to today's behavior — reads open, containers born public — because
+# changing them for existing deployments would silently break the loopback setup the
+# product is documented around.
+ANONYMOUS_READS = _bool_env("ATHENA_ANONYMOUS_READS", True)
+
+_VISIBILITIES = frozenset({"public", "private"})
+
+
+def _visibility_env(name: str, default: str) -> str:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized not in _VISIBILITIES:
+        raise ValueError(
+            f"{name} must be one of: {', '.join(sorted(_VISIBILITIES))} (got {raw!r})"
+        )
+    return normalized
+
+
+DEFAULT_VISIBILITY = _visibility_env("ATHENA_DEFAULT_VISIBILITY", "public")
+
+
+# --- cockpit liveness ------------------------------------------------------
+#
+# How often the three "right now" surfaces re-ask the server for their own markup:
+# the dashboard's fleet-attention card, Mission Control's active-work table, and the
+# open run-control requests. VISION promises the operator can see what each agent is
+# doing right now, and a page that only changes when you press reload cannot keep
+# that promise.
+#
+# 0 disables polling entirely — the pages still render, they just stop refreshing
+# themselves, which is what an operator watching over a metered or battery-powered
+# link wants. Any other value is held to [MIN, MAX] rather than accepted as typed,
+# because the floor is a load statement and not a preference: at 10s each polling
+# admin costs roughly 0.05 ms of server time per second (the rollup measures ~0.5 ms
+# for a real fleet, see main.py), and a 1s interval would multiply that by ten
+# without making anything more legible to a human eye.
+LIVE_REFRESH_MIN_SECONDS = 5
+LIVE_REFRESH_MAX_SECONDS = 3600
+
+
+def _refresh_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer number of seconds") from exc
+    if value == 0:
+        return 0
+    if not (LIVE_REFRESH_MIN_SECONDS <= value <= LIVE_REFRESH_MAX_SECONDS):
+        raise ValueError(
+            f"{name} must be 0 (no polling) or between {LIVE_REFRESH_MIN_SECONDS} "
+            f"and {LIVE_REFRESH_MAX_SECONDS} seconds (got {value})"
+        )
+    return value
+
+
+LIVE_REFRESH_SECONDS = _refresh_env("ATHENA_LIVE_REFRESH_SECONDS", 10)
+
 
 # Browser session lifetime, and whether the session cookie carries the Secure
 # flag (HTTPS-only). Secure defaults OFF so login works over plain http in local

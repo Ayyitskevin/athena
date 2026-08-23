@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Run controls — Admin{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <a href="/aegis/dashboard" class="muted">← Back to dashboard</a>
+        <h1>Run controls</h1>
+    </div>
+</div>
+
+<p class="muted">
+    Every recorded control request, fleet-wide: what was asked of which run, and
+    what the bound agent said back. "Open" means asked, not yet answered, clock
+    still running. Athena records requests and replies — an acknowledgement
+    proves receipt, a completion is the agent's claim, and expired means the
+    clock ran out, never that anything stopped. Create and inspect a single
+    run's controls on its lineage page.
+</p>
+
+<form method="get" action="/admin/run-controls" class="activity-filters">
+    <label>
+        State
+        <select name="state" onchange="this.form.submit()">
+            {% for s in states %}
+            <option value="{{ s }}"{{ " selected" if selected_state == s }}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <button type="submit">Filter</button>
+</form>
+
+{% include "admin/partials/run_controls_list.html" %}
+
+{% endblock %}

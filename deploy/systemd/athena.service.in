@@ -1,0 +1,34 @@
+[Unit]
+Description=Athena self-hosted operator workspace
+Documentation=https://github.com/Ayyitskevin/athena
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@ATHENA_USER@
+Group=@ATHENA_GROUP@
+WorkingDirectory=@ATHENA_CHECKOUT@
+EnvironmentFile=@ATHENA_CONFIG_DIR@/athena.env
+ExecStart=@ATHENA_CHECKOUT@/.venv/bin/athena-serve --host @ATHENA_BIND_HOST@ --port @ATHENA_PORT@
+Restart=always
+RestartSec=10s
+StartLimitBurst=0
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=@ATHENA_DATA_DIR@
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=athena
+
+[Install]
+WantedBy=multi-user.target

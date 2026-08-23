@@ -12,24 +12,36 @@ from contextlib import asynccontextmanager
 import hashlib
 import json
 import logging
+import secrets
 from pathlib import Path
 import sqlite3
+import time
 from typing import Awaitable, Callable
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import Depends, FastAPI, Request
+from fastapi.openapi.docs import (
+    get_redoc_html,
+    get_swagger_ui_html,
+    get_swagger_ui_oauth2_redirect_html,
+)
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette._utils import get_route_path
 
+from athena import __version__ as athena_version
 from athena import config
 from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
+from athena.aegis import fleet_attention as aegis_fleet_attention
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
+from athena.aegis import desk_api as aegis_desk_api
+from athena.workflows import playbook_api as workflows_playbook_api
+from athena.workflows import workspace_search_api as workflows_workspace_search_api
 from athena.aegis import dispatch_api as aegis_dispatch_api
 from athena.aegis import forge_api as aegis_forge_api
-from athena.web import render
+from athena.web import chips, render
 from athena.aegis import embeds_api as aegis_embeds_api
 from athena.aegis import filters_api as aegis_filters_api
 from athena.aegis import fleet_metrics_api as aegis_fleet_metrics_api
@@ -42,17 +54,22 @@ from athena.core import (
     activity_api,
     approvals,
     approvals_api,
+    answerability_api,
     attachments_api,
     budgets,
     db,
+    deployment,
+    deps,
     identity,
     security_events,
     events_api,
     idempotency,
     notifications,
     notifications_api,
+    provenance,
     rate_limits,
     run_context,
+    run_controls_api,
     search_api,
     security_api,
     sessions,
@@ -82,11 +99,25 @@ from athena.web import work_context as web_work_context
 from athena.web import init_templates, router as web_router
 
 
-SECURITY_HEADERS = {
-    "Content-Security-Policy": (
+def content_security_policy(nonce: str | None = None) -> str:
+    """The CSP for one response.
+
+    `style-src` carries no 'unsafe-inline'. Athena renders a handful of styles that
+    genuinely depend on data — a label's stored hex, a rollup bar's percentage, a
+    page's nesting depth — and none of them can be a static class, because the value
+    is not known until the row is read. A CSP nonce does NOT license inline `style=`
+    ATTRIBUTES (only `<style>` elements and scripts), so those values are emitted as
+    tiny nonce-carrying `<style>` elements instead, and the attribute form is gone
+    from the templates entirely. See web/render.py and the label chips.
+
+    The nonce is per response and unguessable, so markup an attacker manages to
+    inject cannot carry a matching one.
+    """
+    style_src = "'self'" if nonce is None else f"'self' 'nonce-{nonce}'"
+    return (
         "default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
+        f"style-src {style_src}; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "font-src 'self'; "
@@ -94,7 +125,11 @@ SECURITY_HEADERS = {
         "base-uri 'self'; "
         "form-action 'self'; "
         "frame-ancestors 'none'"
-    ),
+    )
+
+
+SECURITY_HEADERS = {
+    "Content-Security-Policy": content_security_policy(),
     "Cross-Origin-Opener-Policy": "same-origin",
     "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
     "Referrer-Policy": "same-origin",
@@ -135,6 +170,117 @@ def _is_signed_inbound(method: str, path: str) -> bool:
         or path.startswith("/callbacks/icarus/")
         or path.startswith("/forge/")
     )
+
+
+# The browser paths that must stay reachable when ATHENA_ANONYMOUS_READS=0, because
+# closing them would lock the operator out of the instrument they use to stop being
+# anonymous. Everything here either IS the sign-in path, carries its own credential,
+# or discloses nothing: the login form and its SSO round trip, sign-out, the health
+# probe, and the packaged static assets the login page itself needs to render.
+_ANONYMOUS_ALWAYS_ALLOWED = frozenset(
+    {"/login", "/login/sso", "/auth/callback", "/logout", "/healthz"}
+)
+
+
+class _BrowserSessionRequired(Exception):
+    """A closed browser route was reached without a resolved session."""
+
+
+def _require_browser_session(request: Request) -> None:
+    """Require the browser identity path when anonymous reads are closed.
+
+    Browser routes render from ``request.state.user``; bearer and trusted actor
+    headers belong to REST/MCP and deliberately do not satisfy this dependency.
+    """
+    if _anonymous_web_read_allowed(request.method, get_route_path(request.scope)):
+        return
+    if getattr(request.state, "user", None) is None:
+        raise _BrowserSessionRequired
+
+
+def _anonymous_web_read_allowed(method: str, path: str) -> bool:
+    """Whether a signed-out browser request may proceed with reads closed."""
+    if config.ANONYMOUS_READS:
+        return True
+    if path in _ANONYMOUS_ALWAYS_ALLOWED or path.startswith("/static/"):
+        return True
+    # A machine callback authenticates its own body; it never had a session.
+    if _is_signed_inbound(method, path):
+        return True
+    # Creating the FIRST user on an empty database presents the one-time bootstrap
+    # credential instead of a session. Gating it would make a closed instance
+    # impossible to set up — the flag would lock the operator out of their own box.
+    return method == "POST" and path == "/users"
+
+
+class DeploymentBoundaryMiddleware:
+    """Refuse requests outside Athena's declared socket and Host boundary.
+
+    The accepted socket address comes from the ASGI server scope; the Host value
+    comes from the request and is therefore validated independently. This is a
+    defense against accidental direct-interface exposure and DNS rebinding. It
+    cannot detect a proxy or tunnel that reaches Athena over an allowed socket.
+    """
+
+    def __init__(
+        self,
+        app,
+        *,
+        network_mode: str,
+        allowed_authorities: tuple[deployment.Authority, ...],
+        expected_server: tuple[str, int] | None,
+    ):
+        self.app = app
+        self.network_mode = network_mode
+        self.allowed_authorities = allowed_authorities
+        self.expected_server = expected_server
+        self.allowed_ports = frozenset(
+            authority.port for authority in allowed_authorities
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+
+        server = scope.get("server")
+        server_allowed = (
+            isinstance(server, (list, tuple))
+            and len(server) >= 2
+            and isinstance(server[0], str)
+            and isinstance(server[1], int)
+            and not isinstance(server[1], bool)
+            and (
+                deployment.server_address_matches(
+                    server[0],
+                    server[1],
+                    self.expected_server,
+                )
+                if self.expected_server is not None
+                else (
+                    deployment.address_allowed(server[0], self.network_mode)
+                    and server[1] in self.allowed_ports
+                )
+            )
+        )
+        authority_allowed = deployment.request_authority_allowed(
+            scope.get("headers", ()),
+            scheme=scope.get("scheme", "http"),
+            allowed=self.allowed_authorities,
+        )
+        if server_allowed and authority_allowed:
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await _send_json_response(
+            send,
+            {"detail": "request rejected by deployment boundary"},
+            status_code=421 if server_allowed else 503,
+            extra_headers={"Cache-Control": "private, no-store"},
+        )
 
 
 class SignedInboundRateLimitMiddleware:
@@ -241,6 +387,98 @@ class RequestBodyLimitMiddleware:
         await self.app(scope, replay_receive, send)
 
 
+class RequestConnectionMiddleware:
+    """Give one request exactly one SQLite connection, and close it once.
+
+    A request used to open several: the session middleware for the cookie, the route
+    dependency for the handler, and an idempotent write three more (identity,
+    reserve, publish). Opening is not free — `sqlite3.connect` is lazy and costs
+    ~0.03 ms, but the first statement that touches the file pays ~2.2 ms to attach,
+    per connection, and holding another open does not help. Measured here: ~4.4 ms
+    of attach on a browser page and ~11 ms on an idempotent write, against a
+    fleet-attention rollup that measures ~0.5 ms.
+
+    Pure ASGI, and registered OUTSIDE the session middleware so it also spans the
+    layers that run after the route returns — the idempotency publish, an exception
+    handler recording a refusal. Those are why the route dependency cannot own the
+    lifetime: it has already exited by then.
+
+    The holder opens lazily, so this middleware costs a request that never touches
+    the database exactly nothing — a `/static` fetch still opens zero connections.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        holder = deps.RequestConnection(lambda: scope["app"].state.db_path)
+        scope.setdefault("state", {})["db_holder"] = holder
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            # One close, whatever happened — a handler that raised past every
+            # exception handler still must not leak the file handle.
+            holder.close()
+
+
+class SlowRequestLogMiddleware:
+    """Log one WARNING for any request slower than the configured threshold.
+
+    Nothing in Athena has ever measured request latency. Uvicorn's access log
+    carries method, path, and status but no timing, so a read that quietly grew
+    from 0.7ms to 229ms — which is exactly what F-0.1 was — looks identical to a
+    healthy one in the only per-request record that exists. This is the smallest
+    thing that makes that visible in production, and it is the runtime companion
+    to the CI scaling gate in tests/test_activity_feed_scaling.py.
+
+    Pure ASGI so it can time the response through to the last byte the inner
+    stack sends, including the idempotency publish that runs after the route
+    returns. `finally` so a request that raises is still timed — a slow failure
+    is the interesting kind.
+
+    What it deliberately does NOT log: query strings, headers, bodies, cookies,
+    or the raw path. It reports the ROUTE TEMPLATE (`/issues/{issue_id}`), which
+    is low-cardinality and cannot carry a page title, a search term, an
+    attacker-supplied 404 path, or a token. An unmatched request logs its method
+    and nothing else; uvicorn's access log already has the raw path for those.
+    """
+
+    def __init__(self, app, *, threshold_ms: int):
+        self.app = app
+        self.threshold_ms = threshold_ms
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or self.threshold_ms <= 0:
+            await self.app(scope, receive, send)
+            return
+        status_code = 0
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        started = time.perf_counter()
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            if elapsed_ms >= self.threshold_ms:
+                route = getattr(scope.get("route"), "path", None)
+                _logger.warning(
+                    "slow request: %s %s -> %s in %.0fms (threshold %dms)",
+                    scope.get("method", "?"),
+                    route or "<unmatched>",
+                    status_code or "no response",
+                    elapsed_ms,
+                    self.threshold_ms,
+                )
+
+
 class RunContextMiddleware:
     """Capture run headers into the request-scoped run context, so every activity
     event recorded while handling this request is stamped with that run metadata.
@@ -303,6 +541,7 @@ _IDEMPOTENCY_API_ROOTS = (
     "/notifications",
     "/pages",
     "/projects",
+    "/run-controls",
     "/spaces",
     "/sprints",
     "/tokens",
@@ -397,22 +636,44 @@ class IdempotencyMiddleware:
         ]
 
     @staticmethod
-    def _run_db(db_path, operation, **kwargs):
-        conn = db.connect(db_path)
+    def _run_db(source, operation, **kwargs):
+        """Run one idempotency operation against the request's connection.
+
+        `source` is the request's RequestConnection when the request-connection
+        middleware is installed — the normal case, and the reason an idempotent
+        write no longer pays three extra ~2.2 ms attaches. It falls back to a path
+        so this middleware still works when mounted without that one (a bare ASGI
+        app, a focused test).
+
+        Nothing here closes a borrowed connection: the reserve happens before the
+        route and the publish after it, and the middleware that opened it closes it
+        once. Every idempotency operation commits or rolls back its own transaction,
+        so the connection goes back clean — RequestConnection.get verifies that on
+        the next handoff rather than trusting it.
+        """
+        if isinstance(source, deps.RequestConnection):
+            return operation(source.get(), **kwargs)
+        conn = db.connect(source)
         try:
             return operation(conn, **kwargs)
         finally:
             conn.close()
 
+    def _source(self, scope):
+        """This request's connection holder, or the path if there is no middleware."""
+        return scope.get("state", {}).get("db_holder") or self.db_path
+
     async def _authenticate(
-        self, headers: dict[bytes, bytes]
+        self, scope, headers: dict[bytes, bytes]
     ) -> tuple[str | None, int | None, bool]:
         """Return a canonical live credential identity, optional token id, and
         whether that credential's account is currently paused."""
         authorization = headers.get(b"authorization")
         if authorization is not None and authorization.lower().startswith(b"bearer "):
             raw = authorization[len(b"bearer ") :].strip().decode("latin-1")
-            actor = await asyncio.to_thread(self._resolve_token, raw)
+            actor = await asyncio.to_thread(
+                self._resolve_token, self._source(scope), raw
+            )
             if actor is None:
                 return None, None, False
             return (
@@ -428,24 +689,20 @@ class IdempotencyMiddleware:
                     actor_id = int(raw_actor.decode("latin-1"))
                 except ValueError:
                     return None, None, False
-                actor = await asyncio.to_thread(self._resolve_actor, actor_id)
+                actor = await asyncio.to_thread(
+                    self._resolve_actor, self._source(scope), actor_id
+                )
                 if actor is not None:
                     return f"actor:{actor_id}", None, bool(actor.get("paused_at"))
         return None, None, False
 
-    def _resolve_token(self, raw: str) -> dict | None:
-        conn = db.connect(self.db_path)
-        try:
-            return tokens.resolve_token(conn, raw)
-        finally:
-            conn.close()
+    @classmethod
+    def _resolve_token(cls, source, raw: str) -> dict | None:
+        return cls._run_db(source, tokens.resolve_token, raw=raw)
 
-    def _resolve_actor(self, actor_id: int) -> dict | None:
-        conn = db.connect(self.db_path)
-        try:
-            return users.get_user(conn, actor_id)
-        finally:
-            conn.close()
+    @classmethod
+    def _resolve_actor(cls, source, actor_id: int) -> dict | None:
+        return cls._run_db(source, users.get_user, user_id=actor_id)
 
     @staticmethod
     async def _read_body(receive):
@@ -502,6 +759,7 @@ class IdempotencyMiddleware:
 
     async def _claim(
         self,
+        scope,
         *,
         key: str,
         identity: str,
@@ -511,7 +769,7 @@ class IdempotencyMiddleware:
     ) -> idempotency.ClaimResult:
         return await asyncio.to_thread(
             self._run_db,
-            self.db_path,
+            self._source(scope),
             idempotency.claim_or_read,
             key=key,
             identity=identity,
@@ -523,6 +781,7 @@ class IdempotencyMiddleware:
 
     async def _mark_indeterminate(
         self,
+        scope,
         *,
         key: str,
         identity: str,
@@ -533,7 +792,7 @@ class IdempotencyMiddleware:
             await asyncio.shield(
                 asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.mark_indeterminate,
                     key=key,
                     identity=identity,
@@ -633,7 +892,7 @@ class IdempotencyMiddleware:
             return
 
         try:
-            identity, token_id, paused = await self._authenticate(headers)
+            identity, token_id, paused = await self._authenticate(scope, headers)
         except sqlite3.Error:
             _logger.exception("could not authenticate idempotent request")
             await _send_json_response(
@@ -694,6 +953,7 @@ class IdempotencyMiddleware:
         while True:
             try:
                 claim = await self._claim(
+                    scope,
                     key=key,
                     identity=identity,
                     method=method,
@@ -807,6 +1067,7 @@ class IdempotencyMiddleware:
                 raise _IdempotencyCaptureError("incomplete ASGI response")
         except BaseException:
             await self._mark_indeterminate(
+                scope,
                 key=key,
                 identity=identity,
                 owner_token=owner_token,
@@ -831,7 +1092,7 @@ class IdempotencyMiddleware:
                 )
                 completion = await asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.complete,
                     key=key,
                     identity=identity,
@@ -850,6 +1111,7 @@ class IdempotencyMiddleware:
                     raise RuntimeError("invalid idempotency completion state")
             except BaseException:
                 await self._mark_indeterminate(
+                    scope,
                     key=key,
                     identity=identity,
                     owner_token=owner_token,
@@ -866,6 +1128,7 @@ class IdempotencyMiddleware:
 
         if status_code >= 500:
             await self._mark_indeterminate(
+                scope,
                 key=key,
                 identity=identity,
                 owner_token=owner_token,
@@ -875,7 +1138,7 @@ class IdempotencyMiddleware:
             try:
                 await asyncio.to_thread(
                     self._run_db,
-                    self.db_path,
+                    self._source(scope),
                     idempotency.release,
                     key=key,
                     identity=identity,
@@ -1002,8 +1265,46 @@ def _append_vary(response: Response, *dimensions: str) -> None:
         response.headers["Vary"] = ", ".join(existing)
 
 
+# How long a browser may keep a packaged static asset. Long, because the URL
+# carries a build fingerprint (see static_version): a changed file is a changed
+# URL, so a stale copy is unreachable rather than merely old. `immutable` tells the
+# browser not to revalidate even on reload.
+STATIC_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+
+def static_version(static_dir: Path) -> str:
+    """A short fingerprint of the packaged static assets, computed once at startup.
+
+    Appended to every static URL the templates emit, so a released change to
+    styles.css or the vendored htmx bundle reaches browsers that are holding a
+    year-long cached copy of the old one. Content-based rather than a version
+    number, because the version does not change on every asset edit and a wrong
+    answer here is a user staring at a stale stylesheet.
+
+    No build chain (VISION rule 4): this is a hash over the files themselves, taken
+    at startup. Editing a static file while the server runs therefore does not
+    change the fingerprint until it restarts — which is the documented trade for
+    not having a watcher, and is invisible in the deployments Athena supports,
+    where the files change only when the package does.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(static_dir.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(static_dir).as_posix().encode())
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:12]
+
+
 def _apply_private_cache_policy(request: Request, response: Response) -> None:
     """Prevent shared or browser caches from retaining sensitive responses."""
+    # Packaged static assets are the same bytes for every caller and disclose
+    # nothing, so they are exempt: marking them `private, no-store` because the
+    # browser happened to send a session cookie made every page load re-fetch the
+    # stylesheet, the htmx bundle and the confirm script. They are cached hard and
+    # busted by URL instead.
+    if _path_matches_root(request.url.path, "/static"):
+        response.headers.setdefault("Cache-Control", STATIC_CACHE_CONTROL)
+        return
     request_has_cookie = "cookie" in request.headers
     response_sets_cookie = "set-cookie" in response.headers
     session_path = any(
@@ -1046,8 +1347,13 @@ def _apply_private_cache_policy(request: Request, response: Response) -> None:
     _append_vary(response, *vary)
 
 
-def _attach_security_headers(response: Response, *, is_https: bool = False) -> Response:
+def _attach_security_headers(
+    response: Response, *, is_https: bool = False, nonce: str | None = None
+) -> Response:
     for name, value in SECURITY_HEADERS.items():
+        if name == "Content-Security-Policy" and nonce is not None:
+            response.headers.setdefault(name, content_security_policy(nonce))
+            continue
         response.headers.setdefault(name, value)
     # Emit HSTS when the operator declared HTTPS (COOKIE_SECURE) OR the request actually
     # arrived over TLS. The scheme check auto-covers a direct-HTTPS deploy; behind a
@@ -1063,10 +1369,14 @@ def _attach_security_headers(response: Response, *, is_https: bool = False) -> R
 def create_app(
     db_path: str | Path | None = None,
     *,
+    network_mode: str | None = None,
+    allowed_authorities: tuple[str, ...] | None = None,
+    expected_server: tuple[str, int] | None = None,
     max_request_body_bytes: int | None = None,
     token_rate_limit_per_minute: int | None = None,
     anon_rate_limit_per_minute: int | None = None,
     login_rate_limit_per_minute: int | None = None,
+    login_account_rate_limit_per_minute: int | None = None,
     idempotency_wait_seconds: float | None = None,
     idempotency_lease_seconds: int | None = None,
     idempotency_ttl_seconds: int | None = None,
@@ -1074,6 +1384,15 @@ def create_app(
 ) -> FastAPI:
     _configure_logging()
     resolved_db = Path(db_path) if db_path is not None else config.DB_PATH
+    resolved_network_mode = (
+        config.NETWORK_MODE if network_mode is None else network_mode
+    )
+    resolved_authorities = deployment.normalize_runtime_authorities(
+        config.ALLOWED_AUTHORITIES
+        if allowed_authorities is None
+        else allowed_authorities,
+        network_mode=resolved_network_mode,
+    )
     body_limit = (
         config.MAX_REQUEST_BODY_BYTES
         if max_request_body_bytes is None
@@ -1093,6 +1412,11 @@ def create_app(
         config.LOGIN_RATE_LIMIT_PER_MINUTE
         if login_rate_limit_per_minute is None
         else login_rate_limit_per_minute
+    )
+    login_account_limit = (
+        config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
+        if login_account_rate_limit_per_minute is None
+        else login_account_rate_limit_per_minute
     )
     idempotency_wait = (
         config.IDEMPOTENCY_WAIT_SECONDS
@@ -1182,7 +1506,15 @@ def create_app(
                 ):
                     raise result
 
-    app = FastAPI(title="Athena", lifespan=lifespan)
+    app = FastAPI(title="Athena", lifespan=lifespan, docs_url=None, redoc_url=None)
+    # The footer states which build rendered the page. Not decoration: a
+    # long-running process serves old Python under live-reloaded templates
+    # (this exact skew broke every htmx button on 2026-08-08), and a visible
+    # version that disagrees with the checkout is the ten-second diagnosis.
+    # athena.__version__ is the same source guide.py and recovery bundles
+    # stamp, so every surface names one version.
+    app.state.version = athena_version
+    app.state.build_provenance = provenance.CURRENT_BUILD
 
     # Teach the undo engine each layer's inverses. core/undo.py owns the mechanism
     # and may not import aegis/mentor (the import contract), so the composition
@@ -1335,15 +1667,33 @@ def create_app(
 
     app.add_exception_handler(undo.UndoRefused, _undo_refused)
     app.state.token_rate_limiter = rate_limits.FixedWindowRateLimiter(token_limit)
-    # Throttles anonymous reads and signed-inbound attempts by direct client IP.
+    # Throttles optional-identity REST reads and signed-inbound attempts by
+    # direct client IP. It is not a global browser-request ceiling.
     app.state.anon_rate_limiter = rate_limits.FixedWindowRateLimiter(anon_limit)
     # Throttles POST /login by client IP, before the password hash; see web/auth.py.
     app.state.login_rate_limiter = rate_limits.FixedWindowRateLimiter(login_limit)
+    # ...and by the SUBMITTED EMAIL, which is the axis credential stuffing cannot
+    # spread across: the per-IP limiter above never sees a distributed run converge
+    # on one account. Same limiter, different key.
+    app.state.login_account_rate_limiter = rate_limits.FixedWindowRateLimiter(
+        login_account_limit
+    )
+
     # Middleware is registered inside-out. Among the general request stack,
-    # idempotency wraps the routes, run context wraps idempotency, and the
-    # request-body cap is outermost so keyed requests are bounded before the
-    # fingerprint layer buffers them. The signed-inbound limiter is registered
-    # last below and sits outside this entire stack.
+    # idempotency wraps the routes and run context wraps idempotency. The body
+    # cap is added after session middleware below, so oversized requests are
+    # bounded before cookie-controlled SQLite work. The deployment boundary is
+    # registered last and sits outside this entire stack.
+    async def _browser_session_required(
+        request: Request, exc: Exception
+    ) -> RedirectResponse:
+        if not isinstance(exc, _BrowserSessionRequired):
+            raise exc
+        del request
+        return RedirectResponse("/login", status_code=303)
+
+    app.add_exception_handler(_BrowserSessionRequired, _browser_session_required)
+
     app.add_middleware(
         IdempotencyMiddleware,
         db_path=resolved_db,
@@ -1353,10 +1703,24 @@ def create_app(
         max_response_bytes=idempotency_response_limit,
     )
     app.add_middleware(RunContextMiddleware)
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")
     async def attach_session_user(request: Request, call_next):
+        # Packaged static assets are identical for everyone and identify nobody, so
+        # they skip session resolution entirely. This is not a micro-optimization:
+        # the cookie a signed-in browser sends on EVERY asset request was opening a
+        # SQLite connection, resolving the session, and — for an admin — building
+        # the whole fleet-attention rollup, once per stylesheet and once per script.
+        # A page load therefore paid for the rollup several times over, and
+        # `private, no-store` (below) guaranteed the browser asked again next time.
+        if _path_matches_root(request.url.path, "/static"):
+            request.state.user = None
+            request.state.csrf_token = None
+            request.state.unread_count = 0
+            request.state.attention_total = 0
+            request.state.attention_signals = []
+            request.state.oidc_enabled = False
+            return await call_next(request)
         # Resolve the browser session once per request onto request.state.user,
         # so every page (and the nav) knows who is logged in without each route
         # re-doing it. The session's CSRF token rides alongside on
@@ -1366,6 +1730,11 @@ def create_app(
         request.state.csrf_token = None
         # Unread-inbox count for the nav badge; 0 when logged out.
         request.state.unread_count = 0
+        # Fleet-attention rollup for the Intervene badge. Admin-only below —
+        # every input is an admin-scoped read, so for everyone else these
+        # stay zero/empty and the template renders nothing.
+        request.state.attention_total = 0
+        request.state.attention_signals = []
         # Whether SSO is configured, so the nav can show the linked-identities link
         # only when it's relevant. Evaluated per request so tests/config see it live.
         request.state.oidc_enabled = config.oidc_enabled()
@@ -1377,7 +1746,10 @@ def create_app(
         )
         raw = None if signed_inbound else request.cookies.get(config.SESSION_COOKIE)
         if raw:
-            conn = db.connect(request.app.state.db_path)
+            # The request's one connection (see RequestConnectionMiddleware) rather
+            # than a second one opened and thrown away here — resolving a cookie used
+            # to cost a full ~2.2 ms attach on top of the route's own.
+            conn = deps.request_connection(request).get()
             try:
                 request.state.user = sessions.resolve_session(conn, raw)
                 # The pause lever reaches browser sessions too: a paused user is
@@ -1395,23 +1767,83 @@ def create_app(
                     request.state.unread_count = notifications.unread_count(
                         conn, request.state.user["id"], actor=request.state.user
                     )
+                    # The number that decides whether you need to look must not
+                    # live only on the dashboard. The same build the dashboard
+                    # card runs, so nav and card cannot disagree. Admins only:
+                    # the rollup aggregates admin-scoped reads.
+                    #
+                    # Cost, re-measured on a seeded 10k-issue / 100k-event database
+                    # (scripts/seed_benchmark.py, no ANALYZE): 0.11 ms with no
+                    # supervision state, 0.50 ms at 5 agents, 1.21 ms at 25, 3.81 ms
+                    # at 100. It scales with FLEET SIZE, not with trail size — the
+                    # 0075 verb-window index removed the activity scans that used to
+                    # make it grow with the log (12.9 ms at 100k events before that
+                    # index; the "~0.1 ms" this comment used to claim predated the
+                    # measurement). What remains is per-agent work: the active-work
+                    # projection, the worker registry, the approval queue.
+                    #
+                    # There is deliberately NO cache here. A cache would trade
+                    # staleness in an attention badge — the signal whose whole job is
+                    # to be current — for about half a millisecond at the fleet sizes
+                    # this product is for. If a much larger fleet ever makes this
+                    # hurt, the honest fix is a short TTL measured against a
+                    # re-measurement, not a cache added on the strength of this note.
+                    if request.state.user.get("role") == "admin":
+                        attention = aegis_fleet_attention.build_attention(conn)
+                        request.state.attention_total = attention["total"]
+                        request.state.attention_signals = attention["signals"]
             finally:
-                conn.close()
+                # Not closed here: the route, the idempotency publish and any
+                # exception handler still need it. The middleware that opened it
+                # closes it once, at the end of the request.
+                deps.RequestConnection._ensure_clean(conn)
         return await call_next(request)
+
+    # Outside the session middleware, so the one connection also spans the layers
+    # that run AFTER the route returns (the idempotency publish, an exception
+    # handler recording a refusal). It opens lazily, so sitting this high costs a
+    # request that never reaches the database nothing at all.
+    app.add_middleware(RequestConnectionMiddleware)
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=body_limit)
 
     @app.middleware("http")
     async def harden_http(request: Request, call_next):
+        # Minted BEFORE the routes run, because the templates have to embed it, and
+        # spent in this response's own CSP below. One per response, unguessable, so
+        # injected markup cannot carry a matching one.
+        request.state.csp_nonce = secrets.token_urlsafe(16)
         response = await call_next(request)
         _apply_private_cache_policy(request, response)
         return _attach_security_headers(
-            response, is_https=request.url.scheme == "https"
+            response,
+            nonce=request.state.csp_nonce,
+            is_https=request.url.scheme == "https",
         )
 
-    # Registered last, therefore outermost: a saturated signed-inbound peer is
-    # refused before the body cap buffers bytes or browser/session middleware runs.
+    # A saturated signed-inbound peer is refused before the body cap buffers bytes
+    # or browser/session middleware runs.
     app.add_middleware(
         SignedInboundRateLimitMiddleware,
         limiter=app.state.anon_rate_limiter,
+    )
+    # Inside the deployment boundary, outside everything else: a request refused
+    # for an unsupported Host or socket never ran any Athena work, so timing it
+    # would report the cost of a rejection as if it were a slow page. Everything
+    # past that point — limiter, body cap, session, route, database, idempotency
+    # publish — is inside this timer.
+    app.add_middleware(
+        SlowRequestLogMiddleware,
+        threshold_ms=config.SLOW_REQUEST_LOG_MS,
+    )
+    # Registered last, therefore outermost: unsupported accepted-socket addresses
+    # and Host authorities are refused before body, session, limiter, route, or DB
+    # work. Empty authorities intentionally make raw unconfigured ASGI startup
+    # answer no HTTP requests; athena-serve installs the validated allowlist.
+    app.add_middleware(
+        DeploymentBoundaryMiddleware,
+        network_mode=resolved_network_mode,
+        allowed_authorities=resolved_authorities,
+        expected_server=expected_server,
     )
 
     # Mount web foundation (static + Jinja templates + page router).
@@ -1431,18 +1863,33 @@ def create_app(
     # passes no hosts renders inert text, so a surface that has not opted in
     # degrades to today's behavior rather than breaking.
     templates.env.filters["forge_detail"] = render.render_forge_detail
+    # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
+    # no database access — see chips.py for which domains are exact vs. best-effort.
+    templates.env.filters["status_tone"] = chips.status_tone
+    templates.env.filters["category_tone"] = chips.category_tone
+    templates.env.filters["priority_tone"] = chips.priority_tone
+    templates.env.filters["checkin_tone"] = chips.checkin_tone
+    templates.env.filters["health_tone"] = chips.health_tone
+    templates.env.filters["token_tone"] = chips.token_tone
+    templates.env.filters["sprint_tone"] = chips.sprint_tone
+    # The static fingerprint, computed once here rather than per render. Templates
+    # append it to every /static URL so a released asset change reaches a browser
+    # holding a year-long cached copy (see STATIC_CACHE_CONTROL).
+    app.state.static_version = static_version(package_root / "static")
+    templates.env.globals["static_version"] = app.state.static_version
     init_templates(templates)
-    app.include_router(web_router)
-    app.include_router(web_projects.router)
-    app.include_router(web_activity.router)
-    app.include_router(web_boards.router)
-    app.include_router(web_filters.router)
-    app.include_router(web_auth.router)
-    app.include_router(web_mentor.router)
-    app.include_router(web_labels.router)
-    app.include_router(web_admin.router)
-    app.include_router(web_work_context.router)
-    app.include_router(web_fleet_metrics.router)
+    browser_dependencies = [Depends(_require_browser_session)]
+    app.include_router(web_router, dependencies=browser_dependencies)
+    app.include_router(web_projects.router, dependencies=browser_dependencies)
+    app.include_router(web_activity.router, dependencies=browser_dependencies)
+    app.include_router(web_boards.router, dependencies=browser_dependencies)
+    app.include_router(web_filters.router, dependencies=browser_dependencies)
+    app.include_router(web_auth.router, dependencies=browser_dependencies)
+    app.include_router(web_mentor.router, dependencies=browser_dependencies)
+    app.include_router(web_labels.router, dependencies=browser_dependencies)
+    app.include_router(web_admin.router, dependencies=browser_dependencies)
+    app.include_router(web_work_context.router, dependencies=browser_dependencies)
+    app.include_router(web_fleet_metrics.router, dependencies=browser_dependencies)
 
     # Core REST API (users, api tokens, cross-module search).
     app.include_router(users_api.router)
@@ -1455,6 +1902,15 @@ def create_app(
     app.include_router(aegis_forge_api.router)
     app.include_router(tokens_api.router)
     app.include_router(agent_runs_api.router)
+    app.include_router(run_controls_api.router)
+    app.include_router(answerability_api.router)
+    app.include_router(aegis_desk_api.router)
+    app.include_router(workflows_playbook_api.router)
+    # Before search_api: both live under /search, and the workspace route is the
+    # more specific path. Registration order does not decide the match here (the
+    # paths are distinct), but keeping the composed route adjacent to its layer's
+    # other router is what makes the layering legible in one read.
+    app.include_router(workflows_workspace_search_api.router)
     app.include_router(search_api.router)
     app.include_router(activity_api.router)
     app.include_router(events_api.router)
@@ -1478,10 +1934,49 @@ def create_app(
     app.include_router(mentor_api.spaces_router)
     app.include_router(mentor_api.pages_router)
 
+    # Framework-generated browser HTML follows the same session-only policy as
+    # Athena web routes. The machine-readable OpenAPI document remains public
+    # product metadata; it carries no workspace rows or credential facts.
+    @app.get(
+        "/docs",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def swagger_ui() -> Response:
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=f"{app.title} - Swagger UI",
+            oauth2_redirect_url="/docs/oauth2-redirect",
+        )
+
+    @app.get(
+        "/docs/oauth2-redirect",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def swagger_ui_redirect() -> Response:
+        return get_swagger_ui_oauth2_redirect_html()
+
+    @app.get(
+        "/redoc",
+        include_in_schema=False,
+        dependencies=[Depends(_require_browser_session)],
+    )
+    def redoc() -> Response:
+        return get_redoc_html(
+            openapi_url=app.openapi_url or "/openapi.json",
+            title=f"{app.title} - ReDoc",
+        )
+
     @app.get("/healthz")
     def healthz():
         """Liveness check — cheap, no DB hit. Used by tests and monitoring."""
         return {"status": "ok"}
+
+    @app.get("/version")
+    def version(request: Request):
+        """Code identity snapshot — public metadata with no database access."""
+        return request.app.state.build_provenance.as_dict()
 
     @app.get("/readyz")
     def readyz(request: Request):
@@ -1501,5 +1996,7 @@ def create_app(
     return app
 
 
-# The instance the server runs:  uvicorn athena.main:app
+# Direct Uvicorn startup through this module-global instance is an unsupported
+# development escape hatch. athena-serve constructs a fresh app pinned to the
+# exact listener it preflighted and hands that object to Uvicorn directly.
 app = create_app()

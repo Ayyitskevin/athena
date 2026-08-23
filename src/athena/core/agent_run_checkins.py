@@ -129,6 +129,21 @@ def list_latest_checkins(
     ]
 
 
+def checkin_agent_ids(conn: sqlite3.Connection, run_id: str) -> list[int]:
+    """Every agent id that has checked in under one run id, ascending.
+
+    Check-ins are keyed (agent_id, run_id), so two agents can legitimately report
+    the same run id string; callers that need ONE owner (run controls) treat more
+    than one row here — absent an authoritative run binding — as ambiguity to
+    refuse, never a tie to break."""
+    rows = conn.execute(
+        "SELECT DISTINCT agent_id FROM agent_run_checkins "
+        "WHERE run_id = ? ORDER BY agent_id",
+        (run_id,),
+    ).fetchall()
+    return [int(row["agent_id"]) for row in rows]
+
+
 def _bounded_limit(limit: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int):
         raise ValueError("limit must be an integer")

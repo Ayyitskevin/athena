@@ -37,17 +37,36 @@ python3.12 -m venv .venv
 .venv/bin/athena-demo --db /tmp/athena-review.db
 ```
 
-Sign in with the printed credentials. Then follow:
+Sign in with the printed credentials. The workspace is seeded mid-flight: Sol is
+holding a claim, working under run `demo-sol-run-001`, and waiting on you for two
+answers. Then follow:
 
-1. the dashboard into the **Athena Review** project;
-2. an assigned issue into its append-only activity;
-3. the agent cockpit and the seeded `demo-sol-run-001` facts; and
-4. **Operator Playbook → Fleet operating guide** into its linked issues.
+1. the dashboard's **fleet attention** card — three non-zero counts, each naming
+   the surface it lives on;
+2. **Approvals waiting on you** → Sol asked to close the issue it just finished,
+   and the gate you set is holding the close. Approve or reject it, then look at
+   the issue's activity: the ask, your answer, and the close are three separate
+   recorded facts;
+3. **Run controls awaiting an agent** → you steered Sol's live run and Sol has
+   not answered. Athena records the ask and the reply; it cannot signal a
+   process, so an unanswered control reads as expired, never as obeyed;
+4. the agent cockpit — Sol's live claim, its worker heartbeat, and its hourly
+   budget with real consumption against it; and
+5. **Operator Playbook → Fleet operating guide** into its linked issues.
+
+Answering (2) and (3) is the whole product in ninety seconds: an agent did real
+work, you kept the authority to let it land, and every step is on a trail you
+can replay. To drive it from the other side — as the agent — follow
+[docs/RUNTIME_RECIPE.md](docs/RUNTIME_RECIPE.md).
 
 The command refuses to overwrite an existing database or attachment path,
 disables webhook delivery and automation, and has no public-bind option. Use
 `--seed-only` to create the workspace without starting the server. See
 [REVIEW_GUIDE.md](REVIEW_GUIDE.md) for a focused 30-minute code tour.
+
+Setting up an instance you intend to **keep** — bootstrap an administrator,
+onboard your first agent, and close the operator loop once — is the second path
+in [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
 ## The operator loop
 
@@ -130,16 +149,21 @@ Every pull request runs the repository's
 coverage run is:
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install \
+python3.12 -I -m venv .venv
+.venv/bin/python -I -m pip install \
+  --only-binary :all: \
+  --require-hashes -r constraints/bootstrap-py312.txt
+.venv/bin/python -I -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/python -m pip check
-.venv/bin/python -m pip freeze --exclude-editable \
+.venv/bin/python -I -m pip check
+.venv/bin/python -I -m pip freeze --exclude-editable \
   | diff -u constraints/ci-py312.txt -
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format --check .
 .venv/bin/python -m mypy src/athena
 .venv/bin/python scripts/check_import_contracts.py
+.venv/bin/python scripts/check_write_ownership.py
+.venv/bin/python scripts/check_imported_at_guards.py
 scripts/coverage.sh
 ```
 
@@ -153,11 +177,20 @@ undo — over real loopback HTTP, with nothing stubbed.
 The coverage script runs the complete test suite with full-source branch
 coverage and enforces the floors in `pyproject.toml`. The current baseline, final
 evidence, explicit non-runs, and release blockers live in
-[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). CI then builds an sdist
-and its wheel in isolation, verifies the packaged runtime files from both the
-checkout and extracted sdist, installs the wheel, and runs the process smoke
-outside the checkout. The exact local packaging recipe is in
-[CONTRIBUTING.md](CONTRIBUTING.md); the constrained dependency graph is
+[`docs/RELEASE_READINESS.md`](docs/RELEASE_READINESS.md). After that gate, CI
+snapshots one bounded sdist and builds one wheel from that exact snapshot with a
+hash-locked evidence toolchain. It binds the wheel payload to the sdist source,
+verifies the packaged runtime files and exact `athena-serve` console-script
+mapping, and requires fresh Linux/CPython 3.12 base and MCP installs—resolved
+under the CI constraints—to equal the dependency closures evaluated from the
+installed wheel metadata. The base wheel boots outside the checkout through the
+installed launcher, completes its bootstrap/password/restart process smoke, and
+stops cleanly. `pip-audit` checks both exact third-party name/version sets for
+known advisories, then Athena binds the verified graphs to the wheel SHA-256 in
+CycloneDX evidence. Runtime downloads remain version-pinned rather than
+artifact-hash-locked; the candidate is unsigned and is not a published release.
+The exact local recipe is in [CONTRIBUTING.md](CONTRIBUTING.md); the
+version-pinned dependency graph is
 [`constraints/ci-py312.txt`](constraints/ci-py312.txt).
 
 ## Status and boundaries
@@ -187,9 +220,13 @@ visibility-aware reads, scoped tokens, SSRF-hardened webhooks (with an explicit
 opt-in allowlist for receivers on your own machine or tailnet —
 `ATHENA_EGRESS_PRIVATE_HOSTS`), portability tools,
 and operational health checks. Exposing any self-hosted app publicly still
-requires deliberate TLS, secret, proxy, backup, and monitoring configuration;
-see [SECURITY.md](SECURITY.md) and
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+falls outside the supported deployment contract. `athena-serve` permits only an
+exact loopback or declared Tailscale bind, validates exact Host authorities,
+requires the exact packaged logical schema, refuses unsafe bootstrap/recovery
+state before Athena/Uvicorn accepts traffic, and disables proxy header trust. It
+cannot detect a proxy, tunnel, NAT rule, container publication, Tailscale ACL,
+or Funnel configuration; see
+[SECURITY.md](SECURITY.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Development
 
@@ -197,7 +234,7 @@ see [SECURITY.md](SECURITY.md) and
 python3.12 -m venv .venv
 .venv/bin/python -m pip install \
   -c constraints/ci-py312.txt -e ".[dev,mcp]"
-.venv/bin/uvicorn athena.main:app --reload
+.venv/bin/athena-demo --db /tmp/athena-development.db
 ```
 
 An empty instance intentionally cannot create its first user with the default
@@ -206,16 +243,27 @@ configuration. Before the first start, follow the credentialed, loopback-only
 restart without its one-time token. For a disposable seeded review instance,
 `athena-demo --db /tmp/athena-review.db` remains the shorter path.
 
+Long-running local/tailnet instances use `athena-serve`. Raw
+`uvicorn athena.main:app` is an unsupported development escape hatch: without an
+explicit Host allowlist it rejects every request, and even with one it bypasses
+deployment preflight.
+
 Before submitting a change, run the complete local gate documented in
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The app migrates SQLite on startup. Runtime health endpoints are `/healthz`
-and `/readyz`. A holder of the configured one-time bootstrap credential creates
-the first user as admin; browser admins then manage users at `/admin/users` and
-scoped API tokens at `/settings/tokens`.
+The supported normal launcher requires SQLite to be current before it asks
+Uvicorn to accept requests; it does not silently apply a release migration. Stop
+the service, take a matched database-and-attachment recovery pair, and use the
+intentional offline `athena-doctor --migrate` procedure in
+[OPERATIONS.md](docs/OPERATIONS.md#deploy-preflight) before an upgrade. Bootstrap
+and direct development factories retain transactional migration startup. Runtime
+health endpoints are `/healthz` and `/readyz`. A holder of the configured
+one-time bootstrap credential creates the first user as admin; browser admins
+then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 
 ## Project guides
 
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — five minutes: the disposable demo, or the instance you keep
 - [REVIEW_GUIDE.md](REVIEW_GUIDE.md) — bounded peer-review path and questions
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, workflow, and architecture guardrails
 - [SECURITY.md](SECURITY.md) — trust boundary and private reporting
@@ -233,11 +281,20 @@ scoped API tokens at `/settings/tokens`.
 - [docs/FORGE.md](docs/FORGE.md) — forge integration: inbound signed events as imported history
 - [docs/UNDO.md](docs/UNDO.md) — undo by compensation, and what is not reversible
 - [docs/WORKERS.md](docs/WORKERS.md) — the worker registry and the cooperative kill
+- [docs/RUN_CONTROLS.md](docs/RUN_CONTROLS.md) — steering one live run by recorded request
+- [docs/TRAIL_INTEGRITY.md](docs/TRAIL_INTEGRITY.md) — the activity trail's hash chain, and what it does not claim
+- [docs/ANSWERABILITY.md](docs/ANSWERABILITY.md) — asks and answers per agent, never a score
+- [docs/PLANNING.md](docs/PLANNING.md) — the project timeline and live parent rollups
+- [docs/EDITING.md](docs/EDITING.md) — preview, crash-safe drafts, inline images, HTML export
 - [docs/EXCEPTION_SURFACES.md](docs/EXCEPTION_SURFACES.md) — the attention rollup and security signals
 - [docs/RUN_LEARNINGS.md](docs/RUN_LEARNINGS.md) — promoting what a run learned into Mentor
 - [docs/DISPATCH.md](docs/DISPATCH.md) — handing work to an external executor, and hearing back
 - [docs/ACTIVE_WORK.md](docs/ACTIVE_WORK.md) — claimed-work supervision and attention semantics
 - [docs/WORK_CONTEXT.md](docs/WORK_CONTEXT.md) — visibility-safe agent context
+- [docs/DESK.md](docs/DESK.md) — one call, full orientation: what an agent reads first
+- [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) — docs that start work, from a page's checklist
+- [docs/SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) — watching a space, and what an inbox does not claim
+- The **Field Guide** — an agent's manual, seeded as ordinary pages with `athena-field-guide <db>`
 - [AGENTS.md](AGENTS.md) — repository contract for human and AI contributors
 
 ## License

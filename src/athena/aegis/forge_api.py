@@ -29,8 +29,9 @@ from pydantic import BaseModel
 
 from athena.aegis import forge
 from athena.core import event_source_commands, event_sources, forge_events
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor
+from athena.core.identity import admin_actor, optional_actor
 
 router = APIRouter(tags=["forge"])
 
@@ -53,7 +54,12 @@ class EnabledUpdate(BaseModel):
 
 # The adapter's half of the command-error dialect: the command names WHAT was
 # refused (a closed kind vocabulary), the transport owns which status that means.
+# unauthorized/forbidden exist because the command now owns the admin gate; the
+# admin_actor dependency still refuses first on the wire, so these two fire only
+# for a caller that reached the command some other way.
 _STATUS_BY_KIND = {
+    "unauthorized": 401,
+    "forbidden": 403,
     "invalid": 422,
     "not_found": 404,
     "conflict": 409,
@@ -89,7 +95,7 @@ def create_event_source(
         raise HTTPException(status_code=422, detail="source host is required")
     try:
         return event_source_commands.register_source(
-            conn, actor_id=actor["id"], name=name, kind=payload.kind, host=host
+            conn, actor=actor, name=name, kind=payload.kind, host=host
         )
     except event_source_commands.EventSourceCommandError as exc:
         raise HTTPException(
@@ -99,7 +105,7 @@ def create_event_source(
 
 @router.put("/event-sources/{source_id}/enabled")
 def set_event_source_enabled(
-    source_id: int,
+    source_id: RowIdPath,
     payload: EnabledUpdate,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -107,7 +113,7 @@ def set_event_source_enabled(
     """Pause or resume acceptance without rotating the secret."""
     try:
         return event_source_commands.set_source_enabled(
-            conn, actor_id=actor["id"], source_id=source_id, enabled=payload.enabled
+            conn, actor=actor, source_id=source_id, enabled=payload.enabled
         )
     except event_source_commands.EventSourceCommandError as exc:
         raise HTTPException(
@@ -117,21 +123,19 @@ def set_event_source_enabled(
 
 @router.delete("/event-sources/{source_id}", status_code=204)
 def delete_event_source(
-    source_id: int,
+    source_id: RowIdPath,
     actor: dict = Depends(admin_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
     """Revoke a source. History it already landed is kept — those events were
     authentic when recorded, and revoking a credential is not a reason to rewrite
     the trail."""
-    if not event_source_commands.delete_source(
-        conn, actor_id=actor["id"], source_id=source_id
-    ):
+    if not event_source_commands.delete_source(conn, actor=actor, source_id=source_id):
         raise HTTPException(status_code=404, detail="no such event source")
 
 
 @router.get("/forge/help")
-def forge_help() -> dict:
+def forge_help(_actor: dict | None = Depends(optional_actor)) -> dict:
     """The inbound vocabulary and limits as data, emitted by the parser itself."""
     return forge_events.describe()
 

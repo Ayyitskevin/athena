@@ -22,7 +22,7 @@
         </a>
         <span class="muted">{{ it.event_at }}</span>
         {% if not it.read_at %}
-        <form method="post" action="/inbox/{{ it.id }}/read" style="display:inline">
+        <form method="post" action="/inbox/{{ it.id }}/read" class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button small">Mark read</button>
         </form>

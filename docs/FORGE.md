@@ -45,7 +45,8 @@ not a hash of it. A database leak that exposes token hashes costlessly also
 exposes live source secrets, so the row deserves the same care as the
 credential it is.
 
-Point your forge's webhook at:
+For a forge that can already reach Athena inside the same supported local or
+tailnet boundary, point its webhook at:
 
 ```
 POST https://your-athena/forge/gh
@@ -53,16 +54,20 @@ POST https://your-athena/forge/gh
 
 with GitHub's standard `X-Hub-Signature-256` and `X-GitHub-Event` headers.
 
-That URL must be reachable **from the forge**, which is the one place this
-feature pulls against the rest of the deployment story. Everything else in
-Athena assumes a trusted local machine or tailnet; a `github.com` webhook
-cannot dial your tailnet. The expected shape is a tunnel or reverse proxy that
-exposes **only** this route to the public internet — a cloud tunnel or
-Tailscale Funnel in front of a proxy that forwards `/forge/` and nothing else —
-leaving every other surface tailnet-only.
-A self-hosted forge on the same network needs no exception. This is also why
-the route is hardened the way the Refusals section describes: it is the one
-endpoint an anonymous stranger is *expected* to reach.
+Reachability is where this feature pulls against the rest of Athena's deployment
+story. A public forge such as `github.com` cannot dial a private tailnet, while
+the supported `athena-serve` contract has no public or proxy-terminated mode.
+Athena also cannot detect that a tunnel, reverse proxy, NAT rule, container
+publication, or Tailscale Funnel has exposed an otherwise permitted listener.
+Consequently, receiving events from a public forge is **not a supported release
+shape today**.
+
+A release owner may eventually design a separately reviewed edge exception that
+forwards only the exact forge route, preserves the preflighted `Host`, enforces
+its own connection/body/rate limits, and exposes no other Athena surface. The
+route hardening below is necessary for that design, but it is not approval to
+deploy one. A self-hosted forge on the same local/tailnet boundary needs no such
+exception.
 
 `PUT /event-sources/{id}/enabled` pauses acceptance **without rotating the
 secret**, so silencing a noisy forge does not mean re-registering the webhook on
@@ -161,12 +166,15 @@ honest reading is: *you allowed this channel, and this came through it.*
 ## Limits, stated
 
 - **No backfill, ever.** Only what was delivered while the source was enabled.
-- **Rate limited like every other anonymous path.** Each delivery attempt is
-  charged against the anonymous per-IP limiter
+- **Rate limited before credential or body work.** Each delivery attempt is
+  charged against the shared per-IP limiter
   (`ATHENA_ANON_RATE_LIMIT_PER_MINUTE`, off by default) **before** the source is
   looked up or the body is read — so unsigned bursts, including against unknown
   or paused source names, get a 429 instead of free HMAC work and database
-  lookups.
+  lookups. `athena-serve` requires this limit to be positive in tailnet mode; any
+  future public edge exception would need both a positive Athena limit and an
+  independently bounded edge. This setting also covers optional-identity REST
+  reads; it is not a global browser-request ceiling.
 - **512 KB** per delivery, **20 commits** examined per push, **10 issues** landed
   per delivery. Overflow counts as unmatched, so the operator still sees that
   something arrived and did not land.

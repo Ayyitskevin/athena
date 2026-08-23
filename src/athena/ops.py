@@ -4,18 +4,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+import socket
 import sqlite3
 import stat
 import sys
 import tempfile
+import time
+from datetime import datetime, timezone
 
-from athena.core import attachments, db
+from athena.core import activity_chain, attachments, db, deployment
 from athena.core.backup import (
     backup_database,
     prune_backup_directory,
     restore_database,
     validate_retention_plan,
+)
+from athena.core.recovery import (
+    create_recovery_bundle,
+    materialize_recovery_bundle,
+    validate_current_database,
+    verify_recovery_bundle,
 )
 from athena.core.portability import (
     ATTACHMENT_POLICIES,
@@ -28,33 +38,54 @@ from athena.core.run_replay import export_run_replay_database
 from athena.core.source_import import SOURCE_KINDS, write_source_bundle
 
 
-def _check_integrity(conn: sqlite3.Connection) -> None:
-    result = conn.execute("PRAGMA integrity_check").fetchone()
-    if result is None or result[0] != "ok":
-        reason = "no result" if result is None else result[0]
-        raise ValueError(f"database integrity check failed: {reason}")
+def _sqlite_uri(path: Path, *, mode: str) -> str:
+    """Build an exact SQLite URI without treating path bytes as URI syntax."""
+    if mode not in {"ro", "rw"}:
+        raise ValueError("SQLite URI mode must be ro or rw")
+    return f"{path.absolute().as_uri()}?mode={mode}"
+
+
+def _dry_run_migration(db_path: Path) -> None:
+    """Prove a migration and its final schema on a private copy first."""
+    candidate = sqlite3.connect(":memory:")
+    candidate.row_factory = sqlite3.Row
+    try:
+        if db_path.exists():
+            source = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
+            source.row_factory = sqlite3.Row
+            try:
+                source.backup(candidate)
+            finally:
+                source.close()
+        candidate.execute("PRAGMA foreign_keys = ON")
+        db.migrate(candidate)
+        validate_current_database(candidate)
+    finally:
+        candidate.close()
 
 
 def _check_database(db_path: Path, *, migrate: bool) -> str:
     if migrate:
+        # db.migrate() is forward-only and commits each migration. Rehearse the
+        # complete operation and exact packaged schema on an in-memory backup so
+        # an incompatible-but-recognizable database fails before the real file
+        # receives even the first pending migration.
+        _dry_run_migration(db_path)
         conn = db.connect(db_path)
         try:
             applied_now = db.migrate(conn)
-            _check_integrity(conn)
-            status = db.migration_status(conn)
+            status = validate_current_database(conn)
         finally:
             conn.close()
     else:
         if not db_path.exists():
             raise FileNotFoundError(f"database does not exist: {db_path}")
-        uri = f"file:{db_path}?mode=rw"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = sqlite3.connect(_sqlite_uri(db_path, mode="rw"), uri=True)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
-            _check_integrity(conn)
-            status = db.migration_status(conn)
+            status = validate_current_database(conn)
         finally:
             conn.close()
         applied_now = []
@@ -65,6 +96,51 @@ def _check_database(db_path: Path, *, migrate: bool) -> str:
     return (
         f"database: ok ({len(status.applied)} migrations, "
         f"latest {status.latest}, {action})"
+    )
+
+
+def _check_activity_chain(db_path: Path) -> str:
+    """Walk the trail's hash chain (0072) and report the first break, if any.
+
+    Read-only on purpose: a broken chain is a finding to investigate, never
+    something doctor repairs. Bounded windows keep memory flat however long the
+    trail is; the walk itself is the full verification an operator runs after a
+    restore or before trusting a copied database file.
+    """
+    conn = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        present = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'activity_chain'"
+        ).fetchone()
+        if present is None:
+            # A database that predates 0072 has nothing to verify — say so
+            # rather than failing a check the schema cannot satisfy yet.
+            return "activity chain: not present (database predates migration 0072)"
+        report = activity_chain.verify_all(conn)
+        chain_status = activity_chain.status(conn)
+    finally:
+        conn.close()
+
+    if report["mismatch"] is not None:
+        broken = report["mismatch"]
+        raise ValueError(
+            "activity chain verification failed: "
+            f"event {broken['event_id']}: {broken['reason']} ({broken['detail']})"
+        )
+    head = chain_status["head"]
+    if head is None:
+        return (
+            "activity chain: empty "
+            f"({chain_status['unchained_count']} rows predate the chain)"
+        )
+    unchained = chain_status["unchained_count"]
+    before = f"; {unchained} rows predate the chain" if unchained else ""
+    return (
+        f"activity chain: ok ({report['checked']} entries verified; "
+        f"anchor event {chain_status['anchor_event_id']}; "
+        f"head {head['entry_hash'][:12]}… at event {head['event_id']}{before})"
     )
 
 
@@ -86,7 +162,7 @@ def _check_attachment_dir(db_path: Path, attach_dir: Path) -> str:
         probe.write(b"ok")
         probe.flush()
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
     conn.row_factory = sqlite3.Row
     try:
         blob_count = int(conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0])
@@ -115,12 +191,482 @@ def _check_attachment_dir(db_path: Path, attach_dir: Path) -> str:
     return f"attachments: ok ({blob_count} blobs reconciled; {attach_dir})"
 
 
+def _check_database_posture(
+    db_path: Path,
+    *,
+    bootstrap: bool,
+    enabled_oidc_issuer: str | None,
+    max_request_body_bytes: int,
+) -> str:
+    conn = db.connect(db_path)
+    try:
+        return deployment.check_database_posture(
+            conn,
+            bootstrap=bootstrap,
+            enabled_oidc_issuer=enabled_oidc_issuer,
+            max_request_body_bytes=max_request_body_bytes,
+        )
+    finally:
+        conn.close()
+
+
+def _check_bootstrap_database_before_migration(db_path: Path) -> None:
+    """Recognize an empty or existing Athena database without writing to it.
+
+    A missing or structurally empty database is the normal bootstrap case. An
+    existing database with objects must prove it is Athena through a valid
+    immutable migration prefix and its stable users table. This prevents a path
+    typo from migrating an unrelated SQLite database. The authoritative current
+    schema and zero-user checks still run after migration.
+    """
+    if not db_path.exists():
+        return
+    conn = sqlite3.connect(_sqlite_uri(db_path, mode="ro"), uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        objects = conn.execute(
+            "SELECT type, name FROM sqlite_schema "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        ).fetchall()
+        if not objects:
+            return
+        object_names = {str(row["name"]) for row in objects}
+        if "schema_migrations" not in object_names:
+            raise ValueError(
+                "bootstrap refuses an existing database that is not recognized "
+                "as Athena"
+            )
+        status = db.migration_status(conn, require_current=False)
+        if not status.applied:
+            # db.migrate() deliberately commits the canonical ledger before it
+            # applies 0001. A power loss in that narrow window must remain
+            # retryable, but only when the ledger is the database's sole
+            # non-SQLite object and its schema passed migration_status().
+            if object_names == {"schema_migrations"}:
+                return
+            raise ValueError(
+                "bootstrap refuses an existing database without an applied "
+                "Athena schema"
+            )
+        if "users" not in object_names:
+            raise ValueError(
+                "bootstrap refuses an existing database without an applied "
+                "Athena schema"
+            )
+        if int(conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]) != 0:
+            raise ValueError("bootstrap startup requires a database with zero users")
+    finally:
+        conn.close()
+
+
+def _deployment_checks(
+    db_path: Path,
+    attach_dir: Path,
+    *,
+    bootstrap: bool,
+    enabled_oidc_issuer: str | None,
+    max_request_body_bytes: int,
+) -> list[str]:
+    if bootstrap:
+        _check_bootstrap_database_before_migration(db_path)
+    return [
+        _check_database(db_path, migrate=bootstrap),
+        _check_attachment_dir(db_path, attach_dir),
+        _check_database_posture(
+            db_path,
+            bootstrap=bootstrap,
+            enabled_oidc_issuer=enabled_oidc_issuer,
+            max_request_body_bytes=max_request_body_bytes,
+        ),
+    ]
+
+
+def _port_argument(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
+
+
+def _nonnegative_int_argument(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if result < 0:
+        raise argparse.ArgumentTypeError("must be at least 0")
+    return result
+
+
+def _recovery_point_age_seconds(capture_started_at: datetime) -> float:
+    age = (datetime.now(timezone.utc) - capture_started_at).total_seconds()
+    if age < 0:
+        raise ValueError("recovery capture timestamp is in the future")
+    return age
+
+
+def _recovery_error_text(
+    exc: BaseException,
+    *,
+    recovery_destination: Path | None = None,
+) -> str:
+    detail = str(exc) or ("interrupted" if isinstance(exc, KeyboardInterrupt) else "")
+    published_path = getattr(exc, "recovery_published_path", None)
+    if published_path is not None:
+        return (
+            f"{detail}; recovery artifact committed at {published_path}; "
+            "preserve and verify it"
+        )
+    stage_path = getattr(exc, "recovery_stage_path", None)
+    if stage_path is not None and "private stage retained at" not in detail:
+        detail = (
+            f"{detail}; private stage retained at {stage_path}; "
+            "inspect it and remove it explicitly"
+        )
+    if (
+        isinstance(exc, KeyboardInterrupt)
+        and recovery_destination is not None
+        and os.path.lexists(recovery_destination)
+    ):
+        detail = (
+            f"{detail}; recovery destination exists at {recovery_destination}, but "
+            "publication ownership and durability are unknown; preserve and verify "
+            "it before retrying"
+        )
+    return detail
+
+
+def _listener_address(fd: int) -> tuple[str, int]:
+    if fd < 0:
+        raise ValueError("listener file descriptor must be non-negative")
+    try:
+        duplicate = os.dup(fd)
+    except OverflowError as exc:
+        raise ValueError("listener file descriptor is out of range") from exc
+    try:
+        listener = socket.socket(fileno=duplicate)
+    except BaseException:
+        os.close(duplicate)
+        raise
+    try:
+        if listener.family not in {socket.AF_INET, socket.AF_INET6}:
+            raise ValueError("listener file descriptor must be an IPv4 or IPv6 socket")
+        if listener.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) != socket.SOCK_STREAM:
+            raise ValueError("listener file descriptor must be a stream socket")
+        if listener.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN) != 1:
+            raise ValueError("listener file descriptor must already be listening")
+        address = listener.getsockname()
+    finally:
+        listener.close()
+    if (
+        not isinstance(address, tuple)
+        or len(address) < 2
+        or not isinstance(address[0], str)
+        or not isinstance(address[1], int)
+    ):
+        raise ValueError("listener file descriptor has no numeric IP address")
+    return address[0], address[1]
+
+
+def _run_server(*, host: str, port: int, fd: int | None) -> None:
+    import uvicorn
+
+    from athena import config
+    from athena.main import create_app
+
+    application = create_app(
+        network_mode=config.NETWORK_MODE,
+        allowed_authorities=config.ALLOWED_AUTHORITIES,
+        expected_server=(host, port),
+    )
+    if fd is not None:
+        uvicorn.run(
+            application,
+            fd=fd,
+            workers=1,
+            reload=False,
+            lifespan="on",
+            proxy_headers=False,
+            server_header=False,
+            limit_concurrency=100,
+            timeout_graceful_shutdown=30,
+        )
+        return
+    uvicorn.run(
+        application,
+        host=host,
+        port=port,
+        workers=1,
+        reload=False,
+        lifespan="on",
+        proxy_headers=False,
+        server_header=False,
+        limit_concurrency=100,
+        timeout_graceful_shutdown=30,
+    )
+
+
+def serve_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="athena-serve",
+        description="Start Athena through its supported fail-closed deployment gate.",
+    )
+    parser.add_argument(
+        "--host",
+        help="numeric bind address (defaults to 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=_port_argument,
+        help="TCP port (defaults to 8000)",
+    )
+    parser.add_argument(
+        "--fd",
+        type=int,
+        help="inherited listening IPv4/IPv6 socket descriptor",
+    )
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="migrate an empty local database and enable first-admin bootstrap",
+    )
+    args = parser.parse_args(argv)
+    if args.fd is not None and (args.host is not None or args.port is not None):
+        parser.error("--fd cannot be combined with --host or --port")
+
+    try:
+        from athena import config
+
+        if args.fd is None:
+            bind_host, bind_port = deployment.validate_bind(
+                args.host or "127.0.0.1",
+                args.port or 8000,
+                config.NETWORK_MODE,
+            )
+        else:
+            inherited_host, inherited_port = _listener_address(args.fd)
+            bind_host, bind_port = deployment.validate_bind(
+                inherited_host,
+                inherited_port,
+                config.NETWORK_MODE,
+            )
+        authorities = deployment.validate_static_configuration(
+            db_path=config.DB_PATH,
+            attach_dir=config.ATTACH_DIR,
+            network_mode=config.NETWORK_MODE,
+            bind_host=bind_host,
+            bind_port=bind_port,
+            allowed_authorities=config.ALLOWED_AUTHORITIES,
+            bootstrap=args.bootstrap,
+            bootstrap_token=config.BOOTSTRAP_TOKEN,
+            trust_actor_header=config.TRUST_ACTOR_HEADER,
+            cookie_secure=config.COOKIE_SECURE,
+            oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
+            oidc_redirect_url=(
+                config.OIDC_REDIRECT_URL if config.oidc_enabled() else None
+            ),
+            max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+            token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
+            anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
+            login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+            login_account_rate_limit_per_minute=(
+                config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
+            ),
+        )
+        checks = _deployment_checks(
+            config.DB_PATH,
+            config.ATTACH_DIR,
+            bootstrap=args.bootstrap,
+            enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
+            max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+        )
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        print(f"athena-serve: {exc}", file=sys.stderr)
+        return 1
+
+    # The route layer reads these process-local bootstrap invariants. _run_server
+    # then constructs a fresh app from the normalized policy and pins it to the
+    # exact preflighted listener before handing the object to Uvicorn.
+    config.ALLOWED_AUTHORITIES = tuple(authority.render() for authority in authorities)
+    config.BOOTSTRAP_PASSWORD_REQUIRED = args.bootstrap
+    for check in checks:
+        print(check, flush=True)
+    print(
+        f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
+        f"{len(authorities)} Host authorities)",
+        flush=True,
+    )
+    print("athena-serve: preflight ok", flush=True)
+    _run_server(
+        host=bind_host,
+        port=bind_port,
+        fd=args.fd,
+    )
+    return 0
+
+
+def _validate_doctor_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.recovery_bundle:
+        if any(
+            (
+                args.attach_dir is not None,
+                args.migrate,
+                args.deployment,
+                args.host is not None,
+                args.port is not None,
+            )
+        ):
+            parser.error(
+                "--recovery-bundle cannot be combined with live database, "
+                "attachment, migration, deployment, host, or port options"
+            )
+        if args.max_data_recovery_seconds is not None and args.drill_dir is None:
+            parser.error("--max-data-recovery-seconds requires --drill-dir")
+        return
+
+    if any(
+        (
+            args.drill_dir is not None,
+            args.max_recovery_point_age_seconds is not None,
+            args.max_data_recovery_seconds is not None,
+        )
+    ):
+        parser.error("recovery bundle options require --recovery-bundle")
+    if not args.deployment and (args.host is not None or args.port is not None):
+        parser.error("--host and --port require --deployment")
+    if args.deployment and args.migrate:
+        parser.error("--deployment cannot be combined with --migrate")
+    if args.deployment and args.attach_dir is None:
+        parser.error("--deployment requires --attach-dir")
+
+
+def _recovery_doctor_checks(args: argparse.Namespace) -> list[str]:
+    recovery_started = time.monotonic()
+    drill = None
+    if args.drill_dir is None:
+        bundle = verify_recovery_bundle(args.db_path)
+    else:
+        drill = materialize_recovery_bundle(args.db_path, args.drill_dir)
+        bundle = drill.source_bundle
+
+    recovery_age = _recovery_point_age_seconds(bundle.capture_started_at)
+    if (
+        args.max_recovery_point_age_seconds is not None
+        and recovery_age > args.max_recovery_point_age_seconds
+    ):
+        retained = f"; drill retained at {drill.path}" if drill else ""
+        raise ValueError(
+            "recovery bundle is valid but stale: "
+            f"age {recovery_age:.3f}s exceeds "
+            f"{args.max_recovery_point_age_seconds}s{retained}"
+        )
+
+    checks = [
+        "recovery bundle: ok "
+        f"({bundle.attachment_count} attachments, "
+        f"{bundle.attachment_bytes} bytes; age {recovery_age:.3f}s; "
+        "recorded Athena version "
+        f"{json.dumps(bundle.athena_version, ensure_ascii=True)}; {bundle.path})"
+    ]
+    if drill is None:
+        return checks
+
+    recovery_elapsed = time.monotonic() - recovery_started
+    if (
+        args.max_data_recovery_seconds is not None
+        and recovery_elapsed > args.max_data_recovery_seconds
+    ):
+        raise ValueError(
+            "data-recovery drill completed but exceeded its limit: "
+            f"{recovery_elapsed:.3f}s > "
+            f"{args.max_data_recovery_seconds}s; retained at {drill.path}"
+        )
+    checks.append(
+        f"data-recovery drill: ok ({recovery_elapsed:.3f}s; retained at {drill.path})"
+    )
+    return checks
+
+
+def _deployment_doctor_checks(args: argparse.Namespace) -> list[str]:
+    from athena import config
+
+    assert args.attach_dir is not None
+    bind_host, bind_port = deployment.validate_bind(
+        args.host or "127.0.0.1",
+        args.port or 8000,
+        config.NETWORK_MODE,
+    )
+    authorities = deployment.validate_static_configuration(
+        db_path=args.db_path,
+        attach_dir=args.attach_dir,
+        network_mode=config.NETWORK_MODE,
+        bind_host=bind_host,
+        bind_port=bind_port,
+        allowed_authorities=config.ALLOWED_AUTHORITIES,
+        bootstrap=False,
+        bootstrap_token=config.BOOTSTRAP_TOKEN,
+        trust_actor_header=config.TRUST_ACTOR_HEADER,
+        cookie_secure=config.COOKIE_SECURE,
+        oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
+        oidc_redirect_url=(config.OIDC_REDIRECT_URL if config.oidc_enabled() else None),
+        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+        token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
+        anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
+        login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+        login_account_rate_limit_per_minute=config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE,
+    )
+    if args.db_path != config.DB_PATH:
+        raise ValueError("deployment db_path must exactly match ATHENA_DB")
+    if args.attach_dir != config.ATTACH_DIR:
+        raise ValueError("deployment --attach-dir must exactly match ATHENA_ATTACH_DIR")
+    checks = _deployment_checks(
+        args.db_path,
+        args.attach_dir,
+        bootstrap=False,
+        enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
+        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+    )
+    checks.append(
+        f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
+        f"{len(authorities)} Host authorities)"
+    )
+    return checks
+
+
+def _doctor_checks(args: argparse.Namespace) -> list[str]:
+    if args.recovery_bundle:
+        return _recovery_doctor_checks(args)
+    if args.deployment:
+        return _deployment_doctor_checks(args)
+    checks = [_check_database(args.db_path, migrate=args.migrate)]
+    checks.append(_check_activity_chain(args.db_path))
+    if args.attach_dir is not None:
+        checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
+    return checks
+
+
 def doctor_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="athena-doctor",
         description="Check Athena deployment prerequisites.",
     )
-    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "db_path",
+        type=Path,
+        help="Athena SQLite database path, or recovery bundle directory",
+    )
     parser.add_argument(
         "--attach-dir",
         type=Path,
@@ -131,12 +677,54 @@ def doctor_main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="create or migrate the database before checking it",
     )
+    parser.add_argument(
+        "--deployment",
+        action="store_true",
+        help="apply normal athena-serve deployment and recovery checks",
+    )
+    parser.add_argument(
+        "--host",
+        help="numeric deployment bind address (defaults to 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=_port_argument,
+        help="deployment TCP port (defaults to 8000)",
+    )
+    parser.add_argument(
+        "--recovery-bundle",
+        action="store_true",
+        help="strictly verify the positional recovery bundle without modifying it",
+    )
+    parser.add_argument(
+        "--drill-dir",
+        type=Path,
+        help="materialize a verified bundle into this absent private scratch path",
+    )
+    parser.add_argument(
+        "--max-recovery-point-age-seconds",
+        type=_nonnegative_int_argument,
+        metavar="N",
+        help="fail when bundle capture start is more than N seconds old",
+    )
+    parser.add_argument(
+        "--max-data-recovery-seconds",
+        type=_nonnegative_int_argument,
+        metavar="N",
+        help="fail when verification plus scratch materialization exceeds N seconds",
+    )
     args = parser.parse_args(argv)
+    _validate_doctor_arguments(parser, args)
 
     try:
-        checks = [_check_database(args.db_path, migrate=args.migrate)]
-        if args.attach_dir is not None:
-            checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
+        checks = _doctor_checks(args)
+    except KeyboardInterrupt as exc:
+        detail = _recovery_error_text(
+            exc,
+            recovery_destination=args.drill_dir if args.recovery_bundle else None,
+        )
+        print(f"athena-doctor: {detail}", file=sys.stderr)
+        return 130
     except (
         FileNotFoundError,
         NotADirectoryError,
@@ -144,13 +732,28 @@ def doctor_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-doctor: {exc}", file=sys.stderr)
+        print(f"athena-doctor: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
     for check in checks:
         print(check)
     print("athena-doctor: ok")
     return 0
+
+
+def _validate_backup_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    if args.recovery_bundle:
+        if args.attach_dir is None:
+            parser.error("--recovery-bundle requires --attach-dir")
+        if args.overwrite or args.keep is not None or args.retention_glob is not None:
+            parser.error(
+                "--recovery-bundle cannot be combined with overwrite or retention"
+            )
+    elif args.attach_dir is not None:
+        parser.error("--attach-dir requires --recovery-bundle")
 
 
 def backup_main(argv: list[str] | None = None) -> int:
@@ -178,32 +781,60 @@ def backup_main(argv: list[str] | None = None) -> int:
         "--retention-glob",
         help=("file-name glob used with --keep; defaults to <source-db-stem>-*.db"),
     )
+    parser.add_argument(
+        "--recovery-bundle",
+        action="store_true",
+        help="create a snapshot-bound database and attachment recovery bundle",
+    )
+    parser.add_argument(
+        "--attach-dir",
+        type=Path,
+        help="live attachment directory required by --recovery-bundle",
+    )
     args = parser.parse_args(argv)
+    _validate_backup_arguments(parser, args)
     if args.keep is None and args.retention_glob is not None:
         print("athena-backup: --retention-glob requires --keep", file=sys.stderr)
         return 1
     retention_glob = args.retention_glob or f"{args.db_path.stem}-*.db"
 
     try:
-        if args.keep is not None:
-            validate_retention_plan(
+        if args.recovery_bundle:
+            assert args.attach_dir is not None
+            recovery_bundle = create_recovery_bundle(
+                args.db_path,
+                args.attach_dir,
                 args.backup_path,
-                retention_glob,
-                keep=args.keep,
             )
-        backup = backup_database(
-            args.db_path,
-            args.backup_path,
-            overwrite=args.overwrite,
+            backup = None
+            pruned: list[Path] = []
+        else:
+            if args.keep is not None:
+                validate_retention_plan(
+                    args.backup_path,
+                    retention_glob,
+                    keep=args.keep,
+                )
+            backup = backup_database(
+                args.db_path,
+                args.backup_path,
+                overwrite=args.overwrite,
+            )
+            pruned = []
+            if args.keep is not None:
+                pruned = prune_backup_directory(
+                    backup.parent,
+                    retention_glob,
+                    keep=args.keep,
+                    protected=(backup,),
+                )
+    except KeyboardInterrupt as exc:
+        detail = _recovery_error_text(
+            exc,
+            recovery_destination=(args.backup_path if args.recovery_bundle else None),
         )
-        pruned = []
-        if args.keep is not None:
-            pruned = prune_backup_directory(
-                backup.parent,
-                retention_glob,
-                keep=args.keep,
-                protected=(backup,),
-            )
+        print(f"athena-backup: {detail}", file=sys.stderr)
+        return 130
     except (
         FileNotFoundError,
         FileExistsError,
@@ -212,11 +843,20 @@ def backup_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        print(f"athena-backup: {exc}", file=sys.stderr)
+        print(f"athena-backup: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
-    print(f"Backed up {args.db_path} to {backup}")
-    if args.keep is not None:
+    if args.recovery_bundle:
+        print(
+            "Created recovery bundle "
+            f"at {recovery_bundle.path} "
+            f"({recovery_bundle.attachment_count} attachments, "
+            f"{recovery_bundle.attachment_bytes} bytes)"
+        )
+    else:
+        assert backup is not None
+        print(f"Backed up {args.db_path} to {backup}")
+    if not args.recovery_bundle and args.keep is not None:
         print(
             "Pruned "
             f"{len(pruned)} old backup(s) matching {retention_glob!r}; "
@@ -536,3 +1176,143 @@ def restore_main(argv: list[str] | None = None) -> int:
 
     print(f"Restored {args.backup_path} to {restored}")
     return 0
+
+
+def field_guide_main(argv: list[str] | None = None) -> int:
+    """Seed the Field Guide into an instance you keep.
+
+    This belongs beside the other operator tools rather than inside
+    ``athena-demo``: every command in this module operates on an EXISTING
+    database, while the demo's whole contract is that it refuses one. Same
+    seeding function underneath (``athena.guide``) — one implementation, two
+    entry points, because "never a second seeder" is about the content, not
+    about which CLI the operator happens to be holding.
+    """
+    # Imported HERE, not at module scope: importing this module must never pull in
+    # athena.config, because config validates at import time and offline recovery
+    # (athena-backup / athena-restore / athena-doctor) has to keep working on an
+    # instance whose service configuration is broken — that is exactly when you
+    # need it. `guide` reaches mentor, which reaches config, so a module-level
+    # import would turn a bad ATHENA_NETWORK_MODE into a traceback from every
+    # command in this file. Seeding the guide is not a recovery command and may
+    # legitimately require a loadable app.
+    from athena import guide
+
+    parser = argparse.ArgumentParser(
+        prog="athena-field-guide",
+        description="Seed the agent Field Guide as pages in an existing workspace.",
+    )
+    parser.add_argument("db_path", type=Path, help="Athena SQLite database path")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "report how the seeded guide compares to the content this install "
+            "ships, and change nothing"
+        ),
+    )
+    parser.add_argument(
+        "--as",
+        dest="author_email",
+        help=(
+            "email of the administrator to author the pages as "
+            "(default: the earliest administrator)"
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    if not args.db_path.exists():
+        print(f"athena-field-guide: no such database: {args.db_path}", file=sys.stderr)
+        return 1
+
+    conn = db.connect(args.db_path)
+    try:
+        if args.check:
+            return _print_field_guide_status(guide.guide_status(conn))
+        author = _field_guide_author(conn, args.author_email)
+        seeded = guide.seed_field_guide(conn, author_id=author["id"])
+    except (guide.FieldGuideError, sqlite3.Error, ValueError) as exc:
+        print(f"athena-field-guide: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+    # Attribution is printed, never silent: these pages now carry someone's name
+    # on the trail, and the operator running the command should see whose.
+    print(f"Field guide seeded into {args.db_path}")
+    print(f"  Space:    {seeded['space']['key']} — {seeded['space']['name']}")
+    print(f"  Pages:    {seeded['page_count']}")
+    print(f"  Authored: {author['email']} (user {author['id']})")
+    return 0
+
+
+#: How each status reads to an operator. The wording carries the distinction the
+#: report exists to make: "outdated" is about Athena's content, "edited" is about
+#: theirs, and the two are never merged into one number.
+_GUIDE_STATUS_LABELS = {
+    "current": "current",
+    "outdated": "outdated — Athena's guide changed since you seeded",
+    "edited": "edited by you — left alone",
+    "outdated_and_edited": "outdated AND edited by you — read both before changing",
+    "missing": "not present — deleted, or added to the guide after you seeded",
+}
+
+
+def _print_field_guide_status(status: dict) -> int:
+    """Render the comparison. Reports only: this command never rewrites a page.
+
+    Returns 0 whether or not the guide is current — drift is information, not a
+    failure, and an operator scripting this should not have to treat "your guide
+    is a version behind" as an error.
+    """
+    space = status["space"]
+    print(f"Field guide: {space['key']} — {space['name']}")
+    print(f"  Athena version: {status['athena_version']}")
+    for key, label in _GUIDE_STATUS_LABELS.items():
+        count = status["counts"].get(key, 0)
+        if count:
+            print(f"  {count:>2}  {label}")
+    drifted = [
+        row
+        for row in status["pages"]
+        if row["status"] in ("outdated", "outdated_and_edited", "missing")
+    ]
+    if drifted:
+        print()
+        print("Pages where this install ships something different:")
+        for row in drifted:
+            print(f"  - {row['title']}  [{row['status']}]")
+        print()
+        print(
+            "Nothing was changed. To take the shipped text for a page, read it in "
+            "the wheel and edit the page yourself — these pages are yours now, and "
+            "reseeding would overwrite work this command cannot see the value of."
+        )
+    else:
+        print()
+        print("Every page matches the content this install ships.")
+    return 0
+
+
+def _field_guide_author(conn: sqlite3.Connection, email: str | None) -> dict:
+    """The administrator the guide's pages are authored as.
+
+    Named explicitly with ``--as``, or the earliest administrator. Refuses rather
+    than guessing when there is nobody to attribute to — an unattributed page is
+    not a thing this workspace can hold, because every write is somebody's.
+    """
+    if email is not None:
+        row = conn.execute(
+            "SELECT id, email, role FROM users WHERE email = ?", (email,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"no such user: {email}")
+        if row["role"] != "admin":
+            raise ValueError(f"{email} is not an administrator")
+        return dict(row)
+    row = conn.execute(
+        "SELECT id, email, role FROM users WHERE role = 'admin' ORDER BY id LIMIT 1"
+    ).fetchone()
+    if row is None:
+        raise ValueError("this workspace has no administrator to author the guide as")
+    return dict(row)

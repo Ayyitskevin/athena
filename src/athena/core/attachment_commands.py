@@ -84,7 +84,7 @@ def create_attachment(
                 attachments.unlink_blobs(
                     pending.blob_path.parent, [pending.blob_path.name]
                 )
-            except BaseException as cleanup:
+            except BaseException as cleanup:  # noqa: BLE001 — the blob rollback must run for KeyboardInterrupt too; re-raised as a group
                 raise BaseExceptionGroup(
                     "attachment transaction and blob rollback both failed",
                     [primary, cleanup],

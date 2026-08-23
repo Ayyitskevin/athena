@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import api, issues, saved_filters
 from athena.core import access
+from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
 
@@ -129,7 +130,7 @@ def index(
 
 @router.get("/{filter_id}", response_model=FilterOut)
 def show(
-    filter_id: int,
+    filter_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -138,7 +139,7 @@ def show(
 
 @router.patch("/{filter_id}", response_model=FilterOut)
 def update(
-    filter_id: int,
+    filter_id: RowIdPath,
     payload: FilterUpdate,
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -170,7 +171,7 @@ def update(
 
 @router.delete("/{filter_id}", status_code=204)
 def delete(
-    filter_id: int,
+    filter_id: RowIdPath,
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
@@ -180,7 +181,7 @@ def delete(
 
 @router.get("/{filter_id}/issues", response_model=list[api.IssueOut])
 def run(
-    filter_id: int,
+    filter_id: RowIdPath,
     actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:

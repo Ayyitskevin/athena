@@ -1,0 +1,35 @@
+{# The two halves of a self-refreshing panel, defined once so the three cockpit
+   surfaces cannot drift apart in how they poll or how they admit staleness.
+
+   live_attrs() goes on the panel's ROOT element and the swap is outerHTML, which
+   is what re-arms the timer: the response is the same partial carrying the same
+   attributes, so each refresh sets up the next one. Putting the attributes on an
+   inner element instead would poll exactly once and then stop, silently.
+
+   live_stamp() is not decoration. A panel whose refresh has quietly died — polling
+   turned off, a suspended tab, a network the browser gave up on — looks identical
+   to a live one until it says when it was built. #}
+
+{% macro live_attrs(live) -%}
+{%- if live and live.enabled %} hx-get="{{ live.url }}" hx-trigger="every {{ live.seconds }}s" hx-swap="outerHTML"{% endif %}
+{%- endmacro %}
+
+{% macro live_stamp(live) -%}
+{%- if live %}
+<p class="note-small live-stamp">
+    Read at {{ live.observed_at }} UTC.{{ live_cadence(live) }}
+</p>
+{%- endif %}
+{%- endmacro %}
+
+{# The cadence sentence on its own, for a panel that already prints its own
+   observation time. Active claimed work is one: the projection stamps the instant
+   IT read the database, which is a truer answer than when the template ran, so
+   adding a second timestamp beside it would invite the reader to wonder which one
+   is the real one. #}
+{% macro live_cadence(live) -%}
+{%- if live %}
+{%- if live.enabled %} Refreshing every {{ live.seconds }}s.
+{%- else %} Automatic refresh is off; reload to update.{% endif %}
+{%- endif %}
+{%- endmacro %}

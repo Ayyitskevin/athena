@@ -16,12 +16,12 @@
         </nav>
         <h1>{{ page.title }}</h1>
         <p class="subtitle muted">Updated {{ page.updated_at }}{% if page.archived_at %}
-            · <span class="badge">Archived</span>{% endif %}</p>
+            · <span class="chip" data-tone="neutral">Archived</span>{% endif %}</p>
     </div>
     <div class="header-actions">
         {% if request.state.user %}
         <form method="post" action="/mentor/pages/{{ page.id }}/{{ 'unwatch' if is_watching else 'watch' }}"
-              style="display:inline">
+              class="inline">
             {% include "partials/csrf.html" %}
             <button type="submit" class="button secondary small">{{ 'Unwatch' if is_watching else 'Watch' }}</button>
         </form>
@@ -32,260 +32,276 @@
     </div>
 </div>
 
-{% if tree %}
-<nav class="doc-tree" aria-label="Pages in this space">
-    <h3>{% if space %}Pages in {{ space.name }}{% else %}Pages in this space{% endif %}</h3>
-    <ul>
-    {% for p in tree %}
-        <li style="padding-left: {{ p.depth * 1.25 }}rem;">
-            {% if p.id == page.id %}
-            <span class="doc-tree-current" aria-current="page">{{ p.title }}</span>
-            {% else %}
-            <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
-            {% endif %}
-        </li>
-    {% endfor %}
-    </ul>
-</nav>
-{% endif %}
-
-<div class="page-body">
-    {% if page.body %}
-    <div class="doc-body">{{ body_html }}</div>
-    {% else %}
-    <p class="empty-state">This page has no content yet.</p>
-    {% endif %}
-</div>
-
-<div class="form-container label-block">
-    <h3>Labels</h3>
-    <div class="label-list">
-        {% for l in page_labels %}
-        <span class="label" style="background: {{ l.color }}1a; color: {{ l.color }};">
-            <a href="/aegis/labels/{{ l.name }}" style="color: inherit;">{{ l.name }}</a>
-            {% if can_write %}
-            <form method="post" action="/mentor/pages/{{ page.id }}/labels/{{ l.id }}/delete" class="label-remove">
-                {% include "partials/csrf.html" %}
-                <button type="submit" title="Remove label" aria-label="Remove label">×</button>
-            </form>
-            {% endif %}
-        </span>
-        {% else %}
-        <span class="muted">None</span>
-        {% endfor %}
-    </div>
-    {% if can_write %}
-    <form method="post" action="/mentor/pages/{{ page.id }}/labels" class="label-add">
-        {% include "partials/csrf.html" %}
-        <input type="text" name="name" list="all-page-labels" placeholder="Add label…" required>
-        <button type="submit" class="button small">Add</button>
-    </form>
-    <datalist id="all-page-labels">
-        {% for l in all_labels %}<option value="{{ l.name }}">{% endfor %}
-    </datalist>
-    {% endif %}
-</div>
-
-<div class="form-container comments">
-    <h3>Comments</h3>
-    {% if comments %}
-    <ul class="comment-list">
-        {% for c in comments %}
-        <li class="comment">
-            <div class="comment-meta">
-                <strong>{{ c.author_name }}</strong>
-                <span class="muted">{{ c.created_at }}</span>
-            </div>
-            <div class="comment-body">{{ c.body_html }}</div>
-            {% set is_author = can_write and request.state.user and c.author_id == request.state.user.id %}
-            {% if is_author or (can_write and is_admin) %}
-            <div class="comment-actions">
-                {% if is_author %}
-                <details class="comment-edit">
-                    <summary class="muted">Edit</summary>
-                    <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/edit">
-                        {% include "partials/csrf.html" %}
-                        <textarea name="body" rows="2" required>{{ c.body }}</textarea>
-                        <button type="submit" class="button small">Save</button>
-                    </form>
-                </details>
+{# The design's reading layout: tree | prose | reference rail, with the
+   administrative half of the page collapsed under the content. The prose is
+   the page; everything else supports it. #}
+<div class="doc-layout{% if not tree %} doc-layout--no-tree{% endif %}">
+    {% if tree %}
+    <nav class="doc-tree" aria-label="Pages in this space">
+        <ul>
+        {% for p in tree %}
+            <li class="doc-tree-depth-{{ [p.depth, 9] | min }}">
+                {% if p.id == page.id %}
+                <span class="doc-tree-current" aria-current="page">{{ p.title }}</span>
+                {% else %}
+                <a href="/mentor/pages/{{ p.id }}">{{ p.title }}</a>
                 {% endif %}
-                <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/delete"
-                      data-confirm="Delete this comment?">
-                    {% include "partials/csrf.html" %}
-                    <button type="submit" class="button small secondary">Delete</button>
-                </form>
-            </div>
-            {% endif %}
-        </li>
+            </li>
         {% endfor %}
-    </ul>
-    {% else %}
-    <p class="note-small">No comments yet.</p>
+        </ul>
+    </nav>
     {% endif %}
 
-    {% if can_write %}
-    <form method="post" action="/mentor/pages/{{ page.id }}/comments" class="comment-form">
-        {% include "partials/csrf.html" %}
-        <label for="comment-body">Add a comment</label>
-        <textarea id="comment-body" name="body" rows="3" required
-                  placeholder="Leave a comment…"></textarea>
-        <button type="submit" class="button small">Comment</button>
-    </form>
-    {% elif request.state.user %}
-    <p class="note-small">Viewer role is read-only.</p>
-    {% else %}
-    <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
-    {% endif %}
-</div>
-
-<div class="form-container">
-    <h3>Attachments</h3>
-    {% if attachments %}
-    <ul class="attachment-list">
-        {% for a in attachments %}
-        <li>
-            <a href="/attachments/{{ a.id }}">{{ a.filename }}</a>
-            <span class="muted">({{ a.byte_size }} bytes)</span>
-            {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
-            <form method="post" action="/mentor/pages/{{ page.id }}/attachments/{{ a.id }}/delete"
-                  data-confirm="Remove {{ a.filename }}?" style="display:inline">
-                {% include "partials/csrf.html" %}
-                <button type="submit" class="button danger small">Remove</button>
-            </form>
-            {% endif %}
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p class="note-small">No attachments yet.</p>
-    {% endif %}
-    {% if can_write %}
-    <form method="post" action="/mentor/pages/{{ page.id }}/attachments"
-          enctype="multipart/form-data" class="attachment-form">
-        {% include "partials/csrf.html" %}
-        <input type="file" name="file" required>
-        <button type="submit" class="button secondary">Upload</button>
-    </form>
-    {% endif %}
-</div>
-
-<div class="form-container">
-    <h3>Referenced by</h3>
-    {% if backlinks %}
-    <ul class="backlink-list">
-        {% for ref in backlinks %}
-        <li>
-            {% if ref.kind == "issue" %}
-            <a href="/aegis/issues/{{ ref.id }}" class="xref">{{ ref.title }}</a>
-            {% else %}
-            <a href="/mentor/pages/{{ ref.id }}" class="xref">{{ ref.title }}</a>
-            {% endif %}
-            <span class="muted">({{ ref.kind }})</span>
-        </li>
-        {% endfor %}
-    </ul>
-    {% else %}
-    <p class="note-small">Nothing references this page yet.</p>
-    {% endif %}
-    <p class="note-small">
-        <a href="/mentor/pages/{{ page.id }}/graph">Connections →</a>
-        the link graph around this page, and text that names it without linking.
-    </p>
-</div>
-
-<div class="form-container">
-    <h3>History</h3>
-    {% if versions %}
-    <table class="issues-table">
-        <thead>
-            <tr><th>Version</th><th>Title</th><th>Edited</th>{% if can_write %}<th></th>{% endif %}</tr>
-        </thead>
-        <tbody>
-        {% for v in versions %}
-            <tr>
-                <td class="muted">v{{ v.version }}</td>
-                <td>{{ v.title }}</td>
-                <td class="muted">{{ v.created_at }}</td>
-                {% if can_write %}
-                <td>
-                    <form method="post" action="/mentor/pages/{{ page.id }}/versions/{{ v.version }}/restore"
-                          data-confirm="Restore version {{ v.version }}? The current content is kept in history.">
-                        {% include "partials/csrf.html" %}
-                        <button type="submit" class="button secondary small">Restore</button>
-                    </form>
-                </td>
-                {% endif %}
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="note-small">No prior versions — this page hasn't been edited yet.</p>
-    {% endif %}
-</div>
-
-<div class="form-container">
-    <h3>Activity</h3>
-    {% with events = activity, show_target = False %}
-    {% include "aegis/partials/activity_list.html" %}
-    {% endwith %}
-</div>
-
-{% if can_write %}
-<div class="form-container">
-    <h3>Manage</h3>
-
-    <form method="post" action="/mentor/pages/{{ page.id }}/move" class="issue-form">
-        {% include "partials/csrf.html" %}
-        <div class="form-group">
-            <label for="move-parent">Move under</label>
-            <select id="move-parent" name="parent_id">
-                <option value=""{% if not page.parent_id %} selected{% endif %}>— Top level —</option>
-                {% for p in move_candidates %}
-                <option value="{{ p.id }}"{% if p.id == page.parent_id %} selected{% endif %}>{{ p.title }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-actions">
-            <button type="submit" class="button secondary">Move page</button>
-        </div>
-    </form>
-
-    {% if page.archived_at %}
-    <form method="post" action="/mentor/pages/{{ page.id }}/unarchive" class="issue-form">
-        {% include "partials/csrf.html" %}
-        <div class="form-actions">
-            <button type="submit" class="button secondary">Restore page</button>
-        </div>
-        <p class="note-small">Archived — hidden from the space tree, navigation, and
-            search. Restoring brings it back with its full history.</p>
-    </form>
-    {% else %}
-    <form method="post" action="/mentor/pages/{{ page.id }}/archive" class="issue-form"
-          data-confirm="Archive this page? It's hidden from the tree and search but kept and restorable.">
-        {% include "partials/csrf.html" %}
-        <div class="form-actions">
-            <button type="submit" class="button secondary">Archive page</button>
-        </div>
-        <p class="note-small">A reversible soft-delete — preserves the page, its history,
-            and its comments.</p>
-    </form>
-    {% endif %}
-
-    <form method="post" action="/mentor/pages/{{ page.id }}/delete"
-          data-confirm="Delete this page? Its history is removed too. This cannot be undone.">
-        {% include "partials/csrf.html" %}
-        {% if child_count > 0 %}
-        <button type="submit" class="button danger" disabled>Delete page</button>
-        <p class="note-small">This page has {{ child_count }} child page{{ "s" if child_count != 1 }} —
-            move or delete {{ "them" if child_count != 1 else "it" }} first.</p>
+    <div class="doc-main">
+        {% if page.body %}
+        <div class="prose">{{ body_html }}</div>
         {% else %}
-        <button type="submit" class="button danger">Delete page</button>
+        <p class="empty-state">This page has no content yet.</p>
         {% endif %}
-    </form>
-</div>
-{% endif %}
 
-<p class="note">Data from the Mentor pages API.</p>
+        <div class="doc-admin">
+            <details>
+                <summary>Comments <span class="count-pill">{{ comments | length }}</span></summary>
+                {% if comments %}
+                <ul class="comment-list">
+                    {% for c in comments %}
+                    <li class="comment">
+                        <div class="comment-meta">
+                            <strong>{{ c.author_name }}</strong>
+                            <span class="muted">{{ c.created_at }}</span>
+                        </div>
+                        <div class="comment-body">{{ c.body_html }}</div>
+                        {% set is_author = can_write and request.state.user and c.author_id == request.state.user.id %}
+                        {% if is_author or (can_write and is_admin) %}
+                        <div class="comment-actions">
+                            {% if is_author %}
+                            <details class="comment-edit">
+                                <summary class="muted">Edit</summary>
+                                <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/edit">
+                                    {% include "partials/csrf.html" %}
+                                    <textarea name="body" rows="2" required>{{ c.body }}</textarea>
+                                    <button type="submit" class="button small">Save</button>
+                                </form>
+                            </details>
+                            {% endif %}
+                            <form method="post" action="/mentor/pages/{{ page.id }}/comments/{{ c.id }}/delete"
+                                  data-confirm="Delete this comment?">
+                                {% include "partials/csrf.html" %}
+                                <button type="submit" class="button small secondary">Delete</button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="note-small">No comments yet.</p>
+                {% endif %}
+
+                {% if can_write %}
+                <form method="post" action="/mentor/pages/{{ page.id }}/comments" class="comment-form">
+                    {% include "partials/csrf.html" %}
+                    <label for="comment-body">Add a comment</label>
+                    <textarea id="comment-body" name="body" rows="3" required
+                              placeholder="Leave a comment…"></textarea>
+                    <button type="submit" class="button small">Comment</button>
+                </form>
+                {% elif request.state.user %}
+                <p class="note-small">Viewer role is read-only.</p>
+                {% else %}
+                <p class="note-small"><a href="/login">Sign in</a> to comment.</p>
+                {% endif %}
+            </details>
+
+            <details>
+                <summary>Attachments <span class="count-pill">{{ attachments | length }}</span></summary>
+                {% if attachments %}
+                <ul class="attachment-list">
+                    {% for a in attachments %}
+                    <li>
+                        {# An image attachment shows what it is and hands over the exact
+                           markdown that embeds it. Without this the inline-image feature is
+                           invisible: nothing on the page tells an author the syntax, so the
+                           capability may as well not exist. #}
+                        {% if a.content_type in inline_image_types %}
+                        <a href="/attachments/{{ a.id }}"><img src="/attachments/{{ a.id }}"
+                             alt="{{ a.filename }}" class="attachment-thumb"></a>
+                        {% endif %}
+                        <a href="/attachments/{{ a.id }}">{{ a.filename }}</a>
+                        <span class="muted">({{ a.byte_size }} bytes)</span>
+                        {% if a.content_type in inline_image_types %}
+                        <code class="attachment-embed">![{{ a.filename }}](/attachments/{{ a.id }})</code>
+                        {% endif %}
+                        {% if can_write and request.state.user and a.uploaded_by == request.state.user.id %}
+                        <form method="post" action="/mentor/pages/{{ page.id }}/attachments/{{ a.id }}/delete"
+                              data-confirm="Remove {{ a.filename }}?" class="inline">
+                            {% include "partials/csrf.html" %}
+                            <button type="submit" class="button danger small">Remove</button>
+                        </form>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <p class="note-small">No attachments yet.</p>
+                {% endif %}
+                {% if can_write %}
+                <form method="post" action="/mentor/pages/{{ page.id }}/attachments"
+                      enctype="multipart/form-data" class="attachment-form">
+                    {% include "partials/csrf.html" %}
+                    <input type="file" name="file" required>
+                    <button type="submit" class="button secondary">Upload</button>
+                </form>
+                {% endif %}
+            </details>
+
+            <details>
+                <summary>History <span class="count-pill">{{ versions | length }}</span></summary>
+                {% if versions %}
+                <table class="issues-table">
+                    <thead>
+                        <tr><th>Version</th><th>Title</th><th>Edited</th>{% if can_write %}<th></th>{% endif %}</tr>
+                    </thead>
+                    <tbody>
+                    {% for v in versions %}
+                        <tr>
+                            <td class="muted">v{{ v.version }}</td>
+                            <td>{{ v.title }}</td>
+                            <td class="muted">{{ v.created_at }}</td>
+                            {% if can_write %}
+                            <td>
+                                <form method="post" action="/mentor/pages/{{ page.id }}/versions/{{ v.version }}/restore"
+                                      data-confirm="Restore version {{ v.version }}? The current content is kept in history.">
+                                    {% include "partials/csrf.html" %}
+                                    <button type="submit" class="button secondary small">Restore</button>
+                                </form>
+                            </td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="note-small">No prior versions — this page hasn't been edited yet.</p>
+                {% endif %}
+            </details>
+
+            <details>
+                <summary>Activity</summary>
+                {% with events = activity, show_target = False %}
+                {% include "aegis/partials/activity_list.html" %}
+                {% endwith %}
+            </details>
+
+            {% if can_write %}
+            <details>
+                <summary>Manage</summary>
+                <form method="post" action="/mentor/pages/{{ page.id }}/move" class="issue-form">
+                    {% include "partials/csrf.html" %}
+                    <div class="form-group">
+                        <label for="move-parent">Move under</label>
+                        <select id="move-parent" name="parent_id">
+                            <option value=""{% if not page.parent_id %} selected{% endif %}>— Top level —</option>
+                            {% for p in move_candidates %}
+                            <option value="{{ p.id }}"{% if p.id == page.parent_id %} selected{% endif %}>{{ p.title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="button secondary">Move page</button>
+                    </div>
+                </form>
+
+                {% if page.archived_at %}
+                <form method="post" action="/mentor/pages/{{ page.id }}/unarchive" class="issue-form">
+                    {% include "partials/csrf.html" %}
+                    <div class="form-actions">
+                        <button type="submit" class="button secondary">Restore page</button>
+                    </div>
+                    <p class="note-small">Archived — hidden from the space tree, navigation, and
+                        search. Restoring brings it back with its full history.</p>
+                </form>
+                {% else %}
+                <form method="post" action="/mentor/pages/{{ page.id }}/archive" class="issue-form"
+                      data-confirm="Archive this page? It's hidden from the tree and search but kept and restorable.">
+                    {% include "partials/csrf.html" %}
+                    <div class="form-actions">
+                        <button type="submit" class="button secondary">Archive page</button>
+                    </div>
+                    <p class="note-small">A reversible soft-delete — preserves the page, its history,
+                        and its comments.</p>
+                </form>
+                {% endif %}
+
+                <form method="post" action="/mentor/pages/{{ page.id }}/delete"
+                      data-confirm="Delete this page? Its history is removed too. This cannot be undone.">
+                    {% include "partials/csrf.html" %}
+                    {% if child_count > 0 %}
+                    <button type="submit" class="button danger" disabled>Delete page</button>
+                    <p class="note-small">This page has {{ child_count }} child page{{ "s" if child_count != 1 }} —
+                        move or delete {{ "them" if child_count != 1 else "it" }} first.</p>
+                    {% else %}
+                    <button type="submit" class="button danger">Delete page</button>
+                    {% endif %}
+                </form>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+
+    <aside class="doc-rail" aria-label="Page references">
+        <div>
+            <h2>Labels</h2>
+            <div class="label-list">
+                {% for l in page_labels %}
+                <style nonce="{{ request.state.csp_nonce }}">.label-c-{{ l.color[1:] }}{--label-color: {{ l.color }}}</style><span class="label label-c-{{ l.color[1:] }}">
+                    <a href="/aegis/labels/{{ l.name }}" class="inherit-color">{{ l.name }}</a>
+                    {% if can_write %}
+                    <form method="post" action="/mentor/pages/{{ page.id }}/labels/{{ l.id }}/delete" class="label-remove">
+                        {% include "partials/csrf.html" %}
+                        <button type="submit" title="Remove label" aria-label="Remove label">×</button>
+                    </form>
+                    {% endif %}
+                </span>
+                {% else %}
+                <span class="muted">None</span>
+                {% endfor %}
+            </div>
+            {% if can_write %}
+            <form method="post" action="/mentor/pages/{{ page.id }}/labels" class="label-add">
+                {% include "partials/csrf.html" %}
+                <input type="text" name="name" list="all-page-labels" placeholder="Add label…" required>
+                <button type="submit" class="button small">Add</button>
+            </form>
+            <datalist id="all-page-labels">
+                {% for l in all_labels %}<option value="{{ l.name }}">{% endfor %}
+            </datalist>
+            {% endif %}
+        </div>
+
+        <div>
+            <h2>Referenced by</h2>
+            {% if backlinks %}
+            <ul class="backlink-list">
+                {% for ref in backlinks %}
+                <li>
+                    {% if ref.kind == "issue" %}
+                    <a href="/aegis/issues/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+                    {% else %}
+                    <a href="/mentor/pages/{{ ref.id }}" class="xref">{{ ref.title }}</a>
+                    {% endif %}
+                    <span class="muted">({{ ref.kind }})</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="note-small">Nothing references this page yet.</p>
+            {% endif %}
+            <p class="note-small">
+                <a href="/mentor/pages/{{ page.id }}/graph">Connections →</a>
+                the link graph around this page, and text that names it without linking.
+            </p>
+        </div>
+    </aside>
+</div>
 {% endblock %}
