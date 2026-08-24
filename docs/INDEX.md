@@ -19,6 +19,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | Doc | One line |
 |---|---|
 | [AGENT_BOOT.md](AGENT_BOOT.md) | The canonical seat-boot block for an agent's rules file, the wiring check, and the sqlite escape-hatch policy. |
+| [AGENT_API.md](AGENT_API.md) | **Generated** map of every MCP tool to its required scope and the REST call(s) behind it — regenerate, never edit. |
 | [DESK.md](DESK.md) | `GET /desk` / `my_desk()` — who you are, what is asked of you, what you hold, what changed: one bounded read. |
 | [OFFICE.md](OFFICE.md) | The cubicle inside the desk: one chair per agent, fenced paths, checkout hint. |
 | [WORK_CONTEXT.md](WORK_CONTEXT.md) | The bounded read packet for one issue: the issue, neighbours, blockers, runbook — prefer it over five separate reads. |
@@ -83,7 +84,8 @@ When a one-liner and the document disagree, the document wins — fix the line.
 ## Looking for something that isn't where you expected?
 
 - **API bearer tokens** (minting, scopes, revocation): [QUICKSTART.md](QUICKSTART.md) path B and [OPERATIONS.md](OPERATIONS.md) — not [TOKENS.md](TOKENS.md), which is CSS.
-- **The REST routes**: there is no hand-written API reference; the routers under
-  `src/athena/{aegis,mentor,core}/` are the truth, and `/aegis/*` browser paths
-  are session+CSRF web routes, *not* the API an agent token can call.
+- **The REST routes**: the app's own `/openapi.json` (browse at `/redoc`) is
+  the full reference, and [AGENT_API.md](AGENT_API.md) maps MCP tools to
+  scopes and routes; `/aegis/*` browser paths are session+CSRF web routes,
+  *not* the API an agent token can call.
 - **How to contribute code**: [../AGENTS.md](../AGENTS.md), not this folder.
