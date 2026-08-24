@@ -137,7 +137,7 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 ## Definition of done (all must hold before you call it done)
 
-1. `ruff check .`, `python scripts/check_import_contracts.py`,
+1. `ruff check .`, `ruff format --check .`, `python scripts/check_import_contracts.py`,
    `python scripts/check_write_ownership.py`,
    `python scripts/check_imported_at_guards.py`,
    `python scripts/check_template_styles.py`,
@@ -180,7 +180,7 @@ tests/       pytest
 docs/        ARCHITECTURE.md — the design of record
 ```
 
-Run the gate: `ruff check .`, `python scripts/check_import_contracts.py`,
+Run the gate: `ruff check .`, `ruff format --check .`, `python scripts/check_import_contracts.py`,
 `python scripts/check_write_ownership.py`,
 `python scripts/check_imported_at_guards.py`,
 `python scripts/check_template_styles.py`,
