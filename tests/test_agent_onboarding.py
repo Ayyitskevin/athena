@@ -135,14 +135,18 @@ def test_command_repeats_the_authz_checks_below_every_transport(tmp_path):
     admin = users.get_user(conn, 1)
     member = users.get_user(conn, 2)
     scoped_admin = {**admin, "_token_scopes": ("read",)}
-    for actor, status in ((None, 401), (member, 403), (scoped_admin, 403)):
+    for actor, kind in (
+        (None, "unauthorized"),
+        (member, "forbidden"),
+        (scoped_admin, "forbidden"),
+    ):
         try:
             agent_commands.onboard_agent(
                 conn, actor=actor, email="sol@e.com", name="Sol", scopes=["read"]
             )
             raise AssertionError("expected AgentCommandError")
         except agent_commands.AgentCommandError as exc:
-            assert exc.status_code == status
+            assert exc.kind == kind
     assert (
         conn.execute(
             "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"
@@ -195,7 +199,7 @@ def test_scopes_are_required_and_refusal_creates_nothing(tmp_path):
         )
         raise AssertionError("expected AgentCommandError")
     except agent_commands.AgentCommandError as exc:
-        assert exc.status_code == 422
+        assert exc.kind == "invalid"
     assert (
         conn.execute(
             "SELECT COUNT(*) AS n FROM users WHERE email = 'sol@e.com'"

@@ -29,12 +29,13 @@ VERB_DELETED = "deleted_automation_rule"
 
 
 class AutomationCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (404 for
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND`` ("not_found" for
     an unknown rule) without the command having to know about HTTP."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _detail(rule: dict) -> str:
@@ -76,11 +77,11 @@ def create_rule(
     """
     normalized_name = name.strip()
     if not normalized_name:
-        raise AutomationCommandError("rule name is required", status_code=422)
+        raise AutomationCommandError("invalid", "rule name is required")
     if conditions is not None and not isinstance(conditions, dict):
-        raise AutomationCommandError("conditions must be an object", status_code=422)
+        raise AutomationCommandError("invalid", "conditions must be an object")
     if action_params is not None and not isinstance(action_params, dict):
-        raise AutomationCommandError("action_params must be an object", status_code=422)
+        raise AutomationCommandError("invalid", "action_params must be an object")
     normalized_conditions = conditions or {}
     normalized_action_params = action_params or {}
     error = automation.validate_rule(
@@ -94,7 +95,7 @@ def create_rule(
         schedule_every_seconds=schedule_every_seconds,
     )
     if error is not None:
-        raise AutomationCommandError(error, status_code=422)
+        raise AutomationCommandError("invalid", error)
 
     with db.transaction(conn, immediate=True):
         rule = automation.create_rule(
@@ -129,14 +130,14 @@ def set_rule_enabled(
     """Arm or disarm a rule and record the change atomically. Records an
     'enabled_automation_rule' / 'disabled_automation_rule' event only when the enabled
     state actually flips (re-arming an already-armed rule is not a lifecycle moment).
-    Raises AutomationCommandError(404) for an unknown rule."""
+    Raises AutomationCommandError("not_found") for an unknown rule."""
     with db.transaction(conn, immediate=True):
         before = automation.get_rule(conn, rule_id)
         if before is None:
-            raise AutomationCommandError("no such rule", status_code=404)
+            raise AutomationCommandError("not_found", "no such rule")
         updated = automation.set_enabled(conn, rule_id, enabled, commit=False)
         if updated is None:
-            raise AutomationCommandError("no such rule", status_code=404)
+            raise AutomationCommandError("not_found", "no such rule")
         if bool(before["enabled"]) != bool(updated["enabled"]):
             activity.record(
                 conn,

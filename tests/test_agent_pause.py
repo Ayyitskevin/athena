@@ -173,7 +173,7 @@ def test_pause_is_admin_only_below_the_transport(tmp_path):
         agent_commands.set_user_paused(
             conn, actor=member, target_user_id=1, paused=True
         )
-    assert excinfo.value.status_code == 403
+    assert excinfo.value.kind == "forbidden"
     conn.close()
 
 

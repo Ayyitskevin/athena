@@ -12,7 +12,7 @@ in?", and that was the last unaudited durable write in the Aegis project surface
 These commands own each write end to end: authorization from live rows, the
 validation, the row change, and the activity event inside one
 ``db.transaction(conn, immediate=True)``. REST and the browser are thin callers
-that translate ``StatusCommandError.status_code``.
+that translate ``StatusCommandError.kind`` through their own status tables.
 
 Two things here are deliberate rather than incidental.
 
@@ -55,15 +55,16 @@ VERB_STATUS_REMOVED = "project_status_removed"
 class StatusCommandError(Exception):
     """A transport-neutral status-configuration rejection.
 
-    ``status_code`` lets each adapter map it without re-deriving the reason:
-    404 for a missing *or hidden* project and an unknown status, 403 for a
-    visible project the actor does not own, 409 for a duplicate name or a
-    removal the project's own state refuses, 422 for malformed input.
+    Carries an error KIND, never a status code; adapters map kinds through
+    their own ``STATUS_BY_KIND``: "not_found" for a missing *or hidden*
+    project and an unknown status, "forbidden" for a visible project the
+    actor does not own, "conflict" for a duplicate name or a removal the
+    project's own state refuses, "invalid" for malformed input.
     """
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _authorized_project(
@@ -78,11 +79,11 @@ def _authorized_project(
     """
     project = projects.get_project(conn, project_id)
     if project is None:
-        raise StatusCommandError("no such project", status_code=404)
+        raise StatusCommandError("not_found", "no such project")
 
     live_actor = users.get_user(conn, actor["id"])
     if live_actor is None:
-        raise StatusCommandError("no such project", status_code=404)
+        raise StatusCommandError("not_found", "no such project")
     # Merge rather than replace: the token's scopes live on the resolved actor
     # the transport built, not on the users row.
     effective = {**actor, **live_actor}
@@ -95,10 +96,10 @@ def _authorized_project(
         created_by=project["created_by"],
     )
     if reason == "not_visible":
-        raise StatusCommandError("no such project", status_code=404)
+        raise StatusCommandError("not_found", "no such project")
     if reason is not None:
         raise StatusCommandError(
-            "only the project's creator may configure its statuses", status_code=403
+            "forbidden", "only the project's creator may configure its statuses"
         )
 
     # Re-resolved under the lock: the transport authorized a credential that may
@@ -110,26 +111,26 @@ def _authorized_project(
         or not identity.token_has_scope(effective, tokens.ISSUE_WRITE_SCOPE)
     ):
         raise StatusCommandError(
-            "only the project's creator may configure its statuses", status_code=403
+            "forbidden", "only the project's creator may configure its statuses"
         )
     return project
 
 
-# Each data-layer refusal mapped to the code every transport should answer with.
+# Each data-layer refusal mapped to the error kind every transport translates.
 # Keyed on the REASON_* constants so a reworded message cannot silently change a
-# 409 into a 422 the way substring matching did.
-_STATUS_BY_REASON = {
-    statuses.REASON_NAME_REQUIRED: 422,
-    statuses.REASON_BAD_CATEGORY: 422,
-    statuses.REASON_DUPLICATE: 409,
-    statuses.REASON_UNKNOWN: 404,
-    statuses.REASON_LAST_STATUS: 409,
-    statuses.REASON_IN_USE: 409,
+# conflict into an invalid the way substring matching did.
+_KIND_BY_REASON = {
+    statuses.REASON_NAME_REQUIRED: "invalid",
+    statuses.REASON_BAD_CATEGORY: "invalid",
+    statuses.REASON_DUPLICATE: "conflict",
+    statuses.REASON_UNKNOWN: "not_found",
+    statuses.REASON_LAST_STATUS: "conflict",
+    statuses.REASON_IN_USE: "conflict",
 }
 
 
 def _refuse(reason: str) -> StatusCommandError:
-    return StatusCommandError(reason, status_code=_STATUS_BY_REASON[reason])
+    return StatusCommandError(_KIND_BY_REASON[reason], reason)
 
 
 def add_status(

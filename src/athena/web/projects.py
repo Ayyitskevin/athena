@@ -948,7 +948,7 @@ def _status_refusal(exc: status_commands.StatusCommandError) -> HTMLResponse:
     (duplicate, bad category, last status, still in use) stays 400, which is what
     this form answered before the migration.
     """
-    code = exc.status_code if exc.status_code in (403, 404) else 400
+    code = {"forbidden": 403, "not_found": 404}.get(exc.kind, 400)
     return HTMLResponse(
         f'<div class="error">{html.escape(str(exc))}</div>', status_code=code
     )

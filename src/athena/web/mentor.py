@@ -54,6 +54,9 @@ from athena.web.csrf import verify_csrf
 from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
 from athena.web.router import _readonly_response, get_templates
 
+# Attachment-command refusal codes this browser adapter answers with.
+_ATTACHMENT_STATUS_BY_KIND = {"invalid": 422, "not_found": 404, "forbidden": 403}
+
 router = APIRouter()
 
 
@@ -1374,7 +1377,7 @@ def add_page_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=exc.status_code,
+            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
@@ -1418,7 +1421,7 @@ def remove_page_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=exc.status_code,
+            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 

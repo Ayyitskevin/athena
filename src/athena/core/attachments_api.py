@@ -34,6 +34,15 @@ from athena.core.identity import optional_actor, require_token_scope, write_acto
 
 router = APIRouter(prefix="/attachments", tags=["core"])
 
+# Adapter-owned translation of command-error kinds (the transport decides).
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
+
 
 def _can_see_attachment(
     conn: sqlite3.Connection, actor: dict | None, att: dict
@@ -146,4 +155,6 @@ def remove(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
