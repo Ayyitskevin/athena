@@ -143,6 +143,8 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
    `python scripts/check_template_styles.py`,
    `python scripts/check_template_routes.py`, and `pytest -q`
    are **green** — no skipped or mocked-away tests passed off as passing.
+   `scripts/gate.sh` chains exactly this list and stops loudly at the first
+   failure; if the gate changes, change AGENTS.md and that script together.
 2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
    boots against a real DB, and the feature works over real HTTP. The retained
    `scripts/smoke_app.py` lifecycle is the minimum release-path proof; hit the
@@ -177,7 +179,7 @@ src/athena/
   main.py    app factory: create_app(), deployment boundary, health, wiring
   ops.py     athena-serve and the retained operator CLIs
 tests/       pytest
-docs/        ARCHITECTURE.md — the design of record
+docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the design of record
 ```
 
 Run the gate: `ruff check .`, `ruff format --check .`, `python scripts/check_import_contracts.py`,
@@ -185,7 +187,7 @@ Run the gate: `ruff check .`, `ruff format --check .`, `python scripts/check_imp
 `python scripts/check_imported_at_guards.py`,
 `python scripts/check_template_styles.py`,
 `python scripts/check_template_routes.py`, and `pytest -q -n 4` (plain
-`pytest -q` remains valid).
+`pytest -q` remains valid) — or `scripts/gate.sh`, which chains exactly these.
 Run the app: configure the absolute storage paths and bootstrap/start through
 `athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
 unsupported development escape hatch and intentionally has no authority unless
