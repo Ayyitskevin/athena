@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+import json
 import os
+import re
 import subprocess
 from typing import Any
 
@@ -112,6 +114,67 @@ def event_message(
     )
 
 
+#: The activity verb for "this assignment has a Buzz ping, and here it is".
+#: Recorded on the issue so an assignment can point at the message that
+#: announced it, instead of the trail saying only that a ping was attempted.
+VERB_RADIOED = "radioed_assignment"
+
+#: A Nostr event id is 32 bytes, lower-case hex. Validated rather than trusted:
+#: the id is interpolated into a ``buzz://`` permalink that ``web/render.py``
+#: linkifies inside issue detail, and that grammar's query class is permissive
+#: on purpose. A malformed id must produce NO receipt rather than a link that
+#: renders but resolves nowhere — a link to the wrong place is worse than no
+#: link (the same rule render.py's own truncation comment states).
+_EVENT_ID_RE = re.compile(r"\A[0-9a-f]{64}\Z")
+
+#: Channel comes from operator config, not from an issue author, so this is a
+#: shape check and not a trust boundary. It still runs: a channel carrying a
+#: space or a quote would break out of the permalink it is pasted into.
+_CHANNEL_RE = re.compile(r"\A[A-Za-z0-9._~-]{1,128}\Z")
+
+
+def message_permalink(channel: str, event_id: str) -> str | None:
+    """The relay's entity-link for one message, or None if either half is unfit.
+
+    Kept beside the sender rather than in ``render.py`` because this is the
+    BUILDER of the grammar render.py only recognizes: one function decides what
+    Athena is willing to emit, so a future param lands in one place.
+    """
+    if not _EVENT_ID_RE.match(event_id or "") or not _CHANNEL_RE.match(channel or ""):
+        return None
+    return f"buzz://message?id={event_id}&channel={channel}"
+
+
+def _receipt_from_stdout(stdout: str) -> tuple[str | None, str | None]:
+    """Read the CLI's send receipt. Returns (event_id, refusal_detail).
+
+    The CLI prints one JSON object on success:
+    ``{"accepted":true,"event_id":"<64 hex>","mention_pubkeys":[],"message":""}``
+
+    Two failure shapes are deliberately kept apart. An explicit
+    ``accepted: false`` is a RELAY REFUSAL — the message did not land, and the
+    caller must report it as failed even though the process exited 0. Anything
+    else unreadable (not JSON, no id, a future output format) is a MISSING
+    RECEIPT: the process succeeded, so the message did land, and downgrading a
+    delivered ping to "failed" because its receipt was unparseable would be a
+    lie in the more damaging direction. Missing receipt costs a permalink;
+    a false failure costs the operator's trust in the trail.
+    """
+    try:
+        payload = json.loads(stdout or "")
+    except (ValueError, TypeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    if payload.get("accepted") is False:
+        detail = str(payload.get("message") or "").strip()
+        return None, detail or "relay refused the message"
+    event_id = payload.get("event_id")
+    if isinstance(event_id, str) and _EVENT_ID_RE.match(event_id):
+        return event_id, None
+    return None, None
+
+
 def send_channel_message(
     *,
     channel: str,
@@ -119,7 +182,14 @@ def send_channel_message(
     mention: str | None = None,
     runner: Callable[..., Any] | None = None,
 ) -> dict:
-    """Post one message to one channel over the CLI. Returns {status, detail}.
+    """Post one message to one channel over the CLI.
+
+    Returns ``{status, detail}`` plus, on a successful send, ``channel`` and
+    ``event_id`` (``None`` when the CLI gave no readable receipt) and
+    ``permalink`` (``None`` unless both halves validate). The receipt is what
+    lets an assignment point at its own announcement; before it, the CLI's
+    stdout was read for nothing but an exit code and the id was discarded at
+    the moment it was known.
 
     The shared transport under every radio use: same optional-by-config skip,
     same fail-soft error shape. The CLI inherits the process environment (plus
@@ -161,7 +231,18 @@ def send_channel_message(
     if getattr(completed, "returncode", 1) != 0:
         err = (getattr(completed, "stderr", "") or "").strip()
         return {"status": "failed", "detail": err or "buzz cli failed"}
-    return {"status": "sent", "detail": f"posted to {channel}"}
+    event_id, refusal = _receipt_from_stdout(getattr(completed, "stdout", "") or "")
+    if refusal is not None:
+        # Exit 0 but the relay said no. Trust the payload over the exit code:
+        # reporting "sent" here would put a ping in the trail that no seat saw.
+        return {"status": "failed", "detail": refusal}
+    return {
+        "status": "sent",
+        "detail": f"posted to {channel}",
+        "channel": channel,
+        "event_id": event_id,
+        "permalink": message_permalink(channel, event_id) if event_id else None,
+    }
 
 
 def send_assignment(
@@ -174,7 +255,13 @@ def send_assignment(
     note: str = "",
     runner: Callable[..., Any] | None = None,
 ) -> dict:
-    """Post one assignment ping. Returns {status, detail}."""
+    """Post one assignment ping.
+
+    Returns the transport's result unchanged on success, so ``event_id`` and
+    ``permalink`` survive up to the caller. The earlier version rebuilt a fresh
+    ``{status, detail}`` dict here and dropped the receipt one line after
+    obtaining it, which is why an assignment could not cite its own ping.
+    """
     if not config.buzz_radio_configured():
         return {"status": "skipped", "detail": "buzz radio is not configured"}
     if not buzz_pubkey:
@@ -193,5 +280,5 @@ def send_assignment(
         runner=runner,
     )
     if result.get("status") == "sent":
-        return {"status": "sent", "detail": "posted to command-deck"}
+        return {**result, "detail": "posted to command-deck"}
     return result

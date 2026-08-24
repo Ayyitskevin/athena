@@ -11,7 +11,7 @@ import sqlite3
 
 from athena import config
 from athena.aegis import issue_commands, issues
-from athena.core import buzz_radio, fleet_roster, users
+from athena.core import activity, buzz_radio, fleet_roster, users
 
 
 class AssignError(Exception):
@@ -74,6 +74,14 @@ def assign_issue_to_seat(
         url=url,
         note=note,
     )
+    receipt = _record_radio_receipt(
+        conn,
+        actor=actor,
+        issue_id=int(updated["id"]),
+        seat_name=str(spec["name"]),
+        issue_key=str(key),
+        ping=ping,
+    )
     return {
         "issue_id": updated["id"],
         "issue_key": key,
@@ -82,4 +90,51 @@ def assign_issue_to_seat(
         "seat_name": spec["name"],
         "agent_id": target["id"],
         "radio": ping,
+        "receipt": receipt,
+    }
+
+
+def _record_radio_receipt(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    issue_id: int,
+    seat_name: str,
+    issue_key: str,
+    ping: dict,
+) -> dict:
+    """Write the ``radioed_assignment`` row that ties an assign to its ping.
+
+    Only a ping that both landed AND produced a usable permalink earns a row.
+    A receipt whose whole purpose is to be followed is worth nothing without
+    somewhere to follow it to, and an event with no link would just be a second
+    way of saying what ``assigned`` already said.
+
+    This never raises into the assign. The module's contract is that the radio
+    is optional and never rolls back a successful assignment, and that has to
+    hold for the audit row as much as for the ping: the desk write is already
+    committed by the time we get here, so letting a bookkeeping failure escape
+    would report a completed assign as an error. The failure is returned rather
+    than swallowed, so the caller can see it happened.
+    """
+    if ping.get("status") != "sent":
+        return {"status": "skipped", "detail": f"radio {ping.get('status')}"}
+    permalink = ping.get("permalink")
+    if not permalink:
+        return {"status": "skipped", "detail": "ping landed without a usable receipt"}
+    try:
+        event = activity.record(
+            conn,
+            actor_id=int(actor["id"]),
+            verb=buzz_radio.VERB_RADIOED,
+            target_kind="issue",
+            target_id=issue_id,
+            detail=f"{issue_key} radioed to {seat_name} — {permalink}",
+        )
+    except sqlite3.Error as exc:  # reported to the caller, never raised into the assign
+        return {"status": "failed", "detail": f"receipt not recorded: {exc}"}
+    return {
+        "status": "recorded",
+        "activity_id": event.get("id"),
+        "permalink": permalink,
     }
