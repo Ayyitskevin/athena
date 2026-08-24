@@ -131,7 +131,19 @@
     <span class="chip" data-tone="danger">unit missing {{ roster.summary.unit_missing }}</span>
     <span class="chip" data-tone="neutral">athena linked {{ roster.summary.athena_linked }}</span>
     <span class="chip" data-tone="accent">undeclared {{ roster.summary.undeclared_agents }}</span>
+    {% if roster.drift %}<span class="chip" data-tone="danger">drift {{ roster.summary.drift }}</span>{% endif %}
 </div>
+
+{% if roster.drift %}
+<div class="error">
+    <strong>Roster drift — the declaration and this host disagree:</strong>
+    <ul>
+        {% for line in roster.drift %}
+        <li>{{ line }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
 
 <section class="panel" aria-labelledby="fleet-seats-heading">
     <div class="panel-head"><h2 id="fleet-seats-heading">Declared seats</h2></div>
