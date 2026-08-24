@@ -12,6 +12,7 @@ import stat
 import sys
 import tempfile
 import time
+from typing import Any
 from datetime import datetime, timezone
 
 from athena.core import activity_chain, attachments, db, deployment
@@ -738,6 +739,168 @@ def doctor_main(argv: list[str] | None = None) -> int:
     for check in checks:
         print(check)
     print("athena-doctor: ok")
+    return 0
+
+
+def _seat_doctor_checks(
+    client: Any, *, expect_scopes: frozenset[str] | None
+) -> list[str]:
+    # ``client`` is an ``athena.mcp.client.AthenaClient``; the annotation is
+    # ``Any`` because that module needs httpx, which the BASE install does not
+    # carry — importing it at ops module level breaks ``athena-serve`` in a
+    # server-only (container) install. The entrypoint imports it lazily.
+    """Prove one seat's wiring end to end, or raise ValueError at the first
+    broken link. Ordering is diagnostic: healthz before whoami means an auth
+    failure is attributable to the token, not to an unreachable server; whoami
+    before the desk means a desk failure is about the desk, not identity."""
+    checks: list[str] = []
+
+    client.healthz()
+    checks.append("server: ok (/healthz answered)")
+
+    # A paused or removed account is refused by the server itself at
+    # /users/me (403 "account is paused" / 401 after removal revokes the
+    # token), so those arrive as AthenaError with the reason in the detail —
+    # the doctor translates rather than re-derives them.
+    me = client.whoami()
+    checks.append(
+        "identity: ok "
+        f"({me.get('name')!r}, role {me.get('role')}, "
+        f"agent={bool(me.get('is_agent'))})"
+    )
+
+    scopes = me.get("scopes")
+    if scopes is None:
+        # A browser session or trusted-header path is not scope-limited. A SEAT
+        # must be a bearer token: anything else cannot be rotated, revoked, or
+        # budgeted per agent, so it fails the wiring check outright.
+        raise ValueError(
+            "authentication is not token-scoped — the seat must present a "
+            "bearer token, not a session or actor header"
+        )
+    held = frozenset(scopes)
+    if expect_scopes is not None and held != expect_scopes:
+        raise ValueError(
+            "token scopes do not match expectation: "
+            f"held {sorted(held)}, expected {sorted(expect_scopes)} — "
+            "narrower breaks the seat, wider is unreviewed authority"
+        )
+    checks.append(f"scopes: ok ({', '.join(sorted(held))})")
+
+    budget = me.get("budget")
+    gated = me.get("approval_required") or []
+    checks.append(
+        "limits: ok "
+        f"(budget={'unlimited' if budget is None else budget}, "
+        f"approval-gated kinds={sorted(gated) if gated else 'none'})"
+    )
+
+    desk = client.my_desk()
+    for lane in ("identity", "asks", "work", "signals"):
+        if lane not in desk:
+            raise ValueError(f"desk answered without its {lane!r} lane")
+    work = desk["work"]
+    asks = desk["asks"]
+    signals = desk["signals"]
+    # Each lane is a bounded envelope ({"items": [...], ...}), so the counts
+    # here are "what the desk showed", the same honesty the desk itself keeps.
+    checks.append(
+        "desk: ok "
+        f"(delegations={len(work['delegations'].get('items') or [])}, "
+        f"leases held={work['leases'].get('total', 0)}, "
+        f"open asks={len(asks['run_controls'].get('items') or [])}, "
+        f"unread={signals.get('unread_notifications', 0)})"
+    )
+    return checks
+
+
+def seat_doctor_main(argv: list[str] | None = None) -> int:
+    """Client-side sibling of athena-doctor: prove ONE SEAT's wiring — env,
+    reachability, token, scopes, desk — with a re-runnable command instead of
+    an investigation. Run it after onboarding, after any token rotation, and
+    after a deploy move; docs/AGENT_BOOT.md names it as the wire-first proof."""
+    # Lazy on purpose: the seat doctor is a CLIENT-side tool and needs httpx,
+    # which ships with the [mcp] extra, not the base server install — see
+    # docs/OPERATIONS.md. Base athena-serve must keep booting without it.
+    import httpx
+
+    from athena.mcp.client import AthenaClient, AthenaError
+
+    parser = argparse.ArgumentParser(
+        prog="athena-seat-doctor",
+        description=(
+            "Verify an agent seat's wiring against a running Athena: "
+            "server reachable, bearer token live, scopes as expected, "
+            "desk answering."
+        ),
+    )
+    parser.add_argument(
+        "--base-url",
+        default=os.environ.get("ATHENA_BASE_URL"),
+        help="Athena base URL (default: $ATHENA_BASE_URL)",
+    )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("ATHENA_TOKEN"),
+        help="bearer token (default: $ATHENA_TOKEN; prefer the env variable "
+        "so the secret stays out of shell history and process lists)",
+    )
+    parser.add_argument(
+        "--expect-scopes",
+        help="comma-separated exact scope set the token must hold "
+        "(e.g. 'read,issue:write'); omitted = report without asserting",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="per-request timeout in seconds (default 10)",
+    )
+    args = parser.parse_args(argv)
+
+    if not args.base_url:
+        print(
+            "athena-seat-doctor: no base URL — set ATHENA_BASE_URL or pass --base-url",
+            file=sys.stderr,
+        )
+        return 1
+    if not args.token:
+        print(
+            "athena-seat-doctor: no token — set ATHENA_TOKEN or pass --token "
+            "(see docs/AGENT_BOOT.md for where a seat's token comes from)",
+            file=sys.stderr,
+        )
+        return 1
+    expect_scopes = (
+        frozenset(
+            part.strip() for part in args.expect_scopes.split(",") if part.strip()
+        )
+        if args.expect_scopes is not None
+        else None
+    )
+    if args.expect_scopes is not None and not expect_scopes:
+        print("athena-seat-doctor: --expect-scopes given but empty", file=sys.stderr)
+        return 1
+
+    client = AthenaClient(args.base_url, args.token, timeout=args.timeout)
+    try:
+        checks = _seat_doctor_checks(client, expect_scopes=expect_scopes)
+    except AthenaError as exc:
+        print(f"athena-seat-doctor: FAIL — {exc}", file=sys.stderr)
+        return 1
+    except httpx.HTTPError as exc:
+        print(
+            f"athena-seat-doctor: FAIL — cannot reach {args.base_url}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    except ValueError as exc:
+        print(f"athena-seat-doctor: FAIL — {exc}", file=sys.stderr)
+        return 1
+
+    for check in checks:
+        print(check)
+    print("athena-seat-doctor: ok")
     return 0
 
 

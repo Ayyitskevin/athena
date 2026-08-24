@@ -81,6 +81,7 @@ mcp = ["mcp>=1.2,<2", "httpx"]
 [project.scripts]
 athena-backup = "athena.ops:backup_main"
 athena-doctor = "athena.ops:doctor_main"
+athena-seat-doctor = "athena.ops:seat_doctor_main"
 athena-export = "athena.ops:export_main"
 athena-export-run = "athena.ops:export_run_main"
 athena-field-guide = "athena.ops:field_guide_main"

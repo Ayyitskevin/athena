@@ -805,6 +805,11 @@ class AthenaClient:
     def list_users(self) -> Any:
         return self._result(self._client.get("/users"))
 
+    def healthz(self) -> Any:
+        """The unauthenticated liveness read — proves the server is there at
+        all, so an auth failure afterwards is attributable to the token."""
+        return self._result(self._client.get("/healthz"))
+
     def whoami(self) -> Any:
         """Read the authenticated identity: id, email, role, agent flag, and the
         acting token's effective scopes (null when the auth is not scope-limited)."""

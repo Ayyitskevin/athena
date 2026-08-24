@@ -333,6 +333,27 @@ migration, start `athena-serve` with the same listener values, and follow it wit
 the service-level `/readyz` check. For a first install, use the dedicated
 [First User Bootstrap](#first-user-bootstrap) flow instead.
 
+### The seat doctor — proving one agent's wiring
+
+`athena-doctor` checks the server's side of the world; `athena-seat-doctor`
+checks one **agent seat's** side — from wherever that seat actually runs.
+It needs the `[mcp]` extra (`pip install athena[mcp]` — httpx lives there,
+not in the base server install):
+
+```bash
+ATHENA_BASE_URL=http://100.x.y.z:8300 ATHENA_TOKEN=ath_... \
+  athena-seat-doctor --expect-scopes read,issue:write
+```
+
+It walks the links in diagnostic order — `/healthz` (server there at all),
+`/users/me` (token live, account usable, scopes as expected), `/desk` (the
+agent surface answering) — and stops loudly at the first broken one, so the
+failure names the layer. `--expect-scopes` is an exact-set assertion: a
+narrower token silently breaks the seat, a wider one is authority nobody
+reviewed. Run it after onboarding an agent, after any token rotation, and
+after a deploy move; [`AGENT_BOOT.md`](AGENT_BOOT.md) names it as the
+wire-first proof a seat must pass before its rules file adopts the boot block.
+
 ## Attachment Storage Integrity
 
 New uploads are written to a private, unique sibling staging file, flushed and
