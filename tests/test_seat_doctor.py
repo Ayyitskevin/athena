@@ -142,3 +142,53 @@ def test_main_refuses_to_run_unwired(monkeypatch, capsys):
     assert seat_doctor_main(["--base-url", "http://127.0.0.1:9"]) == 1
     err = capsys.readouterr().err
     assert "ATHENA_TOKEN" in err
+
+
+def test_main_runs_the_full_walk_and_maps_errors(tmp_path, monkeypatch, capsys):
+    """The entrypoint end to end: exit 0 with the five ok lines on a wired
+    seat, exit 1 with the transport diagnosis on a dead token — proving the
+    error mapping the operator will actually see, not just the checks."""
+    import athena.ops as ops
+
+    app = _app(tmp_path)
+    with TestClient(app) as c:
+        seat = _onboarded_seat(c)
+        raw = seat["token"]["token"]
+
+        def _client_factory(base_url, token, timeout):
+            transport = TestClient(app)
+            transport.headers.update({"Authorization": f"Bearer {token}"})
+            return AthenaClient(client=transport)
+
+        monkeypatch.setattr(ops, "AthenaClient", _client_factory)
+
+        assert (
+            seat_doctor_main(
+                [
+                    "--base-url",
+                    "http://test",
+                    "--token",
+                    raw,
+                    "--expect-scopes",
+                    "read,issue:write",
+                ]
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "athena-seat-doctor: ok" in out
+        assert out.count(": ok") >= 5
+
+        assert (
+            seat_doctor_main(["--base-url", "http://test", "--token", "ath_dead"]) == 1
+        )
+        err = capsys.readouterr().err
+        assert "FAIL" in err and "401" in err
+
+        assert (
+            seat_doctor_main(
+                ["--base-url", "http://test", "--token", raw, "--expect-scopes", " , "]
+            )
+            == 1
+        )
+        assert "empty" in capsys.readouterr().err

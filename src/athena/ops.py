@@ -9,12 +9,12 @@ from pathlib import Path
 import socket
 import sqlite3
 import stat
-from typing import TYPE_CHECKING
 import sys
 import tempfile
 import time
 from datetime import datetime, timezone
 
+from athena.mcp.client import AthenaClient, AthenaError
 from athena.core import activity_chain, attachments, db, deployment
 from athena.core.backup import (
     backup_database,
@@ -37,9 +37,6 @@ from athena.core.portability import (
 )
 from athena.core.run_replay import export_run_replay_database
 from athena.core.source_import import SOURCE_KINDS, write_source_bundle
-
-if TYPE_CHECKING:
-    from athena.mcp.client import AthenaClient
 
 
 def _sqlite_uri(path: Path, *, mode: str) -> str:
@@ -819,8 +816,6 @@ def seat_doctor_main(argv: list[str] | None = None) -> int:
     an investigation. Run it after onboarding, after any token rotation, and
     after a deploy move; docs/AGENT_BOOT.md names it as the wire-first proof."""
     import httpx
-
-    from athena.mcp.client import AthenaClient, AthenaError
 
     parser = argparse.ArgumentParser(
         prog="athena-seat-doctor",
