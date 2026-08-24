@@ -336,7 +336,9 @@ the service-level `/readyz` check. For a first install, use the dedicated
 ### The seat doctor — proving one agent's wiring
 
 `athena-doctor` checks the server's side of the world; `athena-seat-doctor`
-checks one **agent seat's** side — from wherever that seat actually runs:
+checks one **agent seat's** side — from wherever that seat actually runs.
+It needs the `[mcp]` extra (`pip install athena[mcp]` — httpx lives there,
+not in the base server install):
 
 ```bash
 ATHENA_BASE_URL=http://100.x.y.z:8300 ATHENA_TOKEN=ath_... \

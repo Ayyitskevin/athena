@@ -148,7 +148,7 @@ def test_main_runs_the_full_walk_and_maps_errors(tmp_path, monkeypatch, capsys):
     """The entrypoint end to end: exit 0 with the five ok lines on a wired
     seat, exit 1 with the transport diagnosis on a dead token — proving the
     error mapping the operator will actually see, not just the checks."""
-    import athena.ops as ops
+    import athena.mcp.client as mcp_client
 
     app = _app(tmp_path)
     with TestClient(app) as c:
@@ -160,7 +160,9 @@ def test_main_runs_the_full_walk_and_maps_errors(tmp_path, monkeypatch, capsys):
             transport.headers.update({"Authorization": f"Bearer {token}"})
             return AthenaClient(client=transport)
 
-        monkeypatch.setattr(ops, "AthenaClient", _client_factory)
+        # seat_doctor_main imports AthenaClient lazily from the client module
+        # (the base install lacks httpx), so THAT module is the patch point.
+        monkeypatch.setattr(mcp_client, "AthenaClient", _client_factory)
 
         assert (
             seat_doctor_main(
@@ -192,3 +194,23 @@ def test_main_runs_the_full_walk_and_maps_errors(tmp_path, monkeypatch, capsys):
             == 1
         )
         assert "empty" in capsys.readouterr().err
+
+
+def test_ops_imports_without_httpx_reaching_sys_modules():
+    """The base (server-only) install has no httpx — it lives in the [mcp]
+    extra. athena-serve therefore must be able to import athena.ops without
+    httpx ever loading; a module-level import of the MCP client here broke
+    the container boot once already. This pins the lazy-import contract in
+    the environment that HAS httpx, by proving the import graph alone never
+    pulls it in."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import athena.ops; "
+        "assert 'httpx' not in sys.modules, 'athena.ops pulled in httpx'"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr

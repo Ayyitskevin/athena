@@ -12,9 +12,9 @@ import stat
 import sys
 import tempfile
 import time
+from typing import Any
 from datetime import datetime, timezone
 
-from athena.mcp.client import AthenaClient, AthenaError
 from athena.core import activity_chain, attachments, db, deployment
 from athena.core.backup import (
     backup_database,
@@ -743,8 +743,12 @@ def doctor_main(argv: list[str] | None = None) -> int:
 
 
 def _seat_doctor_checks(
-    client: AthenaClient, *, expect_scopes: frozenset[str] | None
+    client: Any, *, expect_scopes: frozenset[str] | None
 ) -> list[str]:
+    # ``client`` is an ``athena.mcp.client.AthenaClient``; the annotation is
+    # ``Any`` because that module needs httpx, which the BASE install does not
+    # carry — importing it at ops module level breaks ``athena-serve`` in a
+    # server-only (container) install. The entrypoint imports it lazily.
     """Prove one seat's wiring end to end, or raise ValueError at the first
     broken link. Ordering is diagnostic: healthz before whoami means an auth
     failure is attributable to the token, not to an unreachable server; whoami
@@ -815,7 +819,12 @@ def seat_doctor_main(argv: list[str] | None = None) -> int:
     reachability, token, scopes, desk — with a re-runnable command instead of
     an investigation. Run it after onboarding, after any token rotation, and
     after a deploy move; docs/AGENT_BOOT.md names it as the wire-first proof."""
+    # Lazy on purpose: the seat doctor is a CLIENT-side tool and needs httpx,
+    # which ships with the [mcp] extra, not the base server install — see
+    # docs/OPERATIONS.md. Base athena-serve must keep booting without it.
     import httpx
+
+    from athena.mcp.client import AthenaClient, AthenaError
 
     parser = argparse.ArgumentParser(
         prog="athena-seat-doctor",
