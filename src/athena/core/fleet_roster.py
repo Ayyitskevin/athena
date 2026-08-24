@@ -315,6 +315,47 @@ def build_roster(
             }
         )
 
+    # Drift: declaration-vs-observation mismatches, one actionable line each.
+    # Only POSITIVE observations drift — an `unobserved` probe (no systemd to
+    # ask) asserts nothing, matching the semantics block below. A stopped unit
+    # is an operator state, not drift; a unit systemd has never heard of is.
+    # This list exists because the counts alone went unread: unit_missing sat
+    # at 2 for days while the probe reported "missing" forever (the renamed
+    # buzz-seat-* units), and nothing turned a quiet count into a sentence
+    # anyone would act on.
+    drift: list[str] = []
+    for seat in seats:
+        if seat["unit_verdict"] == "missing":
+            drift.append(
+                f"seat {seat['slug']}: declared unit {seat['unit']} "
+                f"({seat['unit_scope']} scope) is not on this host — "
+                "renamed or retired?"
+            )
+        if seat["kind"] != "operator" and not seat["email"]:
+            drift.append(
+                f"seat {seat['slug']}: no Athena handle — unassignable, "
+                "and the radio cannot reach it"
+            )
+        if seat["email"] and seat["athena"] is None:
+            drift.append(
+                f"seat {seat['slug']}: email {seat['email']} has no Athena "
+                "account — onboard it or fix the declaration"
+            )
+        if (
+            seat["kind"] != "operator"
+            and seat["athena"] is not None
+            and not seat["athena"]["is_agent"]
+        ):
+            drift.append(
+                f"seat {seat['slug']}: {seat['email']} resolves to a "
+                "non-agent account — the declaration points at a person"
+            )
+    for account in undeclared:
+        drift.append(
+            f"athena agent {account['email']} is not a declared seat — "
+            "declare it or offboard it"
+        )
+
     return {
         "schema": SCHEMA,
         "observed_at": clock.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -330,6 +371,7 @@ def build_roster(
         },
         "seats": seats,
         "undeclared_athena_agents": undeclared,
+        "drift": drift,
         "summary": {
             "declared": len(seats),
             "unit_active": sum(1 for seat in seats if seat["unit_verdict"] == "active"),
@@ -341,5 +383,6 @@ def build_roster(
             ),
             "athena_linked": sum(1 for seat in seats if seat["athena"] is not None),
             "undeclared_agents": len(undeclared),
+            "drift": len(drift),
         },
     }
