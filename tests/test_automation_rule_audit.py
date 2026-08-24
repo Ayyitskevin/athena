@@ -205,7 +205,7 @@ def test_command_set_enabled_unknown_rule_rejects_and_records_nothing(tmp_path):
         )
         raise AssertionError("expected AutomationCommandError")
     except automation_commands.AutomationCommandError as exc:
-        assert exc.status_code == 404
+        assert exc.kind == "not_found"
     assert [
         e
         for e in activity.list_activity(conn, limit=50)
@@ -244,7 +244,7 @@ def test_command_rejects_malformed_schedule_before_row_or_audit(tmp_path):
         )
         raise AssertionError("expected AutomationCommandError")
     except automation_commands.AutomationCommandError as exc:
-        assert exc.status_code == 422
+        assert exc.kind == "invalid"
         assert "canonical UTC" in str(exc)
     assert (conn.execute("SELECT COUNT(*) AS count FROM automation_rules")).fetchone()[
         "count"

@@ -60,6 +60,9 @@ from athena.web.render import (
     render_snippet,
 )
 
+# Attachment-command refusal codes this browser adapter answers with.
+_ATTACHMENT_STATUS_BY_KIND = {"invalid": 422, "not_found": 404, "forbidden": 403}
+
 router = APIRouter()
 
 # Populated at app startup from main.py wiring.
@@ -2095,7 +2098,7 @@ def add_issue_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=exc.status_code,
+            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
@@ -2143,7 +2146,7 @@ def remove_issue_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=exc.status_code,
+            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 

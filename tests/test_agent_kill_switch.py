@@ -146,7 +146,7 @@ def test_revoke_agent_tokens_unknown_user_raises_404(tmp_path):
         agent_commands.revoke_agent_tokens(
             conn, actor=users.get_user(conn, 1), target_user_id=999
         )
-    assert ei.value.status_code == 404
+    assert ei.value.kind == "not_found"
 
 
 @pytest.mark.parametrize(
@@ -165,14 +165,14 @@ def test_agent_control_commands_enforce_admin_role_and_token_scope(tmp_path, com
     conn = db.connect(db_path)
     admin = users.get_user(conn, 1)
     attempts = [
-        (None, 401),
-        (users.get_user(conn, member["id"]), 403),
-        ({**admin, "_token_scopes": ["read"]}, 403),
+        (None, "unauthorized"),
+        (users.get_user(conn, member["id"]), "forbidden"),
+        ({**admin, "_token_scopes": ["read"]}, "forbidden"),
     ]
-    for actor, status_code in attempts:
+    for actor, kind in attempts:
         with pytest.raises(agent_commands.AgentCommandError) as ei:
             command(conn, actor=actor, target_user_id=agent["id"])
-        assert ei.value.status_code == status_code
+        assert ei.value.kind == kind
 
     # Every rejected attempt is side-effect free: credentials and role remain live,
     # and no administrative event pretends the protected action happened.
@@ -222,7 +222,7 @@ def test_offboard_refuses_to_strip_the_last_admin(tmp_path):
         agent_commands.offboard_user(
             conn, actor=users.get_user(conn, 1), target_user_id=1
         )
-    assert ei.value.status_code == 409
+    assert ei.value.kind == "conflict"
     # The lone admin is left intact — no partial demotion.
     assert users.get_user(conn, 1)["role"] == "admin"
 

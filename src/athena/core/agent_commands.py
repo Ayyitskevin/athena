@@ -64,18 +64,19 @@ def agent_email_from_name(name: str) -> str:
     """Turn a display name into the unique email the users table requires."""
     slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
     if not slug:
-        raise AgentCommandError("agent name is required", status_code=422)
+        raise AgentCommandError("invalid", "agent name is required")
     return f"{slug}@{AGENT_EMAIL_DOMAIN}"
 
 
 class AgentCommandError(Exception):
-    """A transport-neutral rejection. ``status_code`` lets each adapter map it (404
-    for an unknown target, 409 for the last-admin guard) without the command having
-    to know about HTTP."""
+    """A transport-neutral rejection carrying an error KIND, never a status
+    code. Adapters map kinds through their own ``STATUS_BY_KIND`` ("not_found"
+    for an unknown target, "conflict" for the last-admin guard) without the
+    command having to know about HTTP."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _require_admin_actor(actor: dict | None) -> dict:
@@ -87,12 +88,12 @@ def _require_admin_actor(actor: dict | None) -> dict:
     caller from turning the kill switch into an authorization bypass.
     """
     if actor is None:
-        raise AgentCommandError("authentication required", status_code=401)
+        raise AgentCommandError("unauthorized", "authentication required")
     if not identity.is_admin(actor):
-        raise AgentCommandError("admin role required", status_code=403)
+        raise AgentCommandError("forbidden", "admin role required")
     if not identity.token_has_scope(actor, tokens.ADMIN_SCOPE):
         raise AgentCommandError(
-            f"token scope required: {tokens.ADMIN_SCOPE}", status_code=403
+            "forbidden", f"token scope required: {tokens.ADMIN_SCOPE}"
         )
     return actor
 
@@ -125,17 +126,18 @@ def onboard_agent(
 
     Scopes are required — an agent's first credential must say what it may do
     (the same no-fail-open rule as every other mint surface). Raises
-    AgentCommandError(401/403) for a missing or non-admin actor, (409) for a
-    duplicate email, (422) for blank name or missing/invalid scopes."""
+    AgentCommandError("unauthorized"/"forbidden") for a missing or non-admin
+    actor, "conflict" for a duplicate email, "invalid" for a blank name or
+    missing/invalid scopes."""
     actor = _require_admin_actor(actor)
     name = name.strip()
     if not name:
-        raise AgentCommandError("agent name is required", status_code=422)
+        raise AgentCommandError("invalid", "agent name is required")
     email = (email or "").strip() or agent_email_from_name(name)
     try:
         normalized = tokens.normalize_scopes(scopes)
     except ValueError as exc:
-        raise AgentCommandError(str(exc), status_code=422) from exc
+        raise AgentCommandError("invalid", str(exc)) from exc
     with db.transaction(conn, immediate=True):
         try:
             agent = user_commands.create_user(
@@ -147,9 +149,9 @@ def onboard_agent(
                 is_agent=True,
             )
         except user_commands.UserCommandError as exc:
-            raise AgentCommandError(exc.detail, status_code=422) from exc
+            raise AgentCommandError("invalid", exc.detail) from exc
         except sqlite3.IntegrityError as exc:
-            raise AgentCommandError("email already in use", status_code=409) from exc
+            raise AgentCommandError("conflict", "email already in use") from exc
         # Minted inline rather than via token_commands.mint_token: that command
         # attributes the event to the token's owner (self-service), which here
         # would falsely record the agent minting its own credential.
@@ -189,15 +191,16 @@ def revoke_agent_tokens(
     switch — and record one audited event attributed to the acting admin.
 
     Idempotent: a second call revokes nothing and records that (revoked_token_count
-    0). Raises AgentCommandError(404) if the target user does not exist. Reads and the
+    0). Raises AgentCommandError("not_found") if the target user does not exist. Reads and the
     write share one immediate transaction so a concurrent mint cannot slip a token in
-    between the count and the revoke. Raises AgentCommandError(401/403) when the
+    between the count and the revoke. Raises AgentCommandError("unauthorized"/
+    "forbidden") when the
     actor is missing or lacks the admin role/scope."""
     actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
-            raise AgentCommandError("no such user", status_code=404)
+            raise AgentCommandError("not_found", "no such user")
         revoked = tokens.revoke_all_tokens_for_user(
             conn, user_id=target_user_id, commit=False
         )
@@ -230,24 +233,22 @@ def set_user_paused(
     records nothing — repeated pushes of the same lever are not lifecycle
     moments.
 
-    Refuses to pause the last ACTIVE admin (409): a paused admin cannot resume
+    Refuses to pause the last ACTIVE admin ("conflict"): a paused admin cannot resume
     anyone — itself included — so that pause would brick the workspace. Raises
-    AgentCommandError(404) for an unknown target, (401/403) when the actor is
-    missing or lacks the admin role/scope."""
+    AgentCommandError("not_found") for an unknown target, "unauthorized"/
+    "forbidden" when the actor is missing or lacks the admin role/scope."""
     actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
-            raise AgentCommandError("no such user", status_code=404)
+            raise AgentCommandError("not_found", "no such user")
         if (
             paused
             and target["role"] == users.ADMIN_ROLE
             and not target.get("paused_at")
             and users.count_active_admins(conn) <= 1
         ):
-            raise AgentCommandError(
-                "cannot pause the last active admin", status_code=409
-            )
+            raise AgentCommandError("conflict", "cannot pause the last active admin")
         already = bool(target.get("paused_at"))
         if already == paused:
             return target
@@ -271,18 +272,19 @@ def offboard_user(
     revoke every token — the full offboarding lever — and record one audited event.
 
     Refuses to strip the last admin (mirrors the role-change guard) so a deploy can't
-    lock itself out. Raises AgentCommandError(404) for an unknown target, (409) for the
+    lock itself out. Raises AgentCommandError("not_found") for an unknown target,
+    "conflict" for the
     last-admin case. Idempotent enough to retry safely: re-running on an already-viewer
     account with no sessions/tokens simply revokes zero of each. Raises
-    AgentCommandError(401/403) when the actor is missing or lacks the admin
-    role/scope."""
+    AgentCommandError("unauthorized"/"forbidden") when the actor is missing or
+    lacks the admin role/scope."""
     actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
-            raise AgentCommandError("no such user", status_code=404)
+            raise AgentCommandError("not_found", "no such user")
         if target["role"] == users.ADMIN_ROLE and users.count_admins(conn) <= 1:
-            raise AgentCommandError("cannot offboard the last admin", status_code=409)
+            raise AgentCommandError("conflict", "cannot offboard the last admin")
         users.set_role(conn, target_user_id, users.VIEWER_ROLE, commit=False)
         revoked_sessions = sessions.revoke_all_sessions(
             conn, target_user_id, commit=False
@@ -322,15 +324,15 @@ def remove_user(
     deleted; ``restore_user`` brings the account back as an offboarded viewer.
 
     Refuses to remove the last admin (409, mirroring the offboard guard —
-    removed admins no longer count). Raises AgentCommandError(404) for an
-    unknown target, (401/403) when the actor is missing or lacks the admin
+    removed admins no longer count). Raises AgentCommandError("not_found") for an
+    unknown target, "unauthorized"/"forbidden" when the actor is missing or lacks the admin
     role/scope. Idempotent: re-running on an already-removed account returns
     its current state and records nothing."""
     actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
-            raise AgentCommandError("no such user", status_code=404)
+            raise AgentCommandError("not_found", "no such user")
         if target.get("removed_at"):
             return {
                 "user_id": target_user_id,
@@ -339,7 +341,7 @@ def remove_user(
                 "revoked_token_count": 0,
             }
         if target["role"] == users.ADMIN_ROLE and users.count_admins(conn) <= 1:
-            raise AgentCommandError("cannot remove the last admin", status_code=409)
+            raise AgentCommandError("conflict", "cannot remove the last admin")
         users.set_role(conn, target_user_id, users.VIEWER_ROLE, commit=False)
         revoked_sessions = sessions.revoke_all_sessions(
             conn, target_user_id, commit=False
@@ -376,14 +378,14 @@ def restore_user(
     """Clear the removal tombstone and nothing else: the account returns as an
     offboarded viewer with no sessions, no tokens, and no role back — every
     further step (role, tokens) is its own audited action. Raises
-    AgentCommandError(404) for an unknown target, (401/403) when the actor is
-    missing or lacks the admin role/scope. Idempotent: restoring a present
+    AgentCommandError("not_found") for an unknown target, "unauthorized"/
+    "forbidden" when the actor is missing or lacks the admin role/scope. Idempotent: restoring a present
     account returns it unchanged and records nothing."""
     actor = _require_admin_actor(actor)
     with db.transaction(conn, immediate=True):
         target = users.get_user(conn, target_user_id)
         if target is None:
-            raise AgentCommandError("no such user", status_code=404)
+            raise AgentCommandError("not_found", "no such user")
         if not target.get("removed_at"):
             return target
         updated = users.set_removed(conn, target_user_id, False, commit=False)

@@ -26,6 +26,15 @@ from athena.core.identity import admin_actor
 
 router = APIRouter(prefix="/automation", tags=["aegis"])
 
+# Adapter-owned translation of command-error kinds (the transport decides).
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
+
 
 class RuleOut(BaseModel):
     id: int
@@ -113,7 +122,9 @@ def create(
             schedule_every_seconds=payload.schedule_every_seconds,
         )
     except automation_commands.AutomationCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.get("/rules/{rule_id}", response_model=RuleOut)
@@ -141,7 +152,9 @@ def update(
             conn, actor_id=actor["id"], rule_id=rule_id, enabled=payload.enabled
         )
     except automation_commands.AutomationCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/rules/{rule_id}", status_code=204)

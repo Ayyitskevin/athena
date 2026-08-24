@@ -28,6 +28,15 @@ from athena.mcp.config import claude_mcp_config
 
 router = APIRouter(prefix="/users", tags=["core"])
 
+# Adapter-owned translation of command-error kinds (the transport decides).
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
+
 Role = Literal["admin", "member", "viewer"]
 BOOTSTRAP_TOKEN_HEADER = "X-Athena-Bootstrap-Token"
 
@@ -333,7 +342,9 @@ def onboard_agent(
             token_name=payload.token_name,
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
     return {
         "user": result["user"],
         "token": result["token"],
@@ -498,7 +509,9 @@ def update_paused(
             conn, actor=actor, target_user_id=user_id, paused=payload.paused
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.delete("/{user_id}/tokens", response_model=TokenRevocationOut)
@@ -516,7 +529,9 @@ def revoke_user_tokens(
             conn, actor=actor, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/{user_id}/offboard", response_model=OffboardOut)
@@ -530,7 +545,9 @@ def offboard(
     try:
         return agent_commands.offboard_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/{user_id}/remove", response_model=RemoveOut)
@@ -545,7 +562,9 @@ def remove(
     try:
         return agent_commands.remove_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.post("/{user_id}/restore", response_model=UserOut)
@@ -559,4 +578,6 @@ def restore(
     try:
         return agent_commands.restore_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc

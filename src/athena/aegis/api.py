@@ -1307,7 +1307,9 @@ def upload_issue_attachment(
             attach_dir=config.ATTACH_DIR,
         )
     except attachment_commands.AttachmentCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @router.get("/{issue_id}/attachments", response_model=list[AttachmentOut])
@@ -1676,7 +1678,9 @@ def set_project_visibility(
             conn, actor_id=actor["id"], project_id=project_id, visibility=visibility
         )
     except project_commands.ProjectAccessCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @projects_router.get("/{project_id}/members", response_model=list[MemberOut])
@@ -1809,7 +1813,9 @@ def add_project_status(
             category=payload.category,
         )
     except status_commands.StatusCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 @projects_router.delete("/{project_id}/statuses/{name}", response_model=list[StatusOut])
@@ -1824,7 +1830,9 @@ def remove_project_status(
             conn, actor=actor, project_id=project_id, name=name
         )
     except status_commands.StatusCommandError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        ) from exc
 
 
 # --- Labels: a top-level shared vocabulary --------------------------------

@@ -145,12 +145,14 @@ def delete_project(conn: sqlite3.Connection, *, actor_id: int, project_id: int) 
 
 
 class ProjectAccessCommandError(Exception):
-    """A transport-neutral project-access rejection. ``status_code`` lets each adapter
-    map it (404 for a vanished project, 404 for a non-member removal)."""
+    """A transport-neutral project-access rejection carrying an error KIND,
+    never a status code; each adapter maps kinds through its own status table
+    ("not_found" both for a vanished project and for a non-member removal,
+    so neither answer confirms a hidden project exists)."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def set_project_visibility(
@@ -169,15 +171,15 @@ def set_project_visibility(
     creator's roster row.
 
     The boundary validates the value and skips a no-op set-to-same, so this is only
-    called on a real transition. Raises ``ProjectAccessCommandError(404)`` if the
+    called on a real transition. Raises ``ProjectAccessCommandError("not_found")`` if the
     project vanished before the write."""
     with db.transaction(conn, immediate=True):
         before = projects.get_project(conn, project_id)
         if before is None:
-            raise ProjectAccessCommandError("no such project", status_code=404)
+            raise ProjectAccessCommandError("not_found", "no such project")
         updated = projects.set_visibility(conn, project_id, visibility, commit=False)
         if updated is None:
-            raise ProjectAccessCommandError("no such project", status_code=404)
+            raise ProjectAccessCommandError("not_found", "no such project")
         if visibility == "private":
             access.add_project_member(
                 conn,
@@ -207,7 +209,7 @@ def add_project_member(
 ) -> bool:
     """Grant a user read access to a private project atomically with its
     ``project_member_added`` event. Idempotent: a re-add records nothing and returns
-    False. The boundary validates that the user exists (422) and passes the member's
+    False. The boundary validates that the user exists ("invalid") and passes the member's
     name for the audit detail. Previously the grant and its event were two commits, so
     a crash between them left an unaudited access grant."""
     with db.transaction(conn, immediate=True):

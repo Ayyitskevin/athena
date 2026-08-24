@@ -16,9 +16,9 @@ from athena.core import access, activity, attachments, db
 class AttachmentCommandError(Exception):
     """A transport-neutral attachment rejection."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
-        self.status_code = status_code
+        self.kind = kind
 
 
 def _require_command_owned_transaction(conn: sqlite3.Connection) -> None:
@@ -36,7 +36,7 @@ def _target_is_visible(
         return access.can_see_issue(conn, actor, target_id)
     if target_kind == "page":
         return access.can_see_page(conn, actor, target_id)
-    raise AttachmentCommandError("invalid attachment target", status_code=422)
+    raise AttachmentCommandError("invalid", "invalid attachment target")
 
 
 def create_attachment(
@@ -56,9 +56,7 @@ def create_attachment(
     try:
         with db.transaction(conn, immediate=True):
             if not _target_is_visible(conn, actor, target_kind, target_id):
-                raise AttachmentCommandError(
-                    "no such attachment target", status_code=404
-                )
+                raise AttachmentCommandError("not_found", "no such attachment target")
             pending = attachments.insert_and_publish(
                 conn,
                 target_kind=target_kind,
@@ -110,9 +108,9 @@ def remove_attachment(
         if current is None or not _target_is_visible(
             conn, actor, current["target_kind"], current["target_id"]
         ):
-            raise AttachmentCommandError("no such attachment", status_code=404)
+            raise AttachmentCommandError("not_found", "no such attachment")
         if current["uploaded_by"] != actor["id"]:
-            raise AttachmentCommandError("not the uploader", status_code=403)
+            raise AttachmentCommandError("forbidden", "not the uploader")
         deleted = attachments.delete_row(conn, attachment_id)
         assert deleted is not None
         removed, stored_name = deleted

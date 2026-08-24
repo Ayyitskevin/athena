@@ -605,7 +605,7 @@ def test_attachment_commands_reject_unsafe_context_and_invisible_targets(tmp_pat
             data=b"rejected",
             attach_dir=attach_dir,
         )
-    assert invalid.value.status_code == 422
+    assert invalid.value.kind == "invalid"
 
     with pytest.raises(attachment_commands.AttachmentCommandError) as hidden:
         attachment_commands.create_attachment(
@@ -618,7 +618,7 @@ def test_attachment_commands_reject_unsafe_context_and_invisible_targets(tmp_pat
             data=b"rejected",
             attach_dir=attach_dir,
         )
-    assert hidden.value.status_code == 404
+    assert hidden.value.kind == "not_found"
 
     with pytest.raises(attachment_commands.AttachmentCommandError) as missing:
         attachment_commands.remove_attachment(
@@ -627,7 +627,7 @@ def test_attachment_commands_reject_unsafe_context_and_invisible_targets(tmp_pat
             attachment_id=999,
             attach_dir=attach_dir,
         )
-    assert missing.value.status_code == 404
+    assert missing.value.kind == "not_found"
 
     issue_id = conn.execute(
         "INSERT INTO issues (title, created_by) VALUES ('visible', 1)"
@@ -653,7 +653,7 @@ def test_attachment_commands_reject_unsafe_context_and_invisible_targets(tmp_pat
             attachment_id=attachment["id"],
             attach_dir=attach_dir,
         )
-    assert forbidden.value.status_code == 403
+    assert forbidden.value.kind == "forbidden"
     assert attachments.get(conn, attachment["id"]) is not None
     conn.close()
 
