@@ -28,7 +28,12 @@ the block sends every session into a wall — **wire first, adopt second.**
    token rotation or deploy move):
 
 ```bash
-# HTTP path — one bounded read; expect JSON with an `identity` lane:
+# The wiring proof — server, token, scopes, desk, in one command:
+athena-seat-doctor --expect-scopes read,issue:write
+# (reads $ATHENA_BASE_URL and $ATHENA_TOKEN; exit 0 = wired, exit 1 says
+#  exactly which link is broken)
+
+# Raw fallback where the entrypoint is not installed:
 curl -sf -H "Authorization: Bearer $ATHENA_TOKEN" "$ATHENA_BASE_URL/desk" | head -c 400
 
 # MCP path — ask the harness to call my_desk() and report the identity lane.
