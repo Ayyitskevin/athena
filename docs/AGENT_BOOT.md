@@ -44,11 +44,16 @@ If either fails, stop: fix the wiring, do not paste the block yet.
 ## The canonical boot block
 
 Copy everything inside the fence into the seat's rules file (the
-machine-specific part, not shared doctrine), under a heading naming this file
-as the source:
+machine-specific part, not shared doctrine). Two deliberate shape choices:
+the block opens and closes with **HTML-comment sentinels** so a drift checker
+can extract and byte-diff it the way fleet doctrine is diffed, and its title
+is **bold text, not a `##`/`###` heading** — fleet drift checkers census
+section headings across nodes, and a host-local block must not change a
+file's section census.
 
 ```markdown
-## Athena — the board (source: docs/AGENT_BOOT.md in the athena repo)
+<!-- ATHENA-BOOT-BLOCK v1 · source: docs/AGENT_BOOT.md in the athena repo · keep byte-identical across seat files -->
+**Athena — the board** (this host's seats; wire first — see docs/AGENT_BOOT.md)
 - If the task touches issues, missions, or operator docs: call `my_desk()`
   (MCP) or `GET /desk` FIRST — one bounded read: who you are, what is asked
   of you, what you hold, what changed. Never reconstruct it from separate
@@ -60,10 +65,13 @@ as the source:
 - Tag your writes: `begin_run(run_id=...)` at the start, heartbeat while
   working. Untagged writes are attributable but not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
-  advance the desk cursor to the last event you actually handled.
+  advance the desk cursor to the last event you actually handled. Complete
+  or yield every claim before the session ends — expired leases linger on
+  the desk.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it
   bypasses scopes, the activity trail, undo, and the hash chain.
+<!-- END ATHENA-BOOT-BLOCK -->
 ```
 
 ## Why the sqlite line is absolute
@@ -86,6 +94,8 @@ desk was bypassed and why.
   (`my_desk`, `get_issue_lease`, `claim_issue`, `get_issue_work_context`,
   `begin_run`, the desk cursor), update this file in the same PR — the
   Definition of Done's "you ran it" applies to this document too.
-- Seats adopt by copy, so drift is possible by construction. A fleet that
-  byte-diffs its shared doctrine (as this one does) should include its copies
-  of this block in that check.
+- Seats adopt by copy, so drift is possible by construction. The sentinels
+  exist for exactly that: a fleet that byte-diffs its shared doctrine (as
+  this one does) extracts `<!-- ATHENA-BOOT-BLOCK` … `END ATHENA-BOOT-BLOCK -->`
+  from each seat file and diffs the copies against each other and against
+  this fence.
