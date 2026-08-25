@@ -177,6 +177,12 @@ def _is_signed_inbound(method: str, path: str) -> bool:
 # anonymous. Everything here either IS the sign-in path, carries its own credential,
 # or discloses nothing: the login form and its SSO round trip, sign-out, the health
 # probe, and the packaged static assets the login page itself needs to render.
+# /readyz is DELIBERATELY absent: it is registered directly on the app with no
+# browser dependency, so this gate never sees it — the uptime check survives
+# ATHENA_ANONYMOUS_READS=0 structurally, and tests/test_anonymous_reads_closed.py
+# pins that. Adding it here would be dead config claiming a mechanism that is
+# not in play (measured 2026-08-24 while executing the close-anonymous-reads
+# ruling; an earlier report that the flip closes /readyz did not reproduce).
 _ANONYMOUS_ALWAYS_ALLOWED = frozenset(
     {"/login", "/login/sso", "/auth/callback", "/logout", "/healthz"}
 )
