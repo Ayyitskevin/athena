@@ -1636,6 +1636,11 @@ input::placeholder, textarea::placeholder { color: var(--text-3); }
 .activity-filters input, .activity-filters select { min-width: 8rem; padding: 0.35rem 0.5rem; border: 1px solid var(--border-strong); border-radius: 4px; font: inherit; }
 .activity-filters input[type="search"] { min-width: 15rem; }
 .activity-pager { margin-top: 1rem; text-align: center; }
+.narrative-panel { margin-top: 1.5rem; }
+.narrative-items { list-style: none; padding: 0; margin: 0.5rem 0 0; }
+.narrative-item { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem; padding: 0.3rem 0; border-bottom: 1px solid var(--surface-2); font-size: 0.92rem; }
+.narrative-signal { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-3); }
+.narrative-summary { color: var(--text-2); }
 .page-header-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .run-span { font-variant-numeric: tabular-nums; color: var(--text-2); }
 .run-count { color: var(--text-3); font-size: 0.8rem; white-space: nowrap; }

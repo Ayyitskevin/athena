@@ -129,6 +129,39 @@ def list_latest_checkins(
     ]
 
 
+def list_checkins_for_runs(
+    conn: sqlite3.Connection,
+    *,
+    run_ids: list[str],
+    stale_seconds: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, list[dict]]:
+    """The latest check-in projection for each requested run id, grouped by run.
+
+    Returns only runs that actually have a check-in. This is the narrative's
+    check-in lane: it reads the same table as the admin cockpit but scoped to the
+    run ids an issue's trail carries, so a run story can say "this run last
+    reported X seconds ago" without inventing a second check-in source."""
+    if not run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = conn.execute(
+        "SELECT c.agent_id, u.name AS agent_name, c.run_id, "
+        "c.first_seen_at, c.last_seen_at "
+        "FROM agent_run_checkins c JOIN users u ON u.id = c.agent_id "
+        f"WHERE c.run_id IN ({placeholders}) "
+        "ORDER BY c.run_id, c.last_seen_at DESC, c.agent_id",
+        run_ids,
+    ).fetchall()
+    by_run: dict[str, list[dict]] = {}
+    for row in rows:
+        run_id = str(row["run_id"])
+        by_run.setdefault(run_id, []).append(
+            _with_reporting_state(dict(row), stale_seconds=stale_seconds, now=now)
+        )
+    return by_run
+
+
 def checkin_agent_ids(conn: sqlite3.Connection, run_id: str) -> list[int]:
     """Every agent id that has checked in under one run id, ascending.
 
