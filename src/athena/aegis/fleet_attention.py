@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import sqlite3
 from typing import Literal, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from athena.aegis import automation, dependencies, fleet_work, issues
 from athena.core import (
@@ -189,7 +189,7 @@ def build_attention(
     # of truth. Callers that have an actor get both the count card and its
     # actor-filtered "what next" rows from one request clock.
     if actor is not None:
-        projection["now"] = build_attention_ranking(
+        ranking = build_attention_ranking(
             conn,
             signals=ranking_signals,
             actor=actor,
@@ -197,6 +197,7 @@ def build_attention(
             now=current,
             limit=ranking_limit,
         )
+        projection["now"] = public_attention_ranking(conn, ranking, actor=actor)
     return projection
 
 
@@ -439,6 +440,7 @@ def _collect_open_run_controls(
     examined = len(rows)
     for row in rows:
         run_link = f"/aegis/activity/runs/{quote(row['run_id'], safe='')}/lineage"
+        control_query = urlencode({"run_id": row["run_id"]})
         items.append(
             AttentionRankItem(
                 signal="open_run_control",
@@ -452,7 +454,7 @@ def _collect_open_run_controls(
                 total=examined,
                 next_action="agent-command",
                 command="acknowledge_run_control",
-                link=f"/admin/run-controls?run_id={row['run_id']}",
+                link=f"/admin/run-controls?{control_query}",
                 source_link=run_link,
             )
         )
@@ -530,7 +532,8 @@ def _collect_budget_exhaustions(
         return [], 0, 0
     since = _since_text(window_hours=window_hours, now=now)
     rows = conn.execute(
-        "SELECT id, actor_id, created_at, detail FROM activity "
+        "SELECT id, actor_id, target_kind, target_id, created_at, detail "
+        "FROM activity "
         "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL "
         "ORDER BY id DESC LIMIT 200",
         (budgets.VERB_BUDGET_EXHAUSTED, since),
@@ -538,6 +541,14 @@ def _collect_budget_exhaustions(
     items: list[AttentionRankItem] = []
     examined = len(rows)
     for row in rows:
+        source_query = urlencode(
+            {
+                "actor": row["actor_id"],
+                "verb": budgets.VERB_BUDGET_EXHAUSTED,
+                "kind": row["target_kind"],
+                "target": row["target_id"],
+            }
+        )
         items.append(
             AttentionRankItem(
                 signal="budget_exhaustion",
@@ -551,7 +562,7 @@ def _collect_budget_exhaustions(
                 total=examined,
                 next_action="operator-link",
                 link="/admin/agents",
-                source_link=f"/aegis/activity?actor={row['actor_id']}",
+                source_link=f"/aegis/activity?{source_query}",
             )
         )
     return items, examined, examined
@@ -571,6 +582,14 @@ def _collect_security_refusals(
     items: list[AttentionRankItem] = []
     examined = len(rows)
     for row in rows:
+        source_query = urlencode(
+            {
+                "actor": row["actor_id"],
+                "verb": row["verb"],
+                "kind": row["target_kind"],
+                "target": row["target_id"],
+            }
+        )
         items.append(
             AttentionRankItem(
                 signal="security_refusal",
@@ -584,7 +603,7 @@ def _collect_security_refusals(
                 total=examined,
                 next_action="operator-link",
                 link="/admin/security",
-                source_link=f"/aegis/activity?actor={row['actor_id']}",
+                source_link=f"/aegis/activity?{source_query}",
             )
         )
     return items, examined, examined
@@ -663,6 +682,21 @@ def to_public_rank_item(
         "command": command,
         "link": item.link,
         "source_link": item.source_link,
+    }
+
+
+def public_attention_ranking(
+    conn: sqlite3.Connection,
+    ranking: dict,
+    *,
+    actor: dict,
+) -> dict:
+    """Apply owner resolution and command gates once for every adapter."""
+    return {
+        **ranking,
+        "items": [
+            to_public_rank_item(conn, item, actor=actor) for item in ranking["items"]
+        ],
     }
 
 

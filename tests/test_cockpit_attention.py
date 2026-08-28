@@ -362,7 +362,7 @@ def test_the_rollup_counts_every_exception_surface(tmp_path):
 
 
 def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
-    app, db_file = _app(tmp_path)
+    app, _ = _app(tmp_path)
     with TestClient(app) as c:
         c.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
         c.post(
@@ -372,8 +372,7 @@ def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
         )
         c.headers["X-CSRF-Token"] = c.cookies.get("athena_csrf", "")
         agent = _agent(c)
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        urgent = _claimed_issue(c, agent, title="urgent", reporting=False)
 
         page = c.get("/aegis/dashboard")
         assert "Fleet attention" in page.text
@@ -381,6 +380,9 @@ def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
         assert "Now queue" in page.text
         assert f"issue #{urgent['id']}" in page.text
         assert f"/aegis/issues/{urgent['id']}/history" in page.text
+        assert "owner Sol" in page.text
+        assert "Open owning surface" in page.text
+        assert "heartbeat_agent_run" not in page.text
         # And the nav now reaches the surfaces that had no link at all.
         assert "/admin/agents/runs" in page.text
         assert "/admin/security" in page.text

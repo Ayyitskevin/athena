@@ -428,6 +428,52 @@ def test_agent_command_authorization_degrades_to_operator_link(tmp_path):
         assert agent_item["command"] == "heartbeat_agent_run"
 
 
+def test_open_run_control_visibility_and_command_authorization(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        issue = _claimed_issue(c, agent, title="controlled")
+        outsider = c.post(
+            "/users",
+            json={"email": "out@e.com", "name": "Out", "password": "pw"},
+            headers=H1,
+        ).json()
+        control = c.post(
+            "/run-controls",
+            json={
+                "run_id": f"run-{issue['id']}",
+                "kind": "steer",
+                "payload": "report current state",
+                "ttl_seconds": 600,
+            },
+            headers=H1,
+        ).json()
+
+        admin_item = c.get(
+            "/attention/ranking?signals=open_run_control", headers=H1
+        ).json()["items"][0]
+        assert admin_item["source_id"] == control["id"]
+        assert admin_item["next_action"] == "operator-link"
+        assert admin_item["command"] is None
+
+        agent_item = c.get(
+            "/attention/ranking?signals=open_run_control",
+            headers=_bearer(agent),
+        ).json()["items"][0]
+        assert agent_item["source_id"] == control["id"]
+        assert agent_item["next_action"] == "agent-command"
+        assert agent_item["command"] == "acknowledge_run_control"
+
+        outsider_view = c.get(
+            "/attention/ranking?signals=open_run_control",
+            headers={"X-Athena-Actor": str(outsider["id"])},
+        ).json()
+        assert outsider_view["items"] == []
+        assert outsider_view["examined"] == 0
+        assert outsider_view["total"] == 0
+
+
 def test_event_signals_cite_the_activity_event_not_the_actor(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
@@ -509,7 +555,7 @@ def test_rollup_and_ranking_share_the_existing_attention_projection(tmp_path):
         ranking_signals={"open_blocker"},
     )
     conn.close()
-    assert projection["now"]["items"][0].source_id == blocked["id"]
+    assert projection["now"]["items"][0]["source_id"] == blocked["id"]
     assert projection["now"]["signals"] == ["open_blocker"]
 
 
