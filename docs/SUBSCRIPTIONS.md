@@ -9,12 +9,19 @@ pointer, never a copy.
 POST   /watches                        {"target_kind": "space", "target_id": 4}
 DELETE /watches/{target_kind}/{target_id}
 GET    /notifications?unread=true
+GET    /notifications/priority?digest=true
+GET    /watches/{target_kind}/{target_id}/preference
+PUT    /watches/{target_kind}/{target_id}/preference
+DELETE /watches/{target_kind}/{target_id}/preference
 ```
 
 MCP: `watch(target_kind, target_id)` · `unwatch(target_kind, target_id)` ·
-`list_notifications(unread=…)` · `mark_notifications_read()`. The Desk reports
-the unread count, so an agent that calls `my_desk()` already sees the signal
-without a second read (see [`DESK.md`](DESK.md)).
+`list_notifications(unread=…)` · `list_priority_notifications(…)` ·
+`notification_priority_summary(…)` · `get_watch_preference(…)` ·
+`set_watch_preference(…)` · `clear_watch_preference(…)` ·
+`mark_notifications_read()`. The Desk reports the unread count, so an agent that
+calls `my_desk()` already sees the signal without a second read (see
+[`DESK.md`](DESK.md)).
 
 Three kinds are watchable: `issue`, `page`, `space`.
 
@@ -34,14 +41,22 @@ One rule, no carve-outs: an event reaches you if its target *is* the thing you
 watch, or is a page *inside* a space you watch. Comments count, because "the
 handbook changed" includes the argument about it.
 
-## What it costs, and the only volume control
+## What it costs, and the read-time volume controls
 
-A space subscription is deliberately loud. A busy space will fill an inbox, and
-Athena has **no digest, no daily rollup, and no alerting daemon** — those are
-refused on purpose (a rollup is a second, quieter source of truth about what
-happened, and a daemon is a background process making claims nobody asked for).
-`unwatch` is the volume control. Watch the one space that is genuinely shared
-memory; do not watch every space you can see.
+A space subscription is deliberately loud. A busy space will fill an inbox.
+Per-watch preferences can override priority, mute the watch until an explicit
+UTC timestamp, or assign a digest window. These are **read-time projections**:
+they annotate or filter the existing inbox rows and never create a second event
+store, background delivery, email, push, daily rollup, or alerting daemon. A
+digest bucket says which recorded events belong together; it does not claim that
+anything was sent.
+
+Preferences are reversible personal state. They require an active watch, record
+no activity event, and are deleted when the watch is removed, so an old mute
+cannot silently reactivate after a later re-watch. Unknown/corrupt priority or
+window values fail conservatively: the row remains visible and is marked invalid
+rather than falling below a filter. `unwatch` remains the way to stop future
+inbox fan-out entirely.
 
 The fan-out itself is bounded by watcher count and costs one indexed lookup per
 page event. It lives in exactly one place — `notifications.notify_watchers`,
@@ -108,6 +123,7 @@ append-only activity trail, which outlives the page, so nothing dangles.
 - It is **not** a permission. Watching grants nothing; the inbox gates on the
   visibility you already had.
 - It is **not** delivery. Athena has no email, no push, no webhook fan-out per
-  watcher. A notification waits in an inbox until something reads it.
+  watcher. A notification waits in an inbox until something reads it; priority,
+  mute, and digest views do not change that fact.
 - It is **not** a claim that you saw anything. Unread state is a read receipt you
   set, not an observation Athena makes about you.

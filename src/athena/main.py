@@ -35,6 +35,7 @@ from athena.aegis import api as aegis_api
 from athena.aegis import automation as aegis_automation
 from athena.aegis import fleet_attention as aegis_fleet_attention
 from athena.aegis import fleet_attention_api as aegis_fleet_attention_api
+from athena.aegis import notification_priority_api as aegis_notification_priority_api
 from athena.aegis import automation_api as aegis_automation_api
 from athena.aegis import delegations_api as aegis_delegations_api
 from athena.aegis import desk_api as aegis_desk_api
@@ -1933,6 +1934,7 @@ def create_app(
     app.include_router(aegis_filters_api.router)
     app.include_router(aegis_fleet_work_api.router)
     app.include_router(aegis_fleet_attention_api.router)
+    app.include_router(aegis_notification_priority_api.router)
     app.include_router(aegis_sprints_api.router)
     app.include_router(aegis_automation_api.router)
     app.include_router(aegis_work_context_api.router)

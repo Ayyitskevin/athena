@@ -77,7 +77,15 @@ def test_scope_vocabulary_is_closed():
 
 def test_a_read_token_sees_reads_and_no_mutations():
     surface = _build(frozenset({"read"}))
-    assert {"my_desk", "search_workspace", "get_issue", "whoami"} <= surface
+    assert {
+        "my_desk",
+        "search_workspace",
+        "get_issue",
+        "whoami",
+        "list_priority_notifications",
+        "notification_priority_summary",
+        "get_watch_preference",
+    } <= surface
     # Not one mutation — module writes, personal state, or admin.
     assert not surface & {
         "create_issue",
@@ -87,12 +95,21 @@ def test_a_read_token_sees_reads_and_no_mutations():
         "start_playbook",
         "onboard_agent",
         "undo_action",
+        "set_watch_preference",
+        "clear_watch_preference",
     }
 
 
 def test_an_issue_writer_gets_aegis_and_personal_but_not_mentor_or_admin():
     surface = _build(frozenset({"read", "issue:write"}))
-    assert {"create_issue", "claim_issue", "start_playbook", "watch"} <= surface
+    assert {
+        "create_issue",
+        "claim_issue",
+        "start_playbook",
+        "watch",
+        "set_watch_preference",
+        "clear_watch_preference",
+    } <= surface
     assert not surface & {"create_page", "record_run_learning", "onboard_agent"}
 
 

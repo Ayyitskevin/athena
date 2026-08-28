@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from athena.aegis import issues, notification_priority
 from athena.core import activity, db, notifications
 from athena.main import create_app
 
@@ -35,6 +36,23 @@ def _make_user2(client):
     client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)
 
 
+def test_preference_priority_vocabulary_tracks_aegis(tmp_path):
+    assert notifications.PREFERENCE_PRIORITIES == issues.PRIORITIES
+
+
+def test_preferences_belong_to_live_watches(tmp_path):
+    conn = _conn(tmp_path / "foreign-key.db")
+    foreign_keys = conn.execute("PRAGMA foreign_key_list(watch_preferences)").fetchall()
+    watched_columns = {
+        (row["from"], row["to"], row["on_delete"]) for row in foreign_keys
+    }
+    assert {
+        ("user_id", "user_id", "CASCADE"),
+        ("target_kind", "target_kind", "CASCADE"),
+        ("target_id", "target_id", "CASCADE"),
+    } <= watched_columns
+
+
 # --- unit: priority precedence ----------------------------------------------
 
 
@@ -42,18 +60,21 @@ def test_priority_preference_wins_over_issue_priority(tmp_path):
     conn = _conn(tmp_path / "p.db")
     notifications.watch(conn, 1, "issue", 5)
     # No preference yet -> falls back to issue priority.
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'urgent', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'urgent', 1)"
+    )
     conn.commit()
 
-    proj = notifications.list_priority_notifications(conn, 1)
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert proj["items"] == []
 
     # User overrides down to 'low'.
     notifications.set_preference(conn, 1, "issue", 5, priority="low")
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
-    proj = notifications.list_priority_notifications(conn, 1)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert proj["items"][0]["priority"] == "low"
     assert proj["items"][0]["source"]["issue_priority"] == "urgent"
 
@@ -61,34 +82,45 @@ def test_priority_preference_wins_over_issue_priority(tmp_path):
 def test_priority_defaults_to_issue_priority_then_normal(tmp_path):
     conn = _conn(tmp_path / "p.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'high', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'high', 1)"
+    )
     conn.commit()
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
 
-    proj = notifications.list_priority_notifications(conn, 1)
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert proj["items"][0]["priority"] == "high"
 
 
-def test_priority_unknown_value_falls_back_to_normal(tmp_path):
+def test_priority_unknown_value_surfaces_as_urgent(tmp_path):
     conn = _conn(tmp_path / "p.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'high', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'high', 1)"
+    )
     conn.commit()
-    # Simulate a stale/unknown priority stored directly (defensive test).
+    # Simulate a stale/unknown priority stored directly (defensive test). The
+    # migration rejects this in normal operation, but an imported/corrupt row
+    # must still surface conservatively rather than disappear below a filter.
+    conn.execute("PRAGMA ignore_check_constraints = ON")
     conn.execute(
         "INSERT INTO watch_preferences (user_id, target_kind, target_id, priority) "
         "VALUES (?, 'issue', 5, 'bogus')",
         (1,),
     )
+    conn.execute("PRAGMA ignore_check_constraints = OFF")
     conn.commit()
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
 
-    proj = notifications.list_priority_notifications(conn, 1)
-    assert proj["items"][0]["priority"] == "normal"
+    proj = notification_priority.list_priority_notifications(conn, 1)
+    assert proj["items"][0]["priority"] == "urgent"
+    assert proj["items"][0]["source"]["preference_valid"] is False
 
 
 # --- unit: mute / digest interaction ----------------------------------------
@@ -97,28 +129,36 @@ def test_priority_unknown_value_falls_back_to_normal(tmp_path):
 def test_mute_suppresses_notifications(tmp_path):
     conn = _conn(tmp_path / "m.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'medium', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'medium', 1)"
+    )
     conn.commit()
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     notifications.set_preference(conn, 1, "issue", 5, mute_until=future)
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
 
-    proj = notifications.list_priority_notifications(conn, 1)
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert proj["items"] == []
 
     # include_muted surfaces it with the muted flag.
-    proj = notifications.list_priority_notifications(conn, 1, include_muted=True)
+    proj = notification_priority.list_priority_notifications(
+        conn, 1, include_muted=True
+    )
     assert len(proj["items"]) == 1
     assert proj["items"][0]["muted"] is True
+    assert proj["items"][0]["delivery_state"] == "muted"
 
 
 def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
     conn = _conn(tmp_path / "m.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'medium', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'medium', 1)"
+    )
     conn.commit()
     conn.execute(
         "INSERT INTO watch_preferences (user_id, target_kind, target_id, mute_until) "
@@ -126,11 +166,12 @@ def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
         (1,),
     )
     conn.commit()
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
 
     # Malformed mute_until fails closed: notification is NOT suppressed.
-    proj = notifications.list_priority_notifications(conn, 1)
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert len(proj["items"]) == 1
     assert proj["items"][0]["muted"] is False
 
@@ -138,8 +179,10 @@ def test_mute_fail_closed_on_malformed_timestamp(tmp_path):
 def test_digest_buckets_group_by_window(tmp_path):
     conn = _conn(tmp_path / "d.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'medium', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'medium', 1)"
+    )
     conn.commit()
     notifications.set_preference(conn, 1, "issue", 5, digest_window_minutes=60)
 
@@ -165,26 +208,57 @@ def test_digest_buckets_group_by_window(tmp_path):
     )
     conn.commit()
 
-    proj = notifications.list_priority_notifications(conn, 1, digest=True)
+    proj = notification_priority.list_priority_notifications(conn, 1, digest=True)
     buckets = {item["digest_bucket"] for item in proj["items"]}
     assert len(buckets) == 1
+    assert {item["delivery_state"] for item in proj["items"]} == {"digest"}
+
+
+def test_invalid_digest_window_surfaces_as_immediate_with_warning(tmp_path):
+    conn = _conn(tmp_path / "invalid-digest.db")
+    notifications.watch(conn, 1, "issue", 5)
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'high', 1)"
+    )
+    conn.execute("PRAGMA ignore_check_constraints = ON")
+    conn.execute(
+        "INSERT INTO watch_preferences "
+        "(user_id, target_kind, target_id, digest_window_minutes) "
+        "VALUES (1, 'issue', 5, -1)"
+    )
+    conn.execute("PRAGMA ignore_check_constraints = OFF")
+    conn.commit()
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
+
+    item = notification_priority.list_priority_notifications(conn, 1, digest=True)[
+        "items"
+    ][0]
+    assert item["delivery_state"] == "immediate"
+    assert item["digest_bucket"] is None
+    assert item["source"]["preference_valid"] is False
 
 
 def test_mute_overrides_digest(tmp_path):
     conn = _conn(tmp_path / "md.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'medium', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'medium', 1)"
+    )
     conn.commit()
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     notifications.set_preference(
         conn, 1, "issue", 5, mute_until=future, digest_window_minutes=60
     )
-    activity.record(conn, actor_id=2, verb="changed_status",
-                    target_kind="issue", target_id=5)
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
 
     # Muted items are excluded from the digest projection by default.
-    proj = notifications.list_priority_notifications(conn, 1, digest=True)
+    proj = notification_priority.list_priority_notifications(conn, 1, digest=True)
     assert proj["items"] == []
 
 
@@ -206,14 +280,17 @@ def test_preferences_are_scoped_to_owner(tmp_path):
 def test_observed_at_is_stable_within_request(tmp_path):
     conn = _conn(tmp_path / "obs.db")
     notifications.watch(conn, 1, "issue", 5)
-    conn.execute("INSERT INTO issues (id, title, body, status, priority, created_by) "
-                 "VALUES (5, 't', 'b', 'open', 'medium', 1)")
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'medium', 1)"
+    )
     conn.commit()
     for _ in range(3):
-        activity.record(conn, actor_id=2, verb="changed_status",
-                        target_kind="issue", target_id=5)
+        activity.record(
+            conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+        )
 
-    proj = notifications.list_priority_notifications(conn, 1)
+    proj = notification_priority.list_priority_notifications(conn, 1)
     assert all(item["observed_at"] == proj["observed_at"] for item in proj["items"])
     # observed_at is a recent UTC timestamp.
     parsed = datetime.fromisoformat(proj["observed_at"].replace("Z", "+00:00"))
@@ -228,15 +305,17 @@ def test_api_priority_inbox_and_summary(tmp_path):
     with TestClient(app) as client:
         _bootstrap(client)
         _make_user2(client)
-        issue = client.post("/issues", json={"title": "x", "priority": "high"},
-                            headers=H2).json()
+        issue = client.post(
+            "/issues", json={"title": "x", "priority": "high"}, headers=H2
+        ).json()
         client.post(
             "/watches",
             json={"target_kind": "issue", "target_id": issue["id"]},
             headers=H1,
         )
-        client.patch(f"/issues/{issue['id']}", json={"status": "in_progress"},
-                     headers=H2)
+        client.patch(
+            f"/issues/{issue['id']}", json={"status": "in_progress"}, headers=H2
+        )
 
         # Default projection inherits issue priority.
         inbox = client.get("/notifications/priority", headers=H1).json()
@@ -254,15 +333,15 @@ def test_api_priority_inbox_and_summary(tmp_path):
         inbox = client.get("/notifications/priority", headers=H1).json()
         assert inbox["items"] == []
 
-        summary = client.get("/notifications/priority/summary?unread=true",
-                             headers=H1).json()
-        assert summary["by_priority"] == {
-            "urgent": {"total": 1, "muted": 1}
-        }
+        summary = client.get(
+            "/notifications/priority/summary?unread=true", headers=H1
+        ).json()
+        assert summary["by_priority"] == {"urgent": {"total": 1, "muted": 1}}
 
         # include_muted surfaces the item.
-        inbox = client.get("/notifications/priority?include_muted=true",
-                           headers=H1).json()
+        inbox = client.get(
+            "/notifications/priority?include_muted=true", headers=H1
+        ).json()
         assert inbox["items"][0]["priority"] == "urgent"
         assert inbox["items"][0]["muted"] is True
 
@@ -290,8 +369,12 @@ def test_api_preference_crud(tmp_path):
         assert body["digest_window_minutes"] == 120
 
         # Read
-        assert client.get(f"/watches/issue/{issue['id']}/preference",
-                          headers=H1).json()["priority"] == "low"
+        assert (
+            client.get(f"/watches/issue/{issue['id']}/preference", headers=H1).json()[
+                "priority"
+            ]
+            == "low"
+        )
 
         # Update
         client.put(
@@ -299,16 +382,86 @@ def test_api_preference_crud(tmp_path):
             json={"priority": "high"},
             headers=H1,
         )
-        assert client.get(f"/watches/issue/{issue['id']}/preference",
-                          headers=H1).json()["priority"] == "high"
+        assert (
+            client.get(f"/watches/issue/{issue['id']}/preference", headers=H1).json()[
+                "priority"
+            ]
+            == "high"
+        )
 
         # Delete
-        assert client.delete(
-            f"/watches/issue/{issue['id']}/preference", headers=H1
-        ).status_code == 204
-        assert client.get(
-            f"/watches/issue/{issue['id']}/preference", headers=H1
-        ).status_code == 404
+        assert (
+            client.delete(
+                f"/watches/issue/{issue['id']}/preference", headers=H1
+            ).status_code
+            == 204
+        )
+        assert (
+            client.get(
+                f"/watches/issue/{issue['id']}/preference", headers=H1
+            ).status_code
+            == 404
+        )
+
+
+def test_api_preference_requires_an_active_watch(tmp_path):
+    app = create_app(tmp_path / "requires-watch.db")
+    with TestClient(app) as client:
+        _bootstrap(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        assert (
+            client.delete(f"/watches/issue/{issue['id']}", headers=H1).status_code
+            == 204
+        )
+
+        response = client.put(
+            f"/watches/issue/{issue['id']}/preference",
+            json={"priority": "urgent"},
+            headers=H1,
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "not watching that target"
+
+
+def test_unwatch_clears_preference_before_rewatch(tmp_path):
+    app = create_app(tmp_path / "rewatch.db")
+    with TestClient(app) as client:
+        _bootstrap(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        preference_url = f"/watches/issue/{issue['id']}/preference"
+        client.put(preference_url, json={"priority": "urgent"}, headers=H1)
+
+        assert (
+            client.delete(f"/watches/issue/{issue['id']}", headers=H1).status_code
+            == 204
+        )
+        client.post(
+            "/watches",
+            json={"target_kind": "issue", "target_id": issue["id"]},
+            headers=H1,
+        )
+
+        assert client.get(preference_url, headers=H1).status_code == 404
+
+
+def test_preference_writes_preserve_activity_history(tmp_path):
+    app = create_app(tmp_path / "history.db")
+    with TestClient(app) as client:
+        _bootstrap(client)
+        issue = client.post("/issues", json={"title": "x"}, headers=H1).json()
+        preference_url = f"/watches/issue/{issue['id']}/preference"
+        before = client.get("/events", headers=H1).json()["events"]
+
+        assert (
+            client.put(
+                preference_url, json={"priority": "urgent"}, headers=H1
+            ).status_code
+            == 200
+        )
+        assert client.delete(preference_url, headers=H1).status_code == 204
+
+        after = client.get("/events", headers=H1).json()["events"]
+        assert [event["id"] for event in after] == [event["id"] for event in before]
 
 
 def test_api_preference_validation(tmp_path):
@@ -335,21 +488,30 @@ def test_api_min_priority_filter(tmp_path):
     with TestClient(app) as client:
         _bootstrap(client)
         _make_user2(client)
-        low = client.post("/issues", json={"title": "low", "priority": "low"},
-                          headers=H2).json()
-        high = client.post("/issues", json={"title": "high", "priority": "high"},
-                           headers=H2).json()
-        client.post("/watches", json={"target_kind": "issue", "target_id": low["id"]},
-                    headers=H1)
-        client.post("/watches", json={"target_kind": "issue", "target_id": high["id"]},
-                    headers=H1)
-        client.patch(f"/issues/{low['id']}", json={"status": "in_progress"},
-                     headers=H2)
-        client.patch(f"/issues/{high['id']}", json={"status": "in_progress"},
-                     headers=H2)
+        low = client.post(
+            "/issues", json={"title": "low", "priority": "low"}, headers=H2
+        ).json()
+        high = client.post(
+            "/issues", json={"title": "high", "priority": "high"}, headers=H2
+        ).json()
+        client.post(
+            "/watches",
+            json={"target_kind": "issue", "target_id": low["id"]},
+            headers=H1,
+        )
+        client.post(
+            "/watches",
+            json={"target_kind": "issue", "target_id": high["id"]},
+            headers=H1,
+        )
+        client.patch(f"/issues/{low['id']}", json={"status": "in_progress"}, headers=H2)
+        client.patch(
+            f"/issues/{high['id']}", json={"status": "in_progress"}, headers=H2
+        )
 
-        inbox = client.get("/notifications/priority?min_priority=high",
-                           headers=H1).json()
+        inbox = client.get(
+            "/notifications/priority?min_priority=high", headers=H1
+        ).json()
         assert len(inbox["items"]) == 1
         assert inbox["items"][0]["target_id"] == high["id"]
 
@@ -366,6 +528,9 @@ def test_api_owner_cannot_see_others_preferences(tmp_path):
             headers=H1,
         )
         # User 2 cannot read user 1's preference.
-        assert client.get(
-            f"/watches/issue/{issue['id']}/preference", headers=H2
-        ).status_code == 404
+        assert (
+            client.get(
+                f"/watches/issue/{issue['id']}/preference", headers=H2
+            ).status_code
+            == 404
+        )

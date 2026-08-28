@@ -38,7 +38,7 @@ the documented owners below).
 | Dispatch | The dispatch command owns authorization, the budget charge, the approval gate, the policy digest, the record, and its `dispatch_requested` event in one transaction; the callback command owns evidence/terminal transitions and their audit events atomically; delivery is a post-commit side effect whose outcome is a follow-up event | No redelivery loop, no cancellation, and callback v1 has one immutable evidence pointer rather than a sender sequence; every terminal state is the executor's claim, and Athena never verifies that work happened |
 | Workers | Heartbeat, kill request, cancellation, acknowledgement, and stop each own their write plus its audit event; credentials are re-resolved inside the write transaction | The kill is cooperative — Athena records an instruction and cannot end a process. No worker deletion or expiry |
 | Agent runs | Run/check-in operations use their dedicated command and run-context owners | Process-level kill remains roadmap work, not a shipped guarantee |
-| Personal state | None — by design, and bounded by the rules in the next section: saved filters, watches, notification read-marks, and page and issue drafts are owner-scoped in their mutation SQL (single-statement writes, or one immediate transaction where a read feeds the write), record no audit events, and have exactly one data-module writer each | The category is an exception, not a lane: anything that fails those rules is not personal state and needs a command owner like every other write |
+| Personal state | None — by design, and bounded by the rules in the next section: saved filters, watches and their notification preferences, notification read-marks, and page and issue drafts are owner-scoped in their mutation SQL (single-statement writes, or one immediate transaction where a read feeds the write), record no audit events, and have exactly one data-module writer each | The category is an exception, not a lane: anything that fails those rules is not personal state and needs a command owner like every other write |
 
 The table identifies ownership shape, not test coverage or security severity.
 Before changing a listed legacy path, inspect both REST and browser adapters;
@@ -49,7 +49,10 @@ from activity emission.
 
 Some writes are **personal state**: rows that belong to one user, change nothing
 anyone else can observe, and carry no shared-history significance. Today that is
-**saved filters**, **watches**, **notification read-marks**, and **page and issue drafts**.
+**saved filters**, **watches and their notification preferences**, **notification
+read-marks**, and **page and issue drafts**. A notification preference is owned by
+the same `(user, kind, target)` watch and is deleted with it; it cannot exist first
+and silently reactivate after a later re-watch.
 These do NOT get
 a command owner or audit events — recording "you marked your own inbox read" on
 the append-only trail would be noise, and an audit log is load-bearing precisely

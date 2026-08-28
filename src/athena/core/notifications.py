@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from datetime import datetime, timezone
+from collections.abc import Callable, Mapping
 from typing import cast
 
 from athena.core import access, links
@@ -358,30 +359,35 @@ def mark_all_read(
 
 # --- priority / mute / digest projections -----------------------------------
 
-# Canonical priority order, lowest to highest. Matches aegis/issues.PRIORITIES
-# with an explicit "normal" default for non-issue targets and unset preferences.
+# Notification preferences use the same four explicit values as Aegis issue
+# priority. ``normal`` is projection-only: it means no preference and no target
+# priority. tests/test_notification_priority.py guards the shared values against
+# drift without making core depend on Aegis.
 PRIORITY_ORDER = ("low", "normal", "medium", "high", "urgent")
+PREFERENCE_PRIORITIES = ("low", "medium", "high", "urgent")
 
-# Maps a priority string to its rank; unknown values map to "normal" (fail open
-# on bad data — we never silently drop a notification because a priority string
-# was stale).
+# Closed ranks for filtering and sorting. Stored unknowns are handled by
+# ``_resolve_priority`` and conservatively surface as urgent.
 _PRIORITY_RANK = {name: idx for idx, name in enumerate(PRIORITY_ORDER)}
 
 # Bounds for digest windows: a window smaller than 1 minute is meaningless and
 # larger than one week hides signal. Values outside this range are rejected.
-_MIN_DIGEST_MINUTES = 1
-_MAX_DIGEST_MINUTES = 7 * 24 * 60
+MIN_DIGEST_MINUTES = 1
+MAX_DIGEST_MINUTES = 7 * 24 * 60
+MAX_MUTE_UNTIL_CHARS = 64
 
 # SQLite stores datetimes as 'YYYY-MM-DD HH:MM:SS' in UTC. We accept ISO-8601
 # inputs (with or without timezone) and write them back in the storage format.
 _SQLITE_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+PriorityResolver = Callable[
+    [sqlite3.Connection, set[tuple[str, int]]],
+    Mapping[tuple[str, int], str | None],
+]
 
-def _normalize_priority(value: str | None) -> str:
-    """Return a known priority, or 'normal' for unknown/unset values."""
-    if value is None:
-        return "normal"
-    return value if value in _PRIORITY_RANK else "normal"
+
+class WatchNotFound(LookupError):
+    """A preference write named a target the actor is not watching."""
 
 
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
@@ -393,9 +399,7 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     # Python 3.11+ handles both 'Z' and offset-aware ISO strings via fromisoformat.
     # Older forms may arrive with a space instead of 'T'.
     try:
-        parsed = datetime.fromisoformat(
-            value.replace("Z", "+00:00").replace(" ", "T")
-        )
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00").replace(" ", "T"))
     except (ValueError, TypeError):
         return None
     if parsed.tzinfo is None:
@@ -438,29 +442,35 @@ def set_preference(
     [1, 10080] are rejected. The caller (the API layer) translates these into
     422 responses.
     """
-    if priority is not None and priority not in _PRIORITY_RANK:
-        priority = "normal"
+    if priority is not None and priority not in PREFERENCE_PRIORITIES:
+        raise ValueError(f"priority must be one of: {', '.join(PREFERENCE_PRIORITIES)}")
 
     parsed_mute: datetime | None = None
     if mute_until is not None:
+        if len(mute_until) > MAX_MUTE_UNTIL_CHARS:
+            raise ValueError(
+                f"mute_until must be at most {MAX_MUTE_UNTIL_CHARS} characters"
+            )
         parsed_mute = _parse_iso_timestamp(mute_until)
         if parsed_mute is None:
             raise ValueError("mute_until must be a valid ISO-8601 datetime")
 
     if digest_window_minutes is not None and not (
-        _MIN_DIGEST_MINUTES <= digest_window_minutes <= _MAX_DIGEST_MINUTES
+        MIN_DIGEST_MINUTES <= digest_window_minutes <= MAX_DIGEST_MINUTES
     ):
         raise ValueError(
-            f"digest_window_minutes must be between {_MIN_DIGEST_MINUTES} "
-            f"and {_MAX_DIGEST_MINUTES}"
+            f"digest_window_minutes must be between {MIN_DIGEST_MINUTES} "
+            f"and {MAX_DIGEST_MINUTES}"
         )
 
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO watch_preferences
             (user_id, target_kind, target_id, priority, mute_until,
              digest_window_minutes, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        SELECT ?, ?, ?, ?, ?, ?, datetime('now')
+        FROM watches
+        WHERE user_id = ? AND target_kind = ? AND target_id = ?
         ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET
             priority = excluded.priority,
             mute_until = excluded.mute_until,
@@ -474,10 +484,18 @@ def set_preference(
             priority,
             _format_timestamp(parsed_mute) if parsed_mute else None,
             digest_window_minutes,
+            user_id,
+            target_kind,
+            target_id,
         ),
     )
+    if cursor.rowcount == 0:
+        raise WatchNotFound
     conn.commit()
-    return get_preference(conn, user_id, target_kind, target_id)
+    preference = get_preference(conn, user_id, target_kind, target_id)
+    if preference is None:  # pragma: no cover - the successful write created it
+        raise RuntimeError("preference write succeeded without a readable row")
+    return preference
 
 
 def get_preference(
@@ -512,32 +530,25 @@ def delete_preference(
 # --- projection helpers -----------------------------------------------------
 
 
-def _issue_priorities(
-    conn: sqlite3.Connection, target_kind: str, target_ids: set[int]
-) -> dict[int, str]:
-    """Map issue id -> priority for a batch of issue targets. Non-issue kinds
-    and missing rows return an empty mapping; callers fall back to 'normal'."""
-    if target_kind != "issue" or not target_ids:
-        return {}
-    placeholders = ", ".join("?" * len(target_ids))
-    rows = conn.execute(
-        f"SELECT id, priority FROM issues WHERE id IN ({placeholders})",
-        tuple(target_ids),
-    ).fetchall()
-    return {row["id"]: row["priority"] for row in rows}
-
-
 def _resolve_priority(
     preference_priority: str | None,
-    issue_priority: str | None,
-) -> str:
-    """Priority precedence: explicit watch preference wins, then the issue's
-    own priority, then 'normal'. Unknown values collapse to 'normal'."""
+    target_priority: str | None,
+) -> tuple[str, str, bool]:
+    """Resolve priority and provenance without hiding corrupt input.
+
+    Unknown stored values become urgent. That is deliberately conservative: a
+    stale value may be noisy, but it can never fall below a caller's filter and
+    silently suppress the notification.
+    """
     if preference_priority is not None:
-        return _normalize_priority(preference_priority)
-    if issue_priority is not None:
-        return _normalize_priority(issue_priority)
-    return "normal"
+        if preference_priority in PREFERENCE_PRIORITIES:
+            return preference_priority, "preference", True
+        return "urgent", "invalid_preference", False
+    if target_priority is not None:
+        if target_priority in PREFERENCE_PRIORITIES:
+            return target_priority, "target", True
+        return "urgent", "invalid_target", False
+    return "normal", "default", True
 
 
 def _is_muted(mute_until: str | None, now: datetime) -> bool:
@@ -578,6 +589,7 @@ def list_priority_notifications(
     digest: bool = False,
     limit: int = 50,
     actor: dict | None | object = _UNGATED,
+    resolve_priorities: PriorityResolver | None = None,
 ) -> dict:
     """Read-only priority/mute/digest projection over the user's inbox.
 
@@ -606,13 +618,12 @@ def list_priority_notifications(
         conn, user_id, unread_only=unread_only, limit=limit * 4, actor=actor
     )
 
-    # Batch-resolve issue priorities for issue targets.
-    issue_ids = {
-        row["target_id"]
-        for row in raw
-        if row["target_kind"] == "issue"
-    }
-    issue_priorities = _issue_priorities(conn, "issue", issue_ids)
+    targets = {(row["target_kind"], row["target_id"]) for row in raw}
+    target_priorities = (
+        dict(resolve_priorities(conn, targets))
+        if resolve_priorities and targets
+        else {}
+    )
 
     # Load this user's preferences for every (kind, id) touched by the raw set.
     if raw:
@@ -633,11 +644,9 @@ def list_priority_notifications(
     else:
         preferences = {}
 
-    min_rank = (
-        _PRIORITY_RANK.get(_normalize_priority(min_priority), 0)
-        if min_priority is not None
-        else 0
-    )
+    if min_priority is not None and min_priority not in PRIORITY_ORDER:
+        raise ValueError(f"min_priority must be one of: {', '.join(PRIORITY_ORDER)}")
+    min_rank = _PRIORITY_RANK[min_priority] if min_priority is not None else 0
 
     items: list[dict] = []
     for row in raw:
@@ -645,37 +654,47 @@ def list_priority_notifications(
         target_id = row["target_id"]
         pref = preferences.get((target_kind, target_id), {})
 
-        priority = _resolve_priority(
+        target_priority = target_priorities.get((target_kind, target_id))
+        priority, priority_source, priority_valid = _resolve_priority(
             pref.get("priority"),
-            issue_priorities.get(target_id) if target_kind == "issue" else None,
+            target_priority,
         )
         if _PRIORITY_RANK[priority] < min_rank:
             continue
 
-        muted = _is_muted(pref.get("mute_until"), observed_at)
+        mute_until = pref.get("mute_until")
+        mute_valid = mute_until is None or _parse_iso_timestamp(mute_until) is not None
+        muted = _is_muted(mute_until, observed_at)
         if muted and not include_muted:
             continue
 
         window = pref.get("digest_window_minutes")
+        window_valid = window is None or (
+            isinstance(window, int)
+            and MIN_DIGEST_MINUTES <= window <= MAX_DIGEST_MINUTES
+        )
+        valid_window = window if window_valid else None
+        delivery_state = "muted" if muted else "digest" if valid_window else "immediate"
         bucket = None
-        if digest and window:
-            bucket = _digest_bucket(row["event_at"], window)
+        if digest and isinstance(valid_window, int):
+            bucket = _digest_bucket(row["event_at"], valid_window)
+
+        preference_valid = priority_valid and mute_valid and window_valid
 
         item = {
             **row,
             "observed_at": observed_at_str,
             "priority": priority,
             "muted": muted,
+            "delivery_state": delivery_state,
             "digest_bucket": bucket,
             "source": {
                 "target_kind": target_kind,
                 "target_id": target_id,
-                "issue_priority": (
-                    issue_priorities.get(target_id)
-                    if target_kind == "issue"
-                    else None
-                ),
+                "issue_priority": target_priority if target_kind == "issue" else None,
                 "preference_set": bool(pref),
+                "preference_valid": preference_valid,
+                "priority_source": priority_source,
             },
         }
         items.append(item)
@@ -691,6 +710,7 @@ def priority_summary(
     *,
     unread_only: bool = False,
     actor: dict | None | object = _UNGATED,
+    resolve_priorities: PriorityResolver | None = None,
 ) -> dict:
     """Count notifications per resolved priority, with mute state separated.
 
@@ -703,6 +723,7 @@ def priority_summary(
         include_muted=True,
         limit=10000,
         actor=actor,
+        resolve_priorities=resolve_priorities,
     )
     summary: dict[str, dict[str, int]] = {}
     for item in projection["items"]:
