@@ -11,6 +11,7 @@ const {
 } = require("../../src/athena/static/palette.js");
 
 test("typing an exact issue ref selects inspection before generic actions", () => {
+  assert.equal(defaultActiveIndex("MWS-18", 0), -2);
   assert.equal(defaultActiveIndex("MWS-18", 3), -2);
   assert.equal(defaultActiveIndex("42", 3), -2);
   assert.equal(defaultActiveIndex("capture", 3), 0);
