@@ -66,6 +66,8 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     ("*", "athena.core.notifications", "mark_all_read"): "personal state",
     ("*", "athena.core.notifications", "watch"): "personal state",
     ("*", "athena.core.notifications", "unwatch"): "personal state",
+    ("*", "athena.core.notifications", "set_preference"): "personal state",
+    ("*", "athena.core.notifications", "delete_preference"): "personal state",
     # A page draft is one author's unsaved work in progress: owner-scoped, never
     # audited, never content. Migration 0071 carries the full boundary.
     ("*", "athena.mentor.page_drafts", "save_draft"): "personal state",
