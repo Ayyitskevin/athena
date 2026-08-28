@@ -20,15 +20,19 @@ months ago" is not the same alarm as "someone is probing now".
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import sqlite3
 
-from athena.aegis import automation, fleet_work
+from athena.aegis import automation, dependencies, fleet_work, issues
 from athena.core import (
+    access,
     approvals,
     budgets,
     run_controls,
     security_events,
+    users,
     webhooks,
     workers,
 )
@@ -171,4 +175,444 @@ def build_attention(
         # Kept apart from the rolled-up total so the card can break the refusals
         # down without a second query.
         "refusals_by_verb": refusals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Ranked "Now" queue extension
+# ---------------------------------------------------------------------------
+#
+# The count card above tells an operator *that* something needs them; this
+# projection tells them *what* needs them next. It is still read-time, still
+# owns no tables, and still points at the surfaces that own each fact.
+
+# Closed signal vocabulary. Each name maps to a collector below. Unknown types
+# fail closed at the boundary so the queue can never be widened by a typo.
+RANKING_SIGNALS = (
+    "pending_approval",
+    "claim_needs_attention",
+    "open_blocker",
+    "open_run_control",
+    "failing_automation_rule",
+    "failing_webhook",
+    "budget_exhaustion",
+    "security_refusal",
+)
+
+# Closed severity vocabulary. Lower numeric rank = more urgent.
+SEVERITIES = ("critical", "high", "medium", "low")
+SEVERITY_RANK = {s: i for i, s in enumerate(SEVERITIES)}
+
+
+@dataclass(frozen=True)
+class AttentionRankItem:
+    """One row in the ranked attention queue.
+
+    ``next_action`` is one of three classes:
+      - "agent-command": the current actor is authorized to execute ``command``.
+      - "operator-link": a human follows ``link`` and decides.
+      - "none": informational; no safe next action is known.
+    This slice labels actions; it never executes them.
+    """
+
+    signal: str
+    severity: str
+    source_kind: str
+    source_id: int
+    owner_id: int | None
+    reason: str
+    freshness: str
+    examined: int
+    total: int
+    next_action: str
+    command: str | None = None
+    link: str | None = None
+
+
+def _format_issue_ref(issue: dict) -> str:
+    return issue.get("key") or f"#{issue['id']}"
+
+
+def _collect_pending_approvals(
+    conn: sqlite3.Connection,
+) -> tuple[list[AttentionRankItem], int, int]:
+    rows = approvals.list_requests(conn, state="pending", limit=200)
+    items: list[AttentionRankItem] = []
+    for i, req in enumerate(rows, start=1):
+        items.append(
+            AttentionRankItem(
+                signal="pending_approval",
+                severity="high",
+                source_kind="approval_request",
+                source_id=req.id,
+                owner_id=req.requested_by,
+                reason=f"{req.action_kind} on {req.target_kind} #{req.target_id}",
+                freshness=req.created_at,
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link="/admin/agents",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+def _collect_claims_needing_attention(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    work = fleet_work.build_active_work(
+        conn, attention_state=fleet_work.NEEDS_ATTENTION, limit=200, now=now
+    )
+    items: list[AttentionRankItem] = []
+    for i, work_item in enumerate(work["items"], start=1):
+        reasons = work_item.get("attention_reasons") or ["needs attention"]
+        holder_id = work_item["holder"]["id"]
+        issue = work_item["issue"]
+        items.append(
+            AttentionRankItem(
+                signal="claim_needs_attention",
+                severity="high",
+                source_kind="issue",
+                source_id=issue["id"],
+                owner_id=holder_id,
+                reason="; ".join(reasons),
+                freshness=work_item["lease"]["claimed_at"],
+                examined=i,
+                total=work["examined_count"],
+                next_action="agent-command",
+                command="check in",
+                link=f"/admin/agents/runs?agent_id={holder_id}",
+            )
+        )
+    return items, work["examined_count"], work["visible_total"]
+
+
+def _collect_open_blockers(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+) -> tuple[list[AttentionRankItem], int, int]:
+    """Issues that are blocked by an open issue, across all visible projects.
+
+    Admin callers see everything; the visibility clause is still applied so a
+    future non-admin consumer cannot leak private-project issues.
+    """
+    candidates = issues.list_issues(
+        conn,
+        include_archived=False,
+        visible_project_ids=access.visible_project_filter(conn, actor),
+    )
+    items: list[AttentionRankItem] = []
+    for issue in candidates:
+        blockers = dependencies.open_blockers(conn, issue["id"], actor=dependencies._UNGATED)
+        if not blockers:
+            continue
+        owner_id = (
+            issue["assignee_id"]
+            if issue["assignee_id"] is not None
+            else issue["created_by"]
+        )
+        freshness = issue.get("updated_at") or issue["created_at"]
+        items.append(
+            AttentionRankItem(
+                signal="open_blocker",
+                severity="high",
+                source_kind="issue",
+                source_id=issue["id"],
+                owner_id=owner_id,
+                reason=(
+                    "blocked by "
+                    + ", ".join(
+                        (
+                            f"{_format_issue_ref(b)} · {b['title']}"
+                            if b.get("title")
+                            else _format_issue_ref(b)
+                        )
+                        for b in blockers
+                    )
+                ),
+                freshness=freshness,
+                examined=len(candidates),
+                total=len(candidates),
+                next_action="operator-link",
+                link=f"/issues/{issue['id']}",
+            )
+        )
+    return items, len(candidates), len(candidates)
+
+
+def _collect_open_run_controls(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    rows = run_controls.list_rows(
+        conn, state=run_controls.STATE_FILTER_OPEN, now_stamp=run_controls.stamp(now)
+    )
+    items: list[AttentionRankItem] = []
+    for i, row in enumerate(rows, start=1):
+        items.append(
+            AttentionRankItem(
+                signal="open_run_control",
+                severity="high",
+                source_kind="run_control",
+                source_id=row["id"],
+                owner_id=row["agent_id"],
+                reason=f"{row['kind']} control on run {row['run_id']}",
+                freshness=row["created_at"],
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link=f"/admin/run-controls?run_id={row['run_id']}",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+def _collect_failing_automation_rules(
+    conn: sqlite3.Connection,
+) -> tuple[list[AttentionRankItem], int, int]:
+    rows = automation.list_rules(conn, failing_only=True)
+    items: list[AttentionRankItem] = []
+    for i, row in enumerate(rows, start=1):
+        items.append(
+            AttentionRankItem(
+                signal="failing_automation_rule",
+                severity="high",
+                source_kind="automation_rule",
+                source_id=row["id"],
+                owner_id=row["created_by"],
+                reason=f"last error: {row.get('last_error') or 'unknown'}",
+                freshness=row.get("last_error_at") or row["created_at"],
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link="/admin/automation",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+def _collect_failing_webhooks(
+    conn: sqlite3.Connection,
+) -> tuple[list[AttentionRankItem], int, int]:
+    rows = [hook for hook in webhooks.list_webhooks(conn) if hook["failure_count"]]
+    items: list[AttentionRankItem] = []
+    for i, wh in enumerate(rows, start=1):
+        severity = "critical" if wh["failure_count"] >= 5 else "high"
+        items.append(
+            AttentionRankItem(
+                signal="failing_webhook",
+                severity=severity,
+                source_kind="webhook",
+                source_id=wh["id"],
+                owner_id=wh["created_by"],
+                reason=(
+                    f"{wh['failure_count']} consecutive failures: "
+                    f"{wh['last_error'] or 'unknown'}"
+                ),
+                freshness=wh["last_attempt_at"] or wh["created_at"],
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link="/admin/webhooks",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+def _collect_budget_exhaustions(
+    conn: sqlite3.Connection,
+    *,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    since = _since_text(window_hours=window_hours, now=now)
+    rows = conn.execute(
+        "SELECT id, actor_id, created_at, detail FROM activity "
+        "WHERE verb = ? AND created_at >= ? AND imported_at IS NULL "
+        "ORDER BY id DESC LIMIT 200",
+        (budgets.VERB_BUDGET_EXHAUSTED, since),
+    ).fetchall()
+    items: list[AttentionRankItem] = []
+    for i, row in enumerate(rows, start=1):
+        items.append(
+            AttentionRankItem(
+                signal="budget_exhaustion",
+                severity="medium",
+                source_kind="user",
+                source_id=row["actor_id"],
+                owner_id=row["actor_id"],
+                reason=row["detail"] or "budget exhausted",
+                freshness=row["created_at"],
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link="/admin/agents",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+def _collect_security_refusals(
+    conn: sqlite3.Connection,
+    *,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    since = _since_text(window_hours=window_hours, now=now)
+    rows = security_events.list_failures(conn, since=since, limit=200)
+    items: list[AttentionRankItem] = []
+    for i, row in enumerate(rows, start=1):
+        items.append(
+            AttentionRankItem(
+                signal="security_refusal",
+                severity="medium",
+                source_kind="user",
+                source_id=row["actor_id"],
+                owner_id=row["actor_id"],
+                reason=f"{row['verb']}: {row['detail'] or 'boundary refusal'}",
+                freshness=row["created_at"],
+                examined=i,
+                total=len(rows),
+                next_action="operator-link",
+                link="/admin/security",
+            )
+        )
+    return items, len(rows), len(rows)
+
+
+_RankCollector = Callable[
+    ..., tuple[list[AttentionRankItem], int, int]
+]
+
+_RANKING_COLLECTORS: dict[str, _RankCollector] = {
+    "pending_approval": _collect_pending_approvals,
+    "claim_needs_attention": _collect_claims_needing_attention,
+    "open_blocker": _collect_open_blockers,
+    "open_run_control": _collect_open_run_controls,
+    "failing_automation_rule": _collect_failing_automation_rules,
+    "failing_webhook": _collect_failing_webhooks,
+    "budget_exhaustion": _collect_budget_exhaustions,
+    "security_refusal": _collect_security_refusals,
+}
+
+
+def _rank(items: list[AttentionRankItem]) -> list[AttentionRankItem]:
+    """Most urgent first; within a severity, oldest first."""
+    return sorted(
+        items,
+        key=lambda i: (SEVERITY_RANK[i.severity], i.freshness),
+    )
+
+
+def _issue_command_authorized(item: AttentionRankItem, actor: dict) -> bool:
+    """Whether ``actor`` may execute an agent-command on this row.
+
+    The command class is only offered when the caller is the party assigned to
+    act. For a claim-needs-attention row that party is the agent holder
+    (``owner_id``); admins and even the issue creator see a link instead. This
+    keeps the label honest: the slice never executes a command, and it only
+    labels one when the caller could actually perform it through the existing
+    agent API.
+    """
+    if item.source_kind != "issue" or item.owner_id is None:
+        return False
+    return actor.get("id") == item.owner_id
+
+
+def resolve_owner_name(conn: sqlite3.Connection, owner_id: int | None) -> str | None:
+    if owner_id is None:
+        return None
+    user = users.get_user(conn, owner_id)
+    return user["name"] if user else None
+
+
+def to_public_rank_item(
+    conn: sqlite3.Connection,
+    item: AttentionRankItem,
+    *,
+    actor: dict,
+) -> dict:
+    """Render an AttentionRankItem for the API, applying actor-scoped command
+    authorization at the boundary."""
+    next_action = item.next_action
+    command = item.command
+    if next_action == "agent-command" and not _issue_command_authorized(item, actor):
+        next_action = "operator-link"
+        command = None
+    return {
+        "signal": item.signal,
+        "severity": item.severity,
+        "source_kind": item.source_kind,
+        "source_id": item.source_id,
+        "owner_id": item.owner_id,
+        "owner_name": resolve_owner_name(conn, item.owner_id),
+        "reason": item.reason,
+        "freshness": item.freshness,
+        "examined": item.examined,
+        "total": item.total,
+        "next_action": next_action,
+        "command": command,
+        "link": item.link,
+    }
+
+
+def build_attention_ranking(
+    conn: sqlite3.Connection,
+    *,
+    signals: set[str] | None = None,
+    actor: dict,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+    now: datetime | None = None,
+) -> dict:
+    """Build the ranked "Now" attention queue.
+
+    ``signals`` restricts the result to a subset of the known signal vocabulary.
+    An unknown signal type raises ``ValueError`` so the boundary can fail closed
+    with a 422.
+
+    The returned dict includes:
+      - items: ranked list of ``AttentionRankItem`` dicts
+      - examined: total candidates examined across all signals
+      - total: total candidates considered across all signals
+      - signals: the signal types that contributed to this response
+    """
+    if isinstance(window_hours, bool) or not isinstance(window_hours, int):
+        raise ValueError("window_hours must be an integer")
+    if window_hours < 1:
+        raise ValueError("window_hours must be positive")
+    if signals is None:
+        signals = set(RANKING_SIGNALS)
+    unknown = signals - set(RANKING_SIGNALS)
+    if unknown:
+        raise ValueError(f"unknown signal types: {', '.join(sorted(unknown))}")
+
+    all_items: list[AttentionRankItem] = []
+    examined_total = 0
+    candidate_total = 0
+
+    for signal in sorted(signals):
+        collector = _RANKING_COLLECTORS[signal]
+        if signal == "open_blocker":
+            items, examined, total = collector(conn, actor=actor)
+        elif signal in ("claim_needs_attention", "open_run_control"):
+            items, examined, total = collector(conn, now=now)
+        elif signal in ("budget_exhaustion", "security_refusal"):
+            items, examined, total = collector(
+                conn, window_hours=window_hours, now=now
+            )
+        else:
+            items, examined, total = collector(conn)
+        all_items.extend(items)
+        examined_total += examined
+        candidate_total += total
+
+    return {
+        "items": _rank(all_items),
+        "examined": examined_total,
+        "total": candidate_total,
+        "signals": sorted(signals),
     }
