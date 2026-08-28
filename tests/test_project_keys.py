@@ -152,6 +152,9 @@ def test_get_by_ref_resolves_id_and_key(tmp_path):
     assert issues.get_by_ref(conn, "ath-1")["id"] == a1["id"]  # key is case-insensitive
     assert issues.get_by_ref(conn, "NOPE-1") is None
     assert issues.get_by_ref(conn, "9999") is None
+    assert issues.get_by_ref(conn, "9223372036854775808") is None
+    assert issues.get_by_ref(conn, "ATH-9223372036854775808") is None
+    assert issues.get_by_ref(conn, "9" * 5_000) is None
 
 
 # --- API: keys on the resource + addressability ---------------------------

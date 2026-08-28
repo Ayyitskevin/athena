@@ -525,11 +525,21 @@ def get_issue(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     return _to_issue(row) if row else None
 
 
+MAX_SQLITE_INTEGER = (1 << 63) - 1
+
 # An issue ref is either a bare numeric id ("12") or a project key ("ATH-12").
 # The key form is a project prefix (letters, leading letter) + "-" + the
 # per-project number. This is the addressable surface used by the API and web
 # read routes; writes stay numeric (forms post the issue id we control).
 _KEY_REF_RE = re.compile(r"^([A-Za-z][A-Za-z0-9]*)-(\d+)$")
+
+
+def _bounded_ref_number(raw: str) -> int | None:
+    significant = raw.lstrip("0")
+    if not significant or len(significant) > len(str(MAX_SQLITE_INTEGER)):
+        return None
+    value = int(significant)
+    return value if 1 <= value <= MAX_SQLITE_INTEGER else None
 
 
 def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
@@ -540,21 +550,22 @@ def get_by_ref(conn: sqlite3.Connection, ref: str) -> dict | None:
     is COLLATE NOCASE)."""
     ref = ref.strip()
     if ref.isdigit():
-        return get_issue(conn, int(ref))
+        issue_id = _bounded_ref_number(ref)
+        return get_issue(conn, issue_id) if issue_id is not None else None
     m = _KEY_REF_RE.match(ref)
     if not m:
+        return None
+    project_seq = _bounded_ref_number(m.group(2))
+    if project_seq is None:
         return None
     project = projects.get_project_by_key(conn, m.group(1))
     if project is None:
         return None
     row = conn.execute(
         f"{_SELECT} WHERE i.project_id = ? AND i.project_seq = ?",
-        (project["id"], int(m.group(2))),
+        (project["id"], project_seq),
     ).fetchone()
     return _to_issue(row) if row else None
-
-
-MAX_SQLITE_INTEGER = (1 << 63) - 1
 
 
 def is_filter_id(value: object) -> TypeGuard[int]:

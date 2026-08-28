@@ -14,6 +14,73 @@
 (function () {
   "use strict";
 
+  function createSingleFlight() {
+    var running = false;
+    return {
+      busy: function () {
+        return running;
+      },
+      run: function (task) {
+        if (running) {
+          return null;
+        }
+        running = true;
+        var result;
+        try {
+          result = task();
+        } catch (error) {
+          running = false;
+          throw error;
+        }
+        return Promise.resolve(result).finally(function () {
+          running = false;
+        });
+      },
+    };
+  }
+
+  function focusTrapTarget(activeIndex, count, shiftKey) {
+    if (!count) {
+      return null;
+    }
+    if (shiftKey && activeIndex === 0) {
+      return count - 1;
+    }
+    if (!shiftKey && activeIndex === count - 1) {
+      return 0;
+    }
+    return null;
+  }
+
+  function moveActiveIndex(current, direction, actionCount, hasLookup) {
+    var choices = [];
+    for (var index = 0; index < actionCount; index += 1) {
+      choices.push(index);
+    }
+    if (hasLookup) {
+      choices.push(-2);
+    }
+    if (!choices.length) {
+      return -1;
+    }
+    var position = choices.indexOf(current);
+    if (position === -1) {
+      return direction < 0 ? choices[choices.length - 1] : choices[0];
+    }
+    return choices[(position + direction + choices.length) % choices.length];
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      createSingleFlight: createSingleFlight,
+      focusTrapTarget: focusTrapTarget,
+      moveActiveIndex: moveActiveIndex,
+    };
+  }
+  if (typeof document === "undefined") {
+    return;
+  }
+
   var root = document.getElementById("palette");
   if (!root) {
     return; // signed-out pages render no palette at all
@@ -25,7 +92,7 @@
 
   var actions = [];
   var activeIndex = -1;
-  var inFlight = false; // duplicate-submit guard: one command at a time
+  var submitFlight = createSingleFlight();
   var lastFocus = null;
 
   var REF_RE = /^([A-Za-z][A-Za-z0-9]*-\d+|\d+)$/;
@@ -142,7 +209,7 @@
   }
 
   function activate(action) {
-    if (inFlight) {
+    if (submitFlight.busy()) {
       return; // a command is already running; Enter/click is not a second submit
     }
     if (action.navigate) {
@@ -208,51 +275,48 @@
   }
 
   function submit(action, form, button) {
-    if (inFlight) {
-      return;
-    }
-    inFlight = true;
-    button.disabled = true;
-    setStatus("Running " + action.label + "…");
-    var body = new URLSearchParams(new FormData(form));
-    fetch(action.endpoint, {
-      method: "POST",
-      headers: {
-        "X-CSRF-Token": csrf(),
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: body,
-    })
-      .then(function (res) {
-        return res.json().then(function (payload) {
-          if (!res.ok) {
-            // The command's own refusal (stale identity, conflict, forbidden),
-            // shown verbatim — the palette never retries or rewrites it.
-            setStatus(payload.detail || "Refused.", true);
-            return;
-          }
-          detail.textContent = "";
-          var done = action.label + " — done.";
-          if (payload.href) {
-            var link = document.createElement("a");
-            link.href = payload.href;
-            link.textContent = payload.ref || payload.href;
-            setStatus(done + " ");
-            status.appendChild(link);
-          } else {
-            setStatus(done);
-          }
-          loadActions(); // re-project: the lease/queue just changed
+    submitFlight.run(function () {
+      button.disabled = true;
+      setStatus("Running " + action.label + "…");
+      var body = new URLSearchParams(new FormData(form));
+      return fetch(action.endpoint, {
+        method: "POST",
+        headers: {
+          "X-CSRF-Token": csrf(),
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: body,
+      })
+        .then(function (res) {
+          return res.json().then(function (payload) {
+            if (!res.ok) {
+              // The command's own refusal (stale identity, conflict, forbidden),
+              // shown verbatim — the palette never retries or rewrites it.
+              setStatus(payload.detail || "Refused.", true);
+              return;
+            }
+            detail.textContent = "";
+            var done = action.label + " — done.";
+            if (payload.href) {
+              var link = document.createElement("a");
+              link.href = payload.href;
+              link.textContent = payload.ref || payload.href;
+              setStatus(done + " ");
+              status.appendChild(link);
+            } else {
+              setStatus(done);
+            }
+            return loadActions(); // keep single-flight until the new state arrives
+          });
+        })
+        .catch(function () {
+          setStatus("Request failed — nothing was recorded client-side.", true);
+        })
+        .finally(function () {
+          button.disabled = false;
         });
-      })
-      .catch(function () {
-        setStatus("Request failed — nothing was recorded client-side.", true);
-      })
-      .finally(function () {
-        inFlight = false;
-        button.disabled = false;
-      });
+    });
   }
 
   document.addEventListener("keydown", function (event) {
@@ -281,14 +345,18 @@
       if (!focusables.length) {
         return;
       }
-      var first = focusables[0];
-      var last = focusables[focusables.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      var active = Array.prototype.indexOf.call(
+        focusables,
+        document.activeElement,
+      );
+      var focusTarget = focusTrapTarget(
+        active,
+        focusables.length,
+        event.shiftKey,
+      );
+      if (focusTarget !== null) {
         event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
+        focusables[focusTarget].focus();
       }
       return;
     }
@@ -296,16 +364,14 @@
       return; // form fields own their own keys
     }
     var shown = filtered();
-    var max = shown.length - 1;
     var hasLookup = REF_RE.test(input.value.trim());
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      activeIndex = activeIndex >= max ? (hasLookup ? -2 : 0) : activeIndex + 1;
-      if (activeIndex === -1) activeIndex = hasLookup ? -2 : 0;
+      activeIndex = moveActiveIndex(activeIndex, 1, shown.length, hasLookup);
       render();
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      activeIndex = activeIndex <= 0 ? max : activeIndex - 1;
+      activeIndex = moveActiveIndex(activeIndex, -1, shown.length, hasLookup);
       render();
     } else if (event.key === "Enter") {
       event.preventDefault();
