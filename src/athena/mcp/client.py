@@ -295,6 +295,15 @@ class AthenaClient:
         """Get the bounded work-context packet for one visible issue."""
         return self._result(self._client.get(f"/issues/{ref}/work-context"))
 
+    def get_issue_history(self, issue_id: int, *, limit: int | None = None) -> Any:
+        """Read one issue's bounded operator run narrative."""
+        return self._result(
+            self._client.get(
+                f"/issues/{issue_id}/history",
+                params=self._params(limit=limit),
+            )
+        )
+
     def get_fleet_metrics(
         self,
         *,

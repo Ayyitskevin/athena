@@ -1441,8 +1441,58 @@ def issue_history_view(
         conn, target_kind="issue", target_id=issue["id"], actor=user
     )
     # The operator run narrative: claim/handoff/control/check-in story, read-only.
-    narrative = issue_narrative.build_issue_narrative(
-        conn, issue["id"], actor=user
+    narrative = issue_narrative.build_issue_narrative(conn, issue["id"], actor=user)
+    if narrative is None:  # issue was read above; keep the projection fail-closed
+        return HTMLResponse("Issue not found", status_code=404)
+    narrative_event_ids = {
+        item["source"]["id"]
+        for item in narrative["items"]
+        if item["source"]["kind"] == "activity"
+    }
+    timeline_items = []
+    for item in narrative["items"]:
+        source = item["source"]
+        event_id = source["id"] if source["kind"] == "activity" else None
+        action_href = (
+            f"/aegis/issues/{issue['id']}/history?as_of={event_id}"
+            if event_id is not None
+            else item["via"].removeprefix("GET ")
+        )
+        timeline_items.append(
+            {
+                "kind": "narrative",
+                "at": item["at"],
+                "actor_name": None if item["actor"] is None else item["actor"]["name"],
+                "summary": item["summary"],
+                "signal": item["signal"],
+                "source_label": f"{source['kind']} #{source['id']}",
+                "action_href": action_href,
+                "event_id": event_id,
+            }
+        )
+    for event in events:
+        if event["id"] in narrative_event_ids:
+            continue
+        timeline_items.append(
+            {
+                "kind": "event",
+                "at": event["created_at"],
+                "actor_name": event["actor_name"],
+                "summary": (
+                    f"{event['verb']} {event['detail']}"
+                    if event["detail"]
+                    else event["verb"]
+                ),
+                "signal": None,
+                "source_label": f"activity #{event['id']}",
+                "action_href": (
+                    f"/aegis/issues/{issue['id']}/history?as_of={event['id']}"
+                ),
+                "event_id": event["id"],
+            }
+        )
+    timeline_items.sort(
+        key=lambda item: (str(item["at"]), str(item["source_label"])), reverse=True
     )
     return get_templates().TemplateResponse(
         request=request,
@@ -1453,6 +1503,7 @@ def issue_history_view(
             "events": events,
             "as_of": as_of,
             "narrative": narrative,
+            "timeline_items": timeline_items,
         },
     )
 

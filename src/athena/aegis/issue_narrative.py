@@ -34,7 +34,7 @@ state, control open/expired — is computed from a single per-request
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import claim_handoffs, issues
@@ -136,7 +136,8 @@ def _build(
     issue = issues.get_issue(conn, issue_id)
     if issue is None:
         return None
-    observed_at = run_controls.stamp(now)
+    observed_now = datetime.now(UTC) if now is None else now
+    observed_at = run_controls.stamp(observed_now)
 
     # --- the issue's own trail, gated exactly like the history page ---------
     rows = activity.list_activity(
@@ -150,9 +151,7 @@ def _build(
     events = rows[:EVENT_WINDOW]
 
     # --- the handoff lane: the owning record for yields that carried one ----
-    handoff_history = claim_handoffs.list_handoffs(
-        conn, issue_id, limit=HANDOFF_WINDOW
-    )
+    handoff_history = claim_handoffs.list_handoffs(conn, issue_id, limit=HANDOFF_WINDOW)
     handoffs = handoff_history["items"]
     handoff_by_yield_event = {h["yielded"]["event_id"]: h for h in handoffs}
     handoff_by_resume_event = {
@@ -261,19 +260,19 @@ def _build(
         identity.is_admin(actor) or bool(actor.get("is_agent"))
     )
     controls_clipped = False
-    if can_see_controls:
+    if actor is not None and can_see_controls:
         for run_id in sorted(run_ids):
             controls = run_control_commands.readable_controls(
                 conn,
                 actor=actor,
                 run_id=run_id,
-                limit=CONTROLS_PER_RUN_LIMIT,
-                now=now,
+                limit=CONTROLS_PER_RUN_LIMIT + 1,
+                now=observed_now,
             )
             controls_clipped = controls_clipped or (
-                len(controls) == CONTROLS_PER_RUN_LIMIT
+                len(controls) > CONTROLS_PER_RUN_LIMIT
             )
-            for control in controls:
+            for control in controls[:CONTROLS_PER_RUN_LIMIT]:
                 open_ask = control["state"] in _ASK_STATES
                 items.append(
                     {
@@ -297,7 +296,7 @@ def _build(
     can_see_checkins = actor is not None and identity.is_admin(actor)
     if can_see_checkins:
         checkins = agent_run_checkins.list_checkins_for_runs(
-            conn, run_ids=sorted(run_ids), now=now
+            conn, run_ids=sorted(run_ids), now=observed_now
         )
         for run_id in sorted(checkins):
             for checkin in checkins[run_id]:

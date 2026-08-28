@@ -740,6 +740,15 @@ def test_work_context_client_gets_packet_through_result_and_exposes_etag():
     assert transport.calls == [("GET", "/issues/ATH-7/work-context", {})]
 
 
+def test_issue_history_client_forwards_the_bounded_narrative_limit():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.get_issue_history(7, limit=25)
+
+    assert transport.calls == [("GET", "/issues/7/history", {"params": {"limit": 25}})]
+
+
 def test_list_issues_forwards_sprint_only_when_explicit():
     transport = _RecordingClient()
     client = AthenaClient(client=transport)
@@ -1863,6 +1872,19 @@ def test_work_context_mcp_tool_forwards_only_the_issue_ref():
     asyncio.run(server.call_tool("get_issue_work_context", {"ref": "ATH-7"}))
 
     assert client.calls == [("get_issue_work_context", ("ATH-7",), {})]
+
+
+def test_issue_history_mcp_tool_forwards_issue_id_and_limit():
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    asyncio.run(server.call_tool("get_issue_history", {"issue_id": 7, "limit": 25}))
+
+    assert client.calls == [("get_issue_history", (7,), {"limit": 25})]
 
 
 @pytest.mark.parametrize(

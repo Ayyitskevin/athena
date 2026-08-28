@@ -39,6 +39,30 @@ def test_history_page_shows_current_state_and_checkpoints(tmp_path):
         assert f"/aegis/issues/{iid}/history?as_of=" in page.text
 
 
+def test_history_page_enriches_one_timeline_with_source_actions(tmp_path):
+    with TestClient(create_app(tmp_path / "narrative-web.db")) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A"})
+        created = client.post("/issues", json={"title": "narrated"}, headers=H_ADMIN)
+        issue = created.json()
+        claim = client.post(
+            f"/issues/{issue['id']}/claim",
+            headers={
+                **H_ADMIN,
+                "If-Match": created.headers["ETag"],
+                "X-Athena-Run": "narrative-web-run",
+            },
+        )
+        assert claim.status_code == 201, claim.text
+
+        page = client.get(f"/aegis/issues/{issue['id']}/history", headers=H_ADMIN)
+
+        assert page.status_code == 200
+        assert page.text.count('<ul class="tt-events">') == 1
+        assert "narrative-items" not in page.text
+        assert "activity #" in page.text
+        assert f"/aegis/issues/{issue['id']}/history?as_of=" in page.text
+
+
 def test_history_page_time_travels_to_a_past_checkpoint(tmp_path):
     with TestClient(create_app(tmp_path / "past.db")) as client:
         client.post("/users", json={"email": "a@e.com", "name": "A"})
