@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{# Give the command palette its issue context: claim/yield/complete/inspect
+   actions are projected for THIS issue. The key form (ATH-12) is the canonical
+   ref; a backlog issue falls back to its numeric id — both resolve exactly. #}
+{% set palette_issue_ref = issue.key or issue.id %}
+
 {% block title %}{{ issue.key or "#" ~ issue.id }} — {{ issue.title }} — Aegis{% endblock %}
 
 {% block content %}
