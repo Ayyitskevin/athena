@@ -587,7 +587,7 @@ def list_priority_notifications(
     min_priority: str | None = None,
     include_muted: bool = False,
     digest: bool = False,
-    limit: int = 50,
+    limit: int | None = 50,
     actor: dict | None | object = _UNGATED,
     resolve_priorities: PriorityResolver | None = None,
 ) -> dict:
@@ -611,11 +611,12 @@ def list_priority_notifications(
     observed_at = _now()
     observed_at_str = observed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Load the raw inbox up to the limit, then decorate. We load a little extra
-    # because filtering by priority/mute can shrink the result, but we still want
-    # to honor the caller's limit on the final returned set.
+    # Priority and mute are read-time preferences, so SQL cannot safely limit the
+    # inbox before those filters run. Read the complete visible inbox and apply
+    # the caller's limit only after projection; a bounded overfetch could silently
+    # hide an older urgent item behind newer low-priority or muted rows.
     raw = list_notifications(
-        conn, user_id, unread_only=unread_only, limit=limit * 4, actor=actor
+        conn, user_id, unread_only=unread_only, limit=-1, actor=actor
     )
 
     targets = {(row["target_kind"], row["target_id"]) for row in raw}
@@ -625,18 +626,15 @@ def list_priority_notifications(
         else {}
     )
 
-    # Load this user's preferences for every (kind, id) touched by the raw set.
+    # Load the user's complete (normally tiny) preference set once. Building one
+    # OR expression per inbox row can exceed SQLite's expression-depth limit and
+    # duplicates work when many notifications share a target.
     if raw:
-        params: list = [user_id]
-        conditions = []
-        for row in raw:
-            conditions.append("(target_kind = ? AND target_id = ?)")
-            params.extend((row["target_kind"], row["target_id"]))
         pref_rows = conn.execute(
             "SELECT target_kind, target_id, priority, mute_until, "
             "digest_window_minutes FROM watch_preferences "
-            f"WHERE user_id = ? AND ({' OR '.join(conditions)})",
-            params,
+            "WHERE user_id = ?",
+            (user_id,),
         ).fetchall()
         preferences = {
             (row["target_kind"], row["target_id"]): dict(row) for row in pref_rows
@@ -698,7 +696,7 @@ def list_priority_notifications(
             },
         }
         items.append(item)
-        if len(items) >= limit:
+        if limit is not None and len(items) >= limit:
             break
 
     return {"observed_at": observed_at_str, "items": items}
@@ -721,7 +719,7 @@ def priority_summary(
         user_id,
         unread_only=unread_only,
         include_muted=True,
-        limit=10000,
+        limit=None,
         actor=actor,
         resolve_priorities=resolve_priorities,
     )
