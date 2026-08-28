@@ -344,12 +344,88 @@ def test_palette_claim_with_stale_etag_is_refused(tmp_path):
         issue = _create_assigned_issue(client, member["id"])
         csrf = _csrf_from_page(client)
 
+        actions = client.get(f"/aegis/palette/actions?issue_ref={issue['id']}").json()
+        claim_action = next(a for a in actions["actions"] if a["id"] == "claim")
+        stale_etag = next(
+            field["value"]
+            for field in claim_action["fields"]
+            if field["name"] == "etag"
+        )
+        changed = client.patch(
+            f"/issues/{issue['id']}",
+            json={"priority": "high"},
+            headers={"X-Athena-Actor": str(member["id"])},
+        )
+        assert changed.status_code == 200, changed.text
+
         response = client.post(
             f"/aegis/palette/issues/{issue['id']}/claim",
-            data={"etag": '"stale"'},
+            data={"etag": stale_etag},
             headers={"X-CSRF-Token": csrf},
         )
-        assert response.status_code in (412, 428), response.text
+        assert response.status_code == 412, response.text
+        assert response.json()["code"] == "precondition_failed"
+
+
+def test_palette_collapses_private_issue_identity_for_reads_and_writes(tmp_path):
+    db_file = tmp_path / "palette.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        admin = _create_user_and_login(
+            client, "admin@example.com", "Admin", "secret123", role="admin"
+        )
+        outsider = _create_user(
+            client,
+            "outsider@example.com",
+            "Outsider",
+            "secret123",
+            role="member",
+            actor_id=admin["id"],
+        )
+        project_response = client.post(
+            "/projects",
+            json={"name": "Private", "key": "PRIV"},
+            headers={"X-Athena-Actor": str(admin["id"])},
+        )
+        assert project_response.status_code == 201, project_response.text
+        project = project_response.json()
+        visibility = client.put(
+            f"/projects/{project['id']}/visibility",
+            json={"visibility": "private"},
+            headers={"X-Athena-Actor": str(admin["id"])},
+        )
+        assert visibility.status_code == 200, visibility.text
+        issue_response = client.post(
+            "/issues",
+            json={"title": "Private target", "project_id": project["id"]},
+            headers={"X-Athena-Actor": str(admin["id"])},
+        )
+        assert issue_response.status_code == 201, issue_response.text
+        issue = issue_response.json()
+
+        client.post("/logout")
+        _login(client, outsider["email"], "secret123")
+        csrf = _csrf_from_page(client)
+        conn = db.connect(db_file)
+        before = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+
+        projection = client.get(
+            "/aegis/palette/actions", params={"issue_ref": issue["key"]}
+        )
+        claim = client.post(
+            f"/aegis/palette/issues/{issue['id']}/claim",
+            data={"etag": '"does-not-matter"'},
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        after = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+        conn.close()
+
+    assert projection.status_code == 404, projection.text
+    assert projection.json() == {"detail": "no such issue"}
+    assert claim.status_code == 404, claim.text
+    assert claim.json() == {"detail": "no such issue", "code": "not_found"}
+    assert after == before
 
 
 def test_palette_mutations_refuse_clipped_path_identities_before_sql(tmp_path):
