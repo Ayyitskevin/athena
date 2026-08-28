@@ -65,4 +65,36 @@
         {% endif %}
     </section>
 </div>
+
+{% if narrative %}
+<section class="panel narrative-panel" aria-labelledby="narrative-heading">
+    <div class="panel-head">
+        <h2 id="narrative-heading">Run narrative</h2>
+        <span class="muted">observed at {{ narrative['observed_at'] }}</span>
+    </div>
+    <div class="panel-body">
+        {% if narrative['items'] %}
+        <ul class="narrative-items">
+            {% for item in narrative['items'] %}
+            <li class="narrative-item narrative-{{ item['signal'] }}">
+                <span class="narrative-signal">{{ item['signal'] }}</span>
+                <span class="narrative-summary">{{ item['summary'] }}</span>
+                <span class="muted activity-time">{{ item['at'] }}</span>
+                {% if item['actor'] %}<span class="activity-actor">{{ item['actor']['name'] }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="muted">No run signals yet — only unclassified history events.</p>
+        {% endif %}
+        {% if narrative['clipped'] %}
+        <p class="muted">Showing the newest {{ narrative['limit'] }} items; history is clipped.</p>
+        {% endif %}
+        {% if narrative['window']['unclassified_events'] %}
+        <p class="muted">{{ narrative['window']['unclassified_events'] }} event(s) left untyped so unknown signals are never guessed.</p>
+        {% endif %}
+    </div>
+</section>
+{% endif %}
+
 {% endblock %}

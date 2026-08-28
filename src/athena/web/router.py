@@ -28,6 +28,7 @@ from athena.aegis import (
     issue_drafts,
     issue_etags,
     issue_history,
+    issue_narrative,
     issue_search,
     issues,
     projects,
@@ -1399,7 +1400,11 @@ def issue_history_view(
     issue's lifecycle state reconstructed AS OF a chosen checkpoint (?as_of=<event id>,
     default now), beside the timeline of its events, each a clickable cutoff. A thin
     client over issue_history.project_issue_state; gated exactly like the detail page (a
-    hidden/missing issue is the same 404, so existence never leaks)."""
+    hidden/missing issue is the same 404, so existence never leaks).
+
+    The run narrative (issue_narrative.build_issue_narrative) is added alongside the
+    existing snapshot and checkpoint list: it stitches claim, handoff, run-control, and
+    check-in signals into one operator story without replacing the raw trail."""
     issue = issues.get_by_ref(conn, ref)
     user = getattr(request.state, "user", None)
     if not issue or not access.can_see_project_or_backlog(
@@ -1435,6 +1440,10 @@ def issue_history_view(
     events = activity.list_activity(
         conn, target_kind="issue", target_id=issue["id"], actor=user
     )
+    # The operator run narrative: claim/handoff/control/check-in story, read-only.
+    narrative = issue_narrative.build_issue_narrative(
+        conn, issue["id"], actor=user
+    )
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_history.html",
@@ -1443,6 +1452,7 @@ def issue_history_view(
             "snapshot": snapshot,
             "events": events,
             "as_of": as_of,
+            "narrative": narrative,
         },
     )
 

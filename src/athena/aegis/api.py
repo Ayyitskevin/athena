@@ -32,6 +32,7 @@ from athena.aegis import (
     issue_etags,
     issue_commands,
     issue_history,
+    issue_narrative,
     issue_search,
     issues,
     lease_commands,
@@ -885,6 +886,26 @@ def issue_state(
     if state is None:  # _issue_for_read already 404s; this is belt-and-suspenders
         raise HTTPException(status_code=404, detail="no such issue")
     return state
+
+
+@router.get("/{issue_id}/history")
+def issue_history_narrative(
+    issue_id: RowIdPath,
+    limit: int = Query(50, ge=1, le=200),
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    # The operator narrative for one issue, as JSON. Gated like other reads — a
+    # hidden/missing issue is a 404. The narrative itself preserves each owning
+    # surface's visibility rules (admin sees check-ins, agents see their own
+    # controls, etc.) and never infers write authority from the evidence it shows.
+    _issue_for_read(conn, issue_id, actor)
+    narrative = issue_narrative.build_issue_narrative(
+        conn, issue_id, actor=actor, limit=limit
+    )
+    if narrative is None:  # _issue_for_read already 404s; this is belt-and-suspenders
+        raise HTTPException(status_code=404, detail="no such issue")
+    return narrative
 
 
 def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> dict:
