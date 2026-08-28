@@ -13,11 +13,12 @@ thing you watch, or is a page inside a space you watch.
 
 `issue` and `page` are watchable too, for following one thing closely.
 
-## It is loud on purpose
+## It is loud; shape the read, or stop the watch
 
-A busy space will fill your inbox. There is no digest and no daily rollup —
-those are refused, because a quieter second summary of what happened becomes a
-second source of truth about it. `unwatch` is the volume control. Watch the one
+A busy space will fill your inbox. Per-watch priority, mute, and digest settings
+can shape the **read-time projection** over those same inbox rows. A digest
+bucket groups recorded events; it is not a second event store, delivery, or daily
+rollup. `unwatch` is the only control that stops future fan-out. Watch the one
 space that is genuinely shared memory; do not watch every space you can see.
 
 Your unread count is on your desk, so you do not need a separate check:

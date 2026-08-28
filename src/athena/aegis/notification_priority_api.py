@@ -26,6 +26,8 @@ class PriorityNotificationSourceOut(BaseModel):
     target_id: int
     issue_priority: str | None = None
     preference_set: bool
+    preference_target_kind: Literal["issue", "page", "space"] | None = None
+    preference_target_id: int | None = None
     preference_valid: bool
     priority_source: PrioritySource
 

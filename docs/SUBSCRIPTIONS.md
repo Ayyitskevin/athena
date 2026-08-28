@@ -58,6 +58,13 @@ window values fail conservatively: the row remains visible and is marked invalid
 rather than falling below a filter. `unwatch` remains the way to stop future
 inbox fan-out entirely.
 
+For a page event delivered through a space watch, that space's preference shapes
+the row. If the same actor has preferences for both the page and its containing
+space, the direct page preference wins. Deleting a page removes the evidence of
+which space contained it; retained history then ignores any surviving space
+preference and remains visible with the default projection rather than guessing
+and risking suppression.
+
 The fan-out itself is bounded by watcher count and costs one indexed lookup per
 page event. It lives in exactly one place — `notifications.notify_watchers`,
 which `activity.record` calls once — so there is no second call site that can
