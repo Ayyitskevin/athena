@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import datetime, timezone
 from typing import cast
 
 from athena.core import access, links
@@ -353,3 +354,361 @@ def mark_all_read(
     )
     conn.commit()
     return cur.rowcount
+
+
+# --- priority / mute / digest projections -----------------------------------
+
+# Canonical priority order, lowest to highest. Matches aegis/issues.PRIORITIES
+# with an explicit "normal" default for non-issue targets and unset preferences.
+PRIORITY_ORDER = ("low", "normal", "medium", "high", "urgent")
+
+# Maps a priority string to its rank; unknown values map to "normal" (fail open
+# on bad data — we never silently drop a notification because a priority string
+# was stale).
+_PRIORITY_RANK = {name: idx for idx, name in enumerate(PRIORITY_ORDER)}
+
+# Bounds for digest windows: a window smaller than 1 minute is meaningless and
+# larger than one week hides signal. Values outside this range are rejected.
+_MIN_DIGEST_MINUTES = 1
+_MAX_DIGEST_MINUTES = 7 * 24 * 60
+
+# SQLite stores datetimes as 'YYYY-MM-DD HH:MM:SS' in UTC. We accept ISO-8601
+# inputs (with or without timezone) and write them back in the storage format.
+_SQLITE_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _normalize_priority(value: str | None) -> str:
+    """Return a known priority, or 'normal' for unknown/unset values."""
+    if value is None:
+        return "normal"
+    return value if value in _PRIORITY_RANK else "normal"
+
+
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    """Parse an ISO-8601-ish timestamp into an offset-aware UTC datetime.
+    Returns None for missing/malformed values so callers fail closed (no
+    suppression) rather than silently drop."""
+    if not value:
+        return None
+    # Python 3.11+ handles both 'Z' and offset-aware ISO strings via fromisoformat.
+    # Older forms may arrive with a space instead of 'T'.
+    try:
+        parsed = datetime.fromisoformat(
+            value.replace("Z", "+00:00").replace(" ", "T")
+        )
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _format_timestamp(dt: datetime) -> str:
+    """Store a datetime in the canonical SQLite format."""
+    return dt.astimezone(timezone.utc).strftime(_SQLITE_TS_FORMAT)
+
+
+def _now() -> datetime:
+    """Current UTC time — isolated for tests."""
+    return datetime.now(timezone.utc)
+
+
+# --- preferences ------------------------------------------------------------
+
+
+def set_preference(
+    conn: sqlite3.Connection,
+    user_id: int,
+    target_kind: str,
+    target_id: int,
+    *,
+    priority: str | None = None,
+    mute_until: str | None = None,
+    digest_window_minutes: int | None = None,
+) -> dict:
+    """Create or replace per-watch notification preferences for a user.
+
+    ``priority`` overrides the target's own priority (e.g. issue.priority) when
+    resolving this watch. ``mute_until`` is an ISO-8601 datetime; notifications
+    whose event_at is before it are suppressed. ``digest_window_minutes`` groups
+    notifications into buckets of that length.
+
+    Validation is boundary-strict: unknown priorities are normalized, malformed
+    mute_until is rejected by raising ValueError, and digest windows outside
+    [1, 10080] are rejected. The caller (the API layer) translates these into
+    422 responses.
+    """
+    if priority is not None and priority not in _PRIORITY_RANK:
+        priority = "normal"
+
+    parsed_mute: datetime | None = None
+    if mute_until is not None:
+        parsed_mute = _parse_iso_timestamp(mute_until)
+        if parsed_mute is None:
+            raise ValueError("mute_until must be a valid ISO-8601 datetime")
+
+    if digest_window_minutes is not None and not (
+        _MIN_DIGEST_MINUTES <= digest_window_minutes <= _MAX_DIGEST_MINUTES
+    ):
+        raise ValueError(
+            f"digest_window_minutes must be between {_MIN_DIGEST_MINUTES} "
+            f"and {_MAX_DIGEST_MINUTES}"
+        )
+
+    conn.execute(
+        """
+        INSERT INTO watch_preferences
+            (user_id, target_kind, target_id, priority, mute_until,
+             digest_window_minutes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET
+            priority = excluded.priority,
+            mute_until = excluded.mute_until,
+            digest_window_minutes = excluded.digest_window_minutes,
+            updated_at = excluded.updated_at
+        """,
+        (
+            user_id,
+            target_kind,
+            target_id,
+            priority,
+            _format_timestamp(parsed_mute) if parsed_mute else None,
+            digest_window_minutes,
+        ),
+    )
+    conn.commit()
+    return get_preference(conn, user_id, target_kind, target_id)
+
+
+def get_preference(
+    conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
+) -> dict | None:
+    """The user's preferences for one watch, or None if none exist."""
+    row = conn.execute(
+        """
+        SELECT user_id, target_kind, target_id, priority, mute_until,
+               digest_window_minutes, created_at, updated_at
+        FROM watch_preferences
+        WHERE user_id = ? AND target_kind = ? AND target_id = ?
+        """,
+        (user_id, target_kind, target_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_preference(
+    conn: sqlite3.Connection, user_id: int, target_kind: str, target_id: int
+) -> bool:
+    """Remove preferences for a watch. Returns True if a row was deleted."""
+    cur = conn.execute(
+        "DELETE FROM watch_preferences "
+        "WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+        (user_id, target_kind, target_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+# --- projection helpers -----------------------------------------------------
+
+
+def _issue_priorities(
+    conn: sqlite3.Connection, target_kind: str, target_ids: set[int]
+) -> dict[int, str]:
+    """Map issue id -> priority for a batch of issue targets. Non-issue kinds
+    and missing rows return an empty mapping; callers fall back to 'normal'."""
+    if target_kind != "issue" or not target_ids:
+        return {}
+    placeholders = ", ".join("?" * len(target_ids))
+    rows = conn.execute(
+        f"SELECT id, priority FROM issues WHERE id IN ({placeholders})",
+        tuple(target_ids),
+    ).fetchall()
+    return {row["id"]: row["priority"] for row in rows}
+
+
+def _resolve_priority(
+    preference_priority: str | None,
+    issue_priority: str | None,
+) -> str:
+    """Priority precedence: explicit watch preference wins, then the issue's
+    own priority, then 'normal'. Unknown values collapse to 'normal'."""
+    if preference_priority is not None:
+        return _normalize_priority(preference_priority)
+    if issue_priority is not None:
+        return _normalize_priority(issue_priority)
+    return "normal"
+
+
+def _is_muted(mute_until: str | None, now: datetime) -> bool:
+    """True if now() is strictly before mute_until. Malformed/unset values are
+    treated as not muted — fail closed (let the notification through)."""
+    boundary = _parse_iso_timestamp(mute_until)
+    if boundary is None:
+        return False
+    return now < boundary
+
+
+def _digest_bucket(event_at: str, window_minutes: int) -> str:
+    """Bucket an event timestamp into a digest window. The bucket key is the
+    window's start time as an ISO-8601 string, so notifications in the same
+    window share a key and can be grouped or collapsed by the caller."""
+    ts = _parse_iso_timestamp(event_at)
+    if ts is None:
+        # A malformed event_at lands in its own bucket rather than crashing.
+        return event_at
+    epoch = ts.replace(tzinfo=timezone.utc)
+    window_seconds = window_minutes * 60
+    bucket_start = datetime.fromtimestamp(
+        (epoch.timestamp() // window_seconds) * window_seconds, tz=timezone.utc
+    )
+    return bucket_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- priority inbox projection ----------------------------------------------
+
+
+def list_priority_notifications(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    unread_only: bool = False,
+    min_priority: str | None = None,
+    include_muted: bool = False,
+    digest: bool = False,
+    limit: int = 50,
+    actor: dict | None | object = _UNGATED,
+) -> dict:
+    """Read-only priority/mute/digest projection over the user's inbox.
+
+    Returns a dict with ``observed_at`` (stable UTC snapshot time for this read)
+    and ``items`` (a list of notification rows annotated with ``priority``,
+    ``muted``, ``digest_bucket``, and ``source``).
+
+    - ``priority`` resolves per watch: watch_preferences.priority > issue.priority
+      > 'normal'. Non-issue targets use 'normal' unless a preference exists.
+    - ``muted`` is True when the watch's mute_until is in the future. By default
+      muted items are excluded; pass ``include_muted=True`` to see them.
+    - ``digest_bucket`` is present when the watch has a digest window and ``digest``
+      is True; otherwise it is None.
+    - ``source`` preserves the owning target id/kind and, for issues, the issue's
+      own priority and the preference id that shaped this row.
+
+    Visibility gating is applied exactly like ``list_notifications``: events on
+    targets the actor can no longer see are dropped."""
+    observed_at = _now()
+    observed_at_str = observed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Load the raw inbox up to the limit, then decorate. We load a little extra
+    # because filtering by priority/mute can shrink the result, but we still want
+    # to honor the caller's limit on the final returned set.
+    raw = list_notifications(
+        conn, user_id, unread_only=unread_only, limit=limit * 4, actor=actor
+    )
+
+    # Batch-resolve issue priorities for issue targets.
+    issue_ids = {
+        row["target_id"]
+        for row in raw
+        if row["target_kind"] == "issue"
+    }
+    issue_priorities = _issue_priorities(conn, "issue", issue_ids)
+
+    # Load this user's preferences for every (kind, id) touched by the raw set.
+    if raw:
+        params: list = [user_id]
+        conditions = []
+        for row in raw:
+            conditions.append("(target_kind = ? AND target_id = ?)")
+            params.extend((row["target_kind"], row["target_id"]))
+        pref_rows = conn.execute(
+            "SELECT target_kind, target_id, priority, mute_until, "
+            "digest_window_minutes FROM watch_preferences "
+            f"WHERE user_id = ? AND ({' OR '.join(conditions)})",
+            params,
+        ).fetchall()
+        preferences = {
+            (row["target_kind"], row["target_id"]): dict(row) for row in pref_rows
+        }
+    else:
+        preferences = {}
+
+    min_rank = (
+        _PRIORITY_RANK.get(_normalize_priority(min_priority), 0)
+        if min_priority is not None
+        else 0
+    )
+
+    items: list[dict] = []
+    for row in raw:
+        target_kind = row["target_kind"]
+        target_id = row["target_id"]
+        pref = preferences.get((target_kind, target_id), {})
+
+        priority = _resolve_priority(
+            pref.get("priority"),
+            issue_priorities.get(target_id) if target_kind == "issue" else None,
+        )
+        if _PRIORITY_RANK[priority] < min_rank:
+            continue
+
+        muted = _is_muted(pref.get("mute_until"), observed_at)
+        if muted and not include_muted:
+            continue
+
+        window = pref.get("digest_window_minutes")
+        bucket = None
+        if digest and window:
+            bucket = _digest_bucket(row["event_at"], window)
+
+        item = {
+            **row,
+            "observed_at": observed_at_str,
+            "priority": priority,
+            "muted": muted,
+            "digest_bucket": bucket,
+            "source": {
+                "target_kind": target_kind,
+                "target_id": target_id,
+                "issue_priority": (
+                    issue_priorities.get(target_id)
+                    if target_kind == "issue"
+                    else None
+                ),
+                "preference_set": bool(pref),
+            },
+        }
+        items.append(item)
+        if len(items) >= limit:
+            break
+
+    return {"observed_at": observed_at_str, "items": items}
+
+
+def priority_summary(
+    conn: sqlite3.Connection,
+    user_id: int,
+    *,
+    unread_only: bool = False,
+    actor: dict | None | object = _UNGATED,
+) -> dict:
+    """Count notifications per resolved priority, with mute state separated.
+
+    Useful for a 'Now' cockpit that tells the operator 'you have 3 urgent unread
+    items, 1 of them muted'. Counts are visibility-gated like the inbox."""
+    projection = list_priority_notifications(
+        conn,
+        user_id,
+        unread_only=unread_only,
+        include_muted=True,
+        limit=10000,
+        actor=actor,
+    )
+    summary: dict[str, dict[str, int]] = {}
+    for item in projection["items"]:
+        priority = item["priority"]
+        bucket = summary.setdefault(priority, {"total": 0, "muted": 0})
+        bucket["total"] += 1
+        if item["muted"]:
+            bucket["muted"] += 1
+    return {"observed_at": projection["observed_at"], "by_priority": summary}
