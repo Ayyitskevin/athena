@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import subprocess
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from athena.core import approvals, db
+from athena.aegis import lease_commands
+from athena.core import approvals, approvals_api, db
 from athena.main import create_app
 
 
@@ -31,9 +34,7 @@ def _create_user(client, email, name, password, role="member", actor_id=None):
     return resp.json()
 
 
-def _create_user_and_login(
-    client, email, name, password, role="member", actor_id=None
-):
+def _create_user_and_login(client, email, name, password, role="member", actor_id=None):
     """Create a user and establish a browser session."""
     user = _create_user(client, email, name, password, role, actor_id=actor_id)
     _login(client, email, password)
@@ -88,9 +89,9 @@ def test_palette_markup_present_for_signed_in_user(tmp_path):
     assert 'class="palette-input"' in response.text
     assert 'role="dialog"' in response.text
     assert 'aria-modal="true"' in response.text
-    assert '<kbd>' in response.text
+    assert "<kbd>" in response.text
     assert "/static/palette.js?v=" in response.text
-    assert 'data-csrf=' in response.text
+    assert "data-csrf=" in response.text
 
 
 def test_palette_markup_absent_when_signed_out(tmp_path):
@@ -132,7 +133,7 @@ def test_palette_actions_render_only_permitted_issue_actions(tmp_path):
         ids = {a["id"] for a in actions["actions"]}
         assert "inspect" in ids
         assert "capture" in ids  # admin can write
-        assert "claim" in ids    # admin is a permitted claimant
+        assert "claim" in ids  # admin is a permitted claimant
         assert "yield" not in ids
         assert "complete" not in ids
 
@@ -206,7 +207,8 @@ def test_palette_claim_and_complete_record_activity(tmp_path):
         verbs = _activity_verbs(conn, issue["id"])
         assert "claim_completed" in verbs
 
-        # Re-using the spent generation is refused (duplicate-submit guard at the command).
+        # Re-using a spent possession token is refused by the lease fence. The
+        # browser's actual pending-submit suppression is executed in the Node test.
         repeat = client.post(
             f"/aegis/palette/issues/{issue['id']}/complete",
             data={"generation": generation},
@@ -241,7 +243,9 @@ def test_palette_yield_records_handoff_and_activity(tmp_path):
 
         actions = client.get(f"/aegis/palette/actions?issue_ref={issue['id']}").json()
         yield_action = next(a for a in actions["actions"] if a["id"] == "yield")
-        generation = next(f["value"] for f in yield_action["fields"] if f["name"] == "generation")
+        generation = next(
+            f["value"] for f in yield_action["fields"] if f["name"] == "generation"
+        )
 
         yield_resp = client.post(
             f"/aegis/palette/issues/{issue['id']}/yield",
@@ -311,6 +315,21 @@ def test_palette_unknown_or_clipped_ref_returns_visible_refusal(tmp_path):
         assert response.status_code == 404
         assert "no such issue" in response.json()["detail"]
 
+        # SQLite row identities are signed 64-bit values. An oversized numeric
+        # id or project sequence is a clipped identity, not a server error and
+        # never a guess at a nearby row.
+        for clipped in (
+            "9223372036854775808",
+            "ATH-9223372036854775808",
+            "9" * 5_000,
+            "ATH-" + "9" * 5_000,
+        ):
+            response = client.get(
+                "/aegis/palette/actions", params={"issue_ref": clipped}
+            )
+            assert response.status_code == 404, response.text
+            assert response.json() == {"detail": "no such issue"}
+
 
 def test_palette_claim_with_stale_etag_is_refused(tmp_path):
     db_file = tmp_path / "palette.db"
@@ -331,6 +350,36 @@ def test_palette_claim_with_stale_etag_is_refused(tmp_path):
             headers={"X-CSRF-Token": csrf},
         )
         assert response.status_code in (412, 428), response.text
+
+
+def test_palette_mutations_refuse_clipped_path_identities_before_sql(tmp_path):
+    db_file = tmp_path / "palette.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _create_user_and_login(
+            client, "admin@example.com", "Admin", "secret123", role="admin"
+        )
+        csrf = _csrf_from_page(client)
+        conn = db.connect(db_file)
+        before = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+
+        claim = client.post(
+            "/aegis/palette/issues/9223372036854775808/claim",
+            data={"etag": '"stale"'},
+            headers={"X-CSRF-Token": csrf},
+        )
+        approval = client.post(
+            "/aegis/palette/approvals/9223372036854775808/decision",
+            data={"decision": "approve"},
+            headers={"X-CSRF-Token": csrf},
+        )
+
+        after = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+        conn.close()
+
+    assert claim.status_code == 422, claim.text
+    assert approval.status_code == 422, approval.text
+    assert after == before
 
 
 def test_palette_approve_records_decision_activity(tmp_path):
@@ -403,3 +452,79 @@ def test_palette_approve_forbidden_for_non_admin(tmp_path):
             headers={"X-CSRF-Token": csrf},
         )
         assert response.status_code == 403
+
+
+def test_palette_javascript_keyboard_focus_and_single_flight_contract():
+    """Execute the behavior, not source-string assertions masquerading as JS tests."""
+    root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        ["node", "--test", str(root / "tests/js/test_palette.cjs")],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_palette_projection_uses_the_command_owned_claimant_gate(tmp_path, monkeypatch):
+    app = create_app(tmp_path / "palette.db")
+    with TestClient(app) as client:
+        admin = _create_user_and_login(
+            client, "admin@example.com", "Admin", "secret123", role="admin"
+        )
+        issue = _create_assigned_issue(client, admin["id"])
+        calls = []
+
+        def refuse_projection(conn, candidate, actor):
+            calls.append((candidate["id"], actor["id"]))
+            return False
+
+        monkeypatch.setattr(lease_commands, "claimant_is_eligible", refuse_projection)
+        actions = client.get(f"/aegis/palette/actions?issue_ref={issue['id']}").json()
+
+    assert calls == [(issue["id"], admin["id"])]
+    assert "claim" not in {action["id"] for action in actions["actions"]}
+
+
+def test_palette_approval_uses_the_shared_core_http_adapter(tmp_path, monkeypatch):
+    app = create_app(tmp_path / "palette.db")
+    with TestClient(app) as client:
+        admin = _create_user_and_login(
+            client, "admin@example.com", "Admin", "secret123", role="admin"
+        )
+        csrf = _csrf_from_page(client)
+        calls = []
+
+        def decide_for_actor(conn, *, actor, request_id, decision, note):
+            calls.append((actor["id"], request_id, decision, note))
+            return {"id": request_id, "state": "approved"}
+
+        monkeypatch.setattr(approvals_api, "decide_for_actor", decide_for_actor)
+        response = client.post(
+            "/aegis/palette/approvals/7/decision",
+            data={"decision": "approve", "note": "reviewed"},
+            headers={"X-CSRF-Token": csrf},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": 7, "state": "approved"}
+    assert calls == [(admin["id"], 7, "approve", "reviewed")]
+
+
+def test_loading_palette_actions_is_a_read_only_projection(tmp_path):
+    db_file = tmp_path / "palette.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        admin = _create_user_and_login(
+            client, "admin@example.com", "Admin", "secret123", role="admin"
+        )
+        issue = _create_assigned_issue(client, admin["id"])
+        conn = db.connect(db_file)
+        before = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+        response = client.get(f"/aegis/palette/actions?issue_ref={issue['id']}")
+        after = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+        conn.close()
+
+    assert response.status_code == 200, response.text
+    assert after == before

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from athena.core import approvals, users
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor
+from athena.core.identity import admin_actor, require_admin
 
 router = APIRouter(prefix="/approvals", tags=["core"])
 
@@ -46,6 +46,36 @@ class ApprovalDecision(BaseModel):
 
 class ApprovalPolicyUpdate(BaseModel):
     action_kind: str
+
+
+def decide_for_actor(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    request_id: int,
+    decision: str,
+    note: str | None,
+) -> dict:
+    """The single HTTP-facing approval-decision adapter.
+
+    Browser and REST transports share both the admin gate and the legacy
+    command-error translation here. The domain owner still performs the one
+    atomic decision plus audit event; callers cannot reproduce either policy.
+    """
+    if actor is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    actor = require_admin(actor)
+    try:
+        decided = approvals.decide(
+            conn,
+            actor_id=actor["id"],
+            request_id=request_id,
+            decision=decision,
+            note=note,
+        )
+    except approvals.ApprovalDecisionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return decided.public()
 
 
 @router.get("", response_model=list[ApprovalOut])
@@ -97,17 +127,13 @@ def decide(
     budget, and any `If-Match` — so an approval authorizes an intent, never a
     stored side effect. Deciding an already-settled request is a 409 rather than
     a silent flip of an answer the agent may have acted on."""
-    try:
-        decided = approvals.decide(
-            conn,
-            actor_id=actor["id"],
-            request_id=request_id,
-            decision=payload.decision,
-            note=payload.note,
-        )
-    except approvals.ApprovalDecisionError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return decided.public()
+    return decide_for_actor(
+        conn,
+        actor=actor,
+        request_id=request_id,
+        decision=payload.decision,
+        note=payload.note,
+    )
 
 
 @router.get("/policies/{user_id}", response_model=list[str])

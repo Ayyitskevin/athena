@@ -54,16 +54,28 @@ MAX_DECLARED_PATHS = 32
 MAX_DECLARED_PATH_CHARS = 256
 
 
+def claimant_is_eligible(
+    conn: sqlite3.Connection, issue: dict, actor: dict | None
+) -> bool:
+    """Whether ``actor`` passes the command-owned claimant policy.
+
+    Read surfaces may use this to advertise an affordance, but it grants no
+    authority: :func:`claim_issue` evaluates the same function again under its
+    write transaction.
+    """
+    return actor is not None and (
+        issue["assignee_id"] == actor["id"]
+        or contributors_data.is_contributor(conn, issue["id"], actor["id"])
+        or identity.is_admin(actor)
+    )
+
+
 def _claimant_or_reject(conn: sqlite3.Connection, issue: dict, actor: dict) -> None:
     """A lease is for whoever actually works the issue: its assignee, a delegated
     contributor, or an admin. Deliberately NARROWER than the general issue-write gate
     (which also lets the creator in) — creating an issue is not the same as being handed
     it to work."""
-    if (
-        issue["assignee_id"] == actor["id"]
-        or contributors_data.is_contributor(conn, issue["id"], actor["id"])
-        or identity.is_admin(actor)
-    ):
+    if claimant_is_eligible(conn, issue, actor):
         return
     raise IssueCommandError(
         "forbidden",

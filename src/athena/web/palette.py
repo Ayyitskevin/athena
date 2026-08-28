@@ -13,7 +13,7 @@ Actions in this slice (MWS-18):
 - claim    → ``lease_commands.claim_issue`` (exact issue ETag precondition, or 428/412)
 - yield    → ``lease_commands.yield_claim`` (holder-only, exact lease generation)
 - complete → ``lease_commands.complete_claim`` (holder-only, exact lease generation)
-- approve  → ``approvals.decide`` (admin-only, pending requests only)
+- approve  → ``approvals_api.decide_for_actor`` (admin-only, pending requests only)
 - inspect  → read-only navigation to the issue's existing work-context page
 
 Identity honesty: an unknown or invisible issue ref is a 404 the palette shows as a
@@ -29,7 +29,6 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 
 from athena.aegis import (
-    contributors,
     issue_commands,
     issue_etags,
     issues,
@@ -37,8 +36,9 @@ from athena.aegis import (
     leases,
 )
 from athena.aegis.api import issue_command_status
-from athena.core import access, approvals, identity
+from athena.core import access, approvals, approvals_api, identity
 from athena.core.deps import get_conn
+from athena.core.ids import RowIdPath
 from athena.web.csrf import verify_csrf
 
 router = APIRouter()
@@ -76,17 +76,6 @@ def _visible_issue_or_404(
     ):
         return JSONResponse({"detail": "no such issue"}, status_code=404)
     return issue
-
-
-def _claim_eligible(conn: sqlite3.Connection, issue: dict, actor: dict) -> bool:
-    """Mirror of the claim command's claimant gate (assignee, delegated
-    contributor, admin), used only to decide what to RENDER. The command repeats
-    the check under its write transaction; this read authorizes nothing."""
-    return (
-        issue["assignee_id"] == actor["id"]
-        or contributors.is_contributor(conn, issue["id"], actor["id"])
-        or identity.is_admin(actor)
-    )
 
 
 def _hidden(name: str, value: str) -> dict:
@@ -146,20 +135,17 @@ def palette_actions(
             }
         )
         lease = leases.get_lease(conn, issue["id"])
-        held_by_other = (
-            lease is not None and lease["active"] and lease["holder_id"] != user["id"]
-        )
-        held_by_self = (
-            lease is not None and lease["active"] and lease["holder_id"] == user["id"]
-        )
-        if held_by_other:
-            lease_payload = {
-                "active": True,
-                "holder_name": lease["holder_name"],
-                "expires_at": lease["expires_at"],
-            }
-        if identity.can_write(user) and _claim_eligible(conn, issue, user):
-            if held_by_self:
+        eligible_claimant = identity.can_write(
+            user
+        ) and lease_commands.claimant_is_eligible(conn, issue, user)
+        if lease is not None and lease["active"]:
+            if lease["holder_id"] != user["id"]:
+                lease_payload = {
+                    "active": True,
+                    "holder_name": lease["holder_name"],
+                    "expires_at": lease["expires_at"],
+                }
+            elif eligible_claimant:
                 # The holder's lease generation is THEIRS — it fences their own
                 # delayed mutations, so the actions read hands it back to them
                 # (the REST lease read does the same). Never another actor's.
@@ -218,15 +204,15 @@ def palette_actions(
                         "fields": [_hidden("generation", lease["generation"])],
                     }
                 )
-            elif not held_by_other:
-                actions.append(
-                    {
-                        "id": "claim",
-                        "label": f"Claim {ref}",
-                        "endpoint": f"/aegis/palette/issues/{issue['id']}/claim",
-                        "fields": [_hidden("etag", issue_payload["etag"])],
-                    }
-                )
+        elif eligible_claimant:
+            actions.append(
+                {
+                    "id": "claim",
+                    "label": f"Claim {ref}",
+                    "endpoint": f"/aegis/palette/issues/{issue['id']}/claim",
+                    "fields": [_hidden("etag", issue_payload["etag"])],
+                }
+            )
     if identity.is_admin(user):
         pending = approvals.list_requests(
             conn, state="pending", limit=PENDING_APPROVALS_LIMIT
@@ -288,7 +274,7 @@ def palette_capture(
 )
 def palette_claim(
     request: Request,
-    issue_id: int,
+    issue_id: RowIdPath,
     etag: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> JSONResponse:
@@ -319,7 +305,7 @@ def palette_claim(
 )
 def palette_yield(
     request: Request,
-    issue_id: int,
+    issue_id: RowIdPath,
     generation: str = Form(""),
     reason: str = Form(""),
     note: str = Form(""),
@@ -362,7 +348,7 @@ def palette_yield(
 )
 def palette_complete(
     request: Request,
-    issue_id: int,
+    issue_id: RowIdPath,
     generation: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> JSONResponse:
@@ -386,7 +372,7 @@ def palette_complete(
 )
 def palette_decide_approval(
     request: Request,
-    request_id: int,
+    request_id: RowIdPath,
     decision: str = Form(""),
     note: str = Form(""),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -396,16 +382,12 @@ def palette_decide_approval(
     user = getattr(request.state, "user", None)
     if user is None:
         return _signin_required()
-    if not identity.is_admin(user):
-        return JSONResponse({"detail": "admin role required"}, status_code=403)
-    try:
-        decided = approvals.decide(
+    return JSONResponse(
+        approvals_api.decide_for_actor(
             conn,
-            actor_id=user["id"],
+            actor=user,
             request_id=request_id,
             decision=decision.strip(),
             note=note.strip() or None,
         )
-    except approvals.ApprovalDecisionError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
-    return JSONResponse(decided.public())
+    )

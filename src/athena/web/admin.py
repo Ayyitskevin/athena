@@ -6,7 +6,7 @@ from html import escape
 import json
 import sqlite3
 
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from athena import config
@@ -29,6 +29,7 @@ from athena.core import (
     agents,
     answerability,
     approvals,
+    approvals_api,
     budgets,
     identity,
     oidc,
@@ -808,15 +809,15 @@ def decide_approval(
         return err
     assert user is not None, "_admin_required accepted a missing user"
     try:
-        approvals.decide(
+        approvals_api.decide_for_actor(
             conn,
-            actor_id=user["id"],
+            actor=user,
             request_id=request_id,
             decision=decision.strip(),
             note=note.strip() or None,
         )
-    except approvals.ApprovalDecisionError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+    except HTTPException as exc:
+        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
     return RedirectResponse(
         f"/admin/agents?decided={decision.strip()}", status_code=303
     )
