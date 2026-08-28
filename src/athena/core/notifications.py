@@ -493,7 +493,7 @@ def set_preference(
         raise WatchNotFound
     conn.commit()
     preference = get_preference(conn, user_id, target_kind, target_id)
-    if preference is None:  # pragma: no cover - the successful write created it
+    if preference is None:
         raise RuntimeError("preference write succeeded without a readable row")
     return preference
 
