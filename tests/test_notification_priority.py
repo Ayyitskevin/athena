@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from athena.aegis import issues, notification_priority
 from athena.core import activity, db, notifications
 from athena.main import create_app
+from athena.mentor import page_commands, pages, spaces
 
 H1 = {"X-Athena-Actor": "1"}
 H2 = {"X-Athena-Actor": "2"}
@@ -34,6 +35,14 @@ def _bootstrap(client):
 
 def _make_user2(client):
     client.post("/users", json={"email": "b@e.com", "name": "B"}, headers=H1)
+
+
+def _space_with_page(conn):
+    space = spaces.create_space(conn, key="ENG", name="Eng", created_by=1)
+    page = pages.create_page(
+        conn, space_id=space["id"], title="Runbook", body="", created_by=1
+    )
+    return space, page
 
 
 def test_preference_priority_vocabulary_tracks_aegis(tmp_path):
@@ -172,6 +181,78 @@ def test_priority_summary_counts_the_complete_visible_inbox(tmp_path):
 
     summary = notification_priority.priority_summary(conn, 1)
     assert summary["by_priority"] == {"urgent": {"total": 10_001, "muted": 0}}
+
+
+def test_space_watch_preference_shapes_page_events_inside_the_space(tmp_path):
+    conn = _conn(tmp_path / "space-preference.db")
+    space, page = _space_with_page(conn)
+    notifications.watch(conn, 2, "space", space["id"])
+    notifications.set_preference(
+        conn,
+        2,
+        "space",
+        space["id"],
+        priority="urgent",
+        digest_window_minutes=60,
+    )
+    activity.record(
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+    )
+
+    item = notification_priority.list_priority_notifications(conn, 2, digest=True)[
+        "items"
+    ][0]
+    assert item["target_kind"] == "page"
+    assert item["target_id"] == page["id"]
+    assert item["priority"] == "urgent"
+    assert item["delivery_state"] == "digest"
+    assert item["source"]["preference_target_kind"] == "space"
+    assert item["source"]["preference_target_id"] == space["id"]
+
+
+def test_direct_page_preference_wins_when_page_and_space_are_watched(tmp_path):
+    conn = _conn(tmp_path / "overlap-preference.db")
+    space, page = _space_with_page(conn)
+    notifications.watch(conn, 2, "space", space["id"])
+    notifications.watch(conn, 2, "page", page["id"])
+    notifications.set_preference(conn, 2, "space", space["id"], priority="low")
+    notifications.set_preference(conn, 2, "page", page["id"], priority="urgent")
+    activity.record(
+        conn,
+        actor_id=1,
+        verb="page_edited",
+        target_kind="page",
+        target_id=page["id"],
+    )
+
+    item = notification_priority.list_priority_notifications(conn, 2)["items"][0]
+    assert item["priority"] == "urgent"
+    assert item["source"]["preference_target_kind"] == "page"
+    assert item["source"]["preference_target_id"] == page["id"]
+
+
+def test_deleted_page_does_not_reuse_an_unprovable_space_preference(tmp_path):
+    conn = _conn(tmp_path / "deleted-page-preference.db")
+    space, page = _space_with_page(conn)
+    notifications.watch(conn, 2, "space", space["id"])
+    notifications.set_preference(conn, 2, "space", space["id"], priority="urgent")
+
+    page_commands.delete_page(conn, actor={"id": 1}, page_id=page["id"])
+
+    # The ungated internal/admin read can still see the retained inbox row, but
+    # the deleted page no longer proves which space it belonged to. Applying a
+    # surviving space preference by guess would risk suppressing the wrong row.
+    item = notification_priority.list_priority_notifications(conn, 2)["items"][0]
+    assert item["target_kind"] == "page"
+    assert item["priority"] == "normal"
+    assert item["delivery_state"] == "immediate"
+    assert item["source"]["preference_set"] is False
+    assert item["source"]["preference_target_kind"] is None
+    assert item["source"]["preference_target_id"] is None
 
 
 # --- unit: mute / digest interaction ----------------------------------------

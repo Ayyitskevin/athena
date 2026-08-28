@@ -176,10 +176,11 @@ def update_watch_preference(
     actor: dict = Depends(personal_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    """Set or update your notification preferences for a watched target.
+    """Replace your notification preferences for a watched target.
 
     The preferences layer is personal state: it never writes the activity log,
-    and it only exists while this actor has the corresponding watch.
+    and it only exists while this actor has the corresponding watch. Omitted or
+    null fields restore their defaults.
     """
     try:
         return notifications.set_preference(

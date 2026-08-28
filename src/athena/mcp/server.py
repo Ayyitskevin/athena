@@ -190,6 +190,7 @@ WorkspaceSearchLimit = Annotated[
 WatchKind = Literal["issue", "page", "space"]
 WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 NotificationPriority = Literal["low", "normal", "medium", "high", "urgent"]
+NotificationLimit = Annotated[int, Field(strict=True, ge=1, le=200)]
 WatchPreferencePriority = Literal["low", "medium", "high", "urgent"]
 DigestWindowMinutes = Annotated[
     int,
@@ -840,7 +841,7 @@ def build_server(
         min_priority: NotificationPriority | None = None,
         include_muted: bool = False,
         digest: bool = False,
-        limit: int = 50,
+        limit: NotificationLimit = 50,
     ) -> dict:
         """Read YOUR inbox as a priority/mute/digest projection. Priority is an
         explicit watch override, then the Aegis issue priority, then `normal`.
@@ -879,9 +880,10 @@ def build_server(
         'space' is the one to reach for when a space is your fleet's shared
         memory: it delivers the space's own lifecycle events AND every event on
         every page inside it — created, edited, archived, commented, deleted.
-        That is a firehose by design, and `unwatch` is the only volume control;
-        Athena has no digest and no daily rollup. 'page' follows one document,
-        'issue' one work item.
+        That is a firehose by design. Per-watch priority, mute, and digest
+        preferences shape the read-time projection without creating delivery or
+        a second event store; `unwatch` alone stops future fan-out. 'page' follows
+        one document, 'issue' one work item.
 
         Watching twice is a no-op. Watching something you cannot see subscribes
         you to nothing you can read: the inbox filters by visibility at read

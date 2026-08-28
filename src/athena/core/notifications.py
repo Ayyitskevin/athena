@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime, timezone
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from typing import cast
 
 from athena.core import access, links
@@ -433,9 +433,9 @@ def set_preference(
     """Create or replace per-watch notification preferences for a user.
 
     ``priority`` overrides the target's own priority (e.g. issue.priority) when
-    resolving this watch. ``mute_until`` is an ISO-8601 datetime; notifications
-    whose event_at is before it are suppressed. ``digest_window_minutes`` groups
-    notifications into buckets of that length.
+    resolving this watch. ``mute_until`` is an ISO-8601 datetime; the preference
+    suppresses rows until the projection's observation time reaches it.
+    ``digest_window_minutes`` groups notifications into buckets of that length.
 
     Validation is boundary-strict: unknown priorities are normalized, malformed
     mute_until is rejected by raising ValueError, and digest windows outside
@@ -603,8 +603,8 @@ def list_priority_notifications(
       muted items are excluded; pass ``include_muted=True`` to see them.
     - ``digest_bucket`` is present when the watch has a digest window and ``digest``
       is True; otherwise it is None.
-    - ``source`` preserves the owning target id/kind and, for issues, the issue's
-      own priority and the preference id that shaped this row.
+    - ``source`` preserves the event target, the preference target that shaped
+      the row, and (for issues) the issue's own priority.
 
     Visibility gating is applied exactly like ``list_notifications``: events on
     targets the actor can no longer see are dropped."""
@@ -642,6 +642,21 @@ def list_priority_notifications(
     else:
         preferences = {}
 
+    # A space watch fans out page events without rewriting their owning activity
+    # target. Preserve that source ID, but let the space preference shape the
+    # projection when there is no direct page preference. If the page is gone,
+    # its former container cannot be proven and no space preference is guessed.
+    page_ids = sorted({row["target_id"] for row in raw if row["target_kind"] == "page"})
+    page_spaces: dict[int, int] = {}
+    for offset in range(0, len(page_ids), 500):
+        chunk = page_ids[offset : offset + 500]
+        placeholders = ", ".join("?" for _ in chunk)
+        page_space_rows = conn.execute(
+            f"SELECT id, space_id FROM pages WHERE id IN ({placeholders})",
+            chunk,
+        ).fetchall()
+        page_spaces.update({row["id"]: row["space_id"] for row in page_space_rows})
+
     if min_priority is not None and min_priority not in PRIORITY_ORDER:
         raise ValueError(f"min_priority must be one of: {', '.join(PRIORITY_ORDER)}")
     min_rank = _PRIORITY_RANK[min_priority] if min_priority is not None else 0
@@ -650,7 +665,18 @@ def list_priority_notifications(
     for row in raw:
         target_kind = row["target_kind"]
         target_id = row["target_id"]
-        pref = preferences.get((target_kind, target_id), {})
+        direct_preference_key = (target_kind, target_id)
+        pref = preferences.get(direct_preference_key)
+        preference_key: tuple[str, int] | None = (
+            direct_preference_key if pref is not None else None
+        )
+        if pref is None and target_kind == "page":
+            space_id = page_spaces.get(target_id)
+            preference_key = ("space", space_id) if space_id is not None else None
+            pref = preferences.get(preference_key) if preference_key else None
+        if pref is None:
+            preference_key = None
+            pref = {}
 
         target_priority = target_priorities.get((target_kind, target_id))
         priority, priority_source, priority_valid = _resolve_priority(
@@ -691,6 +717,12 @@ def list_priority_notifications(
                 "target_id": target_id,
                 "issue_priority": target_priority if target_kind == "issue" else None,
                 "preference_set": bool(pref),
+                "preference_target_kind": (
+                    preference_key[0] if preference_key is not None else None
+                ),
+                "preference_target_id": (
+                    preference_key[1] if preference_key is not None else None
+                ),
                 "preference_valid": preference_valid,
                 "priority_source": priority_source,
             },

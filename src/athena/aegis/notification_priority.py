@@ -20,11 +20,17 @@ _UNGATED = object()
 def _resolve_target_priorities(
     conn: sqlite3.Connection, targets: set[tuple[str, int]]
 ) -> dict[tuple[str, int], str]:
-    issue_ids = {target_id for kind, target_id in targets if kind == "issue"}
-    return {
-        ("issue", issue_id): priority
-        for issue_id, priority in issues.priorities_for_ids(conn, issue_ids).items()
-    }
+    issue_ids = sorted(target_id for kind, target_id in targets if kind == "issue")
+    resolved: dict[tuple[str, int], str] = {}
+    for offset in range(0, len(issue_ids), 500):
+        chunk = set(issue_ids[offset : offset + 500])
+        resolved.update(
+            {
+                ("issue", issue_id): priority
+                for issue_id, priority in issues.priorities_for_ids(conn, chunk).items()
+            }
+        )
+    return resolved
 
 
 def list_priority_notifications(
