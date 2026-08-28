@@ -39,6 +39,7 @@ from athena.aegis import (
 )
 from athena.core import (
     dispatch,
+    notifications,
     run_context,
     run_control_commands,
     run_controls,
@@ -188,6 +189,17 @@ WorkspaceSearchLimit = Annotated[
 ]
 WatchKind = Literal["issue", "page", "space"]
 WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
+NotificationPriority = Literal["low", "normal", "medium", "high", "urgent"]
+WatchPreferencePriority = Literal["low", "medium", "high", "urgent"]
+DigestWindowMinutes = Annotated[
+    int,
+    Field(
+        strict=True,
+        ge=notifications.MIN_DIGEST_MINUTES,
+        le=notifications.MAX_DIGEST_MINUTES,
+    ),
+]
+MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 
 # --- tool scopes -------------------------------------------------------------
 #
@@ -240,6 +252,9 @@ TOOL_SCOPES: dict[str, str] = {
     "recent_events": READ_ONLY,
     "whoami": READ_ONLY,
     "list_notifications": READ_ONLY,
+    "list_priority_notifications": READ_ONLY,
+    "notification_priority_summary": READ_ONLY,
+    "get_watch_preference": READ_ONLY,
     "begin_run": READ_ONLY,
     "current_run": READ_ONLY,
     "get_agent_run_health": READ_ONLY,
@@ -281,6 +296,8 @@ TOOL_SCOPES: dict[str, str] = {
     "mark_notifications_read": ANY_WRITE_SCOPE,
     "watch": ANY_WRITE_SCOPE,
     "unwatch": ANY_WRITE_SCOPE,
+    "set_watch_preference": ANY_WRITE_SCOPE,
+    "clear_watch_preference": ANY_WRITE_SCOPE,
     "advance_desk_cursor": ANY_WRITE_SCOPE,
     "heartbeat_agent_run": ANY_WRITE_SCOPE,
     "worker_heartbeat": ANY_WRITE_SCOPE,
@@ -817,6 +834,36 @@ def build_server(
         work delegated to you land here. Pass unread=true for just the unseen."""
         return client.list_notifications(unread=unread, limit=limit)
 
+    @tool
+    def list_priority_notifications(
+        unread: bool = False,
+        min_priority: NotificationPriority | None = None,
+        include_muted: bool = False,
+        digest: bool = False,
+        limit: int = 50,
+    ) -> dict:
+        """Read YOUR inbox as a priority/mute/digest projection. Priority is an
+        explicit watch override, then the Aegis issue priority, then `normal`.
+        Muted rows are hidden unless include_muted=true. digest=true adds the
+        stable digest bucket without claiming that an external delivery occurred."""
+        return client.list_priority_notifications(
+            unread=unread,
+            min_priority=min_priority,
+            include_muted=include_muted,
+            digest=digest,
+            limit=limit,
+        )
+
+    @tool
+    def notification_priority_summary(unread: bool = False) -> dict:
+        """Count YOUR visible notifications by resolved priority and mute state."""
+        return client.notification_priority_summary(unread=unread)
+
+    @tool
+    def get_watch_preference(target_kind: WatchKind, target_id: WatchTargetId) -> dict:
+        """Read YOUR priority, mute, and digest preference for one active watch."""
+        return client.get_watch_preference(target_kind, target_id)
+
     @mutation_tool
     def mark_notifications_read() -> dict:
         """Mark every unread notification in YOUR inbox as read (returns the
@@ -847,6 +894,38 @@ def build_server(
         you were not watching it — the refusal distinguishes "stopped" from
         "was never subscribed", which a silent success would blur."""
         return client.unwatch(target_kind, target_id)
+
+    @mutation_tool
+    def set_watch_preference(
+        target_kind: WatchKind,
+        target_id: WatchTargetId,
+        priority: WatchPreferencePriority | None = None,
+        mute_until: MuteUntil | None = None,
+        digest_window_minutes: DigestWindowMinutes | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Replace YOUR preference for an active watch. Omit or pass null for a
+        field to restore its default. This is owner-scoped personal state and
+        records no activity event; it cannot create a subscription by itself."""
+        return client.set_watch_preference(
+            target_kind,
+            target_id,
+            priority=priority,
+            mute_until=mute_until,
+            digest_window_minutes=digest_window_minutes,
+            idempotency_key=idempotency_key,
+        )
+
+    @mutation_tool
+    def clear_watch_preference(
+        target_kind: WatchKind,
+        target_id: WatchTargetId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict | None:
+        """Delete YOUR preference for a watch, restoring target/default priority."""
+        return client.clear_watch_preference(
+            target_kind, target_id, idempotency_key=idempotency_key
+        )
 
     @tool
     def heartbeat_agent_run(run_id: RunId) -> dict:

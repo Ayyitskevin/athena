@@ -10,23 +10,35 @@
 
 CREATE TABLE watch_preferences (
     user_id                 INTEGER NOT NULL REFERENCES users(id),
-    target_kind             TEXT    NOT NULL,
+    target_kind             TEXT    NOT NULL
+                                    CHECK (target_kind IN ('issue', 'page', 'space')),
     target_id               INTEGER NOT NULL,
     -- Explicit priority override for this watch. NULL means "fall back to the
     -- target's own priority (issue.priority) or the default normal priority."
-    priority                TEXT,
+    priority                TEXT
+                                    CHECK (
+                                        priority IS NULL OR
+                                        priority IN ('low', 'medium', 'high', 'urgent')
+                                    ),
     -- ISO-8601 datetime. While now() is before mute_until, every notification
     -- for this watch is suppressed (fail closed: an unparseable value is
     -- treated as not muted, so a stale/broken setting never silently drops mail).
     mute_until              TEXT,
     -- If set, notifications for this watch are grouped into digest buckets of
     -- this many minutes. NULL means "deliver immediately / no digest."
-    digest_window_minutes   INTEGER,
+    digest_window_minutes   INTEGER
+                                    CHECK (
+                                        digest_window_minutes IS NULL OR
+                                        digest_window_minutes BETWEEN 1 AND 10080
+                                    ),
     created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at              TEXT    NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (user_id, target_kind, target_id)
+    PRIMARY KEY (user_id, target_kind, target_id),
+    FOREIGN KEY (user_id, target_kind, target_id)
+        REFERENCES watches (user_id, target_kind, target_id)
+        ON DELETE CASCADE
 );
 
--- Hot read: preferences for one user's watches, and reverse lookups by target.
-CREATE INDEX idx_watch_preferences_user ON watch_preferences (user_id);
+-- The primary key already covers reads for one user. The reverse index supports
+-- target lifecycle/reconciliation queries without duplicating that prefix.
 CREATE INDEX idx_watch_preferences_target ON watch_preferences (target_kind, target_id);

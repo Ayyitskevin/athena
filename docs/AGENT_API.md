@@ -46,6 +46,7 @@ composes other calls or local state instead of one fixed route.
 | `get_run_lineage` | `GET /activity/runs/{run_id}/lineage` | Read a tagged run's causal tree: ancestors, the focal run's replayable … |
 | `get_run_replay` | `GET /activity/runs/{run_id}/replay` | Export one run as its portable replay ARTIFACT: the events in replay … |
 | `get_sprint` | `GET /sprints/{sprint_id}` | Get one sprint's descriptive fields and lifecycle state. Hidden and … |
+| `get_watch_preference` | `GET /watches/{target_kind}/{target_id}/preference` | Read YOUR priority, mute, and digest preference for one active watch. |
 | `link_graph` | `GET /{base}/{node_id}/graph` | The link neighbourhood around an issue or page, as you can see it. |
 | `list_activity_runs` | `GET /activity/runs` | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
 | `list_automation_failures` | `GET /automation/rules` | Read the admin-only exception list of automation rules whose actions have … |
@@ -59,6 +60,7 @@ composes other calls or local state instead of one fixed route.
 | `list_notifications` | `GET /notifications` | Read YOUR notification inbox — mentions, watched-issue changes, and … |
 | `list_page_versions` | `GET /pages/{page_id}/versions` | The page's superseded revisions, newest first (the live page is NOT one of … |
 | `list_pages` | `GET /spaces/{space_id}/pages` | List the pages in a space. Archived (soft-deleted) pages are hidden by … |
+| `list_priority_notifications` | `GET /notifications/priority` | Read YOUR inbox as a priority/mute/digest projection. Priority is an … |
 | `list_projects` | `GET /projects` | List Aegis projects (id, key, name). |
 | `list_run_controls` | `GET /run-controls` | Run controls — operator requests on live runs and how their agents … |
 | `list_run_events` | `GET /activity` | Replay one run: exactly the activity events tagged with this run id, … |
@@ -68,6 +70,7 @@ composes other calls or local state instead of one fixed route.
 | `list_workers` | `GET /workers` | The worker registry — which agent processes are reporting, on what node, … |
 | `my_desk` | `GET /desk` | START HERE. Your desk: who you are, what is asked of you, what you … |
 | `my_office` | `GET /office` | Your cubicle. Athena's unique seat: at most one chair (one active … |
+| `notification_priority_summary` | `GET /notifications/priority/summary` | Count YOUR visible notifications by resolved priority and mute state. |
 | `page_backlinks` | `GET /pages/{page_id}/backlinks` | What references this page — the INCOMING edges of the knowledge graph. Each … |
 | `page_outgoing_links` | `GET /pages/{page_id}/outgoing-links` | What this page references — the OUTGOING edges of the knowledge graph (the … |
 | `project_timeline` | `GET /projects/{project_id}/timeline` | A project's roadmap: sprint lanes, the issues in them, and the declared … |
@@ -135,11 +138,13 @@ composes other calls or local state instead of one fixed route.
 |---|---|---|
 | `acknowledge_run_control` | `POST /run-controls/{control_id}/acknowledge` | Record that YOU read a control addressed to your run. |
 | `advance_desk_cursor` | `POST /desk/cursor` | Record that you have handled every visible event up to `after_id`. |
+| `clear_watch_preference` | `DELETE /watches/{target_kind}/{target_id}/preference` | Delete YOUR preference for a watch, restoring target/default priority. |
 | `complete_run_control` | `POST /run-controls/{control_id}/complete` | Complete a control addressed to your run. |
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | Decline a control addressed to your run, with the reason the operator … |
 | `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | Report that this authenticated agent is still working on `run_id`. |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | Rewrite the SOURCE document so its first unlinked mention of the target … |
 | `mark_notifications_read` | `POST /notifications/read_all` | Mark every unread notification in YOUR inbox as read (returns the … |
+| `set_watch_preference` | `PUT /watches/{target_kind}/{target_id}/preference` | Replace YOUR preference for an active watch. Omit or pass null for a … |
 | `undo_action` | `POST /activity/{event_id}/undo` | Undo one activity event by applying its registered inverse. |
 | `unwatch` | `DELETE /watches/{target_kind}/{target_id}` | Unsubscribe YOUR inbox from a target you are watching. Errors 404 if … |
 | `watch` | `POST /watches` | Subscribe YOUR inbox to a target so you learn it changed without … |
@@ -171,4 +176,4 @@ composes other calls or local state instead of one fixed route.
 
 ---
 
-*128 tools. Generated from `mcp/server.py` (`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*133 tools. Generated from `mcp/server.py` (`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

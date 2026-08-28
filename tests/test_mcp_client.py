@@ -423,6 +423,20 @@ MUTATION_CASES = [
         "/automation/rules/7",
         lambda c, k: c.delete_automation_rule(7, idempotency_key=k),
     ),
+    (
+        "set_watch_preference",
+        "PUT",
+        "/watches/issue/7/preference",
+        lambda c, k: c.set_watch_preference(
+            "issue", 7, priority="urgent", idempotency_key=k
+        ),
+    ),
+    (
+        "clear_watch_preference",
+        "DELETE",
+        "/watches/issue/7/preference",
+        lambda c, k: c.clear_watch_preference("issue", 7, idempotency_key=k),
+    ),
 ]
 
 MUTATION_TOOL_NAMES = {case[0] for case in MUTATION_CASES}
@@ -524,6 +538,11 @@ MCP_MUTATION_CASES = [
         {"rule_id": 7, "enabled": False},
     ),
     ("delete_automation_rule", {"rule_id": 7}),
+    (
+        "set_watch_preference",
+        {"target_kind": "issue", "target_id": 7, "priority": "urgent"},
+    ),
+    ("clear_watch_preference", {"target_kind": "issue", "target_id": 7}),
 ]
 MCP_IF_MATCH_CASES = [
     case for case in MCP_MUTATION_CASES if case[0] in IF_MATCH_TOOL_NAMES

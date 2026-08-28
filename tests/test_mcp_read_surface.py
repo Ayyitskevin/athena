@@ -108,6 +108,55 @@ def test_notifications_inbox_roundtrip(tmp_path):
         admin.__exit__(None, None, None)
 
 
+def test_notification_preferences_roundtrip_over_agent_client(tmp_path):
+    admin, agent, _ = _workspace(tmp_path, "priority-inbox.db")
+    try:
+        issue = admin.post(
+            "/issues", json={"title": "priority work", "priority": "high"}, headers=H1
+        ).json()
+        agent.watch("issue", issue["id"])
+        admin.patch(
+            f"/issues/{issue['id']}",
+            json={"status": "in_progress"},
+            headers=H1,
+        )
+
+        projected = agent.list_priority_notifications(unread=True)
+        assert projected["items"][0]["priority"] == "high"
+        assert projected["items"][0]["event_id"] > 0
+        assert projected["items"][0]["delivery_state"] == "immediate"
+
+        saved = agent.set_watch_preference(
+            "issue",
+            issue["id"],
+            priority="urgent",
+            digest_window_minutes=60,
+            idempotency_key="priority-pref",
+        )
+        assert saved["priority"] == "urgent"
+        assert (
+            agent.get_watch_preference("issue", issue["id"])["digest_window_minutes"]
+            == 60
+        )
+        projected = agent.list_priority_notifications(unread=True, digest=True)
+        assert projected["items"][0]["priority"] == "urgent"
+        assert projected["items"][0]["delivery_state"] == "digest"
+        assert projected["items"][0]["digest_bucket"]
+        assert agent.notification_priority_summary(unread=True)["by_priority"] == {
+            "urgent": {"total": 1, "muted": 0}
+        }
+
+        agent.clear_watch_preference(
+            "issue", issue["id"], idempotency_key="clear-priority-pref"
+        )
+        assert (
+            agent.list_priority_notifications(unread=True)["items"][0]["priority"]
+            == "high"
+        )
+    finally:
+        admin.__exit__(None, None, None)
+
+
 def test_get_run_replay_freezes_the_run_into_an_artifact(tmp_path):
     admin, agent, _ = _workspace(tmp_path, "artifact.db")
     try:

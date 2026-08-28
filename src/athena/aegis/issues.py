@@ -85,6 +85,23 @@ def like_contains(value: str) -> str:
     return _like_contains(value)
 
 
+def priorities_for_ids(conn: sqlite3.Connection, issue_ids: set[int]) -> dict[int, str]:
+    """Return the canonical priority for each existing issue in ``issue_ids``.
+
+    Cross-module projections call this instead of borrowing the ``issues`` table
+    from core. Missing ids are absent, so the caller can preserve its own default
+    or fail-closed behavior without inventing an issue row.
+    """
+    if not issue_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in issue_ids)
+    rows = conn.execute(
+        f"SELECT id, priority FROM issues WHERE id IN ({placeholders})",
+        tuple(sorted(issue_ids)),
+    ).fetchall()
+    return {row["id"]: row["priority"] for row in rows}
+
+
 def _to_issue(row: sqlite3.Row) -> dict:
     """Turn a _SELECT row into an issue dict, adding the computed display key.
 

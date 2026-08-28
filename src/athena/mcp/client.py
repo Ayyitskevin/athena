@@ -1071,6 +1071,80 @@ class AthenaClient:
             params["unread"] = True
         return self._result(self._client.get("/notifications", params=params))
 
+    def list_priority_notifications(
+        self,
+        *,
+        unread: bool = False,
+        min_priority: str | None = None,
+        include_muted: bool = False,
+        digest: bool = False,
+        limit: int = 50,
+    ) -> Any:
+        """Read the actor's priority/mute/digest inbox projection."""
+        return self._result(
+            self._client.get(
+                "/notifications/priority",
+                params=self._params(
+                    unread=unread or None,
+                    min_priority=min_priority,
+                    include_muted=include_muted or None,
+                    digest=digest or None,
+                    limit=limit,
+                ),
+            )
+        )
+
+    def notification_priority_summary(self, *, unread: bool = False) -> Any:
+        """Count the actor's notifications by priority and mute state."""
+        return self._result(
+            self._client.get(
+                "/notifications/priority/summary",
+                params=self._params(unread=unread or None),
+            )
+        )
+
+    def get_watch_preference(self, target_kind: str, target_id: int) -> Any:
+        """Read the actor's preference for one active watch."""
+        return self._result(
+            self._client.get(f"/watches/{target_kind}/{target_id}/preference")
+        )
+
+    def set_watch_preference(
+        self,
+        target_kind: str,
+        target_id: int,
+        *,
+        priority: str | None = None,
+        mute_until: str | None = None,
+        digest_window_minutes: int | None = None,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Replace the actor's preference for one active watch."""
+        return self._mutate(
+            self._client.put,
+            f"/watches/{target_kind}/{target_id}/preference",
+            json={
+                "priority": priority,
+                "mute_until": mute_until,
+                "digest_window_minutes": digest_window_minutes,
+            },
+            idempotency_key=idempotency_key,
+        )
+
+    def clear_watch_preference(
+        self,
+        target_kind: str,
+        target_id: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Delete the actor's preference and restore target/default priority."""
+        return self._mutate(
+            self._client.delete,
+            f"/watches/{target_kind}/{target_id}/preference",
+            idempotency_key=idempotency_key,
+        )
+
     def mark_all_notifications_read(self) -> Any:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")
