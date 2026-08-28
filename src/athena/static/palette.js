@@ -150,7 +150,7 @@
             return null;
           }
           actions = body.actions || [];
-          activeIndex = actions.length ? 0 : -1;
+          activeIndex = defaultActiveIndex(input.value, filtered().length);
           render();
           return body;
         });
