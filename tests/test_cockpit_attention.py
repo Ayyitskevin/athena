@@ -378,6 +378,9 @@ def test_the_dashboard_shows_the_rollup_to_admins_only(tmp_path):
         page = c.get("/aegis/dashboard")
         assert "Fleet attention" in page.text
         assert "Claims needing attention" in page.text
+        assert "Now queue" in page.text
+        assert f"issue #{urgent['id']}" in page.text
+        assert f"/aegis/issues/{urgent['id']}/history" in page.text
         # And the nav now reaches the surfaces that had no link at all.
         assert "/admin/agents/runs" in page.text
         assert "/admin/security" in page.text

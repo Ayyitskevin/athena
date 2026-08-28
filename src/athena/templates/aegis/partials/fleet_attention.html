@@ -33,6 +33,36 @@
             agent is healthy.
         </p>
         {% endif %}
+        {% if fleet_attention.now["items"] %}
+        <h4>Now queue</h4>
+        <ol class="dashboard-list">
+            {% for item in fleet_attention.now["items"] %}
+            <li>
+                <strong>{{ item.reason }}</strong>
+                <span class="chip">{{ item.severity }}</span>
+                <span class="muted">
+                    <a href="{{ item.source_link }}">{{ item.source_kind | replace('_', ' ') }} #{{ item.source_id }}</a>
+                    · owner {{ item.owner_name or 'unassigned' }}
+                    · {{ item.freshness }}
+                    · examined {{ item.examined }} of {{ item.total }}
+                </span>
+                {% if item.next_action == "operator-link" and item.link %}
+                <a href="{{ item.link }}">Open owning surface</a>
+                {% elif item.next_action == "agent-command" %}
+                <code>{{ item.command }}</code>
+                {% else %}
+                <span class="muted">No safe next action</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ol>
+        {% if fleet_attention.now.clipped %}
+        <p class="muted">
+            Showing {{ fleet_attention.now.returned }} ranked rows after examining
+            {{ fleet_attention.now.examined }} candidates.
+        </p>
+        {% endif %}
+        {% endif %}
         <p class="muted">
             <a href="/admin/agents/runs">Mission Control</a> ·
             <a href="/admin/security">Security signals</a>
