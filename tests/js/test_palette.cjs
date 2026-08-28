@@ -5,9 +5,17 @@ const assert = require("node:assert/strict");
 
 const {
   createSingleFlight,
+  defaultActiveIndex,
   focusTrapTarget,
   moveActiveIndex,
 } = require("../../src/athena/static/palette.js");
+
+test("typing an exact issue ref selects inspection before generic actions", () => {
+  assert.equal(defaultActiveIndex("MWS-18", 3), -2);
+  assert.equal(defaultActiveIndex("42", 3), -2);
+  assert.equal(defaultActiveIndex("capture", 3), 0);
+  assert.equal(defaultActiveIndex("no match", 0), -1);
+});
 
 test("keyboard selection includes an exact-ref lookup and wraps", () => {
   assert.equal(moveActiveIndex(0, 1, 2, true), 1);

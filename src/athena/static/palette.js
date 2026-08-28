@@ -14,6 +14,8 @@
 (function () {
   "use strict";
 
+  var REF_RE = /^([A-Za-z][A-Za-z0-9]*-\d+|\d+)$/;
+
   function createSingleFlight() {
     var running = false;
     return {
@@ -70,9 +72,17 @@
     return choices[(position + direction + choices.length) % choices.length];
   }
 
+  function defaultActiveIndex(query, actionCount) {
+    if (REF_RE.test(query.trim())) {
+      return -2;
+    }
+    return actionCount ? 0 : -1;
+  }
+
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       createSingleFlight: createSingleFlight,
+      defaultActiveIndex: defaultActiveIndex,
       focusTrapTarget: focusTrapTarget,
       moveActiveIndex: moveActiveIndex,
     };
@@ -94,8 +104,6 @@
   var activeIndex = -1;
   var submitFlight = createSingleFlight();
   var lastFocus = null;
-
-  var REF_RE = /^([A-Za-z][A-Za-z0-9]*-\d+|\d+)$/;
 
   function csrf() {
     return root.getAttribute("data-csrf") || "";
@@ -384,7 +392,7 @@
   });
 
   input.addEventListener("input", function () {
-    activeIndex = 0;
+    activeIndex = defaultActiveIndex(input.value, filtered().length);
     render();
   });
 })();
