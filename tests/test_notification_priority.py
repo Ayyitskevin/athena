@@ -123,6 +123,57 @@ def test_priority_unknown_value_surfaces_as_urgent(tmp_path):
     assert proj["items"][0]["source"]["preference_valid"] is False
 
 
+def test_priority_filter_does_not_hide_matches_beyond_an_overfetch_window(tmp_path):
+    conn = _conn(tmp_path / "complete-filter.db")
+    for issue_id, priority in ((5, "urgent"), (6, "low")):
+        notifications.watch(conn, 1, "issue", issue_id)
+        conn.execute(
+            "INSERT INTO issues (id, title, body, status, priority, created_by) "
+            "VALUES (?, 't', 'b', 'open', ?, 1)",
+            (issue_id, priority),
+        )
+    conn.commit()
+
+    # The urgent event is older than four low-priority events. A bounded
+    # overfetch followed by filtering would return no result for limit=1.
+    activity.record(
+        conn, actor_id=2, verb="changed_status", target_kind="issue", target_id=5
+    )
+    for _ in range(4):
+        activity.record(
+            conn, actor_id=2, verb="commented", target_kind="issue", target_id=6
+        )
+
+    projection = notification_priority.list_priority_notifications(
+        conn, 1, min_priority="urgent", limit=1
+    )
+    assert [item["target_id"] for item in projection["items"]] == [5]
+
+
+def test_priority_summary_counts_the_complete_visible_inbox(tmp_path):
+    conn = _conn(tmp_path / "complete-summary.db")
+    notifications.watch(conn, 1, "issue", 5)
+    conn.execute(
+        "INSERT INTO issues (id, title, body, status, priority, created_by) "
+        "VALUES (5, 't', 'b', 'open', 'urgent', 1)"
+    )
+    for event_id in range(1, 10_002):
+        conn.execute(
+            "INSERT INTO activity "
+            "(id, actor_id, verb, target_kind, target_id, created_at) "
+            "VALUES (?, 2, 'commented', 'issue', 5, datetime('now'))",
+            (event_id,),
+        )
+        conn.execute(
+            "INSERT INTO notifications (user_id, event_id) VALUES (1, ?)",
+            (event_id,),
+        )
+    conn.commit()
+
+    summary = notification_priority.priority_summary(conn, 1)
+    assert summary["by_priority"] == {"urgent": {"total": 10_001, "muted": 0}}
+
+
 # --- unit: mute / digest interaction ----------------------------------------
 
 
