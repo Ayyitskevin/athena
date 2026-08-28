@@ -4,16 +4,17 @@ This is the read-time twin of the count-based ``fleet_attention`` card used on
 the dashboard. It returns individual attention rows ranked by severity and
 freshness, each naming the owning surface so the caller knows where to act.
 """
+
 from __future__ import annotations
 
 import sqlite3
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from athena.aegis import fleet_attention
 from athena.core.deps import get_conn
-from athena.core.identity import admin_actor
+from athena.core.identity import current_actor
 
 router = APIRouter(prefix="/attention/ranking", tags=["aegis"])
 
@@ -23,10 +24,14 @@ _PRIVATE_HEADERS = {
 }
 
 
-class AttentionRankItemOut(BaseModel):
-    signal: str
-    severity: str
-    source_kind: str
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class AttentionRankItemOut(_StrictModel):
+    signal: fleet_attention.AttentionSignal
+    severity: fleet_attention.Severity
+    source_kind: fleet_attention.SourceKind
     source_id: int
     owner_id: int | None
     owner_name: str | None
@@ -34,16 +39,20 @@ class AttentionRankItemOut(BaseModel):
     freshness: str
     examined: int
     total: int
-    next_action: str
+    next_action: fleet_attention.NextAction
     command: str | None = None
     link: str | None = None
+    source_link: str | None = None
 
 
-class AttentionRankOut(BaseModel):
+class AttentionRankOut(_StrictModel):
     items: list[AttentionRankItemOut]
     examined: int
     total: int
-    signals: list[str]
+    signals: list[fleet_attention.AttentionSignal]
+    returned: int
+    limit: int
+    clipped: bool
 
 
 def _parse_signals(value: str | None) -> set[str] | None:
@@ -71,25 +80,32 @@ def index(
         le=168,
         description="how far back event-counted signals look",
     ),
-    actor: dict = Depends(admin_actor),
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="maximum ranked rows to return",
+    ),
+    actor: dict = Depends(current_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    """Return the ranked attention queue for the authenticated admin.
+    """Return the ranked attention queue for the authenticated actor.
 
-    The queue is built fresh on every request from existing data — there is no
-    separate attention table. Unknown signal names in ``?signals=`` produce a 422
-    (fail closed). The response always discloses how many candidates were
-    examined and considered, even when the queue is empty.
+    Admins see the fleet signals already available on the cockpit. Other actors
+    see only signals their existing read gates permit: their own claim/control
+    rows and blockers on visible issues. Unknown signal names in ``?signals=``
+    produce a 422. The response always discloses bounded denominators.
     """
     response.headers.update(_PRIVATE_HEADERS)
     signal_set = _parse_signals(signals)
     try:
-        result = fleet_attention.build_attention_ranking(
+        result = fleet_attention.build_attention(
             conn,
-            signals=signal_set,
             actor=actor,
+            ranking_signals=signal_set,
             window_hours=window_hours,
-        )
+            ranking_limit=limit,
+        )["now"]
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -101,4 +117,7 @@ def index(
         "examined": result["examined"],
         "total": result["total"],
         "signals": result["signals"],
+        "returned": result["returned"],
+        "limit": result["limit"],
+        "clipped": result["clipped"],
     }

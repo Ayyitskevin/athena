@@ -28,6 +28,7 @@ composes other calls or local state instead of one fixed route.
 | `find_pages_by_title` | `GET /pages/by-title` | Find Mentor pages by their TITLE instead of a numeric id — the address you can … |
 | `get_agent_budget` | `GET /users/{user_id}/budget` | Read a user's durable action budget — how many metered writes it may … |
 | `get_agent_run_health` | `GET /activity/agent-runs` | Read the admin-only fleet cockpit rollup: each agent's bounded recent … |
+| `get_attention_ranking` | `GET /attention/ranking` | Read the bounded, actor-filtered "Now" queue. Each row cites its … |
 | `get_automation_rule` | `GET /automation/rules/{rule_id}` | Get one admin-only automation rule by id, including schedule progress, … |
 | `get_fleet_active_work` | `GET /fleet/active-work` | Admin-only view of agent-held issue claims. Joins each lease to its … |
 | `get_fleet_metrics` | `GET /fleet/metrics` | Read bounded issue throughput for this token's visible scope. Dates are … |
@@ -170,4 +171,4 @@ composes other calls or local state instead of one fixed route.
 
 ---
 
-*127 tools. Generated from `mcp/server.py` (`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*128 tools. Generated from `mcp/server.py` (`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

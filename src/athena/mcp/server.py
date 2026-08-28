@@ -30,6 +30,7 @@ from pydantic import AfterValidator, Field
 from athena.aegis import (
     automation,
     delegations,
+    fleet_attention,
     fleet_metrics,
     fleet_work,
     issue_narrative,
@@ -132,6 +133,8 @@ FleetWorkLimit = Annotated[int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT
 IssueHistoryLimit = Annotated[
     int, Field(strict=True, ge=1, le=issue_narrative.MAX_LIMIT)
 ]
+AttentionWindowHours = Annotated[int, Field(strict=True, ge=1, le=168)]
+AttentionLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
 FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 DispatchIssueId = Annotated[
     int, Field(strict=True, ge=1, le=dispatch.MAX_SQLITE_INTEGER)
@@ -230,6 +233,7 @@ TOOL_SCOPES: dict[str, str] = {
     "get_issue": READ_ONLY,
     "get_issue_work_context": READ_ONLY,
     "get_issue_history": READ_ONLY,
+    "get_attention_ranking": READ_ONLY,
     "get_fleet_metrics": READ_ONLY,
     "list_issue_comments": READ_ONLY,
     "get_issue_state": READ_ONLY,
@@ -738,6 +742,23 @@ def build_server(
         its owning source; unknown activity stays unclassified, and clipped
         lanes are reported instead of presented as complete."""
         return client.get_issue_history(issue_id, limit=limit)
+
+    @tool
+    def get_attention_ranking(
+        signals: list[fleet_attention.AttentionSignal] | None = None,
+        window_hours: AttentionWindowHours = fleet_attention.DEFAULT_WINDOW_HOURS,
+        limit: AttentionLimit = 20,
+    ) -> dict:
+        """Read the bounded, actor-filtered "Now" queue. Each row cites its
+        owning source, reason, freshness, and signal denominator. Admin tokens
+        see fleet-private signals; other tokens see only their own claim/control
+        rows and blockers on issues they may read. This tool labels a safe next
+        action but never executes one."""
+        return client.get_attention_ranking(
+            signals=signals,
+            window_hours=window_hours,
+            limit=limit,
+        )
 
     @tool
     def get_fleet_metrics(

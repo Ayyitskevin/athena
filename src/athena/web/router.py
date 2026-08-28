@@ -201,7 +201,7 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
     # admin-scoped read. It is counts and links only — it computes no state of its
     # own, so it can never disagree with the surfaces it points at.
     attention = (
-        fleet_attention.build_attention(conn)
+        fleet_attention.build_attention(conn, actor=user)
         if user is not None and identity.is_admin(user)
         else None
     )

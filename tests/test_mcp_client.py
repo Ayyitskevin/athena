@@ -749,6 +749,28 @@ def test_issue_history_client_forwards_the_bounded_narrative_limit():
     assert transport.calls == [("GET", "/issues/7/history", {"params": {"limit": 25}})]
 
 
+def test_attention_ranking_client_forwards_filters_to_the_rest_projection():
+    transport = _RecordingClient()
+    client = AthenaClient(client=transport)
+
+    client.get_attention_ranking(
+        signals=["open_blocker", "claim_needs_attention"], window_hours=12
+    )
+
+    assert transport.calls == [
+        (
+            "GET",
+            "/attention/ranking",
+            {
+                "params": {
+                    "signals": "open_blocker,claim_needs_attention",
+                    "window_hours": 12,
+                }
+            },
+        )
+    ]
+
+
 def test_list_issues_forwards_sprint_only_when_explicit():
     transport = _RecordingClient()
     client = AthenaClient(client=transport)
@@ -1885,6 +1907,30 @@ def test_issue_history_mcp_tool_forwards_issue_id_and_limit():
     asyncio.run(server.call_tool("get_issue_history", {"issue_id": 7, "limit": 25}))
 
     assert client.calls == [("get_issue_history", (7,), {"limit": 25})]
+
+
+def test_attention_ranking_mcp_tool_forwards_signal_filters_and_window():
+    import asyncio
+
+    from athena.mcp.server import build_server
+
+    client = _MCPRecordingAthenaClient()
+    server = build_server(client)
+
+    asyncio.run(
+        server.call_tool(
+            "get_attention_ranking",
+            {"signals": ["open_blocker"], "window_hours": 12},
+        )
+    )
+
+    assert client.calls == [
+        (
+            "get_attention_ranking",
+            (),
+            {"signals": ["open_blocker"], "window_hours": 12, "limit": 20},
+        )
+    ]
 
 
 @pytest.mark.parametrize(

@@ -8,8 +8,11 @@ visibility, mixed time windows, and the empty-state honesty rule.
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+import pytest
 
 from athena.aegis import fleet_attention
+from athena.aegis.fleet_attention_api import AttentionRankItemOut
 from athena.core import activity, budgets, db, security_events
 from athena.main import create_app
 
@@ -96,7 +99,9 @@ def _set_rule_failing(db_file, rule_id, error="boom"):
     conn.close()
 
 
-def test_ranking_is_admin_only(tmp_path):
+def test_ranking_requires_authentication_and_filters_each_signal_for_the_actor(
+    tmp_path,
+):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
@@ -106,11 +111,13 @@ def test_ranking_is_admin_only(tmp_path):
             headers=H1,
         ).json()
         assert c.get("/attention/ranking").status_code == 401
-        assert (
-            c.get("/attention/ranking", headers={"X-Athena-Actor": str(member["id"])})
-            .status_code
-            == 403
+        member_view = c.get(
+            "/attention/ranking?signals=security_refusal",
+            headers={"X-Athena-Actor": str(member["id"])},
         )
+        assert member_view.status_code == 200
+        assert member_view.json()["items"] == []
+        assert member_view.json()["examined"] == 0
         assert c.get("/attention/ranking", headers=H1).status_code == 200
 
 
@@ -146,8 +153,7 @@ def test_signal_filter_returns_only_requested_signals(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        _claimed_issue(c, agent, title="urgent", reporting=False)
 
         only_claims = c.get(
             "/attention/ranking?signals=claim_needs_attention",
@@ -188,6 +194,56 @@ def test_open_blocker_signal_surfaces_blocked_issues(tmp_path):
         assert item["total"] == 2
 
 
+def test_open_blocker_signal_does_not_leak_a_private_project(tmp_path):
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        outsider = c.post(
+            "/users",
+            json={"email": "out@e.com", "name": "Out", "password": "pw"},
+            headers=H1,
+        ).json()
+        project = c.post(
+            "/projects",
+            json={"name": "Private", "key": "PVT"},
+            headers=H1,
+        ).json()
+        blocked = c.post(
+            "/issues",
+            json={"title": "hidden blocked", "project_id": project["id"]},
+            headers=H1,
+        ).json()
+        blocker = c.post(
+            "/issues",
+            json={"title": "hidden blocker", "project_id": project["id"]},
+            headers=H1,
+        ).json()
+        c.post(
+            f"/issues/{blocked['id']}/links",
+            json={"target_ref": str(blocker["id"]), "relation": "blocked_by"},
+            headers=H1,
+        )
+        c.put(
+            f"/projects/{project['id']}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+
+        outsider_view = c.get(
+            "/attention/ranking?signals=open_blocker",
+            headers={"X-Athena-Actor": str(outsider["id"])},
+        ).json()
+        assert outsider_view["items"] == []
+        assert outsider_view["examined"] == 0
+        assert outsider_view["total"] == 0
+        assert (
+            c.get("/attention/ranking?signals=open_blocker", headers=H1).json()[
+                "items"
+            ][0]["source_id"]
+            == blocked["id"]
+        )
+
+
 def test_mixed_windows_affect_event_signals_not_state_signals(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:
@@ -220,9 +276,7 @@ def test_mixed_windows_affect_event_signals_not_state_signals(tmp_path):
             params={"window_hours": 1},
         ).json()
         assert any(item["signal"] == "claim_needs_attention" for item in short["items"])
-        assert not any(
-            item["signal"] == "security_refusal" for item in short["items"]
-        )
+        assert not any(item["signal"] == "security_refusal" for item in short["items"])
 
         # Move the clock forward so the refusal is older than the window, and
         # verify the event-counted signal drops while the standing signal stays.
@@ -253,9 +307,7 @@ def test_failing_webhooks_rank_by_severity(tmp_path):
         ).json()
         _set_webhook_failing(db_file, wh["id"], failure_count=5, error="timeout")
 
-        ranking = c.get(
-            "/attention/ranking?signals=failing_webhook", headers=H1
-        ).json()
+        ranking = c.get("/attention/ranking?signals=failing_webhook", headers=H1).json()
         assert len(ranking["items"]) == 1
         item = ranking["items"][0]
         assert item["signal"] == "failing_webhook"
@@ -300,14 +352,18 @@ def test_pending_approval_appears_and_links(tmp_path):
             json={"action_kind": "issue.close"},
             headers=H1,
         )
-        gated = c.post("/issues", json={"title": "gated"}, headers=_bearer(agent)).json()
+        gated = c.post(
+            "/issues", json={"title": "gated"}, headers=_bearer(agent)
+        ).json()
         c.patch(
             f"/issues/{gated['id']}",
             json={"status": "done"},
             headers=_bearer(agent),
         )
 
-        ranking = c.get("/attention/ranking?signals=pending_approval", headers=H1).json()
+        ranking = c.get(
+            "/attention/ranking?signals=pending_approval", headers=H1
+        ).json()
         assert len(ranking["items"]) == 1
         item = ranking["items"][0]
         assert item["signal"] == "pending_approval"
@@ -342,12 +398,11 @@ def test_budget_exhaustion_and_security_refusal_are_excluded_when_imported(tmp_p
 
 
 def test_agent_command_authorization_degrades_to_operator_link(tmp_path):
-    app, db_file = _app(tmp_path)
+    app, _ = _app(tmp_path)
     with TestClient(app) as c:
         _bootstrap(c)
         agent = _agent(c)
-        urgent = _claimed_issue(c, agent, title="urgent")
-        _expire_lease(db_file, urgent["id"])
+        _claimed_issue(c, agent, title="urgent", reporting=False)
 
         # Admin (actor 1) is NOT the assignee, so an agent-command degrades to a
         # link — the slice never executes a command, and it only labels one when
@@ -360,17 +415,134 @@ def test_agent_command_authorization_degrades_to_operator_link(tmp_path):
         assert item["next_action"] == "operator-link"
         assert item["command"] is None
 
-        # When the caller IS the assignee, the same row surfaces as a command.
-        agent_view = fleet_attention.build_attention_ranking(
-            db.connect(db_file),
-            signals={"claim_needs_attention"},
-            actor=agent["user"],
+        # When the caller IS the assignee, the real public boundary exposes the
+        # same row as a command. Exercising only the Python projection would miss
+        # an admin-only REST route that no agent could actually use.
+        agent_view = c.get(
+            "/attention/ranking?signals=claim_needs_attention",
+            headers=_bearer(agent),
         )
-        agent_item = fleet_attention.to_public_rank_item(
-            db.connect(db_file), agent_view["items"][0], actor=agent["user"]
+        assert agent_view.status_code == 200
+        agent_item = agent_view.json()["items"][0]
+        assert agent_item["next_action"] == "agent-command", agent_view.text
+        assert agent_item["command"] == "heartbeat_agent_run"
+
+
+def test_event_signals_cite_the_activity_event_not_the_actor(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+
+    conn = db.connect(db_file)
+    budget_event = activity.record(
+        conn,
+        actor_id=1,
+        verb=budgets.VERB_BUDGET_EXHAUSTED,
+        target_kind="user",
+        target_id=1,
+        detail="daily ceiling reached",
+    )
+    refusal_event = activity.record(
+        conn,
+        actor_id=1,
+        verb=security_events.VERB_SCOPE_DENIED,
+        target_kind="user",
+        target_id=1,
+        detail="admin scope required",
+    )
+    conn.close()
+
+    with TestClient(app) as c:
+        body = c.get(
+            "/attention/ranking?signals=budget_exhaustion,security_refusal",
+            headers=H1,
+        ).json()
+    by_signal = {item["signal"]: item for item in body["items"]}
+    assert by_signal["budget_exhaustion"]["source_kind"] == "activity_event"
+    assert by_signal["budget_exhaustion"]["source_id"] == budget_event["id"]
+    assert by_signal["security_refusal"]["source_kind"] == "activity_event"
+    assert by_signal["security_refusal"]["source_id"] == refusal_event["id"]
+
+
+def test_output_vocabularies_are_closed_at_the_rest_boundary():
+    valid = {
+        "signal": "open_blocker",
+        "severity": "high",
+        "source_kind": "issue",
+        "source_id": 7,
+        "owner_id": 1,
+        "owner_name": "Ann",
+        "reason": "blocked",
+        "freshness": "2026-08-28 12:00:00",
+        "examined": 1,
+        "total": 1,
+        "next_action": "operator-link",
+        "command": None,
+        "link": "/aegis/issues/7",
+        "source_link": "/aegis/issues/7/history",
+    }
+    for field, bad in (
+        ("signal", "mystery"),
+        ("severity", "catastrophic"),
+        ("next_action", "execute-now"),
+    ):
+        with pytest.raises(ValidationError):
+            AttentionRankItemOut.model_validate({**valid, field: bad})
+
+
+def test_rollup_and_ranking_share_the_existing_attention_projection(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        blocked = c.post("/issues", json={"title": "blocked"}, headers=H1).json()
+        blocker = c.post("/issues", json={"title": "blocker"}, headers=H1).json()
+        c.post(
+            f"/issues/{blocked['id']}/links",
+            json={"target_ref": str(blocker["id"]), "relation": "blocked_by"},
+            headers=H1,
         )
-        assert agent_item["next_action"] == "agent-command"
-        assert agent_item["command"] == "check in"
+
+    conn = db.connect(db_file)
+    projection = fleet_attention.build_attention(
+        conn,
+        actor={"id": 1, "role": "admin"},
+        ranking_signals={"open_blocker"},
+    )
+    conn.close()
+    assert projection["now"]["items"][0].source_id == blocked["id"]
+    assert projection["now"]["signals"] == ["open_blocker"]
+
+
+def test_default_projection_captures_one_clock_for_counts_and_ranking(
+    tmp_path, monkeypatch
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+
+    observed = datetime(2040, 1, 2, 3, 4, 5, tzinfo=UTC)
+    calls = 0
+
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            nonlocal calls
+            calls += 1
+            assert tz is UTC
+            return observed
+
+    monkeypatch.setattr(fleet_attention, "datetime", FrozenDateTime)
+    conn = db.connect(db_file)
+    projection = fleet_attention.build_attention(
+        conn,
+        actor={"id": 1, "role": "admin"},
+        ranking_signals={"security_refusal"},
+    )
+    conn.close()
+
+    assert calls == 1
+    assert projection["since"] == "2040-01-01 03:04:05"
+    assert projection["now"]["items"] == []
 
 
 def test_ranking_sorts_by_severity_then_freshness(tmp_path):
@@ -396,9 +568,7 @@ def test_ranking_sorts_by_severity_then_freshness(tmp_path):
         assert "failing_webhook" in signals
         assert "budget_exhaustion" in signals
         # High severity rows sort before medium severity rows.
-        high_index = next(
-            i for i, s in enumerate(signals) if s == "failing_webhook"
-        )
+        high_index = next(i for i, s in enumerate(signals) if s == "failing_webhook")
         medium_index = next(
             i for i, s in enumerate(signals) if s == "budget_exhaustion"
         )

@@ -10,6 +10,7 @@ only httpx (not the MCP SDK), so it can be unit-tested in CI without the optiona
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -301,6 +302,25 @@ class AthenaClient:
             self._client.get(
                 f"/issues/{issue_id}/history",
                 params=self._params(limit=limit),
+            )
+        )
+
+    def get_attention_ranking(
+        self,
+        *,
+        signals: Sequence[str] | None = None,
+        window_hours: int | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """Read the actor-filtered ranked attention queue."""
+        return self._result(
+            self._client.get(
+                "/attention/ranking",
+                params=self._params(
+                    signals=",".join(signals) if signals else None,
+                    window_hours=window_hours,
+                    limit=limit,
+                ),
             )
         )
 
