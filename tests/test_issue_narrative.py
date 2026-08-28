@@ -193,8 +193,7 @@ def test_full_lifecycle_orders_newest_first_and_cites_every_source(tmp_path):
 
     # Every item cites an owning source that actually exists.
     event_ids = {
-        row["id"]
-        for row in conn.execute("SELECT id FROM activity").fetchall()
+        row["id"] for row in conn.execute("SELECT id FROM activity").fetchall()
     }
     control_ids = {
         row["id"] for row in conn.execute("SELECT id FROM run_controls").fetchall()
@@ -283,6 +282,37 @@ def test_clipped_window_says_so_instead_of_implying_completeness(tmp_path):
     conn.close()
 
 
+def test_control_window_reports_clipping_only_when_items_were_omitted(
+    tmp_path, monkeypatch
+):
+    """A full control window is still complete; only an overflowing lane is
+    labelled clipped, and the response stays bounded to the advertised limit."""
+    conn = _migrated_conn(tmp_path / "control-window.db")
+    _seed_users(conn)
+    issue = _delegated_issue(conn)
+    _claim(conn, 2, issue["id"], run_id=RUN_ID)
+    monkeypatch.setattr(issue_narrative, "CONTROLS_PER_RUN_LIMIT", 2)
+    t0 = datetime(2020, 1, 1, tzinfo=UTC)
+    _control(conn, now=t0)
+    _control(conn, now=t0 + timedelta(seconds=120))
+
+    exact = issue_narrative.build_issue_narrative(
+        conn, issue["id"], actor=_actor(conn, 1)
+    )
+    assert not exact["window"]["controls_clipped"]
+    assert sum(item["source"]["kind"] == "run_control" for item in exact["items"]) == 2
+
+    _control(conn, now=t0 + timedelta(seconds=240))
+    overflow = issue_narrative.build_issue_narrative(
+        conn, issue["id"], actor=_actor(conn, 1)
+    )
+    assert overflow["window"]["controls_clipped"]
+    assert (
+        sum(item["source"]["kind"] == "run_control" for item in overflow["items"]) == 2
+    )
+    conn.close()
+
+
 def test_missing_issue_and_foreign_runs_are_absent(tmp_path):
     """A missing issue is None, not an empty story. And a control on a run that
     never touched this issue stays with its own run — the narrative joins only
@@ -301,9 +331,9 @@ def test_missing_issue_and_foreign_runs_are_absent(tmp_path):
         conn, issue["id"], actor=_actor(conn, 1)
     )
     assert narrative is not None
-    assert all(
-        item["run_id"] != OTHER_RUN_ID for item in narrative["items"]
-    ), narrative["items"]
+    assert all(item["run_id"] != OTHER_RUN_ID for item in narrative["items"]), (
+        narrative["items"]
+    )
     assert not [
         item for item in narrative["items"] if item["source"]["kind"] == "run_control"
     ]
@@ -352,6 +382,51 @@ def test_one_clock_drives_every_derived_freshness(tmp_path):
     assert control_item["signal"] == "run_control"
     assert control_item["state"] == run_controls.STATE_EXPIRED
     assert checkin_item["state"] == agent_run_checkins.STALE
+    conn.close()
+
+
+def test_default_call_captures_one_clock_for_the_whole_projection(
+    tmp_path, monkeypatch
+):
+    """The normal, non-injected path captures server time once, then uses that
+    same instant for the response stamp and every freshness calculation."""
+    conn = _migrated_conn(tmp_path / "default-clock.db")
+    _seed_users(conn)
+    issue = _delegated_issue(conn)
+    _claim(conn, 2, issue["id"], run_id=RUN_ID)
+    _checkin(conn)
+    t0 = datetime(2040, 1, 2, 3, 4, 5, tzinfo=UTC)
+    conn.execute(
+        "UPDATE agent_run_checkins SET last_seen_at = ? WHERE run_id = ?",
+        (t0.strftime("%Y-%m-%d %H:%M:%S"), RUN_ID),
+    )
+    conn.commit()
+    _control(conn, now=t0, ttl_seconds=60)
+    observed = t0 + timedelta(seconds=30)
+
+    class FrozenDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is UTC
+            return observed
+
+    monkeypatch.setattr(issue_narrative, "datetime", FrozenDateTime)
+    narrative = issue_narrative.build_issue_narrative(
+        conn, issue["id"], actor=_actor(conn, 1)
+    )
+
+    assert narrative["observed_at"] == run_controls.stamp(observed)
+    control_item = next(
+        item for item in narrative["items"] if item["source"]["kind"] == "run_control"
+    )
+    checkin_item = next(
+        item
+        for item in narrative["items"]
+        if item["source"]["kind"] == "agent_run_checkin"
+    )
+    assert control_item["state"] == run_controls.STATE_REQUESTED
+    assert "30s before observed_at" in checkin_item["summary"]
+    assert checkin_item["state"] == agent_run_checkins.REPORTING_RECENTLY
     conn.close()
 
 
@@ -417,9 +492,7 @@ def test_handoff_outside_the_event_window_still_cites_its_own_record(tmp_path):
         issue_narrative.EVENT_WINDOW = original
 
     assert narrative["window"]["events_clipped"]
-    handoff_item = next(
-        i for i in narrative["items"] if i["signal"] == "handoff"
-    )
+    handoff_item = next(i for i in narrative["items"] if i["signal"] == "handoff")
     assert handoff_item["source"]["kind"] == "claim_handoff"
     assert handoff_item["source"]["id"] == handoff["handoff_token"]
     assert handoff_item["state"] == "awaiting_resume"

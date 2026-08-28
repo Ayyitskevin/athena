@@ -44,18 +44,20 @@
     </section>
 
     <section class="tt-timeline">
-        <h2>Checkpoints</h2>
-        {% if events %}
+        <h2>Operator history</h2>
+        {% if timeline_items %}
         <ul class="tt-events">
             <li class="tt-event{% if as_of is none %} current{% endif %}">
                 <a href="/aegis/issues/{{ issue.id }}/history">Now (latest)</a>
             </li>
-            {% for e in events %}
-            <li class="tt-event{% if as_of == e.id %} current{% endif %}">
-                <a href="/aegis/issues/{{ issue.id }}/history?as_of={{ e.id }}">
-                    <span class="activity-actor">{{ e.actor_name }}</span>
-                    <span class="muted">{{ e.verb }}{% if e.detail %} {{ e.detail }}{% endif %}</span>
-                    <span class="muted activity-time">{{ e.created_at }}</span>
+            {% for item in timeline_items %}
+            <li class="tt-event{% if item.kind == 'narrative' %} narrative-item narrative-{{ item.signal }}{% endif %}{% if as_of == item.event_id %} current{% endif %}">
+                <a href="{{ item.action_href }}">
+                    {% if item.signal %}<span class="narrative-signal">{{ item.signal }}</span>{% endif %}
+                    {% if item.actor_name %}<span class="activity-actor">{{ item.actor_name }}</span>{% endif %}
+                    <span class="narrative-summary">{{ item.summary }}</span>
+                    <span class="muted activity-time">{{ item.at }}</span>
+                    <span class="muted narrative-source">{{ item.source_label }}</span>
                 </a>
             </li>
             {% endfor %}
@@ -63,38 +65,13 @@
         {% else %}
         <p class="muted">No activity yet — nothing to time-travel through.</p>
         {% endif %}
-    </section>
-</div>
-
-{% if narrative %}
-<section class="panel narrative-panel" aria-labelledby="narrative-heading">
-    <div class="panel-head">
-        <h2 id="narrative-heading">Run narrative</h2>
-        <span class="muted">observed at {{ narrative['observed_at'] }}</span>
-    </div>
-    <div class="panel-body">
-        {% if narrative['items'] %}
-        <ul class="narrative-items">
-            {% for item in narrative['items'] %}
-            <li class="narrative-item narrative-{{ item['signal'] }}">
-                <span class="narrative-signal">{{ item['signal'] }}</span>
-                <span class="narrative-summary">{{ item['summary'] }}</span>
-                <span class="muted activity-time">{{ item['at'] }}</span>
-                {% if item['actor'] %}<span class="activity-actor">{{ item['actor']['name'] }}</span>{% endif %}
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p class="muted">No run signals yet — only unclassified history events.</p>
-        {% endif %}
         {% if narrative['clipped'] %}
-        <p class="muted">Showing the newest {{ narrative['limit'] }} items; history is clipped.</p>
+        <p class="muted">Showing the newest {{ narrative['limit'] }} run items; history is clipped.</p>
         {% endif %}
         {% if narrative['window']['unclassified_events'] %}
-        <p class="muted">{{ narrative['window']['unclassified_events'] }} event(s) left untyped so unknown signals are never guessed.</p>
+        <p class="muted">{{ narrative['window']['unclassified_events'] }} event(s) remain as raw activity so unknown signals are never guessed.</p>
         {% endif %}
-    </div>
-</section>
-{% endif %}
+    </section>
+</div>
 
 {% endblock %}

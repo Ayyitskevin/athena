@@ -32,6 +32,7 @@ from athena.aegis import (
     delegations,
     fleet_metrics,
     fleet_work,
+    issue_narrative,
     issues,
     lease_commands,
 )
@@ -128,6 +129,9 @@ FleetActorLimit = Annotated[
 ]
 FleetMetricDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
 FleetWorkLimit = Annotated[int, Field(strict=True, ge=1, le=fleet_work.MAX_LIMIT)]
+IssueHistoryLimit = Annotated[
+    int, Field(strict=True, ge=1, le=issue_narrative.MAX_LIMIT)
+]
 FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 DispatchIssueId = Annotated[
     int, Field(strict=True, ge=1, le=dispatch.MAX_SQLITE_INTEGER)
@@ -225,6 +229,7 @@ TOOL_SCOPES: dict[str, str] = {
     "get_fleet_active_work": READ_ONLY,
     "get_issue": READ_ONLY,
     "get_issue_work_context": READ_ONLY,
+    "get_issue_history": READ_ONLY,
     "get_fleet_metrics": READ_ONLY,
     "list_issue_comments": READ_ONLY,
     "get_issue_state": READ_ONLY,
@@ -723,6 +728,16 @@ def build_server(
         links. This packet is not a claim or lease and does not guarantee readiness,
         unblocked status, agent liveness, or replayability."""
         return client.get_issue_work_context(ref)
+
+    @tool
+    def get_issue_history(
+        issue_id: int,
+        limit: IssueHistoryLimit = issue_narrative.DEFAULT_LIMIT,
+    ) -> dict:
+        """Read one issue's bounded operator run narrative. Every item cites
+        its owning source; unknown activity stays unclassified, and clipped
+        lanes are reported instead of presented as complete."""
+        return client.get_issue_history(issue_id, limit=limit)
 
     @tool
     def get_fleet_metrics(
