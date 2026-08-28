@@ -96,7 +96,7 @@ from athena.web import labels as web_labels
 from athena.web import mentor as web_mentor
 from athena.web import projects as web_projects
 from athena.web import work_context as web_work_context
-from athena.web import init_templates, router as web_router
+from athena.web import init_templates, palette as web_palette, router as web_router
 
 
 def content_security_policy(nonce: str | None = None) -> str:
@@ -1895,6 +1895,7 @@ def create_app(
     app.include_router(web_labels.router, dependencies=browser_dependencies)
     app.include_router(web_admin.router, dependencies=browser_dependencies)
     app.include_router(web_work_context.router, dependencies=browser_dependencies)
+    app.include_router(web_palette.router, dependencies=browser_dependencies)
     app.include_router(web_fleet_metrics.router, dependencies=browser_dependencies)
 
     # Core REST API (users, api tokens, cross-module search).

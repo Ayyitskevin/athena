@@ -188,6 +188,27 @@
         <small class="mono">{{ request.app.state.version }} · local alpha</small>
     </footer>
 </div>
+{% if request.state.user %}
+{# The gated command palette (MWS-18): keyboard-first capture/claim/yield/complete/
+   approve/inspect, rendered ONLY as the server's /aegis/palette/actions projection
+   permits — this markup is the shell; what it can do arrives per-request from the
+   command-owning API. data-csrf is the session's synchronizer token (same value
+   every form embeds) so palette.js can POST with the X-CSRF-Token header. #}
+<div id="palette" class="palette" hidden role="dialog" aria-modal="true" aria-label="Command palette"
+     data-issue-ref="{{ palette_issue_ref | default('', true) }}"
+     data-csrf="{{ request.state.csrf_token or '' }}">
+    <div class="palette-panel">
+        <label class="visually-hidden" for="palette-input">Filter actions or type an issue ref</label>
+        <input id="palette-input" class="palette-input" type="text" autocomplete="off"
+               placeholder="Type to filter actions, or an issue ref to inspect (MWS-18, 42)">
+        <ul class="palette-actions" role="listbox" aria-label="Available actions"></ul>
+        <div class="palette-detail"></div>
+        <p class="palette-status" role="status" aria-live="polite"></p>
+        <p class="palette-hint"><kbd>&#8593;&#8595;</kbd> move · <kbd>Enter</kbd> run · <kbd>Esc</kbd> close · <kbd>Ctrl K</kbd> open</p>
+    </div>
+</div>
+<script src="/static/palette.js?v={{ static_version }}" defer></script>
+{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>
