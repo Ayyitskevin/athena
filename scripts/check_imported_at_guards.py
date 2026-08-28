@@ -148,6 +148,13 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "itself refuses imported events, so a reversed-imported row cannot "
         "exist — the guard keeps the count honest even if that ever changed",
     ),
+    (
+        "aegis/fleet_attention.py",
+        "_collect_budget_exhaustions",
+        r"imported_at IS NULL",
+        "the ranked attention queue's budget-exhaustion signal is a "
+        "native-only read; foreign history must not look like a live ceiling hit",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is
