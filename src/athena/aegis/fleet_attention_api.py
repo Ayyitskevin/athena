@@ -99,21 +99,19 @@ def index(
     response.headers.update(_PRIVATE_HEADERS)
     signal_set = _parse_signals(signals)
     try:
-        result = fleet_attention.build_attention(
+        ranking = fleet_attention.build_attention_ranking(
             conn,
+            signals=signal_set,
             actor=actor,
-            ranking_signals=signal_set,
             window_hours=window_hours,
-            ranking_limit=limit,
-        )["now"]
+            limit=limit,
+        )
+        result = fleet_attention.public_attention_ranking(conn, ranking, actor=actor)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return {
-        "items": [
-            fleet_attention.to_public_rank_item(conn, item, actor=actor)
-            for item in result["items"]
-        ],
+        "items": result["items"],
         "examined": result["examined"],
         "total": result["total"],
         "signals": result["signals"],
