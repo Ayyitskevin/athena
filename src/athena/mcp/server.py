@@ -1281,8 +1281,10 @@ def build_server(
         addressed to you, kill requests on your workers, claim handoffs you
         have not acknowledged), `work` (your delegation inbox, the leases you
         hold — `active` is the clock's verdict at THIS read, not a stored
-        state), `signals` (unread notifications, and how many visible events
-        sit past your cursor).
+        state — and `work.leases.lapsed`, rows the clock already released on
+        issues still open: renew them or clear them with complete_claim),
+        `signals` (unread notifications, and how many visible events sit past
+        your cursor).
 
         The loop: `my_desk()` -> act -> drain `recent_events(after=...)` from
         your cursor -> `advance_desk_cursor(after_id=<last id you handled>)`.

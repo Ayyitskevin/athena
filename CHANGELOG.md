@@ -108,6 +108,31 @@ the newest one and for what tagging still requires.
   `tests/test_vendored_assets.py`, so a byte change to the bundle is a red
   build and an htmx upgrade names the new version and digest in the same diff.
 
+### Fixed
+
+- **The desk called lapsed leases "held" (MWS-29).** `work.leases` was built
+  from every `issue_leases` row belonging to the reader, with `active` derived
+  from the clock — which is honest per row and false in aggregate. Nothing ever
+  removes a lease row except the next acquisition or its holder's own
+  release/yield/decline, and `complete_claim` refused an expired lease with
+  `409 no active claim to complete`. So a lease that lapsed on an issue nobody
+  re-claimed sat under "issues you hold" permanently, counted by `total`, with
+  no command that could clear it. Live on this fleet: four such rows from a
+  single day, all on finished issues, on the seat that reads its desk most.
+  The row lifecycle and the derived flag were telling different stories and the
+  lane reported the wrong one.
+
+  `work.leases.items` and `total` are now ACTIVE leases only, counted against
+  the same instant the items were read. A sibling `work.leases.lapsed` (with
+  `lapsed_total`) carries the reader's expired rows on issues that are still
+  open — the ones there is still something to do about — while expired rows on
+  done issues are omitted entirely and stay readable at
+  `GET /issues/{id}/lease`, which is the surface that answers "who held this
+  last". `lapsed_total` counts what survives that filter, not the rows behind
+  it. The desk schema is therefore `athena.agent_desk.v2`: `items` and `total`
+  mean something narrower than they did, and a consumer deserves to be told
+  rather than to notice.
+
 ### Added
 
 - **A standing prune ledger, and the tooling that makes it runnable.** VISION says

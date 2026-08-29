@@ -66,8 +66,9 @@ file's section census.
   working. Untagged writes are attributable but not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
   advance the desk cursor to the last event you actually handled. Complete
-  or yield every claim before the session ends — expired leases linger on
-  the desk.
+  or yield every claim before the session ends — one you let lapse lists
+  under `work.leases.lapsed` until you `complete_claim` it with its
+  generation.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it
   bypasses scopes, the activity trail, undo, and the hash chain.

@@ -21,6 +21,8 @@ import secrets
 import sqlite3
 from typing import TypeGuard
 
+from athena.aegis import statuses
+
 # A claim lasts this long by default before it must be renewed (re-claimed). Long enough
 # for a real work session, short enough that an abandoned claim frees the work within the
 # hour. Callers may pass their own window up to the max.
@@ -45,6 +47,22 @@ _SELECT = (
     "(l.expires_at > datetime('now')) AS active "
     "FROM issue_leases l JOIN users u ON u.id = l.holder_id"
 )
+
+#: The same projection as ``_SELECT`` with the clock supplied as a PARAMETER
+#: rather than ``datetime('now')``, so a holder read derives ``active`` from the
+#: caller's injected stamp — the one the desk already uses for its other lanes.
+#: Callers append their own WHERE/ORDER/LIMIT and pass the stamp first.
+_HELD_SELECT = (
+    "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
+    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
+    "(l.expires_at > ?) AS active "
+    "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
+)
+
+
+def _clock_stamp(now: datetime | None) -> str:
+    """The comparison stamp in the storage format ``expires_at`` uses."""
+    return (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _parse_declared_paths(raw: object) -> list[str]:
@@ -125,14 +143,101 @@ def list_active_leases(
     return [_row_to_lease(row) for row in conn.execute(sql, params).fetchall()]
 
 
-def count_leases_held_by(conn: sqlite3.Connection, *, holder_id: int) -> int:
-    """How many leases this holder has rows for, so a clipped list can say so."""
+def active_leases_held_by(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    limit: int = 20,
+    now: datetime | None = None,
+) -> list[dict]:
+    """One holder's leases that are STILL LIVE by the clock — "what am I holding
+    right now?", most recently claimed first.
+
+    The strict half of ``leases_held_by``. That reader deliberately includes
+    expired rows and hands the caller an ``active`` flag to sort out; this one
+    answers the narrower question a caller has when the word "held" has to be
+    true — a row here is a possession no one else can take. ``active`` is still
+    returned (always True) so the projection stays identical to the other holder
+    reads rather than a special shape callers have to branch on.
+    """
+    bounded = max(1, min(int(limit), 100))
+    stamp = _clock_stamp(now)
+    rows = conn.execute(
+        _HELD_SELECT + "WHERE l.holder_id = ? AND l.expires_at > ? "
+        "ORDER BY l.claimed_at DESC, l.issue_id DESC LIMIT ?",
+        (stamp, holder_id, stamp, bounded),
+    ).fetchall()
+    return [_row_to_lease(row) for row in rows]
+
+
+def count_active_leases_held_by(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    now: datetime | None = None,
+) -> int:
+    """How many leases this holder still holds by the clock, so a clipped list
+    can say so. Takes the same injectable ``now`` as the list read: a total
+    counted against a different instant than the items it bounds is a total that
+    can disagree with its own list."""
+    stamp = _clock_stamp(now)
     return int(
         conn.execute(
-            "SELECT COUNT(*) AS n FROM issue_leases WHERE holder_id = ?",
-            (holder_id,),
+            "SELECT COUNT(*) AS n FROM issue_leases "
+            "WHERE holder_id = ? AND expires_at > ?",
+            (holder_id, stamp),
         ).fetchone()["n"]
     )
+
+
+def lapsed_leases_held_by(
+    conn: sqlite3.Connection,
+    *,
+    holder_id: int,
+    limit: int = 20,
+    now: datetime | None = None,
+) -> tuple[list[dict], int]:
+    """This holder's EXPIRED rows on issues that are still open, newest first,
+    with the count of everything that passed the filter.
+
+    A lease row outlives its window: nothing sweeps it, and only the next
+    acquisition or the holder's own release removes it. So "the clock released
+    this and nobody took it back" is a real fact its last holder has to act on —
+    renew it, or clear it — and it belongs on a surface that says so, not folded
+    in among the leases they actually hold.
+
+    Rows on issues whose status category is ``done`` are omitted: there is no
+    possession left to lose on finished work, and surfacing it would grow an
+    unclearable list on every seat. The row itself is not hidden — it stays
+    readable at ``get_lease`` for as long as it exists, which is where "who held
+    this last" is answered.
+
+    The returned count is the count AFTER that filter, not the number of expired
+    rows: a total that counts rows the list can never show would be the same
+    lie in a smaller font. The filter runs in Python (a holder has at most one
+    row per issue, so this is bounded by their own lease count) rather than
+    duplicating the delegation inbox's category SQL, which would put a second
+    copy of "what closed means" in the tree.
+    """
+    bounded = max(1, min(int(limit), 100))
+    stamp = _clock_stamp(now)
+    rows = conn.execute(
+        _HELD_SELECT + "WHERE l.holder_id = ? AND l.expires_at <= ? "
+        "ORDER BY l.claimed_at DESC, l.issue_id DESC",
+        (stamp, holder_id, stamp),
+    ).fetchall()
+    still_open = []
+    for row in rows:
+        issue = conn.execute(
+            "SELECT project_id, status FROM issues WHERE id = ?",
+            (row["issue_id"],),
+        ).fetchone()
+        if issue is None:
+            continue
+        if statuses.is_done(conn, issue["project_id"], issue["status"]):
+            continue
+        still_open.append(_row_to_lease(row))
+    return still_open[:bounded], len(still_open)
 
 
 def upsert_lease(

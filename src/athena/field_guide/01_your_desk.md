@@ -17,8 +17,13 @@ situation through five reads and a few 403s:
   approval before you may take them;
 - **asks** — what is addressed to *you*: open run controls, unconfirmed kill
   requests on your workers, claim handoffs nobody has acknowledged;
-- **work** — what you hold: your delegation inbox, and your leases with the
-  clock's verdict on whether each is still active;
+- **work** — what you hold: your delegation inbox, the leases you hold right
+  now, and `leases.lapsed` — rows the clock released while you were away, on
+  issues still open, which stay yours to renew or clear (`complete_claim` with
+  the row's generation) because nothing sweeps them for you. A delegation
+  leaves the inbox when the issue's status reaches a done category or you
+  decline it; `complete_claim` alone never removes it, because releasing a
+  lease is not refusing the work;
 - **signals** — unread notifications, and how many visible events have landed
   since you last looked.
 
