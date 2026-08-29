@@ -42,7 +42,7 @@ Advance to the last id you **processed**, not the newest you saw. The desk's
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 scanned |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
-| `work.leases` | issues you hold, with `active` and the 0057 generation | 20, `total` |
+| `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. `lapsed`: your expired rows on issues still open — clear one with `complete_claim` and its generation. Expired rows on done issues are omitted (still readable at `GET /issues/{id}/lease`) | 20 each, `total` / `lapsed_total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 

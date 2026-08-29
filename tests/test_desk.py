@@ -54,6 +54,37 @@ def _desk(client, headers):
     return response.json()
 
 
+def _claimed_issue(client, agent, title="work"):
+    """An issue delegated to ``agent`` and claimed by it. Claiming is
+    optimistic-concurrency gated, so the current ETag rides along."""
+    bearer = _bearer(agent)
+    issue = client.post("/issues", json={"title": title}, headers=H1).json()
+    delegated = client.post(
+        f"/issues/{issue['id']}/delegate",
+        json={"user_id": agent["user"]["id"]},
+        headers=H1,
+    )
+    assert delegated.status_code == 201, delegated.text
+    etag = client.get(f"/issues/{issue['id']}", headers=bearer).headers["ETag"]
+    claimed = client.post(
+        f"/issues/{issue['id']}/claim", headers={**bearer, "If-Match": etag}
+    )
+    assert claimed.status_code in (200, 201), claimed.text
+    return issue
+
+
+def _expire(db_file, issue_id):
+    """Force one lease into the past — a holder that walked away. Same row, and
+    every derived `active` flips with no write of ours."""
+    conn = db.connect(db_file)
+    conn.execute(
+        "UPDATE issue_leases SET expires_at = '2000-01-01 00:00:00' WHERE issue_id = ?",
+        (issue_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
 # --- shape and zero state ---------------------------------------------------
 
 
@@ -92,6 +123,10 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
         "items": [],
         "total": 0,
         "limit": desk.LEASES_LIMIT,
+        # Empty and present, not absent: a fresh agent holds nothing and has
+        # lost nothing, and those are two facts, not one missing key.
+        "lapsed": [],
+        "lapsed_total": 0,
         "meaning": board["work"]["leases"]["meaning"],
     }
     assert board["signals"]["unread_notifications"] == 0
@@ -115,6 +150,14 @@ def test_every_lane_reports_what_it_is_and_what_it_bounds(tmp_path):
     assert "acknowledged" in board["asks"]["claim_handoffs"]["meaning"]
     assert board["work"]["delegations"]["limit"] == desk.DELEGATIONS_LIMIT
     assert "clock's verdict" in board["work"]["leases"]["meaning"]
+    # Both lease lists are PRESENT and empty rather than absent, and each
+    # carries its own total. An absent lane would read as "no such thing"
+    # rather than "nothing here", which is the lie this whole test exists for.
+    assert board["work"]["leases"]["items"] == []
+    assert board["work"]["leases"]["total"] == 0
+    assert board["work"]["leases"]["lapsed"] == []
+    assert board["work"]["leases"]["lapsed_total"] == 0
+    assert board["work"]["leases"]["limit"] == desk.LEASES_LIMIT
 
 
 # --- the lanes, each populated ----------------------------------------------
@@ -231,6 +274,97 @@ def test_leases_show_what_i_hold_with_the_clocks_verdict(tmp_path):
     lapsed = leases.leases_held_by(conn, holder_id=sol["user"]["id"])
     conn.close()
     assert len(lapsed) == 1 and lapsed[0]["active"] is False
+
+
+def test_a_lapsed_lease_leaves_held_and_appears_under_lapsed(tmp_path):
+    # WHY: "held" has to be true. A lease row outlives its window — nothing
+    # sweeps it — so a desk that lists every row it owns reports work the agent
+    # lost as work it is doing, and `total` counts it. The row is not hidden:
+    # it moves to the lane that says what it actually is, so the agent can
+    # renew it or clear it rather than quietly believing it still holds the
+    # issue. Losing a lease silently is still worse than seeing it.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        sol = _agent(client)
+        bearer = _bearer(sol)
+        issue = _claimed_issue(client, sol)
+
+        board = _desk(client, bearer)
+        assert board["schema"] == "athena.agent_desk.v2"
+        held = board["work"]["leases"]
+        assert held["total"] == 1
+        assert held["items"][0]["issue_id"] == issue["id"]
+        assert held["items"][0]["active"] is True
+        assert held["lapsed"] == []
+        assert held["lapsed_total"] == 0
+
+        _expire(db_file, issue["id"])
+
+        after = _desk(client, bearer)["work"]["leases"]
+        assert after["items"] == []
+        assert after["total"] == 0
+        assert after["lapsed"][0]["issue_id"] == issue["id"]
+        assert after["lapsed"][0]["active"] is False
+        # The generation rides along, because it is what clears the row.
+        assert after["lapsed"][0]["generation"]
+        assert after["lapsed_total"] == 1
+
+
+def test_a_lapsed_lease_on_a_done_issue_is_not_shown(tmp_path):
+    # WHY: the lapsed lane is a to-do list, and a lease on finished work has
+    # nothing left to lose. Left in, it would grow forever on every seat and
+    # train agents to ignore the lane. It is OMITTED, not deleted: the row is
+    # still the answer to "who held this last", so the surface that owns that
+    # question still returns it.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        sol = _agent(client)
+        bearer = _bearer(sol)
+        issue = _claimed_issue(client, sol)
+        _expire(db_file, issue["id"])
+
+        closed = client.patch(
+            f"/issues/{issue['id']}", json={"status": "done"}, headers=H1
+        )
+        assert closed.status_code == 200, closed.text
+
+        leases_lane = _desk(client, bearer)["work"]["leases"]
+        assert leases_lane["items"] == []
+        assert leases_lane["lapsed"] == []
+        assert leases_lane["lapsed_total"] == 0
+
+        # The owning surface still shows the last holder.
+        row = client.get(f"/issues/{issue['id']}/lease", headers=bearer)
+        assert row.status_code == 200, row.text
+        assert row.json()["holder_id"] == sol["user"]["id"]
+        assert row.json()["active"] is False
+
+
+def test_lapsed_total_counts_after_the_done_filter_not_rows(tmp_path):
+    # WHY: the shape of this bug is "count the rows, then filter the list" — a
+    # total that promises more than the lane can ever show. Two lapsed leases,
+    # one on a done issue: the count must be 1, matching what is listed.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        sol = _agent(client)
+        bearer = _bearer(sol)
+        still_open = _claimed_issue(client, sol, title="open work")
+        finished = _claimed_issue(client, sol, title="finished work")
+        _expire(db_file, still_open["id"])
+        _expire(db_file, finished["id"])
+        assert (
+            client.patch(
+                f"/issues/{finished['id']}", json={"status": "done"}, headers=H1
+            ).status_code
+            == 200
+        )
+
+        leases_lane = _desk(client, bearer)["work"]["leases"]
+        assert [row["issue_id"] for row in leases_lane["lapsed"]] == [still_open["id"]]
+        assert leases_lane["lapsed_total"] == 1
 
 
 def test_notifications_and_delegations_reach_the_desk(tmp_path):

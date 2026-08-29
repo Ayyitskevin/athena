@@ -46,7 +46,7 @@ from athena.core import (
 from athena.core import run_control_commands, workers
 from athena.core.desk_cursors import DESK_CURSOR
 
-SCHEMA = "athena.agent_desk.v1"
+SCHEMA = "athena.agent_desk.v2"
 
 #: The desk is a summary, so every lane is short on purpose: enough to decide
 #: what to do next, never a page of history. The owning surface is one call
@@ -156,12 +156,21 @@ def build_desk(
     inbox = delegations.list_delegations(
         conn, actor, viewer=actor, limit=DELEGATIONS_LIMIT
     )
-    held = leases.leases_held_by(conn, holder_id=user_id, limit=LEASES_LIMIT, now=now)
+    # "Held" has to be true: this lane is what the clock still says is yours.
+    # The rows the clock already released are their own list below, because a
+    # lapsed lease is a different thing to do (renew it, or clear it) than a
+    # live one — not a footnote on the same list.
+    held = leases.active_leases_held_by(
+        conn, holder_id=user_id, limit=LEASES_LIMIT, now=now
+    )
+    lapsed, lapsed_total = leases.lapsed_leases_held_by(
+        conn, holder_id=user_id, limit=LEASES_LIMIT, now=now
+    )
     # A handoff is attached to an issue, so "mine to acknowledge" is exactly
     # "open on an issue I hold" — composed rather than re-queried. The reader
     # returns a dict keyed by issue id; the desk presents an ordered list.
     handoffs_by_issue = claim_handoffs.open_handoffs_for_issues(
-        conn, [lease["issue_id"] for lease in held if lease["active"]]
+        conn, [lease["issue_id"] for lease in held]
     )
     handoffs = [handoffs_by_issue[key] for key in sorted(handoffs_by_issue)]
 
@@ -234,13 +243,23 @@ def build_desk(
             },
             "leases": {
                 "items": held,
-                "total": leases.count_leases_held_by(conn, holder_id=user_id),
+                "total": leases.count_active_leases_held_by(
+                    conn, holder_id=user_id, now=now
+                ),
                 "limit": LEASES_LIMIT,
+                "lapsed": lapsed,
+                "lapsed_total": lapsed_total,
                 "meaning": (
-                    "issues you hold; `active` is the clock's verdict at this "
-                    "read, not a stored state. complete_claim releases the "
-                    "lease and does not mark the issue done. declared_paths "
-                    "is the optional file fence."
+                    "`items` are the issues you hold at this read; `active` is "
+                    "the clock's verdict, not a stored state, and `total` "
+                    "counts the same instant. `lapsed` are leases the clock "
+                    "already released on issues still open — nobody else holds "
+                    "them unless GET /issues/{id}/lease says so; complete_claim "
+                    "with a lapsed row's generation clears it. A lapsed lease "
+                    "on a done issue is not listed here; its row stays readable "
+                    "at GET /issues/{id}/lease. complete_claim releases the "
+                    "lease and does not mark the issue done. declared_paths is "
+                    "the optional file fence."
                 ),
             },
         },
