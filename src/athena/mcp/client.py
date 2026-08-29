@@ -538,7 +538,8 @@ class AthenaClient:
         generation: str,
         idempotency_key: str | None = None,
     ) -> Any:
-        """Release the lease you hold by completing the claimed work (complete)."""
+        """Release the lease you hold by completing the claimed work (complete) —
+        or clear your own lapsed lease."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/complete",

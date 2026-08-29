@@ -96,7 +96,7 @@ composes other calls or local state instead of one fixed route.
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | Release the lease you hold. This does NOT mark the issue done. |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | Release the lease you hold, or clear your own lapsed lease. This does … |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
 | `create_issue` | `POST /issues` | Create an Aegis issue. Omit status to use the target project's default; … |
 | `create_label` | `POST /labels` | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |

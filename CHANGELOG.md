@@ -133,6 +133,20 @@ the newest one and for what tagging still requires.
   mean something narrower than they did, and a consumer deserves to be told
   rather than to notice.
 
+  `complete_claim` now clears the caller's OWN lapsed lease, under the same
+  generation fence the active path uses (a supplied generation must match; with
+  none supplied the server-observed one is exact, because the release runs
+  inside `BEGIN IMMEDIATE` — the reasoning `decline_delegation` already
+  documents for the same case). The 200 body carries `lapsed` on both branches
+  so the field is never absent. Every other refusal is unchanged: no row, or
+  someone else's row, is still `no active claim to complete`, and the
+  admin-releases-anyone lever stays limited to ACTIVE leases. The one
+  deliberate difference from the active path is the open-claim-handoff gate,
+  which now applies only while the possession is live: `resume_claim_handoff`
+  itself requires an active claim, so demanding it of a lapsed row would be a
+  refusal whose remedy is unreachable. The handoff stays open regardless and
+  still gates whoever claims next.
+
 ### Added
 
 - **A standing prune ledger, and the tooling that makes it runnable.** VISION says
