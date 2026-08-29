@@ -506,9 +506,12 @@ def complete_claim(
     generation: object | None,
 ) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
-    the next claimant. The actor must hold the ACTIVE lease (an admin may release anyone's,
-    a moderation lever). Rejects with IssueCommandError('conflict') if there is no active
-    lease or it belongs to someone else; 404 for an unseeable issue. Completion releases the
+    the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
+    clock has already expired (clearing a lapsed row is the holder's to do — nothing else
+    removes it, so it would otherwise sit on their desk forever). An admin may release
+    anyone's ACTIVE lease, a moderation lever; an expired row belonging to someone else is
+    nobody's to complete. Rejects with IssueCommandError('conflict') if there is no lease
+    row, or it belongs to someone else; 404 for an unseeable issue. Completion releases the
     coordination lease only — it does not change the issue's status; the agent transitions
     status through the ordinary (audited) status command."""
     actor = _require_issue_writer(actor)
@@ -516,18 +519,34 @@ def complete_claim(
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)
-        if existing is None or not existing["active"]:
+        mine = existing is not None and existing["holder_id"] == actor["id"]
+        # An expired row that is not yours is not a possession anyone may
+        # complete — including an admin, whose release lever stays ACTIVE-only.
+        # It is left for the next acquisition to replace, exactly as before.
+        if existing is None or (not existing["active"] and not mine):
             raise IssueCommandError("conflict", "no active claim to complete")
-        if existing["holder_id"] != actor["id"] and not identity.is_admin(actor):
+        if not mine and not identity.is_admin(actor):
             raise IssueCommandError(
                 "conflict",
                 f"issue is claimed by {existing['holder_name']}, not you",
             )
-        current_generation = _matching_lease_generation(existing, generation)
+        lapsed = not existing["active"]
+        if lapsed and generation is None:
+            # The immediate writer lock makes the server-observed expired
+            # generation an exact fence: no replacement can appear between this
+            # read and the deletion. Same reasoning as decline's expired branch.
+            current_generation = existing["generation"]
+        else:
+            current_generation = _matching_lease_generation(existing, generation)
         if (
-            existing["holder_id"] == actor["id"]
+            mine
+            and not lapsed
             and claim_handoffs.get_open_handoff(conn, issue_id) is not None
         ):
+            # Only an ACTIVE possession owes the handshake. resume_claim_handoff
+            # itself requires an active claim, so demanding it of a lapsed row
+            # would be a refusal whose remedy is unreachable. The handoff stays
+            # open either way and still gates whoever claims next.
             raise IssueCommandError(
                 "conflict",
                 "resume the open claim handoff before completing this possession",
@@ -553,6 +572,9 @@ def complete_claim(
             "issue_id": issue_id,
             "issue_status": issue["status"],
             "issue_still_open": still_open,
+            # Always present on both branches: an absent field would make
+            # "the clock had already released this" a defaulted meaning.
+            "lapsed": lapsed,
             "next": (
                 "complete_claim released the lease only; issue status is unchanged"
             ),

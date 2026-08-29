@@ -1808,10 +1808,13 @@ def build_server(
         generation: LeaseGeneration,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Release the lease you hold. This does NOT mark the issue done.
-        The 200 body repeats issue_status and issue_still_open; PATCH the issue
-        to `done` separately if the work is finished. An open claim handoff
-        returns 409 until this exact leaseholder explicitly resumes it."""
+        """Release the lease you hold, or clear your own lapsed lease. This does
+        NOT mark the issue done. The 200 body repeats issue_status and
+        issue_still_open, and `lapsed` says whether the row you cleared had
+        already expired; PATCH the issue to `done` separately if the work is
+        finished. While you hold it ACTIVELY, an open claim handoff returns 409
+        until this exact leaseholder explicitly resumes it. Pass the lapsed
+        row's generation — my_desk lists it under work.leases.lapsed."""
         return client.complete_claim(
             issue_id,
             generation=generation,

@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import (
+    claim_handoffs,
     dependencies,
     issue_commands,
     issue_etags,
@@ -261,6 +262,181 @@ def test_complete_releases_only_for_the_holder(tmp_path):
     assert leases.get_lease(conn, issue["id"]) is None
     reclaim = _claim(conn, 3, issue["id"])
     assert reclaim["holder_id"] == 3
+
+
+def _expire(conn, issue_id):
+    """Push one lease into the past. Nothing in Athena sweeps the row — that is
+    the whole reason the holder has to be able to clear it."""
+    conn.execute(
+        "UPDATE issue_leases SET expires_at = datetime('now','-1 minute') "
+        "WHERE issue_id = ?",
+        (issue_id,),
+    )
+    conn.commit()
+
+
+def _completed_generations(conn, issue_id):
+    return [
+        event["detail"]
+        for event in activity.list_activity(
+            conn,
+            target_kind="issue",
+            target_id=issue_id,
+            verb="claim_completed",
+        )
+    ]
+
+
+def test_complete_clears_my_own_lapsed_lease_under_its_generation(tmp_path):
+    # WHY: a lease row outlives its window and only its holder's own release
+    # removes it, so refusing complete on an expired row left the holder with a
+    # row they could see, could not clear, and were told they still held. The
+    # clock decides; the holder clears. The release is fenced by the same
+    # generation an active one is, and it is audited like one — a row that
+    # vanishes with no event is indistinguishable from one that was never there.
+    conn = _migrated_conn(tmp_path / "lapsed-complete.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    lease = _claim(conn, 2, issue["id"])
+    _expire(conn, issue["id"])
+    assert leases.get_lease(conn, issue["id"])["active"] is False
+
+    released = lease_commands.complete_claim(
+        conn,
+        actor=_actor(conn, 2),
+        issue_id=issue["id"],
+        generation=lease["generation"],
+    )
+    assert released["released"] is True
+    assert released["lapsed"] is True
+    assert leases.get_lease(conn, issue["id"]) is None
+    assert _completed_generations(conn, issue["id"]) == [
+        f"generation {lease['generation']}"
+    ]
+
+
+def test_complete_on_an_active_lease_reports_it_was_not_lapsed(tmp_path):
+    # WHY: `lapsed` is on BOTH branches so its absence never has to be read as
+    # a value. "Nobody told me" and "it was live" are different answers.
+    conn = _migrated_conn(tmp_path / "live-complete.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    lease = _claim(conn, 2, issue["id"])
+
+    released = lease_commands.complete_claim(
+        conn,
+        actor=_actor(conn, 2),
+        issue_id=issue["id"],
+        generation=lease["generation"],
+    )
+    assert released["released"] is True
+    assert released["lapsed"] is False
+
+
+def test_complete_on_a_lapsed_lease_without_a_generation_uses_the_observed_one(
+    tmp_path,
+):
+    # WHY: the active path REQUIRES the generation because a live possession can
+    # be replaced between a read and a write. An expired row cannot be renewed,
+    # and the release runs under BEGIN IMMEDIATE, so the server-observed
+    # generation is an exact fence — the same reasoning decline already carries.
+    # Requiring a token the agent may no longer have would strand the row.
+    conn = _migrated_conn(tmp_path / "lapsed-no-gen.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    lease = _claim(conn, 2, issue["id"])
+    _expire(conn, issue["id"])
+
+    released = lease_commands.complete_claim(
+        conn, actor=_actor(conn, 2), issue_id=issue["id"], generation=None
+    )
+    assert released["released"] is True and released["lapsed"] is True
+    assert leases.get_lease(conn, issue["id"]) is None
+    assert _completed_generations(conn, issue["id"]) == [
+        f"generation {lease['generation']}"
+    ]
+
+
+def test_complete_with_a_stale_generation_on_a_lapsed_lease_is_refused(tmp_path):
+    # WHY: omitting the fence is allowed; getting it WRONG is not. A supplied
+    # token is a claim about which possession the caller means, and a stale one
+    # means they are acting on an epoch that is gone — the loosened rule must
+    # not become "any generation will do".
+    conn = _migrated_conn(tmp_path / "lapsed-stale-gen.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    _claim(conn, 2, issue["id"])
+    _expire(conn, issue["id"])
+
+    with pytest.raises(issue_commands.IssueCommandError) as refused:
+        lease_commands.complete_claim(
+            conn,
+            actor=_actor(conn, 2),
+            issue_id=issue["id"],
+            generation="0" * 32,
+        )
+    assert refused.value.kind == "lease_generation_mismatch"
+    assert leases.get_lease(conn, issue["id"]) is not None
+    assert _completed_generations(conn, issue["id"]) == []
+
+
+def test_complete_never_clears_someone_elses_lapsed_lease(tmp_path):
+    # WHY: "the holder clears it" is the rule, and expiry does not turn a row
+    # into common property. Neither another delegated contributor nor an ADMIN
+    # may complete it — the admin release lever exists to break a live deadlock,
+    # and an expired row is not one. The refusal is the one they got before.
+    conn = _migrated_conn(tmp_path / "lapsed-not-mine.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    lease = _claim(conn, 2, issue["id"])
+    _expire(conn, issue["id"])
+
+    for actor_id in (3, 1):  # AgentB, then the admin.
+        with pytest.raises(issue_commands.IssueCommandError) as refused:
+            lease_commands.complete_claim(
+                conn,
+                actor=_actor(conn, actor_id),
+                issue_id=issue["id"],
+                generation=lease["generation"],
+            )
+        assert refused.value.kind == "conflict"
+        assert refused.value.detail == "no active claim to complete"
+
+    assert leases.get_lease(conn, issue["id"])["holder_id"] == 2
+    assert _completed_generations(conn, issue["id"]) == []
+
+
+def test_complete_clears_a_lapsed_lease_even_with_an_open_claim_handoff(tmp_path):
+    # WHY: an ACTIVE holder must resume the context handed to them before
+    # completing. A lapsed holder cannot — resume_claim_handoff itself requires
+    # an active claim — so applying the gate here would be a refusal whose
+    # remedy is unreachable, and the desk's "clear it with complete_claim" would
+    # be false. Nothing is lost by allowing it: the handoff stays OPEN and still
+    # gates whoever claims next.
+    conn = _migrated_conn(tmp_path / "lapsed-handoff.db")
+    _seed(conn)
+    issue = _delegated_issue(conn)
+    first = _claim(conn, 2, issue["id"])
+    lease_commands.yield_claim(
+        conn,
+        actor=_actor(conn, 2),
+        issue_id=issue["id"],
+        **_handoff_payload(first["generation"], reason="needs_input"),
+    )
+    second = _claim(conn, 3, issue["id"])
+    assert claim_handoffs.get_open_handoff(conn, issue["id"]) is not None
+    _expire(conn, issue["id"])
+
+    released = lease_commands.complete_claim(
+        conn,
+        actor=_actor(conn, 3),
+        issue_id=issue["id"],
+        generation=second["generation"],
+    )
+    assert released["released"] is True and released["lapsed"] is True
+    assert leases.get_lease(conn, issue["id"]) is None
+    # Still unacknowledged, and still the next holder's to resume.
+    assert claim_handoffs.get_open_handoff(conn, issue["id"]) is not None
 
 
 def test_decline_removes_contributor_and_drops_lease(tmp_path):
@@ -744,6 +920,43 @@ def test_rest_claim_conflict_and_lease_read(tmp_path):
             headers={"X-Athena-Actor": "3", "If-Match": issue_tag},
         )
         assert again.status_code == 201 and again.json()["holder_id"] == 3
+
+
+def test_rest_complete_reports_lapsed_through_the_response_model(tmp_path):
+    # WHY: the route declares a response_model, which FILTERS the returned dict —
+    # a key the model does not name is dropped silently, with no error anywhere.
+    # `lapsed` is the difference between "you stood up" and "you cleared a row
+    # you had already lost", so it has to be asserted on the wire, not just on
+    # the command's return value.
+    db_file = tmp_path / "rest-lapsed.db"
+    app = create_app(db_file)
+    with TestClient(app) as client:
+        _rest_seed(db_file)
+        owner = {"X-Athena-Actor": "1"}
+        issue = client.post("/issues", json={"title": "work"}, headers=owner).json()
+        client.post(
+            f"/issues/{issue['id']}/delegate", json={"user_id": 2}, headers=owner
+        )
+        issue_tag = client.get(f"/issues/{issue['id']}").headers["etag"]
+        claimed = client.post(
+            f"/issues/{issue['id']}/claim",
+            headers={"X-Athena-Actor": "2", "If-Match": issue_tag},
+        )
+        assert claimed.status_code == 201, claimed.text
+
+        conn = db.connect(db_file)
+        _expire(conn, issue["id"])
+        conn.close()
+
+        done = client.post(
+            f"/issues/{issue['id']}/complete",
+            json={"generation": claimed.json()["generation"]},
+            headers={"X-Athena-Actor": "2"},
+        )
+        assert done.status_code == 200, done.text
+        assert done.json()["released"] is True
+        assert done.json()["lapsed"] is True
+        assert client.get(f"/issues/{issue['id']}/lease").json() is None
 
 
 def test_rest_claim_requires_auth(tmp_path):
