@@ -24,9 +24,18 @@ from athena.core import access
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor
-from athena.mentor import run_learnings
+from athena.mentor import run_learning_commands, run_learnings
 
 router = APIRouter(tags=["mentor"])
+
+# Adapter-owned translation of command-error kinds (the transport decides).
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 
 
 class LearningIn(BaseModel):
@@ -68,7 +77,7 @@ def record_learning(
     Requires the Mentor write scope (it writes a page) and visibility of the issue.
     201 because the result is a new entry, and possibly a new page."""
     try:
-        result = run_learnings.record_learning(
+        result = run_learning_commands.record_learning(
             conn,
             actor=actor,
             issue_id=issue_id,
@@ -76,12 +85,12 @@ def record_learning(
             run_id=payload.run_id,
             space_id=payload.space_id,
         )
-    except run_learnings.LearningError as exc:
+    except run_learning_commands.LearningError as exc:
         detail: object = exc.detail
         if exc.extra:
             detail = {"error": exc.detail, **exc.extra}
         raise HTTPException(
-            status_code=run_learnings.STATUS_BY_KIND[exc.kind], detail=detail
+            status_code=STATUS_BY_KIND[exc.kind], detail=detail
         ) from exc
     page = result["page"]
     return {

@@ -238,6 +238,14 @@ def complete(
 ) -> str:
     """Publish a bounded 2xx response iff this caller still owns the claim.
 
+    This receipt is a second transaction, separate from the domain write, on
+    purpose. ``claim_or_read`` commits the executing row on the middleware's
+    connection before the handler runs, so a concurrent retry can see the
+    single-flight claim. Folding the receipt into the domain transaction would
+    hide that claim until commit (both retries execute) or hold SQLite's writer
+    lock for the whole request. A crash between those two commits leaves the
+    key executing and fail-closed; this function never steals it.
+
     Returns completed, authorization_changed, or lost. An authorization change
     during route execution purges the replay body but still lets middleware send
     this fresh response; subsequent retries remain fail-closed.

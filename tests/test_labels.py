@@ -163,6 +163,18 @@ def test_create_and_list_labels(tmp_path):
         _create_label(client, "bug")
         names = [label["name"] for label in client.get("/labels").json()]
         assert names == ["bug", "feature"]  # alphabetical
+    # Creating a name is a shared-vocabulary write, so the trail has to say who
+    # added it. Attach/detach already did; the vocabulary insert itself did not.
+    conn = db.connect(db_file)
+    rows = conn.execute(
+        "SELECT target_kind, detail FROM activity "
+        "WHERE verb = 'label_created' ORDER BY id"
+    ).fetchall()
+    conn.close()
+    assert [(row["target_kind"], row["detail"]) for row in rows] == [
+        ("label", "feature"),
+        ("label", "bug"),
+    ]
 
 
 def test_create_duplicate_label_is_409(tmp_path):

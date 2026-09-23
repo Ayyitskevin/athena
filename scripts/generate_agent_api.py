@@ -7,7 +7,7 @@ token scope and which REST call it performs — from the code itself:
 
 - the tool list and scopes come from ``athena.mcp.server.TOOL_SCOPES``
   (registration is fail-closed on that dict, so it cannot under-report);
-- each tool's REST calls are read from the tool bodies in ``server.py``
+- each tool's REST calls are read from the tool bodies in ``mcp/tools_*.py``
   (which ``AthenaClient`` methods it calls) joined to the HTTP verb + path
   literals in ``client.py``;
 - descriptions come from the registered FastMCP tools themselves.
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-SERVER = REPO / "src" / "athena" / "mcp" / "server.py"
+TOOL_MODULES = sorted((REPO / "src" / "athena" / "mcp").glob("tools_*.py"))
 CLIENT = REPO / "src" / "athena" / "mcp" / "client.py"
 DOC = REPO / "docs" / "AGENT_API.md"
 
@@ -108,29 +108,38 @@ def client_method_calls() -> dict[str, list[str]]:
 
 
 def tool_client_methods() -> dict[str, list[str]]:
-    """Map each @tool / @mutation_tool function in server.py to the client
-    methods its body calls (in first-seen order, deduplicated)."""
-    tree = ast.parse(SERVER.read_text())
+    """Map each @tool / @mutation_tool function to the client methods its body
+    calls (in first-seen order, deduplicated).
+
+    Tool functions live in ``mcp/tools_*.py``. ``server.py`` only keeps
+    ``TOOL_SCOPES`` and ``build_server``, which calls those registrars.
+    """
+    if not TOOL_MODULES:
+        raise SystemExit("mcp/tools_*.py is missing; tool bodies have nowhere to live")
     tools: dict[str, list[str]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        if not any(
-            isinstance(d, ast.Name) and d.id in ("tool", "mutation_tool")
-            for d in node.decorator_list
-        ):
-            continue
-        methods: list[str] = []
-        for call in ast.walk(node):
-            if (
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and isinstance(call.func.value, ast.Name)
-                and call.func.value.id == "client"
-                and call.func.attr not in methods
+    for path in TOOL_MODULES:
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if not any(
+                isinstance(d, ast.Name) and d.id in ("tool", "mutation_tool")
+                for d in node.decorator_list
             ):
-                methods.append(call.func.attr)
-        tools[node.name] = methods
+                continue
+            if node.name in tools:
+                raise SystemExit(f"MCP tool {node.name} is defined more than once")
+            methods: list[str] = []
+            for call in ast.walk(node):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id == "client"
+                    and call.func.attr not in methods
+                ):
+                    methods.append(call.func.attr)
+            tools[node.name] = methods
     return tools
 
 
@@ -166,8 +175,8 @@ def render() -> str:
     descriptions = registered_descriptions()
 
     # Fail loud on any mismatch between the three sources: a tool the AST pass
-    # found but TOOL_SCOPES does not know (or vice versa) means server.py
-    # changed shape and this generator must be updated with it.
+    # found but TOOL_SCOPES does not know (or vice versa) means the tool
+    # modules changed shape and this generator must be updated with them.
     ast_tools = set(tool_methods)
     scoped_tools = set(TOOL_SCOPES)
     if ast_tools != scoped_tools:
@@ -229,9 +238,9 @@ def render() -> str:
         "---",
         "",
         f"*{len(TOOL_SCOPES)} tools. Generated from `mcp/server.py` "
-        "(`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path "
-        "literals); the registration path is fail-closed, so a tool missing "
-        "here cannot exist in the server either.*",
+        "(`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` "
+        "(verb + path literals); the registration path is fail-closed, so a "
+        "tool missing here cannot exist in the server either.*",
         "",
     ]
     return "\n".join(lines)

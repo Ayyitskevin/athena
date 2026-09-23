@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from athena.core import access, activity, identity, run_control_commands, undo
 from athena.core.deps import get_conn
-from athena.mentor import run_learnings, spaces
+from athena.mentor import run_learning_commands, run_learnings, spaces
 from athena.web.csrf import verify_csrf
 from athena.web.router import _int_or_none, get_templates
 
@@ -409,7 +409,7 @@ def record_run_learning_web(
         )
     back = f"/aegis/activity/runs/{quote(run_id, safe='')}/lineage"
     try:
-        result = run_learnings.record_learning(
+        result = run_learning_commands.record_learning(
             conn,
             actor=user,
             issue_id=issue_id,
@@ -417,7 +417,7 @@ def record_run_learning_web(
             run_id=run_id,
             space_id=_int_or_none(space_id),
         )
-    except run_learnings.LearningError as exc:
+    except run_learning_commands.LearningError as exc:
         return RedirectResponse(
             f"{back}?{urlencode({'error': exc.detail})}", status_code=303
         )

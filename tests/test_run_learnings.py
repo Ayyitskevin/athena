@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from athena.core import db
 from athena.main import create_app
-from athena.mentor import run_learnings
+from athena.mentor import run_learning_commands, run_learnings
 
 H1 = {"X-Athena-Actor": "1"}
 
@@ -386,19 +386,19 @@ def test_command_guards_below_the_transport(tmp_path):
         issue = _issue(c)
 
     conn = db.connect(db_file)
-    with pytest.raises(run_learnings.LearningError) as anonymous:
-        run_learnings.record_learning(
+    with pytest.raises(run_learning_commands.LearningError) as anonymous:
+        run_learning_commands.record_learning(
             conn, actor=None, issue_id=issue["id"], summary="x"
         )
     assert anonymous.value.kind == "unauthorized"
     actor = {"id": 1, "name": "Ann", "role": "admin", "is_agent": False}
-    with pytest.raises(run_learnings.LearningError) as bad_summary:
-        run_learnings.record_learning(
+    with pytest.raises(run_learning_commands.LearningError) as bad_summary:
+        run_learning_commands.record_learning(
             conn, actor=actor, issue_id=issue["id"], summary=17
         )
     assert bad_summary.value.kind == "invalid"
-    with pytest.raises(run_learnings.LearningError) as bad_run:
-        run_learnings.record_learning(
+    with pytest.raises(run_learning_commands.LearningError) as bad_run:
+        run_learning_commands.record_learning(
             conn, actor=actor, issue_id=issue["id"], summary="x", run_id=42
         )
     assert bad_run.value.kind == "invalid"

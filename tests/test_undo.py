@@ -289,14 +289,38 @@ def test_one_way_and_trapdoor_verbs_are_refused_with_a_reason(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
         issue = _issue(c)
-        c.post(f"/issues/{issue['id']}/comments", json={"body": "read me"}, headers=H1)
-
+        posted = c.post(
+            f"/issues/{issue['id']}/comments", json={"body": "read me"}, headers=H1
+        ).json()
         refused = _undo(c, _event(c, "commented")["id"])
         assert refused.status_code == 422
         assert refused.json()["code"] == "undo_not_reversible"
         # The refusal names the class and says why, so a surface can explain itself.
         assert "one_way" in refused.json()["detail"]
         assert "delete the comment" in refused.json()["detail"]
+
+        # Editing and deleting are classified too: the old wording is not a fact
+        # we can put back, and a deleted body is gone.
+        assert (
+            c.patch(
+                f"/issues/{issue['id']}/comments/{posted['id']}",
+                json={"body": "rewritten"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        edited = _undo(c, _event(c, "comment_edited")["id"])
+        assert edited.status_code == 422
+        assert "one_way" in edited.json()["detail"]
+        assert (
+            c.delete(
+                f"/issues/{issue['id']}/comments/{posted['id']}", headers=H1
+            ).status_code
+            == 204
+        )
+        deleted = _undo(c, _event(c, "comment_deleted")["id"])
+        assert deleted.status_code == 422
+        assert "trapdoor" in deleted.json()["detail"]
 
         # A verb nobody has classified is honest about that rather than claiming
         # irreversibility it has not established.

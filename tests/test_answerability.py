@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from athena.core import answerability, approvals, db
+from athena.core import answerability, approval_commands, approvals, db
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
 
@@ -211,7 +211,9 @@ def test_approvals_and_reversals_lanes_count_recorded_corrections(tmp_path):
         target_id=1,
         run_id=None,
     )
-    approvals.decide(conn, actor_id=1, request_id=pending.id, decision="approve")
+    approval_commands.decide(
+        conn, actor_id=1, request_id=pending.id, decision="approve"
+    )
     approvals.open_request(
         conn,
         actor_id=agent_id,

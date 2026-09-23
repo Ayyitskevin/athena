@@ -176,4 +176,4 @@ composes other calls or local state instead of one fixed route.
 
 ---
 
-*133 tools. Generated from `mcp/server.py` (`TOOL_SCOPES` + tool bodies) and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*133 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
