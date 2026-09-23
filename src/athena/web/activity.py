@@ -3,9 +3,9 @@
 Split out of web/router.py (the god-file) to keep each web surface navigable,
 following the same one-module-per-area pattern as web/projects.py, web/mentor.py,
 web/admin.py, and web/labels.py. Its own APIRouter, mounted by main.py. A thin
-client over core.activity — it owns no data. The template accessor and the shared
-int-parse helper are imported from web.router (get_templates reads the Jinja
-instance main.py injects at startup).
+client over core.activity — it owns no data. Templates come from web.router
+(get_templates reads the Jinja instance main.py injects at startup). The
+integer query parse lives in web.browsing.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ from athena.core import access, activity, identity, run_control_commands, undo
 from athena.core.deps import get_conn
 from athena.mentor import run_learning_commands, run_learnings, spaces
 from athena.web.csrf import verify_csrf
-from athena.web.router import _int_or_none, get_templates
+from athena.web.browsing import int_or_none
+from athena.web.router import get_templates
 
 router = APIRouter()
 
@@ -69,10 +70,10 @@ def activity_feed(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     Supports the same filters (actor / verb / target kind) and a cursor (?before=)
     for paging back through history one page at a time."""
 
-    actor_id = _int_or_none(request.query_params.get("actor"))
+    actor_id = int_or_none(request.query_params.get("actor"))
     actor_type = _actor_type_or_none(request.query_params.get("actor_type"))
-    before_id = _int_or_none(request.query_params.get("before"))
-    target_id = _int_or_none(request.query_params.get("target"))
+    before_id = int_or_none(request.query_params.get("before"))
+    target_id = int_or_none(request.query_params.get("target"))
     verb = (request.query_params.get("verb") or "").strip() or None
     kind = (request.query_params.get("kind") or "").strip() or None
     q = (request.query_params.get("q") or "").strip()
@@ -180,9 +181,9 @@ def activity_export_csv(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Download the current activity filters as a CSV audit export."""
-    actor_id = _int_or_none(request.query_params.get("actor"))
+    actor_id = int_or_none(request.query_params.get("actor"))
     actor_type = _actor_type_or_none(request.query_params.get("actor_type"))
-    target_id = _int_or_none(request.query_params.get("target"))
+    target_id = int_or_none(request.query_params.get("target"))
     verb = (request.query_params.get("verb") or "").strip() or None
     kind = (request.query_params.get("kind") or "").strip() or None
     q = (request.query_params.get("q") or "").strip()
@@ -219,7 +220,7 @@ def activity_runs(request: Request, conn: sqlite3.Connection = Depends(get_conn)
     since a run is by definition one actor's uninterrupted stretch. With no actor it
     renders the picker and a hint; an unknown actor renders empty."""
 
-    actor_id = _int_or_none(request.query_params.get("actor"))
+    actor_id = int_or_none(request.query_params.get("actor"))
     user = getattr(request.state, "user", None)
     visible_actors = activity.distinct_actors(conn, actor=user)
     selected_actor = next(
@@ -356,7 +357,7 @@ def create_run_control_web(
     ttl_text = (ttl_seconds or "").strip()
     parsed_ttl: int | None = None
     if ttl_text:
-        parsed_ttl = _int_or_none(ttl_text)
+        parsed_ttl = int_or_none(ttl_text)
         if parsed_ttl is None:
             return RedirectResponse(
                 f"{back}?{urlencode({'error': 'ttl_seconds must be a whole number of seconds'})}",
@@ -415,7 +416,7 @@ def record_run_learning_web(
             issue_id=issue_id,
             summary=summary,
             run_id=run_id,
-            space_id=_int_or_none(space_id),
+            space_id=int_or_none(space_id),
         )
     except run_learning_commands.LearningError as exc:
         return RedirectResponse(

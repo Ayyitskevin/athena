@@ -12,6 +12,12 @@ the newest one and for what tagging still requires.
 
 ### Security
 
+- **`httpx2` pinned up to 2.12.0, with `httpcore2` 2.12.0.** PYSEC-2026-3846,
+  PYSEC-2026-3848, and PYSEC-2026-3849 were published against the pinned 2.10.0,
+  which turned CI's audit-the-pinned-inputs step red. 2.12.0 requires
+  `httpcore2==2.12.0`. Starlette's TestClient is the consumer; the supply-chain
+  audit passes against the new pins with zero known vulnerabilities.
+
 - **A long number between brackets could take down a write.** Python raises
   `ValueError` from `int(str)` past 4300 digits, and every one of Athena's
   bracket grammars captured `\d+` with no bound — so a body containing

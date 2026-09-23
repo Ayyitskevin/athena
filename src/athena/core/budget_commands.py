@@ -16,7 +16,7 @@ from athena.core.budgets import (
     VERB_BUDGET_SET,
     WINDOWS,
     Budget,
-    _stamp,
+    stamp_window,
     get_budget,
 )
 
@@ -59,7 +59,13 @@ def set_budget(
                 "INSERT INTO agent_budgets "
                 "(user_id, window, action_limit, action_used, window_started_at, set_by) "
                 "VALUES (?, ?, ?, 0, ?, ?)",
-                (target_user_id, window, action_limit, _stamp(utc_now()), actor_id),
+                (
+                    target_user_id,
+                    window,
+                    action_limit,
+                    stamp_window(utc_now()),
+                    actor_id,
+                ),
             )
         else:
             # Preserve action_used and the window anchor: a limit change is not a

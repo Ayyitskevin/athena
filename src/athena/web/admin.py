@@ -27,7 +27,7 @@ from athena.web.router import get_templates
 
 router = APIRouter()
 
-_ACTIVE_WORK_PRIVATE_HEADERS = {
+ACTIVE_WORK_PRIVATE_HEADERS = {
     "Cache-Control": "private, no-store",
     "Vary": "Cookie",
 }
@@ -49,7 +49,7 @@ def _signin_required(verb: str) -> HTMLResponse:
     )
 
 
-def _admin_required(user: dict | None) -> HTMLResponse | None:
+def admin_required(user: dict | None) -> HTMLResponse | None:
     if user is None:
         return _signin_required("use admin tools")
     if not identity.is_admin(user):
@@ -69,7 +69,7 @@ def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
     return None
 
 
-def _selected_scopes(
+def selected_scopes(
     read: str | None,
     issue_write: str | None,
     docs_write: str | None,
@@ -404,7 +404,7 @@ def create_token(
             context=_token_context(conn, user, error="Token name is required."),
             status_code=400,
         )
-    scopes = _selected_scopes(
+    scopes = selected_scopes(
         scope_read, scope_issue_write, scope_docs_write, scope_admin
     )
     try:
@@ -460,7 +460,7 @@ def _admin_context(
 def users_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     return templates.TemplateResponse(
@@ -481,10 +481,10 @@ def create_user(
 ):
     templates = get_templates()
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     email = email.strip()
     name = name.strip()
     if not email or not name:
@@ -543,7 +543,7 @@ def update_user_password(
 ):
     templates = get_templates()
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
     target = users.get_user(conn, user_id)
@@ -592,10 +592,10 @@ def update_user_role(
 ):
     templates = get_templates()
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     try:
         user_commands.set_user_role(
             conn, actor_id=actor["id"], target_user_id=user_id, role=role
@@ -632,10 +632,10 @@ def update_user_agent(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" to mark as agent, anything else to
     # mark as human), so the button is a deterministic toggle, not a read-then-flip.
     try:
@@ -667,7 +667,7 @@ def _webhooks_context(
     }
 
 
-_CONTROL_STATE_FILTERS = (
+CONTROL_STATE_FILTERS = (
     run_controls.STATE_FILTER_OPEN,
     *run_controls.CONTROL_STATES,
     "all",
@@ -678,7 +678,7 @@ _CONTROL_STATE_FILTERS = (
 def webhooks_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     return templates.TemplateResponse(
@@ -697,10 +697,10 @@ def create_webhook(
 ):
     templates = get_templates()
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     url = url.strip()
     # Same SSRF guard the REST API applies — refuse a private/loopback/malformed URL
     # at the boundary rather than at delivery time.
@@ -740,10 +740,10 @@ def toggle_webhook(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" resume, anything else pause) — a
     # deterministic toggle. Resuming clears the backoff so it retries promptly. The
     # command records the flip atomically.
@@ -769,10 +769,10 @@ def delete_webhook(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     if not webhook_commands.delete_webhook(
         conn, actor_id=actor["id"], webhook_id=webhook_id
     ):
