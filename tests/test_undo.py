@@ -316,7 +316,7 @@ def test_one_way_and_trapdoor_verbs_are_refused_with_a_reason(tmp_path):
             c.delete(
                 f"/issues/{issue['id']}/comments/{posted['id']}", headers=H1
             ).status_code
-            == 200
+            == 204
         )
         deleted = _undo(c, _event(c, "comment_deleted")["id"])
         assert deleted.status_code == 422
