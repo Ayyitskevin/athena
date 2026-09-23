@@ -147,3 +147,13 @@ def register() -> None:
         action_class=undo.ONE_WAY,
         reason="restore the prior version explicitly — page history already keeps it",
     )
+    undo.register(
+        "page_comment_edited",
+        action_class=undo.ONE_WAY,
+        reason="the previous wording is not stored as a fact; edit the comment again",
+    )
+    undo.register(
+        "page_comment_deleted",
+        action_class=undo.TRAPDOOR,
+        reason="the comment body is gone; it cannot be restored from the trail",
+    )

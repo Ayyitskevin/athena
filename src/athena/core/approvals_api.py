@@ -16,12 +16,21 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from athena.core import approvals, users
+from athena.core import approval_commands, approvals, users
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, require_admin
 
 router = APIRouter(prefix="/approvals", tags=["core"])
+
+# Adapter-owned translation of command-error kinds (the transport decides).
+STATUS_BY_KIND: dict[str, int] = {
+    "not_found": 404,
+    "invalid": 422,
+    "conflict": 409,
+    "forbidden": 403,
+    "unauthorized": 401,
+}
 
 
 class ApprovalOut(BaseModel):
@@ -66,15 +75,17 @@ def decide_for_actor(
         raise HTTPException(status_code=401, detail="authentication required")
     actor = require_admin(actor)
     try:
-        decided = approvals.decide(
+        decided = approval_commands.decide(
             conn,
             actor_id=actor["id"],
             request_id=request_id,
             decision=decision,
             note=note,
         )
-    except approvals.ApprovalDecisionError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except approval_commands.ApprovalDecisionError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
     return decided.public()
 
 
@@ -160,7 +171,7 @@ def set_policy(
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
     try:
-        approvals.set_policy(
+        approval_commands.set_policy(
             conn,
             actor_id=actor["id"],
             target_user_id=user_id,
@@ -181,7 +192,7 @@ def clear_policy(
     """Ungate an action kind for a user. Idempotent."""
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
-    approvals.clear_policy(
+    approval_commands.clear_policy(
         conn,
         actor_id=actor["id"],
         target_user_id=user_id,

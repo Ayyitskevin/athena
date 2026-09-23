@@ -18,11 +18,19 @@ from fastapi.testclient import TestClient
 import pytest
 
 from athena.aegis import api as aegis_api
-from athena.aegis import comment_commands, sprint_commands, sprints_api
-from athena.core import token_commands, tokens_api, webhook_commands, webhooks_api
+from athena.aegis import comment_commands, labels_api, sprint_commands, sprints_api
+from athena.core import (
+    approval_commands,
+    approvals_api,
+    label_commands,
+    token_commands,
+    tokens_api,
+    webhook_commands,
+    webhooks_api,
+)
 from athena.main import create_app
 from athena.mentor import api as mentor_api
-from athena.mentor import page_comment_commands, space_commands
+from athena.mentor import learnings_api, page_comment_commands, space_commands
 
 H1 = {"X-Athena-Actor": "1"}
 
@@ -33,6 +41,8 @@ MIGRATED = (
     token_commands.TokenCommandError,
     webhook_commands.WebhookCommandError,
     page_comment_commands.PageCommentCommandError,
+    approval_commands.ApprovalDecisionError,
+    label_commands.LabelCommandError,
 )
 
 ROUTE_MODULES = (
@@ -41,6 +51,9 @@ ROUTE_MODULES = (
     sprints_api,
     tokens_api,
     webhooks_api,
+    approvals_api,
+    labels_api,
+    learnings_api,
 )
 
 #: The dialect's canonical mapping. A route module may deviate deliberately, but

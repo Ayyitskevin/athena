@@ -15,7 +15,7 @@ re-execute a stale payload under authorization evaluated at a different moment.
 import pytest
 from fastapi.testclient import TestClient
 
-from athena.core import approvals, db
+from athena.core import approval_commands, approvals, db
 from athena.main import create_app
 
 H1 = {"X-Athena-Actor": "1"}
@@ -388,12 +388,12 @@ def test_decide_rejects_an_unknown_decision_and_request(tmp_path):
     with TestClient(app) as c:
         _bootstrap(c)
     conn = db.connect(db_file)
-    with pytest.raises(approvals.ApprovalDecisionError) as bad_decision:
-        approvals.decide(conn, actor_id=1, request_id=1, decision="maybe")
-    assert bad_decision.value.status_code == 422
-    with pytest.raises(approvals.ApprovalDecisionError) as missing:
-        approvals.decide(conn, actor_id=1, request_id=999, decision="approve")
-    assert missing.value.status_code == 404
+    with pytest.raises(approval_commands.ApprovalDecisionError) as bad_decision:
+        approval_commands.decide(conn, actor_id=1, request_id=1, decision="maybe")
+    assert bad_decision.value.kind == "invalid"
+    with pytest.raises(approval_commands.ApprovalDecisionError) as missing:
+        approval_commands.decide(conn, actor_id=1, request_id=999, decision="approve")
+    assert missing.value.kind == "not_found"
     # An anonymous actor has no policy to consult — the gate is per-identity.
     approvals.require(
         conn, None, action_kind="issue.close", target_kind="issue", target_id=1

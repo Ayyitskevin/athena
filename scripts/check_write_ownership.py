@@ -6,8 +6,8 @@ results. They never execute INSERT/UPDATE/DELETE themselves, and they never
 call a data module's mutating helper directly. A write lives behind a command
 module (the ``*_commands.py`` naming convention IS the self-declaration) or
 behind one of the designated data-module writers that COMMAND_MIGRATION.md
-documents: the personal-state category, the login/session flow, the budget and
-approval owners, and the delivery-outcome recorders.
+documents: the personal-state category, the login/session flow, and the
+delivery-outcome recorders.
 
 This check exists because H-0.5/H-1.2/H-1.3 were all instances of a transport
 reaching around the command layer — a rule that was written down and followed
@@ -107,27 +107,6 @@ ALLOWED_TRANSPORT_WRITES: dict[tuple[str, str, str], str] = {
     ),
     ("*", "athena.core.identity", "optional_actor"): (
         "refusal audit inside the authentication dependency"
-    ),
-    # --- Documented command owners that predate the *_commands naming
-    # convention (COMMAND_MIGRATION.md: each "owns its write plus its audit
-    # event"). Renaming the modules is the follow-up, not widening this list.
-    ("*", "athena.core.budgets", "set_budget"): (
-        "documented budget command owner without the _commands suffix"
-    ),
-    ("*", "athena.core.budgets", "clear_budget"): (
-        "documented budget command owner without the _commands suffix"
-    ),
-    ("*", "athena.core.approvals", "set_policy"): (
-        "documented approvals command owner without the _commands suffix"
-    ),
-    ("*", "athena.core.approvals", "clear_policy"): (
-        "documented approvals command owner without the _commands suffix"
-    ),
-    ("*", "athena.core.approvals", "decide"): (
-        "documented approvals command owner without the _commands suffix"
-    ),
-    ("*", "athena.mentor.run_learnings", "record_learning"): (
-        "documented learning-promotion command owner without the _commands suffix"
     ),
     # --- Inbound event-source recording (COMMAND_MIGRATION.md, "Event
     # sources"): the forge delivery path is deliberately not a command; it writes

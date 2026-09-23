@@ -15,7 +15,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from athena import config
-from athena.core import agent_commands, approvals, budgets, user_commands, users
+from athena.core import (
+    agent_commands,
+    approvals,
+    budget_commands,
+    budgets,
+    user_commands,
+    users,
+)
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import (
@@ -468,7 +475,7 @@ def set_budget(
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
     try:
-        budget = budgets.set_budget(
+        budget = budget_commands.set_budget(
             conn,
             actor_id=actor["id"],
             target_user_id=user_id,
@@ -491,7 +498,7 @@ def clear_budget(
     is a 204 that records nothing."""
     if users.get_user(conn, user_id) is None:
         raise HTTPException(status_code=404, detail="no such user")
-    budgets.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
+    budget_commands.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
 
 
 @router.put("/{user_id}/paused", response_model=UserOut)

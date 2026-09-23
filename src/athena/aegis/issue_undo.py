@@ -269,3 +269,23 @@ def register() -> None:
         action_class=undo.ONE_WAY,
         reason="a policy override is a decision on the record, not a state to flip",
     )
+    undo.register(
+        "comment_edited",
+        action_class=undo.ONE_WAY,
+        reason="the previous wording is not stored as a fact; edit the comment again",
+    )
+    undo.register(
+        "comment_deleted",
+        action_class=undo.TRAPDOOR,
+        reason="the comment body is gone; it cannot be restored from the trail",
+    )
+    undo.register(
+        "issue_edited",
+        action_class=undo.ONE_WAY,
+        reason="title and body changes are prose on the trail, not a stored before/after",
+    )
+    undo.register(
+        "changed_priority",
+        action_class=undo.ONE_WAY,
+        reason="priority changes are recorded as prose, with no fact table to restore",
+    )

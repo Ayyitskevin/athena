@@ -13,7 +13,7 @@ from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
-from athena.core import budgets, db
+from athena.core import budget_commands, budgets, db
 from athena.core._util import utc_now
 from athena.main import create_app
 
@@ -487,7 +487,7 @@ def test_core_helpers_guard_their_inputs(tmp_path):
     agent_id = agent["user"]["id"]
 
     with pytest.raises(ValueError, match="window must be one of"):
-        budgets.set_budget(
+        budget_commands.set_budget(
             conn,
             actor_id=1,
             target_user_id=agent_id,
@@ -495,15 +495,17 @@ def test_core_helpers_guard_their_inputs(tmp_path):
             action_limit=5,
         )
     with pytest.raises(ValueError, match="must be an integer"):
-        budgets.set_budget(
+        budget_commands.set_budget(
             conn, actor_id=1, target_user_id=agent_id, window="day", action_limit="5"
         )
     with pytest.raises(ValueError, match="must not be negative"):
-        budgets.set_budget(
+        budget_commands.set_budget(
             conn, actor_id=1, target_user_id=agent_id, window="day", action_limit=-1
         )
     # Clearing an unbudgeted user is an honest False, and records nothing.
-    assert budgets.clear_budget(conn, actor_id=1, target_user_id=agent_id) is False
+    assert (
+        budget_commands.clear_budget(conn, actor_id=1, target_user_id=agent_id) is False
+    )
     # An anonymous actor has no budget to charge — the gate is per-identity.
     budgets.charge(conn, None)
     conn.close()

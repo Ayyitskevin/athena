@@ -223,9 +223,13 @@ live in [ROADMAP.md](ROADMAP.md) — the two numberings are unrelated; read
 - Authenticated REST mutations support durable, bounded `Idempotency-Key`
   single-flight claims. Exact retries coalesce across workers and completed
   receipts survive restarts; mismatched payloads conflict, revoked credentials
-  cannot replay, and one-time-secret creation is excluded. Because domain writes
-  and receipt finalization are not yet one transaction, abandoned/failed owners
-  remain explicitly indeterminate and are never automatically taken over. A
+  cannot replay, and one-time-secret creation is excluded. The executing claim
+  commits on its own connection before the handler runs, so a concurrent retry
+  can see the single-flight row. The receipt is a second transaction on
+  purpose: joining it to the domain write would either hide that claim until
+  the handler commits (so two retries both execute) or hold SQLite's writer
+  lock for the whole request. A crash between the domain commit and the receipt
+  leaves the key executing and indeterminate, and it is never taken over. A
   global authorization revision purges and permanently fences stored responses
   after access-affecting role, membership, visibility, authority, account-pause,
   or placement changes; this is intentionally broader than per-target

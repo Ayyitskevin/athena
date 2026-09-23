@@ -25,8 +25,9 @@ from athena.aegis import (
 )
 from athena.core import (
     agent_run_commands,
+    approval_commands,
     approvals,
-    budgets,
+    budget_commands,
     db,
     deployment,
     run_context,
@@ -123,7 +124,7 @@ def _seed_supervision(
     #    consumption — a control that has never been felt, which teaches the reviewer
     #    nothing about what it does. The operator bounds the agent, and then the agent
     #    works against the bound.
-    budget = budgets.set_budget(
+    budget = budget_commands.set_budget(
         conn,
         actor_id=operator["id"],
         target_user_id=sol["id"],
@@ -188,7 +189,7 @@ def _seed_supervision(
     #    ApprovalRequired handler records it: on the freed connection, AFTER the
     #    refused command's transaction unwound, because a row written inside that
     #    transaction would have rolled back with the refusal.
-    approvals.set_policy(
+    approval_commands.set_policy(
         conn,
         actor_id=operator["id"],
         target_user_id=sol["id"],
