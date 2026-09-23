@@ -6,8 +6,8 @@ the acting user: you can only see, run, change, or delete your OWN filters, and 
 filter that isn't yours reads as 404 (we don't reveal that it exists).
 
 Running a filter returns issues through the SAME shape and label-composition the
-issue endpoints use (api.IssueOut / api._with_labels_many), so a saved query and an
-ad-hoc one are indistinguishable to the client.
+issue endpoints use (api.IssueOut / rest_support.with_labels_many), so a saved
+query and an ad-hoc one are indistinguishable to the client.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.aegis import api, issues, saved_filters
+from athena.aegis.rest_support import with_labels_many
 from athena.core import access
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
@@ -194,4 +195,4 @@ def run(
         # running it — the reason to save that query rather than a fixed user id.
         actor=actor,
     )
-    return api._with_labels_many(conn, rows)
+    return with_labels_many(conn, rows)
