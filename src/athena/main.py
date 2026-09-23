@@ -88,7 +88,9 @@ from athena.web import admin_agents as web_admin_agents
 from athena.web import admin_automation as web_admin_automation
 from athena.web import admin_security as web_admin_security
 from athena.web import issue_actions as web_issue_actions
+from athena.web import issue_detail as web_issue_detail
 from athena.web import issue_discussion as web_issue_discussion
+from athena.web import issue_editor as web_issue_editor
 from athena.web import issues as web_issues
 from athena.web import auth as web_auth
 from athena.web import boards as web_boards
@@ -788,6 +790,8 @@ def create_app(
     browser_dependencies = [Depends(_require_browser_session)]
     app.include_router(web_router, dependencies=browser_dependencies)
     app.include_router(web_issues.router, dependencies=browser_dependencies)
+    app.include_router(web_issue_editor.router, dependencies=browser_dependencies)
+    app.include_router(web_issue_detail.router, dependencies=browser_dependencies)
     app.include_router(web_issue_actions.router, dependencies=browser_dependencies)
     app.include_router(web_issue_discussion.router, dependencies=browser_dependencies)
     app.include_router(web_projects.router, dependencies=browser_dependencies)
