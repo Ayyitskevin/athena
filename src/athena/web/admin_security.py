@@ -18,9 +18,9 @@ from athena.web import live
 from athena.web.router import get_templates
 
 from athena.web.admin import (
-    _ACTIVE_WORK_PRIVATE_HEADERS,
-    _CONTROL_STATE_FILTERS,
-    _admin_required,
+    ACTIVE_WORK_PRIVATE_HEADERS,
+    CONTROL_STATE_FILTERS,
+    admin_required,
 )
 
 router = APIRouter()
@@ -39,7 +39,7 @@ def security_signals(
     list of who has been probing is operator intelligence."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     selected = verb if verb in security_events.SECURITY_VERBS else None
@@ -57,7 +57,7 @@ def security_signals(
             "chain": activity_chain.status(conn),
             "chain_tail": activity_chain.verify_tail(conn),
         },
-        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        headers=ACTIVE_WORK_PRIVATE_HEADERS,
     )
 
 
@@ -76,13 +76,13 @@ def run_controls_admin(
     This page renders the same command read those serve — it owns no data."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     # A hand-edited filter falls back to the default rather than erroring —
     # the security page's lenient stance for GET filters.
-    selected = state if state in _CONTROL_STATE_FILTERS else "open"
+    selected = state if state in CONTROL_STATE_FILTERS else "open"
     controls = run_control_commands.readable_controls(
         conn,
         actor=user,
@@ -102,7 +102,7 @@ def run_controls_admin(
     context = {
         "controls": controls,
         "linkable_runs": linkable,
-        "states": list(_CONTROL_STATE_FILTERS),
+        "states": list(CONTROL_STATE_FILTERS),
         "selected_state": selected,
         "clipped": len(controls) == run_controls.MAX_LIST_LIMIT,
         "limit": run_controls.MAX_LIST_LIMIT,
@@ -119,5 +119,5 @@ def run_controls_admin(
         request=request,
         name=name,
         context=context,
-        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        headers=ACTIVE_WORK_PRIVATE_HEADERS,
     )

@@ -6,7 +6,7 @@ anything in it, and the block is a 404 (indistinguishable from missing) so a hid
 resource's existence never leaks through a write attempt.
 
 The gates concentrate at choke points: _issue_for_write (issue mutations),
-_issue_for_read (issue comments/attachments — visibility without modify rights),
+issue_for_read (issue comments/attachments — visibility without modify rights),
 _project_for_sprint_write (sprint mutations), and _page_for_read (page mutations). These
 tests exercise each, plus the subtle cases: an issue owner who loses access when the
 project goes private, creating/moving into a hidden project, and linking to a hidden

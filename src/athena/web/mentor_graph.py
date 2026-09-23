@@ -19,8 +19,8 @@ from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 from athena.web.mentor import (
-    _page_visible_or_response,
-    _write_required,
+    page_visible_or_response,
+    write_required,
 )
 
 router = APIRouter()
@@ -41,7 +41,7 @@ def page_graph(
     """
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    page, err = _page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     assert page is not None
@@ -83,11 +83,11 @@ def link_page_mention(
     its version snapshot, and its attribution. Nothing here writes to the target.
     """
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "link mentions")
+    err = write_required(user, "link mentions")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    page, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     assert page is not None

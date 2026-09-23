@@ -50,6 +50,13 @@ from athena.core.ids import RowIdPath
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
+from athena.aegis.rest_support import (
+    PRIVATE_LEASE_HEADERS,
+    if_match_values,
+    issue_command_error_response,
+    issue_command_http_error,
+    issue_for_read,
+)
 
 router = APIRouter(prefix="/issues", tags=["aegis"])
 
@@ -238,129 +245,6 @@ class CommentOut(BaseModel):
     created_at: str
 
 
-_ISSUE_COMMAND_STATUS = {
-    "unauthorized": 401,
-    "forbidden": 403,
-    "not_found": 404,
-    "invalid": 422,
-    "conflict": 409,
-    "precondition_required": 428,
-    "invalid_precondition": 400,
-    "precondition_too_large": 431,
-    "precondition_failed": 412,
-    "lease_generation_required": 428,
-    "invalid_lease_generation": 422,
-    "lease_generation_mismatch": 409,
-}
-
-
-def issue_command_status(exc: issue_commands.IssueCommandError) -> int:
-    """The HTTP status this command rejection means.
-
-    Public because the undo engine needs the same answer from outside this module
-    (`aegis/issue_undo.py`): its route lives in ``core``, which may not import
-    ``aegis`` to translate. One mapping, so the two boundaries cannot drift."""
-    return _ISSUE_COMMAND_STATUS[exc.kind]
-
-
-def _issue_command_http_error(
-    exc: issue_commands.IssueCommandError,
-) -> HTTPException:
-    """Translate a framework-free command rejection at the REST boundary."""
-    return HTTPException(status_code=issue_command_status(exc), detail=exc.detail)
-
-
-_PRECONDITION_HTTP = {
-    "precondition_required": (428, "precondition_required"),
-    "invalid_precondition": (400, "invalid_if_match"),
-    "precondition_too_large": (431, "if_match_too_large"),
-    "precondition_failed": (412, "precondition_failed"),
-}
-
-_LEASE_GENERATION_HTTP = {
-    "lease_generation_required": (428, "lease_generation_required"),
-    "invalid_lease_generation": (422, "invalid_lease_generation"),
-    "lease_generation_mismatch": (409, "lease_generation_mismatch"),
-}
-_ISSUE_POLICY_HTTP = {
-    issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE: 409,
-}
-
-
-_PRIVATE_LEASE_HEADERS = {
-    "Cache-Control": "private, no-store",
-    "Vary": "Authorization, X-Athena-Actor",
-}
-
-
-def _issue_precondition_response(
-    exc: issue_commands.IssueCommandError,
-) -> JSONResponse | None:
-    """Render conditional-request failures with a stable code and current tag."""
-    spec = _PRECONDITION_HTTP.get(exc.kind)
-    if spec is None:
-        return None
-    status_code, code = spec
-    headers = {}
-    if exc.current_etag is not None:
-        headers["ETag"] = exc.current_etag
-    if exc.kind == "precondition_required":
-        headers["Cache-Control"] = "no-store"
-    return JSONResponse(
-        status_code=status_code,
-        content={"detail": exc.detail, "code": code},
-        headers=headers,
-    )
-
-
-def _issue_command_error_response(
-    exc: issue_commands.IssueCommandError,
-) -> JSONResponse:
-    """Return a conditional failure or raise the route's ordinary HTTP error."""
-    response = _issue_precondition_response(exc)
-    if response is not None:
-        return response
-    generation_spec = _LEASE_GENERATION_HTTP.get(exc.kind)
-    if generation_spec is not None:
-        status_code, code = generation_spec
-        return JSONResponse(
-            status_code=status_code,
-            content={"detail": exc.detail, "code": code},
-            headers=_PRIVATE_LEASE_HEADERS,
-        )
-    policy_status = _ISSUE_POLICY_HTTP.get(exc.code or "")
-    if policy_status is not None:
-        return JSONResponse(
-            status_code=policy_status,
-            content={"detail": exc.detail, "code": exc.code},
-            headers=_PRIVATE_LEASE_HEADERS,
-        )
-    raise _issue_command_http_error(exc) from exc
-
-
-def _if_match_values(request: Request) -> list[str] | None:
-    """Preserve every raw If-Match field line for standards-aware parsing."""
-    values = [
-        value.decode("latin-1")
-        for name, value in request.scope.get("headers", ())
-        if name.lower() == b"if-match"
-    ]
-    return values or None
-
-
-_CLAIM_IF_MATCH_OPENAPI = {
-    "parameters": [
-        {
-            "name": "If-Match",
-            "in": "header",
-            "required": True,
-            "description": "Exactly one strong root issue ETag.",
-            "schema": {"type": "string"},
-        }
-    ]
-}
-
-
 def _with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
     """Attach the issue's labels under a "labels" key. Issues own their core row
     (issues.py); labels are composed on here so the two modules stay in their
@@ -408,7 +292,7 @@ def create(
             project_id=payload.project_id,
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _tagged_issue(conn, issue, response)
 
 
@@ -653,7 +537,7 @@ def backlinks(
     # a hidden issue 404s identically to a missing one (the lone sub-resource read that
     # used a bare existence check — a 200-vs-404 existence oracle), and the sources are
     # gated by the viewer so a hidden project's/space's reference never reveals itself.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return links.backlinks(conn, target_kind="issue", target_id=issue_id, actor=actor)
 
 
@@ -667,7 +551,7 @@ def issue_graph(
 ) -> dict:
     # The bounded neighbourhood around this issue, as positioned data rather than
     # markup — the Aegis twin of the page graph.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return graph.ego_graph(
         conn,
         kind="issue",
@@ -689,7 +573,7 @@ def issue_related_items(
     # Aegis twin of the page route: co-citation over the same links the graph
     # walks, direct neighbours deliberately absent (they are /backlinks), the
     # bound disclosed. 404 for missing and hidden alike.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return graph.related_items(
         conn, kind="issue", node_id=issue_id, actor=actor, limit=limit
     )
@@ -704,7 +588,7 @@ def issue_unlinked_mentions(
 ) -> dict:
     # Text naming this issue's key without linking to it. A read: it proposes
     # edges, never creates them.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return mentions.unlinked_mentions(
         conn, kind="issue", target_id=issue_id, actor=actor, limit=limit
     )
@@ -729,7 +613,7 @@ def link_issue_mention(
     # a reference. The endpoint lives on the source's own domain because the source
     # is what gets edited — and it goes through update_issue, so the edit carries
     # the same authorization, projections, and audit as any other issue edit.
-    issue = _issue_for_read(conn, issue_id, actor)
+    issue = issue_for_read(conn, issue_id, actor)
     if payload.target_kind not in ("issue", "page"):
         raise HTTPException(status_code=422, detail="target_kind must be issue or page")
     needle = mentions.mention_text(conn, payload.target_kind, payload.target_id)
@@ -747,7 +631,7 @@ def link_issue_mention(
             conn, actor=actor, issue_id=issue_id, body=body
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
     return _tagged_issue(conn, updated, response)
 
 
@@ -777,7 +661,7 @@ def issue_state(
     # Time-travel: the issue's lifecycle state folded from its activity log as of a past
     # event. Gated like other reads — a hidden/missing issue is a 404; within a visible
     # issue its own history reads openly, like the detail page.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     try:
         state = issue_history.project_issue_state(
             conn, issue_id, as_of_event_id=as_of, actor=actor
@@ -786,7 +670,7 @@ def issue_state(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except issue_history.IssueHistoryTooLarge as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if state is None:  # _issue_for_read already 404s; this is belt-and-suspenders
+    if state is None:  # issue_for_read already 404s; this is belt-and-suspenders
         raise HTTPException(status_code=404, detail="no such issue")
     return state
 
@@ -802,11 +686,11 @@ def issue_history_narrative(
     # hidden/missing issue is a 404. The narrative itself preserves each owning
     # surface's visibility rules (admin sees check-ins, agents see their own
     # controls, etc.) and never infers write authority from the evidence it shows.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     narrative = issue_narrative.build_issue_narrative(
         conn, issue_id, actor=actor, limit=limit
     )
-    if narrative is None:  # _issue_for_read already 404s; this is belt-and-suspenders
+    if narrative is None:  # issue_for_read already 404s; this is belt-and-suspenders
         raise HTTPException(status_code=404, detail="no such issue")
     return narrative
 
@@ -838,22 +722,6 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
     return issue
 
 
-def _issue_for_read(
-    conn: sqlite3.Connection, issue_id: int, actor: dict | None
-) -> dict:
-    """Fetch an issue the actor may READ, or raise 404. The read counterpart of
-    _issue_for_write: a missing issue and one in a private project the actor can't see
-    are the same 404, so a sub-resource (comments/children/links/contributors/
-    attachments) never leaks for a hidden issue. Backlog issues (no project) read like
-    a public one. No write check — reads stay open within what's visible."""
-    issue = issues.get_issue(conn, issue_id)
-    if issue is None or not access.can_see_project_or_backlog(
-        conn, actor, issue["project_id"]
-    ):
-        raise HTTPException(status_code=404, detail="no such issue")
-    return issue
-
-
 @router.patch("/{issue_id}", response_model=IssueOut)
 def update(
     issue_id: RowIdPath,
@@ -871,11 +739,11 @@ def update(
             conn,
             actor=actor,
             issue_id=issue_id,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
             **fields,
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
     return _tagged_issue(conn, updated, response)
 
 
@@ -896,10 +764,10 @@ def set_assignee(
             actor=actor,
             issue_id=issue_id,
             assignee_id=payload.assignee_id,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
     return _tagged_issue(conn, updated, response)
 
 
@@ -917,7 +785,7 @@ def archive_issue(
             conn, actor=actor, issue_id=issue_id, archived=True
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -934,7 +802,7 @@ def unarchive_issue(
             conn, actor=actor, issue_id=issue_id, archived=False
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -1027,10 +895,10 @@ def set_sprint(
             actor=actor,
             issue_id=issue_id,
             sprint_id=payload.sprint_id,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
     return _tagged_issue(conn, updated, response)
 
 
@@ -1051,10 +919,10 @@ def set_project(
             actor=actor,
             issue_id=issue_id,
             project_id=payload.project_id,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
     return _tagged_issue(conn, updated, response)
 
 
@@ -1074,7 +942,7 @@ def set_parent(
             conn, actor=actor, issue_id=issue_id, parent_id=payload.parent_id
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _with_labels(conn, updated)
 
 
@@ -1089,7 +957,7 @@ def list_children(
     # a child can sit in a private project the caller can't see (parenting spans
     # projects), so gate the list the same way the issue list is gated — else the
     # parent's children would leak a hidden child's content.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     children = issues.list_children(
         conn, issue_id, visible_project_ids=access.visible_project_filter(conn, actor)
     )
@@ -1106,7 +974,7 @@ def add_comment(
     # author is the authenticated actor, never a caller-supplied field. Commenting is
     # an additive write any issue WRITER may do — but only on an issue they can see, so
     # gate by visibility (404 if missing or hidden), not by can_modify.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="comment body is required")
@@ -1123,7 +991,7 @@ def list_comments(
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
-    _issue_for_read(conn, issue_id, actor)  # 404 if missing or not visible
+    issue_for_read(conn, issue_id, actor)  # 404 if missing or not visible
     return comments.list_comments(conn, issue_id)
 
 
@@ -1162,7 +1030,7 @@ def edit_comment(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
-    _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
+    issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
     _author_comment_or_error(conn, issue_id, comment_id, actor)
     body = payload.body.strip()
     if not body:
@@ -1190,7 +1058,7 @@ def delete_comment(
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> None:
-    _issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
+    issue_for_read(conn, issue_id, actor)  # 404 if the issue is missing or hidden
     _author_comment_or_error(conn, issue_id, comment_id, actor, allow_admin=True)
     # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
     # vanished in a race records nothing and 404s.
@@ -1213,7 +1081,7 @@ def upload_issue_attachment(
     # Attaching is additive, like commenting: any issue writer may do it (not just
     # the creator/assignee) — but only on an issue they can see. 404 if missing or
     # hidden.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     data = file.file.read()
     if not data:
         raise HTTPException(status_code=422, detail="empty file")
@@ -1243,7 +1111,7 @@ def list_issue_attachments(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[dict]:
     # Open read, like listing comments. 404 if the issue is missing or not visible.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return attachments.list_for(conn, "issue", issue_id)
 
 
@@ -1258,7 +1126,7 @@ def list_links(
 ) -> dict:
     # Open read, like backlinks/comments. 404 if the issue is missing or not visible,
     # so a hidden/typo'd id reads as not-found rather than three empty lists.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return dependencies.list_links(conn, issue_id, actor=actor)
 
 
@@ -1282,7 +1150,7 @@ def add_link(
             relation=payload.relation,
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
 
 
 @router.delete("/{issue_id}/links/{relation}/{target_id}", response_model=IssueLinksOut)
@@ -1304,28 +1172,10 @@ def remove_link(
             relation=relation,
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
-
-
-_PROJECT_POLICY_PRECONDITION_HTTP = {
-    "precondition_required": (428, "precondition_required"),
-    "invalid_precondition": (400, "invalid_if_match"),
-    "precondition_too_large": (431, "if_match_too_large"),
-    "precondition_failed": (412, "precondition_failed"),
-}
-
-_PROJECT_POLICY_STATUS = {
-    "not_found": 404,
-    "forbidden": 403,
-    "precondition_required": 428,
-    "invalid_precondition": 400,
-    "precondition_too_large": 431,
-    "precondition_failed": 412,
-}
+        raise issue_command_http_error(exc) from exc
 
 
 # --- Projects: a top-level grouping of issues -----------------------------
-
 
 # --- Project access control: privacy toggle + membership ------------------
 #
@@ -1335,12 +1185,9 @@ _PROJECT_POLICY_STATUS = {
 # be able to lock themselves out. Reads of the roster are gated by plain visibility:
 # anyone who can SEE the project can see who's in it.
 
-
 # --- Per-project statuses: the configurable lifecycle ---------------------
 
-
 # --- Labels: a top-level shared vocabulary --------------------------------
-
 
 # --- Labels on an issue: a write, so creator-or-assignee gated -------------
 
@@ -1359,7 +1206,7 @@ def attach_label(
             conn, actor=actor, issue_id=issue_id, label_id=payload.label_id
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _with_labels(conn, issue)
 
 
@@ -1375,7 +1222,7 @@ def detach_label(
             conn, actor=actor, issue_id=issue_id, label_id=label_id
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
     return _with_labels(conn, issue)
 
 
@@ -1444,10 +1291,10 @@ def complete_issue_claim(
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
         )
-        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        response.headers.update(PRIVATE_LEASE_HEADERS)
         return released
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
 
 
 # Sibling modules attach the remaining routes to the routers defined

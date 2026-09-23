@@ -31,14 +31,14 @@ from athena.mentor import (
 from markupsafe import escape
 from athena.web.csrf import verify_csrf
 from athena.web.render import MAX_PREVIEW_CHARS, render_comment, render_page_body
+from athena.web.browsing import ATTACHMENT_STATUS_BY_KIND
 from athena.web.router import get_templates
 
 from athena.web.mentor import (
-    _ATTACHMENT_STATUS_BY_KIND,
-    _page_visible_or_response,
-    _signin_required,
-    _tree_rows,
-    _write_required,
+    page_visible_or_response,
+    signin_required,
+    tree_rows,
+    write_required,
 )
 
 router = APIRouter()
@@ -64,7 +64,7 @@ def page_detail(
     # left-rail idea), and the "Move under" candidates (every OTHER page; self can't
     # be its own parent — descendants stay in and are rejected by validate_move).
     page_rows = pages.list_pages_in_space(conn, page["space_id"])
-    tree = _tree_rows(page_rows)
+    tree = tree_rows(page_rows)
     siblings = [p for p in page_rows if p["id"] != page_id]
     # Breadcrumb trail: walk up parent_id (using the in-memory page map, no extra
     # queries) to collect this page's ancestors, root-first. The seen-set guards
@@ -137,10 +137,10 @@ def edit_page_form(
     a write, so logged-out callers get a sign-in prompt rather than a dead form."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit pages")
+    err = write_required(user, "edit pages")
     if err is not None:
         return err
-    assert user is not None  # _write_required refused a missing user above
+    assert user is not None  # write_required refused a missing user above
 
     page = pages.get_page(conn, page_id)
     # Can't edit (or even see the form for) a page in a space you can't read — 404,
@@ -283,7 +283,7 @@ def preview_page_body(
     """
     user = getattr(request.state, "user", None)
     if user is None:
-        return _signin_required("preview")
+        return signin_required("preview")
     if len(body) > MAX_PREVIEW_CHARS:
         return HTMLResponse(
             '<div class="error">Too long to preview.</div>', status_code=413
@@ -311,11 +311,11 @@ def autosave_page_draft(
     work is held without the page moving under them.
     """
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit pages")
+    err = write_required(user, "edit pages")
     if err is not None:
         return err
     assert user is not None
-    page, err = _page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     assert page is not None
@@ -357,7 +357,7 @@ def discard_page_draft(
 ):
     """Throw away this author's draft of this page. Affects nobody else."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit pages")
+    err = write_required(user, "edit pages")
     if err is not None:
         return err
     assert user is not None
@@ -388,12 +388,12 @@ def edit_page(
     next is the whole point of this route (see ``_conflict_response``): nothing is
     overwritten, nothing is merged, and nothing the author typed is thrown away."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit pages")
+    err = write_required(user, "edit pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
-    _, err = _page_visible_or_response(conn, page_id, user)
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     title = title.strip()
@@ -465,12 +465,12 @@ def move_page(
     string today but we HTML-escape it on the way out so this stays safe even if
     the predicate ever grows to echo user input. 303 back so the new breadcrumb shows."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "move pages")
+    err = write_required(user, "move pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
-    page, err = _page_visible_or_response(conn, page_id, user)
+    page, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
 
@@ -511,10 +511,10 @@ def delete_page(
     if the page still has children — same no-cascade rule as the API. On success the
     page is gone, so we 303 to the space it lived in (captured before the delete)."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "delete pages")
+    err = write_required(user, "delete pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
     # The command owns the atomic delete, its 'page_deleted' event, the visibility
     # check, and the no-cascade children rule — then the post-commit blob unlink +
@@ -541,11 +541,11 @@ def archive_page(
     to Delete. Gated on the session user; the command owns the flip AND its atomic
     'page_archived' event. 303 back to the page (it still exists, just archived)."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "archive pages")
+    err = write_required(user, "archive pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     try:
@@ -566,11 +566,11 @@ def unarchive_page(
     """Restore an archived page from its detail page. Gated on the session user; the
     command records 'page_unarchived' only if it was actually archived."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "restore pages")
+    err = write_required(user, "restore pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     try:
@@ -592,11 +592,11 @@ def add_page_attachment(
     """Attach a file to a page from its detail page. Open write like editing a page.
     Empty → 400, oversize → 413; otherwise 303 back to the page."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "attach files")
+    err = write_required(user, "attach files")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     data = file.file.read()
@@ -620,7 +620,7 @@ def add_page_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
+            status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
@@ -637,11 +637,11 @@ def remove_page_attachment(
 ):
     """Delete a page attachment. Uploader-only. POST because forms can't DELETE."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "remove files")
+    err = write_required(user, "remove files")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     att = attachments.get(conn, attachment_id)
@@ -664,7 +664,7 @@ def remove_page_attachment(
     except attachment_commands.AttachmentCommandError as exc:
         return HTMLResponse(
             f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
+            status_code=ATTACHMENT_STATUS_BY_KIND[exc.kind],
         )
     return RedirectResponse(f"/mentor/pages/{page_id}", status_code=303)
 
@@ -680,7 +680,7 @@ def watch_page(request: Request, page_id: int, conn=Depends(get_conn)):
         )
     # You can't watch what you can't see (and a subscription would later leak the page
     # through notifications) — a hidden page is "not found".
-    _, err = _page_visible_or_response(conn, page_id, user)
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     notifications.watch(conn, user["id"], "page", page_id)
@@ -696,7 +696,7 @@ def unwatch_page(request: Request, page_id: int, conn=Depends(get_conn)):
             '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
             status_code=401,
         )
-    _, err = _page_visible_or_response(conn, page_id, user)
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     notifications.unwatch(conn, user["id"], "page", page_id)
@@ -719,12 +719,12 @@ def restore_version(
     page or that version is missing; 303 back to the page, which now shows the
     restored content with the previously-live revision added to its history."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "restore pages")
+    err = write_required(user, "restore pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
-    _, err = _page_visible_or_response(conn, page_id, user)
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     # The command owns the atomic restore AND its 'page_restored' event; a missing
@@ -751,11 +751,11 @@ def add_page_comment(
     author is the session, never a form field), then 303 back so the new comment
     shows. Mirrors the Aegis issue-comment web route."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "comment")
+    err = write_required(user, "comment")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     body = body.strip()
@@ -811,11 +811,11 @@ def edit_page_comment(
     """Edit a page comment from its detail page. Gated on the session user AND on
     author-ownership (you may only edit your own), then 303 back to the page."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit comments")
+    err = write_required(user, "edit comments")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     _, err = _own_page_comment_or_response(conn, page_id, comment_id, user)
@@ -854,11 +854,11 @@ def delete_page_comment(
     """Delete a page comment from its detail page. Same author-ownership rule as
     edit. POST (not DELETE) because HTML forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "delete comments")
+    err = write_required(user, "delete comments")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     _, err = _own_page_comment_or_response(
@@ -892,11 +892,11 @@ def add_page_label(
     doesn't manage a separate vocabulary first (the same shared vocabulary issues
     use). Open write like editing a page. Empty name → 400. 303 back to the page."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "label pages")
+    err = write_required(user, "label pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
-    _, err = _page_visible_or_response(conn, page_id, user)
+    assert user is not None, "write_required accepted a missing user"
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     name = name.strip()
@@ -931,12 +931,12 @@ def remove_page_label(
     """Detach a label from a page. Same write gate. POST (not DELETE) because HTML
     forms can't issue DELETE."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "label pages")
+    err = write_required(user, "label pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
     # 404 a missing OR hidden page, symmetric with add_page_label (and the REST detach).
-    _, err = _page_visible_or_response(conn, page_id, user)
+    _, err = page_visible_or_response(conn, page_id, user)
     if err is not None:
         return err
     # The command owns the atomic detach + 'page_unlabeled' event. A label that

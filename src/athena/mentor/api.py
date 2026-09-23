@@ -261,7 +261,7 @@ _PAGE_COMMAND_STATUS = {
 def page_command_status(exc: page_commands.PageCommandError) -> int:
     """The HTTP status this page-command rejection means.
 
-    Public for the same reason its Aegis twin is (`aegis.api.issue_command_status`):
+    Public for the same reason its Aegis twin is (`aegis.rest_support.issue_command_status`):
     the undo engine's route lives in ``core``, which may not import ``mentor`` to
     translate, so `mentor/page_undo.py` reuses this one mapping instead of keeping
     a second that could drift."""
@@ -653,7 +653,7 @@ def _page_for_read(conn: sqlite3.Connection, page_id: int, actor: dict | None) -
     """Fetch a page the actor may READ, or raise 404. A page in a private space the
     actor can't see is the SAME 404 as a missing one, so a page sub-resource
     (comments/versions/attachments/backlinks) never leaks for a hidden page. The Mentor
-    twin of aegis _issue_for_read — every per-page GET funnels through here, the way the
+    twin of aegis issue_for_read — every per-page GET funnels through here, the way the
     issue sub-resources funnel through theirs, so visibility can't be forgotten on one."""
     page = pages.get_page(conn, page_id)
     if page is None or not access.can_see_space(conn, actor, page["space_id"]):

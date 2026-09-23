@@ -4,8 +4,8 @@ Split out of web/router.py (which had grown past 2,700 lines) to keep each web
 surface navigable, following the same one-module-per-area pattern as web/mentor.py,
 web/admin.py, and web/labels.py. Its own APIRouter, mounted by main.py. A thin client
 over the projects/sprints data layers, gated on the browser session — it owns no data.
-The template and read-only-response helpers are the shared ones from web.router
-(get_templates reads the Jinja instance main.py injects at startup).
+Templates come from web.router (get_templates reads the Jinja instance main.py
+injects at startup). The read-only refusal lives in web.browsing.
 """
 
 from __future__ import annotations
@@ -34,7 +34,8 @@ from athena.aegis import (
 from athena.core import access, fleet_roster, identity, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.router import _readonly_response, get_templates
+from athena.web.browsing import readonly_response
+from athena.web.router import get_templates
 from athena.workflows import fleet_assign_commands
 
 router = APIRouter()
@@ -137,7 +138,7 @@ def project_floor_assign(
             status_code=401,
         )
     if not identity.can_write(user):
-        return _readonly_response()
+        return readonly_response()
     floor = office.build_floor(conn, project_id=project_id, actor=user)
     if floor is None:
         return HTMLResponse(
@@ -306,7 +307,7 @@ def create_project(
             status_code=401,
         )
     if not identity.can_write(user):
-        return _readonly_response()
+        return readonly_response()
     name = name.strip()
     if not name:
         return HTMLResponse(
@@ -364,7 +365,7 @@ def _authorize_project_write(conn, project_id: int, user: dict):
             '<div class="error">No such project.</div>', status_code=404
         )
     if not identity.can_write(user):
-        return None, _readonly_response()
+        return None, readonly_response()
     if reason == "not_owner":
         return None, HTMLResponse(
             '<div class="blocked">Only the project creator may edit it.</div>',
@@ -536,7 +537,7 @@ def _authorize_project_manage(conn, project_id: int, user: dict):
             '<div class="error">No such project.</div>', status_code=404
         )
     if not identity.can_write(user):
-        return None, _readonly_response()
+        return None, readonly_response()
     if project["created_by"] != user["id"] and not identity.is_admin(user):
         return None, HTMLResponse(
             '<div class="blocked">Only the project creator or an admin may manage access.</div>',

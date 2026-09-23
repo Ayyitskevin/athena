@@ -22,7 +22,7 @@ from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
 
 from athena.web.admin import (
-    _admin_required,
+    admin_required,
 )
 
 router = APIRouter()
@@ -119,7 +119,7 @@ def _action_params_from_form(
 def automation_admin(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     return templates.TemplateResponse(
@@ -154,10 +154,10 @@ def create_rule(
 ):
     templates = get_templates()
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
 
     name = name.strip()
     trigger_type = trigger_type.strip()
@@ -241,10 +241,10 @@ def toggle_rule(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     # The form posts the DESIRED next state ("1" enable, anything else pause) — a
     # deterministic toggle that keeps the rule (and its place in fire order). The
     # command records the flip atomically.
@@ -268,10 +268,10 @@ def delete_rule(
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     actor = getattr(request.state, "user", None)
-    err = _admin_required(actor)
+    err = admin_required(actor)
     if err is not None:
         return err
-    assert actor is not None, "_admin_required accepted a missing user"
+    assert actor is not None, "admin_required accepted a missing user"
     if not automation_commands.delete_rule(conn, actor_id=actor["id"], rule_id=rule_id):
         return HTMLResponse('<div class="error">No such rule.</div>', status_code=404)
     return RedirectResponse("/admin/automation", status_code=303)
