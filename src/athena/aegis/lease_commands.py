@@ -51,8 +51,6 @@ CLAIM_PRECONDITION_REQUIRED_DETAIL = (
 LEASE_GENERATION_REQUIRED_DETAIL = (
     "the exact current lease generation is required for this operation"
 )
-MAX_DECLARED_PATHS = 32
-MAX_DECLARED_PATH_CHARS = 256
 
 
 def claimant_is_eligible(
@@ -114,47 +112,11 @@ def _matching_lease_generation(existing: dict, generation: object | None) -> str
 
 
 def normalize_declared_paths(raw: object) -> list[str]:
-    """Repo-relative POSIX paths. Empty means issue-fence only."""
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise IssueCommandError("invalid", "paths must be a list of strings")
-    if len(raw) > MAX_DECLARED_PATHS:
-        raise IssueCommandError(
-            "invalid",
-            f"at most {MAX_DECLARED_PATHS} declared paths",
-        )
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, str):
-            raise IssueCommandError("invalid", "paths must be a list of strings")
-        text = item.strip().replace("\\", "/")
-        if not text or "\x00" in text:
-            raise IssueCommandError("invalid", "declared path is empty or invalid")
-        if text.startswith("/"):
-            raise IssueCommandError("invalid", "declared paths must be relative")
-        parts: list[str] = []
-        for part in text.split("/"):
-            if part in ("", "."):
-                continue
-            if part == "..":
-                raise IssueCommandError(
-                    "invalid", "declared paths may not contain '..'"
-                )
-            parts.append(part)
-        if not parts:
-            raise IssueCommandError("invalid", "declared path is empty or invalid")
-        normalized = "/".join(parts)
-        if len(normalized) > MAX_DECLARED_PATH_CHARS:
-            raise IssueCommandError(
-                "invalid",
-                f"declared path must be at most {MAX_DECLARED_PATH_CHARS} characters",
-            )
-        if normalized not in seen:
-            seen.add(normalized)
-            out.append(normalized)
-    return out
+    """Normalize the request with the same grammar used for stored fences."""
+    try:
+        return coordination_roots.normalize_declared_paths(raw)
+    except coordination_roots.RootError as exc:
+        raise IssueCommandError(exc.kind, str(exc)) from exc
 
 
 def paths_overlap(left: str, right: str) -> bool:
@@ -171,24 +133,32 @@ def _canonical_path(prefix: str, path: str) -> str:
 
 
 def _refuse_overlapping_paths(
-    conn: sqlite3.Connection, *, issue_id: int, paths: list[str], root: dict | None
+    conn: sqlite3.Connection,
+    *,
+    issue_id: int,
+    paths: list[str] | None,
+    root: dict | None,
 ) -> None:
-    if not paths:
+    if paths == []:
         return
     location = (
         None
-        if root is None
+        if root is None or paths is None
         else coordination_roots.resolve(root, config.LEASE_ROOT_CATALOG)
     )
     canonical_paths = (
         []
-        if location is None
+        if location is None or paths is None
         else [_canonical_path(location[1], path) for path in paths]
     )
     for other in leases.list_active_leases(conn, except_issue_id=issue_id):
-        theirs_paths = other.get("declared_paths") or []
-        if not theirs_paths:
+        theirs_paths = other["declared_paths"]
+        if other["path_fence"] == "issue_only":
             continue
+        if not theirs_paths:
+            raise IssueCommandError(
+                "conflict", "declared paths conflict with another active lease"
+            )
         other_root = other.get("coordination_root")
         other_location = (
             None
@@ -284,12 +254,16 @@ def claim_issue(
             required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
             exact=True,
         )
-        declared_paths = (
-            existing["declared_paths"]
-            if renewed and paths is None
-            else normalize_declared_paths(paths)
-        )
-        root = existing["coordination_root"] if renewed else None
+        preserve_paths = renewed and paths is None
+        declared_paths: list[str] | None = normalize_declared_paths(paths)
+        root = None
+        if renewed and existing is not None:
+            root = existing["coordination_root"]
+            if preserve_paths:
+                declared_paths = existing["declared_paths"]
+                if declared_paths == [] and existing["path_fence"] == "unresolved":
+                    # A failed stored decode is not an explicit empty request.
+                    declared_paths = None
         if coordination_root is not None:
             try:
                 requested_root = coordination_roots.parse_selector(
@@ -322,6 +296,7 @@ def claim_issue(
             declared_paths=declared_paths,
             coordination_root=root,
             preserve_coordination_root=renewed,
+            preserve_declared_paths=preserve_paths,
             commit=False,
         )
         issue_activity.record_issue_claimed(

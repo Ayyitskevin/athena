@@ -10,18 +10,23 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
+from typing import Literal
 
 MAX_CATALOG_BYTES = 16_384
 MAX_ROOTS = 32
 MAX_PREFIX_CHARS = 256
 MAX_BINDING_BYTES = 2_048
+MAX_DECLARED_PATHS = 32
+MAX_DECLARED_PATH_CHARS = 256
 _KEY = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _GENERATION = re.compile(r"[0-9a-f]{32}\Z")
 
 
 class RootError(ValueError):
-    def __init__(self, detail: str, *, kind: str = "invalid"):
+    def __init__(
+        self, detail: str, *, kind: Literal["invalid", "conflict"] = "invalid"
+    ):
         super().__init__(detail)
         self.kind = kind
 
@@ -261,3 +266,43 @@ def read_binding(
         return parse_selector(selector).as_dict()
     except RootError:
         return None
+
+
+def normalize_declared_paths(raw: object) -> list[str]:
+    """Repo-relative POSIX paths. Empty means issue-fence only."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise RootError("paths must be a list of strings")
+    if len(raw) > MAX_DECLARED_PATHS:
+        raise RootError(
+            f"at most {MAX_DECLARED_PATHS} declared paths",
+        )
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            raise RootError("paths must be a list of strings")
+        text = item.strip().replace("\\", "/")
+        if not text or "\x00" in text:
+            raise RootError("declared path is empty or invalid")
+        if text.startswith("/"):
+            raise RootError("declared paths must be relative")
+        parts: list[str] = []
+        for part in text.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                raise RootError("declared paths may not contain '..'")
+            parts.append(part)
+        if not parts:
+            raise RootError("declared path is empty or invalid")
+        normalized = "/".join(parts)
+        if len(normalized) > MAX_DECLARED_PATH_CHARS:
+            raise RootError(
+                f"declared path must be at most {MAX_DECLARED_PATH_CHARS} characters",
+            )
+        if normalized not in seen:
+            seen.add(normalized)
+            out.append(normalized)
+    return out

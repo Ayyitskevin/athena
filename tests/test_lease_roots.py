@@ -830,3 +830,321 @@ def test_explicit_stale_catalog_is_conflict_not_unknown_fallback(client):
     )
     assert result.status_code == 409
     assert client.get(f"/issues/{item}/lease").json() is None
+
+
+@pytest.mark.parametrize(
+    ("stored_paths", "expected_fence", "expected_status"),
+    [
+        *[
+            (raw, "unresolved", 409)
+            for raw in (
+                "not-json",
+                "",
+                "null",
+                "false",
+                "0",
+                "{}",
+                '"docs"',
+                "[null]",
+                "[false]",
+                "[1]",
+                "[{}]",
+                "[[]]",
+                '["docs", 1]',
+                '[""]',
+                '["."]',
+                '["../outside"]',
+                '["/absolute"]',
+                json.dumps(["bad\x00path"]),
+                json.dumps(["x" * 257]),
+                json.dumps(["docs"] * 33),
+            )
+        ],
+        ("[]", "issue_only", 201),
+        ("  [  ]  ", "issue_only", 201),
+    ],
+)
+def test_persisted_paths_distinguish_malformed_from_intentional_empty(
+    client, stored_paths, expected_fence, expected_status
+):
+    from athena.core import db
+
+    first, second = issue(client), issue(client)
+    held = claim(client, first, paths=["docs"], coordination_root=root()).json()
+    conn = db.connect(client.app.state.db_path)
+    try:
+        # Synthetic stored data, not a request encoding or real topology probe.
+        conn.execute(
+            "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?",
+            (stored_paths, first),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    separated = claim(
+        client, second, paths=["elsewhere"], coordination_root=root("two")
+    )
+    assert separated.status_code == expected_status, separated.text
+    observed = client.get(f"/issues/{first}/lease").json()
+    assert observed["generation"] == held["generation"]
+    assert observed["declared_paths"] == []
+    assert observed["path_fence"] == expected_fence
+
+
+@pytest.mark.parametrize("payload", [{}, {"paths": None, "coordination_root": None}])
+def test_omitted_malformed_paths_renewal_retains_raw_bytes(client, payload):
+    from athena.core import db
+
+    item = issue(client)
+    held = claim(client, item, paths=["docs"], coordination_root=root()).json()
+    conn = db.connect(client.app.state.db_path)
+    try:
+        raw_root = conn.execute(
+            "SELECT coordination_root FROM issue_leases WHERE issue_id = ?", (item,)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?",
+            ("not-json", item),
+        )
+        conn.commit()
+        renewed = claim(client, item, generation=held["generation"], **payload)
+        assert renewed.status_code == 201, renewed.text
+        assert renewed.json()["path_fence"] == "unresolved"
+        assert renewed.json()["declared_paths"] == []
+        stored = conn.execute(
+            "SELECT declared_paths, coordination_root FROM issue_leases WHERE issue_id = ?",
+            (item,),
+        ).fetchone()
+        assert tuple(stored) == ("not-json", raw_root)
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def malformed_lease(client):
+    from athena.core import db
+
+    item = issue(client)
+    held = claim(client, item, paths=["docs"], coordination_root=root()).json()
+    conn = db.connect(client.app.state.db_path)
+    try:
+        conn.execute(
+            "UPDATE issue_leases SET declared_paths = 'not-json' WHERE issue_id = ?",
+            (item,),
+        )
+        conn.commit()
+        yield item, held, conn
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("paths", [[], ["replacement"]])
+def test_explicit_replacement_of_malformed_fence_is_audited(
+    client, malformed_lease, paths
+):
+    item, held, conn = malformed_lease
+    result = claim(client, item, generation=held["generation"], paths=paths)
+    assert result.status_code == 201, result.text
+    expected = "rooted" if paths else "issue_only"
+    assert result.json()["declared_paths"] == paths
+    assert result.json()["path_fence"] == expected
+    assert result.json()["generation"] == held["generation"]
+    assert result.json()["coordination_root"] == root()
+    assert conn.execute(
+        "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (item,)
+    ).fetchone()[0] == json.dumps(paths)
+    events = client.get(
+        "/activity", params={"target_kind": "issue", "target_id": item}
+    ).json()
+    event = next(e for e in events if e["verb"] == "lease_renewed")
+    assert f"path_fence {expected}" in event["detail"]
+
+
+def test_malformed_renewing_fence_is_conservative_against_other_nonempty(client):
+    from athena.core import db
+
+    first, second = issue(client), issue(client)
+    held = claim(client, first, paths=["docs"], coordination_root=root()).json()
+    assert (
+        claim(client, second, paths=["docs"], coordination_root=root("two")).status_code
+        == 201
+    )
+    conn = db.connect(client.app.state.db_path)
+    try:
+        conn.execute(
+            "UPDATE issue_leases SET declared_paths = 'not-json' WHERE issue_id = ?",
+            (first,),
+        )
+        conn.commit()
+        assert claim(client, first, generation=held["generation"]).status_code == 409
+        assert (
+            conn.execute(
+                "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (first,)
+            ).fetchone()[0]
+            == "not-json"
+        )
+        # An intentional issue-only transition still claims no new file coverage.
+        cleared = claim(client, first, generation=held["generation"], paths=[])
+        assert cleared.status_code == 201, cleared.text
+        assert cleared.json()["path_fence"] == "issue_only"
+    finally:
+        conn.close()
+
+
+def test_malformed_paths_and_binding_survive_omitted_renewal(client, malformed_lease):
+    item, held, conn = malformed_lease
+    conn.execute(
+        "UPDATE issue_leases SET coordination_root = 'retained-unknown' WHERE issue_id = ?",
+        (item,),
+    )
+    conn.commit()
+    other = issue(client)
+    assert claim(client, other, paths=[]).status_code == 201
+    result = claim(client, item, generation=held["generation"])
+    assert result.status_code == 201, result.text
+    assert result.json()["coordination_root"] is None
+    assert result.json()["path_fence"] == "unresolved"
+    assert tuple(
+        conn.execute(
+            "SELECT declared_paths, coordination_root FROM issue_leases WHERE issue_id = ?",
+            (item,),
+        ).fetchone()
+    ) == ("not-json", "retained-unknown")
+
+
+@pytest.mark.parametrize("operation", ["complete", "yield"])
+def test_malformed_fence_does_not_prevent_existing_release(
+    client, malformed_lease, operation
+):
+    item, held, _conn = malformed_lease
+    payload = {"generation": held["generation"]}
+    if operation == "yield":
+        payload.update(
+            reason="blocked",
+            attempted_work="Synthetic inspection",
+            evidence=["Fixture only"],
+            blocking_question="Review stored fence",
+            resume_instructions="Read the retained handoff",
+        )
+    result = client.post(f"/issues/{item}/{operation}", json=payload)
+    assert result.status_code in (200, 201), result.text
+    assert client.get(f"/issues/{item}/lease").json() is None
+
+
+def test_expired_malformed_fence_reacquires_without_stale_bytes(
+    client, malformed_lease
+):
+    item, held, conn = malformed_lease
+    conn.execute(
+        "UPDATE issue_leases SET expires_at = datetime('now','-1 second'), coordination_root = 'retained-unknown' WHERE issue_id = ?",
+        (item,),
+    )
+    conn.commit()
+    result = claim(client, item)
+    assert result.status_code == 201, result.text
+    assert result.json()["generation"] != held["generation"]
+    assert result.json()["coordination_root"] is None
+    assert result.json()["path_fence"] == "issue_only"
+    assert tuple(
+        conn.execute(
+            "SELECT declared_paths, coordination_root FROM issue_leases WHERE issue_id = ?",
+            (item,),
+        ).fetchone()
+    ) == ("[]", None)
+
+
+def test_malformed_fence_keeps_existing_projection_types(client, malformed_lease):
+    from athena.aegis import office
+    from athena.mcp.client import AthenaClient
+
+    item, held, conn = malformed_lease
+    tag = client.get(f"/issues/{item}").headers["ETag"]
+    echoed = AthenaClient(client=client).claim_issue(
+        item, if_match=tag, generation=held["generation"], coordination_root=root()
+    )
+    assert echoed["path_fence"] == "unresolved"
+    assert echoed["coordination_root"] == root()
+    views = [
+        client.get(f"/issues/{item}/lease").json(),
+        client.get("/office").json()["chair"],
+        client.get("/desk").json()["office"]["chair"],
+        next(row for row in office.build_occupancy(conn) if row["issue_id"] == item),
+    ]
+    for view in views:
+        assert view["declared_paths"] == []
+        assert view["path_fence"] == "unresolved"
+        assert view["coordination_root"] == root()
+
+
+def test_malformed_fence_replacement_still_requires_generation_and_etag(
+    client, malformed_lease
+):
+    item, held, conn = malformed_lease
+    assert claim(client, item, generation="0" * 32, paths=[]).status_code == 409
+    assert claim(client, item, paths=[]).status_code == 428
+    denied = client.post(
+        f"/issues/{item}/claim",
+        json={"generation": held["generation"], "paths": []},
+        headers={"If-Match": '"stale"'},
+    )
+    assert denied.status_code == 412, denied.text
+    assert (
+        conn.execute(
+            "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (item,)
+        ).fetchone()[0]
+        == "not-json"
+    )
+
+
+def test_malformed_fence_replacement_audit_failure_retains_original_bytes(
+    client, malformed_lease
+):
+    import sqlite3
+
+    item, held, conn = malformed_lease
+    before = client.get(f"/issues/{item}/lease").json()
+    conn.execute(
+        "CREATE TRIGGER reject_r3_event BEFORE INSERT ON activity WHEN NEW.verb = 'lease_renewed' BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END"
+    )
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
+        claim(client, item, generation=held["generation"], paths=[])
+    assert client.get(f"/issues/{item}/lease").json() == before
+    assert (
+        conn.execute(
+            "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (item,)
+        ).fetchone()[0]
+        == "not-json"
+    )
+
+
+def test_normalizable_stored_paths_keep_raw_omitted_bytes(client, malformed_lease):
+    item, held, conn = malformed_lease
+    raw = json.dumps([" ./docs//file ", "docs/file"])
+    conn.execute(
+        "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?", (raw, item)
+    )
+    conn.commit()
+    result = claim(client, item, generation=held["generation"])
+    assert result.status_code == 201, result.text
+    assert result.json()["declared_paths"] == ["docs/file"]
+    assert result.json()["path_fence"] == "rooted"
+    assert (
+        conn.execute(
+            "SELECT declared_paths FROM issue_leases WHERE issue_id = ?", (item,)
+        ).fetchone()[0]
+        == raw
+    )
+
+
+def test_unreadable_numeric_json_stored_fence_stays_unresolved(client, malformed_lease):
+    item, _held, conn = malformed_lease
+    # A syntactically JSON number beyond the decoder's supported integer range.
+    raw = "[" + "1" * 5000 + "]"
+    conn.execute(
+        "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?", (raw, item)
+    )
+    conn.commit()
+    observed = client.get(f"/issues/{item}/lease")
+    assert observed.status_code == 200, observed.text
+    assert observed.json()["path_fence"] == "unresolved"

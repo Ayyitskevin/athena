@@ -67,32 +67,30 @@ def _clock_stamp(now: datetime | None) -> str:
     return (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _parse_declared_paths(raw: object) -> list[str]:
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return [str(item) for item in raw]
+def _parse_declared_paths(raw: object) -> list[str] | None:
+    """None is unreadable stored state, never an intentional empty fence."""
     try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed]
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(parsed, list):
+            return None
+        return coordination_roots.normalize_declared_paths(parsed)
+    except (ValueError, RecursionError):
+        return None
 
 
 def _row_to_lease(row: sqlite3.Row) -> dict:
     lease = dict(row)
     lease["active"] = bool(lease["active"])  # SQLite returns 0/1 for the comparison
-    lease["declared_paths"] = _parse_declared_paths(lease.get("declared_paths"))
+    paths = _parse_declared_paths(lease.get("declared_paths"))
+    lease["declared_paths"] = paths if paths is not None else []
     lease["coordination_root"] = coordination_roots.read_binding(
         lease.get("coordination_root"), lease["generation"], config.LEASE_ROOT_CATALOG
     )
     lease["path_fence"] = (
         "issue_only"
-        if not lease["declared_paths"]
+        if paths == []
         else "rooted"
-        if lease["coordination_root"] is not None
+        if paths is not None and lease["coordination_root"] is not None
         else "unresolved"
     )
     return lease
@@ -262,6 +260,7 @@ def upsert_lease(
     coordination_root: dict | None = None,
     *,
     preserve_coordination_root: bool = False,
+    preserve_declared_paths: bool = False,
     commit: bool = True,
 ) -> dict:
     """Acquire or renew the lease with one opaque possession generation.
@@ -276,7 +275,11 @@ def upsert_lease(
     The CONFLICT check — refusing to steal another holder's ACTIVE lease — is the
     command's job, run under the same write lock; this is the unconditional write it
     performs once that check passes. ``commit=False`` folds it into the command's
-    transaction with the audit event. Returns the fresh lease."""
+    transaction with the audit event. Returns the fresh lease.
+
+    Preservation flags are command-selected only for active renewal; they keep
+    omitted raw bytes, including unreadable historical state, without repair.
+    Fresh acquisition leaves both flags false and replaces the whole fence."""
     lease_generation = secrets.token_hex(16) if generation is None else generation
     if not is_valid_generation(lease_generation):
         raise ValueError("invalid issue lease generation")
@@ -288,7 +291,8 @@ def upsert_lease(
         "ON CONFLICT(issue_id) DO UPDATE SET "
         "holder_id = excluded.holder_id, claimed_at = excluded.claimed_at, "
         "expires_at = excluded.expires_at, generation = excluded.generation, "
-        "declared_paths = excluded.declared_paths, coordination_root = "
+        "declared_paths = CASE WHEN ? THEN issue_leases.declared_paths "
+        "ELSE excluded.declared_paths END, coordination_root = "
         "CASE WHEN ? THEN issue_leases.coordination_root ELSE excluded.coordination_root END",
         (
             issue_id,
@@ -297,6 +301,7 @@ def upsert_lease(
             lease_generation,
             paths_json,
             coordination_roots.encode_binding(coordination_root, lease_generation),
+            preserve_declared_paths,
             preserve_coordination_root,
         ),
     )
