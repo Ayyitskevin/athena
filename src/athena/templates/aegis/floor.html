@@ -90,8 +90,10 @@
                     {% if chair.occupant.declared_paths %}
                     · fenced
                     {% for path in chair.occupant.declared_paths %}<code>{{ path }}</code> {% endfor %}
-                    {% else %}
+                    {% elif chair.occupant.path_fence == "issue_only" %}
                     · issue fence only
+                    {% else %}
+                    · unresolved path fence
                     {% endif %}
                 </p>
                 {% elif chair.assignee_name %}

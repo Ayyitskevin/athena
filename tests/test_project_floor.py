@@ -1,12 +1,29 @@
 """Project floor: many chairs, one seat each."""
 
 from fastapi.testclient import TestClient
+import pytest
 
 from athena.aegis import office
+from athena.core import db
 from athena.main import create_app
 
 
-def test_floor_lists_empty_and_occupied_chairs(tmp_path):
+@pytest.mark.parametrize(
+    ("stored_paths", "label", "path_html"),
+    [
+        ("not-json", "unresolved path fence", None),
+        ("[]", "issue fence only", None),
+        (
+            '["src/athena/aegis/office.py"]',
+            None,
+            "<code>src/athena/aegis/office.py</code>",
+        ),
+        ('["docs/<draft>&.md"]', None, "<code>docs/&lt;draft&gt;&amp;.md</code>"),
+    ],
+)
+def test_floor_lists_empty_and_occupied_chairs(
+    tmp_path, stored_paths, label, path_html
+):
     app = create_app(tmp_path / "floor.db")
     with TestClient(app) as client:
         client.post(
@@ -53,7 +70,9 @@ def test_floor_lists_empty_and_occupied_chairs(tmp_path):
         ).headers["etag"]
         claimed = client.post(
             f"/issues/{seated['id']}/claim",
-            json={"paths": ["src/athena/aegis/office.py"]},
+            json={
+                "paths": [] if stored_paths == "[]" else ["src/athena/aegis/office.py"]
+            },
             headers={
                 "Authorization": f"Bearer {grok['token']['token']}",
                 "If-Match": etag,
@@ -61,11 +80,32 @@ def test_floor_lists_empty_and_occupied_chairs(tmp_path):
         )
         assert claimed.status_code == 201, claimed.text
 
+        conn = db.connect(app.state.db_path)
+        try:
+            # Synthetic retained input is projected by the real reader.
+            conn.execute(
+                "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?",
+                (stored_paths, seated["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
         page = client.get(f"/aegis/projects/{project['id']}/floor")
         assert page.status_code == 200, page.text
         assert "Nobody shares a seat" in page.text
         assert "empty chair" in page.text
         assert "taken chair" in page.text
+        if label is not None:
+            assert label in page.text
+        if label != "issue fence only":
+            assert "issue fence only" not in page.text
+        if label != "unresolved path fence":
+            assert "unresolved path fence" not in page.text
+        if path_html is not None:
+            assert path_html in page.text
+        assert "<draft>" not in page.text
+        assert "not-json" not in page.text
 
         payload = client.get(f"/projects/{project['id']}/floor").json()
         assert payload["schema"] == office.FLOOR_SCHEMA

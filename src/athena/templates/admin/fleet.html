@@ -52,8 +52,10 @@
                 <td>
                     {% if row.declared_paths %}
                     {% for path in row.declared_paths %}<code>{{ path }}</code> {% endfor %}
-                    {% else %}
+                    {% elif row.path_fence == "issue_only" %}
                     <span class="muted">issue fence only</span>
+                    {% else %}
+                    <span class="muted">unresolved path fence</span>
                     {% endif %}
                 </td>
                 <td class="muted">{{ row.expires_at }}</td>
