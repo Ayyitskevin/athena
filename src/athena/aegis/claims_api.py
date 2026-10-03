@@ -90,6 +90,8 @@ class LeaseOut(BaseModel):
     generation: str
     active: bool
     declared_paths: list[str] = []
+    coordination_root: dict[str, str] | None = None
+    path_fence: Literal["rooted", "unresolved", "issue_only"] = "issue_only"
     open_claim_handoff: ClaimHandoffOut | None = None
 
 
@@ -101,8 +103,11 @@ class ClaimIn(BaseModel):
     # same active possession; a supplied stale value never becomes acquisition.
     generation: str | None = None
     # Optional repo-relative POSIX paths this holder intends to touch. Empty or
-    # omitted = issue fence only. Overlap with another active lease is 409.
+    # omitted = issue fence only on acquisition; omitted/null retains on renewal.
+    # Explicit [] is issue-only. Unknown nonempty origins conflict conservatively.
     paths: list[str] | None = None
+    # The shared command validates selectors against operator-declared qualification.
+    coordination_root: object = None
 
 
 class YieldClaimIn(BaseModel):
@@ -274,6 +279,7 @@ def claim_issue(
             if_match=_if_match_values(request),
             generation=payload.generation if payload else None,
             paths=payload.paths if payload else None,
+            coordination_root=payload.coordination_root if payload else None,
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:

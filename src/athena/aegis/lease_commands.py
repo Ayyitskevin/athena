@@ -19,6 +19,7 @@ import secrets
 import sqlite3
 from typing import Literal
 
+from athena import config
 from athena.aegis import (
     claim_handoffs,
     contributors as contributors_data,
@@ -32,7 +33,7 @@ from athena.aegis.issue_commands import (
     _require_issue_writer,
     _visible_issue,
 )
-from athena.core import db, identity
+from athena.core import coordination_roots, db, identity
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
@@ -50,8 +51,6 @@ CLAIM_PRECONDITION_REQUIRED_DETAIL = (
 LEASE_GENERATION_REQUIRED_DETAIL = (
     "the exact current lease generation is required for this operation"
 )
-MAX_DECLARED_PATHS = 32
-MAX_DECLARED_PATH_CHARS = 256
 
 
 def claimant_is_eligible(
@@ -113,67 +112,83 @@ def _matching_lease_generation(existing: dict, generation: object | None) -> str
 
 
 def normalize_declared_paths(raw: object) -> list[str]:
-    """Repo-relative POSIX paths. Empty means issue-fence only."""
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise IssueCommandError("invalid", "paths must be a list of strings")
-    if len(raw) > MAX_DECLARED_PATHS:
-        raise IssueCommandError(
-            "invalid",
-            f"at most {MAX_DECLARED_PATHS} declared paths",
-        )
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, str):
-            raise IssueCommandError("invalid", "paths must be a list of strings")
-        text = item.strip().replace("\\", "/")
-        if not text or "\x00" in text:
-            raise IssueCommandError("invalid", "declared path is empty or invalid")
-        if text.startswith("/"):
-            raise IssueCommandError("invalid", "declared paths must be relative")
-        parts: list[str] = []
-        for part in text.split("/"):
-            if part in ("", "."):
-                continue
-            if part == "..":
-                raise IssueCommandError(
-                    "invalid", "declared paths may not contain '..'"
-                )
-            parts.append(part)
-        if not parts:
-            raise IssueCommandError("invalid", "declared path is empty or invalid")
-        normalized = "/".join(parts)
-        if len(normalized) > MAX_DECLARED_PATH_CHARS:
-            raise IssueCommandError(
-                "invalid",
-                f"declared path must be at most {MAX_DECLARED_PATH_CHARS} characters",
-            )
-        if normalized not in seen:
-            seen.add(normalized)
-            out.append(normalized)
-    return out
+    """Normalize the request with the same grammar used for stored fences."""
+    try:
+        return coordination_roots.normalize_declared_paths(raw)
+    except coordination_roots.RootError as exc:
+        raise IssueCommandError(exc.kind, str(exc)) from exc
 
 
 def paths_overlap(left: str, right: str) -> bool:
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
+def _canonical_path(prefix: str, path: str) -> str:
+    joined = "/".join(part for part in (prefix, path) if part)
+    if len(joined) > 512:
+        raise IssueCommandError(
+            "invalid", "canonical declared path exceeds 512 characters"
+        )
+    return joined
+
+
 def _refuse_overlapping_paths(
-    conn: sqlite3.Connection, *, issue_id: int, paths: list[str]
+    conn: sqlite3.Connection,
+    *,
+    issue_id: int,
+    paths: list[str] | None,
+    root: dict | None,
 ) -> None:
-    if not paths:
+    if paths == []:
         return
+    location = (
+        None
+        if root is None or paths is None
+        else coordination_roots.resolve(root, config.LEASE_ROOT_CATALOG)
+    )
+    canonical_paths = (
+        []
+        if location is None or paths is None
+        else [_canonical_path(location[1], path) for path in paths]
+    )
     for other in leases.list_active_leases(conn, except_issue_id=issue_id):
-        for mine in paths:
-            for theirs in other.get("declared_paths") or []:
-                if paths_overlap(mine, theirs):
-                    raise IssueCommandError(
-                        "conflict",
-                        f"declared path '{mine}' overlaps '{theirs}' on issue "
-                        f"{other['issue_id']} held by {other['holder_name']}",
-                    )
+        theirs_paths = other["declared_paths"]
+        if other["path_fence"] == "issue_only":
+            continue
+        if not theirs_paths:
+            raise IssueCommandError(
+                "conflict", "declared paths conflict with another active lease"
+            )
+        other_root = other.get("coordination_root")
+        other_location = (
+            None
+            if other_root is None
+            else coordination_roots.resolve(other_root, config.LEASE_ROOT_CATALOG)
+        )
+        # Unknown origins cannot establish even lexical separation.
+        if location is None or other_location is None:
+            raise IssueCommandError(
+                "conflict", "declared paths conflict with another active lease"
+            )
+        try:
+            other_paths = normalize_declared_paths(theirs_paths)
+            canonical_other = [
+                _canonical_path(other_location[1], path) for path in other_paths
+            ]
+        except IssueCommandError as exc:
+            raise IssueCommandError(
+                "conflict", "declared paths conflict with another active lease"
+            ) from exc
+        if location[0] != other_location[0]:
+            continue
+        if any(
+            paths_overlap(left, right)
+            for left in canonical_paths
+            for right in canonical_other
+        ):
+            raise IssueCommandError(
+                "conflict", "declared paths conflict with another active lease"
+            )
 
 
 def claim_issue(
@@ -185,6 +200,7 @@ def claim_issue(
     generation: object | None = None,
     lease_seconds: int = leases.DEFAULT_LEASE_SECONDS,
     paths: object = None,
+    coordination_root: object = None,
 ) -> dict:
     """Take the exclusive lease on an issue (accept). Returns the lease
     {issue_id, holder_id, holder_name, claimed_at, expires_at, active}.
@@ -238,8 +254,39 @@ def claim_issue(
             required_detail=CLAIM_PRECONDITION_REQUIRED_DETAIL,
             exact=True,
         )
-        declared_paths = normalize_declared_paths(paths)
-        _refuse_overlapping_paths(conn, issue_id=issue_id, paths=declared_paths)
+        preserve_paths = renewed and paths is None
+        declared_paths: list[str] | None = normalize_declared_paths(paths)
+        root = None
+        if renewed and existing is not None:
+            root = existing["coordination_root"]
+            if preserve_paths:
+                declared_paths = existing["declared_paths"]
+                if declared_paths == [] and existing["path_fence"] == "unresolved":
+                    # A failed stored decode is not an explicit empty request.
+                    declared_paths = None
+        if coordination_root is not None:
+            try:
+                requested_root = coordination_roots.parse_selector(
+                    coordination_root
+                ).as_dict()
+                requested_location = coordination_roots.resolve(
+                    requested_root, config.LEASE_ROOT_CATALOG
+                )
+                if renewed:
+                    if root is None or requested_location != coordination_roots.resolve(
+                        root, config.LEASE_ROOT_CATALOG
+                    ):
+                        raise IssueCommandError(
+                            "conflict",
+                            "changing coordination root requires a new possession",
+                        )
+                else:
+                    root = requested_root
+            except coordination_roots.RootError as exc:
+                raise IssueCommandError(exc.kind, str(exc)) from exc
+        _refuse_overlapping_paths(
+            conn, issue_id=issue_id, paths=declared_paths, root=root
+        )
         lease = leases.upsert_lease(
             conn,
             issue_id,
@@ -247,6 +294,9 @@ def claim_issue(
             lease_seconds,
             generation=current_generation,
             declared_paths=declared_paths,
+            coordination_root=root,
+            preserve_coordination_root=renewed,
+            preserve_declared_paths=preserve_paths,
             commit=False,
         )
         issue_activity.record_issue_claimed(
@@ -256,6 +306,8 @@ def claim_issue(
             expires_at=lease["expires_at"],
             generation=lease["generation"],
             renewed=renewed,
+            coordination_root=lease["coordination_root"],
+            path_fence=lease["path_fence"],
             commit=False,
         )
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)

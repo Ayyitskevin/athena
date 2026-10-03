@@ -61,6 +61,8 @@ def _chair_from_lease(
         "project_id": None if issue is None else issue.get("project_id"),
         "generation": lease.get("generation"),
         "declared_paths": list(lease.get("declared_paths") or []),
+        "coordination_root": lease.get("coordination_root"),
+        "path_fence": lease["path_fence"],
         "expires_at": lease.get("expires_at"),
         "blocked_by": [
             {
@@ -145,6 +147,8 @@ def build_occupancy(
                 "issue_key": None if issue is None else issue.get("key"),
                 "issue_title": None if issue is None else issue.get("title"),
                 "declared_paths": list(lease.get("declared_paths") or []),
+                "coordination_root": lease.get("coordination_root"),
+                "path_fence": lease["path_fence"],
                 "expires_at": lease.get("expires_at"),
             }
         )
@@ -202,6 +206,8 @@ def build_floor(
                     None if holder is None else holder.get("email")
                 ),
                 "declared_paths": list(lease.get("declared_paths") or []),
+                "coordination_root": lease.get("coordination_root"),
+                "path_fence": lease["path_fence"],
                 "expires_at": lease.get("expires_at"),
                 "generation": lease.get("generation"),
             }

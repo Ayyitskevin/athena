@@ -4,7 +4,7 @@ The MCP server is a client of Athena like the web UI is: it goes THROUGH the RES
 API (with a scoped bearer token), never around it, so every action an agent takes
 gets the same validation, scope enforcement, and audit trail as a human's. This
 module is the boundary between "MCP tool" and "HTTP call"; it deliberately imports
-only httpx (not the MCP SDK), so it can be unit-tested in CI without the optional
+httpx and a pure wire normalizer (not the MCP SDK), so it can be unit-tested in CI without the optional
 `mcp` dependency, by injecting a TestClient as the transport.
 """
 
@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+import re
 
 import httpx
+
+from athena.core.coordination_roots import RootError, parse_selector
 
 
 class AthenaError(RuntimeError):
@@ -464,23 +467,54 @@ class AthenaClient:
         generation: str | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
+        coordination_root: dict | None = None,
         idempotency_key: str | None = None,
     ) -> Any:
         """Claim against the exact strong root issue ETag the caller reviewed.
 
-        ``paths`` optionally fences repo-relative files against other active leases.
+        ``paths`` declares relative files. ``coordination_root`` selects a qualified
+        operator mapping, not filesystem authority. Omission retains on renewal;
+        explicit [] means issue-only. Explicit roots require confirmation even when
+        the server returned success; an unconfirmed mutation may already exist.
         """
-        return self._mutate(
+        result = self._mutate(
             self._client.post,
             f"/issues/{issue_id}/claim",
             json=self._params(
                 lease_seconds=lease_seconds,
                 generation=generation,
                 paths=paths,
+                coordination_root=coordination_root,
             ),
             if_match=if_match,
             idempotency_key=idempotency_key,
         )
+
+        if coordination_root is not None:
+            try:
+                expected = parse_selector(coordination_root).as_dict()
+            except RootError:
+                expected = None
+            echoed_generation = (
+                result.get("generation") if isinstance(result, dict) else None
+            )
+            confirmed = (
+                expected is not None
+                and isinstance(result, dict)
+                and result.get("coordination_root") == expected
+                and isinstance(echoed_generation, str)
+                and re.fullmatch(r"[0-9a-f]{32}", echoed_generation) is not None
+                and (generation is None or echoed_generation == generation)
+            )
+            if not confirmed:
+                raise AthenaError(
+                    "Coordination root unconfirmed; the claim may already exist. "
+                    "Read the current lease before acting; do not retry without its root.",
+                    method="POST",
+                    path=f"/issues/{issue_id}/claim",
+                    code="coordination_root_unconfirmed",
+                )
+        return result
 
     def yield_claim(
         self,

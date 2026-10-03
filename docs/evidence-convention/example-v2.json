@@ -1,0 +1,133 @@
+{
+  "schema": "athena.evidence_manifest.v1",
+  "schema_version": 1,
+  "mode": "documentary_only",
+  "id": "fictional-spelling-example-v2",
+  "recorded_at": "2026-10-03T20:23:19Z",
+  "handoff": {
+    "root": "repository",
+    "path": "docs/evidence-convention/samples/handoff-v2.md",
+    "sha256": "c55ecbfc603c90696c397ad649ada773c821b1c9f647eab9b4b9b5c666d0a316",
+    "byte_count": 595,
+    "git_ref": null
+  },
+  "subjects": [
+    {
+      "id": "source-v2",
+      "record": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/source-v2.md",
+        "sha256": "1cc89f03386d0400cf9d8f9233d74133f59a92caf038da4791ce48d7531f0042",
+        "byte_count": 149,
+        "git_ref": null
+      },
+      "scope": "FICTIONAL spelling illustration in this exact inert source note only; not operational acceptance."
+    }
+  ],
+  "source_refs": [],
+  "verdicts": [
+    {
+      "record": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/verdict-v2.md",
+        "sha256": "3e34bd0c53e04ced30c6771b7e4f06f8bcb94dafdf1452e1ef8dd9c3b5c7a682",
+        "byte_count": 424,
+        "git_ref": null
+      },
+      "subject_ids": [
+        "source-v2"
+      ],
+      "reported_verdict": "FICTIONAL_PASS_SPELLING_ONLY",
+      "scope": "FICTIONAL illustrative spelling label, not a genuine review, owner return, Athena approval, runtime result or permission."
+    }
+  ],
+  "observations": [
+    {
+      "role": "fictional author",
+      "actor_label": "Example Author (FICTIONAL)",
+      "session_id": null,
+      "provenance": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/handoff-v2.md",
+        "sha256": "c55ecbfc603c90696c397ad649ada773c821b1c9f647eab9b4b9b5c666d0a316",
+        "byte_count": 595,
+        "git_ref": null
+      },
+      "scope": "Invented illustration of continuation prose, not authenticated identity or a genuine handoff."
+    },
+    {
+      "role": "fictional reviewer",
+      "actor_label": "Example Reviewer (FICTIONAL)",
+      "session_id": null,
+      "provenance": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/verdict-v2.md",
+        "sha256": "3e34bd0c53e04ced30c6771b7e4f06f8bcb94dafdf1452e1ef8dd9c3b5c7a682",
+        "byte_count": 424,
+        "git_ref": null
+      },
+      "scope": "Invented spelling-review label only; no real reviewer independence or acceptance claimed."
+    }
+  ],
+  "checks": [
+    {
+      "name": "Actual sample-file digests and sizes",
+      "status": "PASS",
+      "command": "sha256sum docs/evidence-convention/samples/*.md && wc -c -l docs/evidence-convention/samples/*.md",
+      "cwd": "repository root",
+      "exit_code": 0,
+      "observed": "All six real sample files read; SHA256 values and byte counts in this manifest were computed from the on-disk bytes.",
+      "limits": "Documentary file reads only. No application, runtime or genuine review behavior executed."
+    },
+    {
+      "name": "Genuine review and operational acceptance",
+      "status": "UNRUN",
+      "command": null,
+      "cwd": null,
+      "exit_code": null,
+      "observed": "No genuine owner or reviewer result supplied; all labels are fictional.",
+      "limits": "Fictional narrative is not evidence of operational behavior, approval, independence or authority."
+    }
+  ],
+  "predecessors": [
+    {
+      "record": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/verdict-v1.md",
+        "sha256": "c0c90124bc97bd5d7284f4d10aa4dbb236edde64f77e91adaeeccaaf93a06236",
+        "byte_count": 357,
+        "git_ref": null
+      },
+      "proposition": "Only the fictional spelling proposition that source-v1 contains \"aplpe\"; v2 changes that word to \"apple\".",
+      "disposition": "supersedes_only",
+      "successor": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/verdict-v2.md",
+        "sha256": "3e34bd0c53e04ced30c6771b7e4f06f8bcb94dafdf1452e1ef8dd9c3b5c7a682",
+        "byte_count": 424,
+        "git_ref": null
+      }
+    },
+    {
+      "record": {
+        "root": "repository",
+        "path": "docs/evidence-convention/samples/source-v1.md",
+        "sha256": "0045544b4b7d789db92423c2da0e64e3a1f090521ae6750f36c60d22bd01c5d6",
+        "byte_count": 149,
+        "git_ref": null
+      },
+      "proposition": "Original fictional source retained as historical context, not the subject of the new verdict.",
+      "disposition": "context_only",
+      "successor": null
+    }
+  ],
+  "rolling_controls": [],
+  "limitations": [
+    "FICTIONAL source/handoff/verdict narrative, not genuine owner content, reviewer acceptance, Athena approval or a runtime result.",
+    "The digests and byte counts are actual local computations. Root repository resolves to this repository root within the reader's existing read grant.",
+    "Record git_ref is null to avoid circular self-reference to the enclosing commit; that Git commit independently pins the complete example files as a unit. source_refs is empty because no historical source ref is invented.",
+    "recorded_at is the observed time of constructing this index, not a historical owner decision or review time.",
+    "Next artifact, checkpoint and authentic trigger are null in the fictional handoff; no continuation work is activated.",
+    "Retrieval savings, full activity-history recovery, native identity, runtime behavior and operational acceptance are unmeasured or unrun."
+  ]
+}

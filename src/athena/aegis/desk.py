@@ -31,7 +31,7 @@ owns each number. Nothing here is a second source of truth.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import claim_handoffs, delegations, leases, office
@@ -160,11 +160,14 @@ def build_desk(
     # The rows the clock already released are their own list below, because a
     # lapsed lease is a different thing to do (renew it, or clear it) than a
     # live one — not a footnote on the same list.
+    # Capture the default once: expiry must not put one possession in both
+    # lanes or make the total/embedded office disagree with the held list.
+    lease_now = now if now is not None else datetime.now(UTC)
     held = leases.active_leases_held_by(
-        conn, holder_id=user_id, limit=LEASES_LIMIT, now=now
+        conn, holder_id=user_id, limit=LEASES_LIMIT, now=lease_now
     )
     lapsed, lapsed_total = leases.lapsed_leases_held_by(
-        conn, holder_id=user_id, limit=LEASES_LIMIT, now=now
+        conn, holder_id=user_id, limit=LEASES_LIMIT, now=lease_now
     )
     # A handoff is attached to an issue, so "mine to acknowledge" is exactly
     # "open on an issue I hold" — composed rather than re-queried. The reader
@@ -244,7 +247,7 @@ def build_desk(
             "leases": {
                 "items": held,
                 "total": leases.count_active_leases_held_by(
-                    conn, holder_id=user_id, now=now
+                    conn, holder_id=user_id, now=lease_now
                 ),
                 "limit": LEASES_LIMIT,
                 "lapsed": lapsed,
@@ -259,7 +262,9 @@ def build_desk(
                     "on a done issue is not listed here; its row stays readable "
                     "at GET /issues/{id}/lease. complete_claim releases the "
                     "lease and does not mark the issue done. declared_paths is "
-                    "the optional file fence."
+                    "the optional file fence. path_fence is rooted only for a current "
+                    "qualified declaration, not verified process location; unresolved "
+                    "nonempty fences are conservative; issue_only reserves no files."
                 ),
             },
         },
@@ -281,7 +286,7 @@ def build_desk(
         "office": office.build_office(
             conn,
             actor=actor,
-            now=now,
+            now=lease_now,
             inbox_items=inbox.get("items") or [],
         ),
         "cursor": cursor,

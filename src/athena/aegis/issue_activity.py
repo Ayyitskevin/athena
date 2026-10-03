@@ -14,6 +14,7 @@ status, same assignee) writes nothing, on either surface.
 from __future__ import annotations
 
 from collections.abc import Collection
+import json
 import sqlite3
 from typing import TypedDict
 
@@ -754,6 +755,8 @@ def record_issue_claimed(
     expires_at: str,
     generation: str,
     renewed: bool,
+    coordination_root: dict | None = None,
+    path_fence: str = "issue_only",
     commit: bool = True,
 ) -> None:
     """Record that an actor took (or renewed) the exclusive lease on an issue — the
@@ -769,7 +772,10 @@ def record_issue_claimed(
         verb="lease_renewed" if renewed else "claimed",
         target_kind="issue",
         target_id=issue_id,
-        detail=f"generation {generation}; until {expires_at}",
+        detail=(
+            f"generation {generation}; until {expires_at}; path_fence {path_fence}; "
+            f"coordination_root {json.dumps(coordination_root, sort_keys=True)}"
+        ),
         commit=commit,
     )
 

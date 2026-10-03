@@ -127,7 +127,20 @@ restart behavior, privacy contract, bounds, and limitations.
 - `GET /activity/runs/{run_id}/lineage` reconstructs the parent/child tree from
   `run_id`, `parent_run_id`, and `forked_from_event_id`.
 - `GET /activity/runs/{run_id}/replay` returns a portable JSON artifact with the
-  run's complete ordered events plus light lineage metadata.
+  run's first at most 5,000 ordered events plus light lineage metadata. Inspect
+  `partial`: when true, this is a bounded prefix, not the complete run.
+
+The exporter uses 500-event pages and clips the focal payload at 5,000 events
+(`src/athena/core/run_replay.py`). `event_count` counts returned events; when
+`partial` is true it is only a lower bound on the whole run. Lineage summaries
+have their own partial markers. The database export below uses the same builder
+and does not bypass this cap. Missing or not-completely-visible runs are not
+returned as a purportedly complete visibility-filtered replay.
+
+For an exact evidence file referenced by a clipped packet, use the
+[continuation recovery recipe](CONTINUATION.md#recover-exact-evidence).
+Recovering that file completely does not clear a replay's `partial` flag or prove
+the full run history was recovered. Replay is never permission to repeat effects.
 
 Operators can write the same artifact from a database file:
 

@@ -1,6 +1,7 @@
 """Declared fleet roster: systemd verdict + Athena rows, never 'alive'."""
 
 from fastapi.testclient import TestClient
+import pytest
 
 from athena.core import db, fleet_roster, users
 from athena.main import create_app
@@ -143,7 +144,19 @@ def test_roster_joins_athena_and_flags_undeclared(tmp_path):
     conn.close()
 
 
-def test_admin_fleet_page_and_json(tmp_path):
+@pytest.mark.parametrize(
+    ("stored_paths", "label", "path_html"),
+    [
+        ("not-json", "unresolved path fence", None),
+        ("[]", "issue fence only", None),
+        ('["docs/plain.md"]', None, "<code>docs/plain.md</code>"),
+        ('["docs/<draft>&.md"]', None, "<code>docs/&lt;draft&gt;&amp;.md</code>"),
+    ],
+)
+def test_admin_fleet_page_and_json(
+    tmp_path, monkeypatch, stored_paths, label, path_html
+):
+    monkeypatch.setattr(fleet_roster, "probe_systemd_unit", _probe)
     app = create_app(tmp_path / "fleet-admin.db")
     with TestClient(app) as client:
         client.post(
@@ -155,6 +168,30 @@ def test_admin_fleet_page_and_json(tmp_path):
             json={"name": "Grok", "scopes": ["read"]},
             headers={"X-Athena-Actor": "1"},
         )
+        item = client.post(
+            "/issues",
+            json={"title": "Fictional occupied chair"},
+            headers={"X-Athena-Actor": "1"},
+        ).json()
+        tag = client.get(
+            f"/issues/{item['id']}", headers={"X-Athena-Actor": "1"}
+        ).headers["etag"]
+        accepted = client.post(
+            f"/issues/{item['id']}/claim",
+            json={"paths": [] if stored_paths == "[]" else ["docs/plain.md"]},
+            headers={"X-Athena-Actor": "1", "If-Match": tag},
+        )
+        assert accepted.status_code == 201, accepted.text
+        conn = db.connect(app.state.db_path)
+        try:
+            # Retained fixture bytes reach the real reader and HTML route.
+            conn.execute(
+                "UPDATE issue_leases SET declared_paths = ? WHERE issue_id = ?",
+                (stored_paths, item["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         anon = client.get("/admin/fleet")
         assert anon.status_code == 401
         client.post(
@@ -183,6 +220,16 @@ def test_admin_fleet_page_and_json(tmp_path):
         page = client.get("/admin/fleet")
         assert page.status_code == 200, page.text
         assert "Fleet roster" in page.text
+        if label is not None:
+            assert label in page.text
+        if label != "issue fence only":
+            assert "issue fence only" not in page.text
+        if label != "unresolved path fence":
+            assert "unresolved path fence" not in page.text
+        if path_html is not None:
+            assert path_html in page.text
+        assert "<draft>" not in page.text
+        assert "not-json" not in page.text
         assert "buzz-acp-grok.service" in page.text
         assert (
             "does not claim anyone" in page.text.lower()
