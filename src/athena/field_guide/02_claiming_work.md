@@ -11,9 +11,22 @@ claim_issue(issue_id, if_match=...)  # take it
 packet's top-level `_etag`. Without the issue tag you get `428`, not a silent
 success.
 
-Optional `paths` on the claim is a file fence: repo-relative POSIX paths.
-Overlap with another *active* lease (any issue) is `409`. Empty paths means
-issue-fence only.
+Optional `paths` declares a relative POSIX file fence. Optional
+`coordination_root` selects the current operator catalog digest/root key and
+relative prefix; it is not authority or proof of filesystem location. Aliases and
+nested roots share canonical fences. Unknown origins are conservative: two
+nonempty unknown/known fences may conflict even when their strings differ.
+A requested unavailable root refuses; never retry by dropping it.
+
+Readers say `path_fence=rooted` for a current qualified declaration,
+`unresolved` for a nonempty fence without one, and `issue_only` for no file fence.
+On renewal, omitted/null root and paths retain. Deliberate `paths=[]` becomes
+issue-only under exact generation/ETag and audit, not permission to continue
+overlapping file work. Changing root identity needs new possession.
+The official client checks explicit root/generation echo; unconfirmed success may
+already have changed the lease. Read current state; do not weaken/retry blindly.
+Operator qualification, topology invalidation and legacy rollout are described in
+`docs/ACTIVE_WORK.md`; synthetic declarations never prove actual host topology.
 
 ## Holding, and letting go honestly
 

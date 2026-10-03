@@ -12,6 +12,7 @@ since I looked" are different facts, and collapsing them would make a fresh
 agent believe it was caught up.
 """
 
+from datetime import UTC, datetime, timedelta
 import sqlite3
 
 import pytest
@@ -309,6 +310,52 @@ def test_a_lapsed_lease_leaves_held_and_appears_under_lapsed(tmp_path):
         # The generation rides along, because it is what clears the row.
         assert after["lapsed"][0]["generation"]
         assert after["lapsed_total"] == 1
+
+
+def test_one_desk_read_keeps_lease_lanes_consistent_across_expiry(
+    tmp_path, monkeypatch
+):
+    # WHY: a lease can expire between the held, lapsed, count and office reads.
+    # A single desk response must classify it at one observation instant, rather
+    # than show the same possession as both held and lapsed with a zero total.
+    from athena.aegis import leases
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        agent = _agent(client, email="codex@agents.local", name="Codex")
+        issue = _claimed_issue(client, agent)
+        conn = db.connect(db_file)
+        try:
+            conn.execute(
+                "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
+                ("2030-01-01 00:00:01", issue["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        class CrossingClock(datetime):
+            observed = datetime(2030, 1, 1, tzinfo=UTC)
+
+            @classmethod
+            def now(cls, tz=None):
+                value = cls.observed
+                cls.observed += timedelta(seconds=1)
+                return value if tz is None else value.astimezone(tz)
+
+        monkeypatch.setattr(desk, "datetime", CrossingClock)
+        monkeypatch.setattr(leases, "datetime", CrossingClock)
+        board = _desk(client, _bearer(agent))
+
+    lane = board["work"]["leases"]
+    assert [row["issue_id"] for row in lane["items"]] == [issue["id"]]
+    assert lane["items"][0]["active"] is True
+    assert lane["lapsed"] == []
+    assert lane["total"] == 1
+    assert lane["lapsed_total"] == 0
+    assert board["office"]["active_lease_count"] == 1
+    assert board["office"]["chair"]["issue_id"] == issue["id"]
 
 
 def test_a_lapsed_lease_on_a_done_issue_is_not_shown(tmp_path):

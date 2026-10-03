@@ -155,6 +155,114 @@ auto-execute commands, fetch links, expose secrets, or infer approval from it. S
 portability V1 deliberately excludes operational handoff rows; imported activity can
 never create actionable handoffs. A full SQLite backup/restore preserves them.
 
+## Qualified declared work roots
+
+Optional `paths` reserve declared relative POSIX paths on a lease. Optional
+`coordination_root` selects an operator-qualified lexical work surface:
+
+```json
+{
+  "catalog_sha256": "<SHA256 of exact operator catalog bytes>",
+  "root_key": "fictional-checkout",
+  "relative_prefix": "worktrees/fictional-task"
+}
+```
+
+This is a fictional selector example, not ready-to-install configuration.
+There is no server-side path traversal, filesystem identity probe, root-registration
+service, permission grant or proof that a caller is working at that location.
+
+The operator may provide `ATHENA_LEASE_ROOT_CATALOG` through existing private,
+untracked process configuration. It is parsed once at startup, not per request.
+The catalog has exactly `version` (integer 1), `qualification`, and `roots`.
+The qualification object has exactly:
+
+```json
+{
+  "storage_namespace": "fictional-storage",
+  "topology_epoch": "epoch-1",
+  "coverage": "whole-entry",
+  "path_semantics": "posix-case-sensitive-normalization-preserving-v1",
+  "alias_closed": true,
+  "families_disjoint": true,
+  "effects": "declared-checkout-files-only"
+}
+```
+
+The identifiers above are fictional coordination labels. Namespace and epoch must
+each match `[a-z0-9][a-z0-9._-]{0,63}`. Other fields must equal those exact literal
+values; booleans must really be JSON booleans. Each of 1–32 root entries has exactly
+`root_key`, `tree_id`, `prefix`, `evidence_sha256`. Keys/family identifiers use
+the same bounded identifier grammar. Evidence is an inert 64-lowercase-hex digest
+of retained operator evidence, never an arbitrary file/URL Athena opens. The
+entire UTF-8 JSON is at most 16384 bytes. Duplicate/unknown fields, duplicate root
+keys, unsupported profiles, malformed values and incomplete qualification refuse
+startup. Unset/empty catalog leaves unknown mode; it does not establish separation.
+Whitespace changes the exact-byte catalog digest.
+
+Qualification is a declaration backed by separately reviewed evidence, not a
+filesystem truth check. It must cover **entire entries**, including every admitted
+descendant/relative offset, plus cross-family relationships in one comparable
+storage namespace and topology epoch. Actual covered overlap within a family must
+imply canonical lexical overlap; different families must have disjoint covered
+surfaces. Interior symlinks, bind mounts, hard-link aliases, case folding or Unicode
+normalization can defeat lexical comparison. Unsupported/unproven entries must be
+omitted; do not label a broad workspace qualified merely to enable coexistence.
+There are no partial-subtree exceptions. Caller-supplied inode, host, branch,
+project or arbitrary root labels never prove disjointness.
+
+Root prefixes are relative POSIX text, bounded to 256 characters; empty is allowed.
+Repeated separators/dot segments collapse; absolute/parent/backslash/drive/control
+spellings refuse. Configured plus selected relative prefix is also bounded to 256.
+Existing declared-path normalization trims outer whitespace, converts backslashes
+to separators, collapses dot/empty segments and rejects absolute/parent/NUL paths.
+Paths are bounded to 256 characters; the full canonical join is bounded to 512.
+Covered work must honor these canonical spellings. No case-folding or Unicode
+normalization is inferred.
+
+Aliases/nested roots use the same family and canonical offset. Every other active
+lease participates, including same-account and hidden issues. Conflict details
+do not disclose the competing issue, holder or paths. Two nonempty fences with
+either origin unresolved conflict even when their relative strings differ.
+A missing/stale explicitly selected root refuses; it never silently falls back.
+Valid qualified distinct families may coexist, as may lexical nonoverlap within
+one qualified family. Empty paths reserve no files.
+
+Lease readers expose the accepted selector or null, and `path_fence`:
+`rooted` = a current qualified declaration bound to this possession generation;
+`unresolved` = a nonempty fence without a usable current binding;
+`issue_only` = no declared file fence. None proves process location, confinement,
+authority or liveness. Internal family/namespace/epoch/evidence metadata is not
+added to these projections.
+
+On active renewal, omitted/null paths and root retain their stored values.
+Explicit `[]` deliberately becomes issue-only with the exact generation, fresh
+issue ETag and atomic audit; it is not permission to continue overlapping file work.
+Root identity/offset changes, including upgrading an active legacy binding, need
+new possession. Equivalent aliases retain the original selector. The official
+client requires an exact normalized explicit-selector and generation echo; it
+cannot confirm a different alias from private catalog evidence. Omit root for an
+ordinary retaining renewal. An unconfirmed success raises a local error, does not
+retry/release, and may already have created/renewed the lease: read current state.
+An idempotent response is historical, not proof of a still-current possession.
+
+Topology/path-semantics/covered-effect changes invalidate qualification **before
+reliance**. Withdraw the catalog through a reviewed configuration rollout,
+requalify and advance the epoch before reuse. An unchanged digest cannot attest
+a retargeted mount. Ordinary file changes are covered only while the invariant
+holds. Shared Git administration and dependency caches are excluded effects;
+checkout bindings never establish their safe separation.
+
+Migration 0081 adds a nullable generation-bound binding; existing rows retain their
+generation/paths and are unresolved. Changed catalog bytes make old bindings
+unresolved, not reinterpreted or forcibly released. Release/yield/complete need not
+have the original catalog installed. Mixed root-aware/root-unaware writers are
+unsupported: old writers can leave stale binding bytes attached to a replaced row.
+Coordinate writer adoption with the reviewed schema/configuration rollout; merely
+swapping back to an old binary is not an accepted rollback. No real catalog should
+be installed until retained topology evidence and rollout review justify it.
+Synthetic qualification tests verify branches, not real topology.
+
 ## Limitations
 
 - An untagged claim cannot be correlated to a replay/check-in run.
@@ -165,7 +273,8 @@ never create actionable handoffs. A full SQLite backup/restore preserves them.
   visibility. The projection flags either kind of drift but does not repair it.
 - Only holders currently marked as agents are projected. A lease retained by a
   reclassified human remains an issue-level fact outside this fleet view.
-- Repository/worktree ownership and conflict detection are not modeled here.
+- Filesystem ownership/location is not established. Qualified declared-root fencing
+  is cooperative coordination, not filesystem enforcement.
 - Blockers and account controls are current facts; replay remains the historical
   event artifact.
 - Reserved characters in run ids can make existing path-parameter replay/lineage

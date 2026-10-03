@@ -23,6 +23,9 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [DESK.md](DESK.md) | `GET /desk` / `my_desk()` — who you are, what is asked of you, what you hold, what changed: one bounded read. |
 | [OFFICE.md](OFFICE.md) | The cubicle inside the desk: one chair per agent, fenced paths, checkout hint. |
 | [WORK_CONTEXT.md](WORK_CONTEXT.md) | The bounded read packet for one issue: the issue, neighbours, blockers, runbook — prefer it over five separate reads. |
+| [EVIDENCE_MANIFEST.md](EVIDENCE_MANIFEST.md) | When freezing or reviewing evidence: versioned documentary bindings through existing attachments and references, never approval. |
+| [CONTINUATION.md](CONTINUATION.md) | When resuming or encountering clipped evidence: select the smallest new delta and recover exact bytes or report PARTIAL. |
+| [CAPABILITY_BASELINE.md](CAPABILITY_BASELINE.md) | Before adopting a source feature: distinguish source presence, dated observations and unknown live capability. |
 | [QUERY.md](QUERY.md) | The work query language (GitHub-shaped, not Jira) — same syntax in the search box, REST, and saved filters. |
 | [RUNS.md](RUNS.md) | Runs are a projection of the append-only activity log: begin, tag writes, heartbeat, replay, lineage. |
 | [RUN_CONTROLS.md](RUN_CONTROLS.md) | Steering a live run by recorded request — between "let it run" and the blunt levers. |

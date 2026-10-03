@@ -8,6 +8,8 @@ import math
 import os
 from pathlib import Path
 
+from athena.core.coordination_roots import parse_catalog
+
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _LOG_LEVELS = frozenset({"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"})
@@ -50,6 +52,12 @@ def _float_env(name: str, default: float, *, minimum: float, inclusive: bool) ->
 
 # The SQLite file Athena stores everything in. Override with the ATHENA_DB env var.
 DB_PATH = Path(os.environ.get("ATHENA_DB", "athena.db"))
+
+# Immutable operator-evidenced declared roots; never request-path filesystem reads.
+try:
+    LEASE_ROOT_CATALOG = parse_catalog(os.environ.get("ATHENA_LEASE_ROOT_CATALOG", ""))
+except ValueError as exc:
+    raise ValueError(f"ATHENA_LEASE_ROOT_CATALOG: {exc}") from exc
 
 # Athena supports a direct loopback listener and an explicitly declared Tailscale
 # listener. It intentionally has no public mode: proxies, tunnels, NAT, container

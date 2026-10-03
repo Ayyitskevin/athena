@@ -1,0 +1,400 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Inert documentary evidence manifest v1; not an Athena runtime validator",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "mode",
+    "id",
+    "recorded_at",
+    "handoff",
+    "subjects",
+    "source_refs",
+    "verdicts",
+    "observations",
+    "checks",
+    "predecessors",
+    "rolling_controls",
+    "limitations"
+  ],
+  "properties": {
+    "schema": {
+      "const": "athena.evidence_manifest.v1"
+    },
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "mode": {
+      "const": "documentary_only"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "handoff": {
+      "$ref": "#/$defs/record"
+    },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "record",
+          "scope"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "record": {
+            "$ref": "#/$defs/record"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 20,
+      "minItems": 1
+    },
+    "source_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "root_label",
+          "git_ref",
+          "provenance"
+        ],
+        "properties": {
+          "root_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "git_ref": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "provenance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 20,
+      "minItems": 0
+    },
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "record",
+          "subject_ids",
+          "reported_verdict",
+          "scope"
+        ],
+        "properties": {
+          "record": {
+            "$ref": "#/$defs/record"
+          },
+          "subject_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4000
+            },
+            "maxItems": 20,
+            "minItems": 1
+          },
+          "reported_verdict": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 20,
+      "minItems": 0
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "actor_label",
+          "session_id",
+          "provenance",
+          "scope"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "actor_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "$ref": "#/$defs/record"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 20,
+      "minItems": 0
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status",
+          "command",
+          "cwd",
+          "exit_code",
+          "observed",
+          "limits"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "status": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "PARTIAL",
+              "UNRUN"
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observed": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "limits": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 40,
+      "minItems": 0
+    },
+    "predecessors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "record",
+          "proposition",
+          "disposition",
+          "successor"
+        ],
+        "properties": {
+          "record": {
+            "$ref": "#/$defs/record"
+          },
+          "proposition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "disposition": {
+            "enum": [
+              "context_only",
+              "supersedes_only"
+            ]
+          },
+          "successor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/record"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "maxItems": 10,
+      "minItems": 0
+    },
+    "rolling_controls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "record",
+          "observed_at",
+          "scope"
+        ],
+        "properties": {
+          "record": {
+            "$ref": "#/$defs/record"
+          },
+          "observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        }
+      },
+      "maxItems": 10,
+      "minItems": 0
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4000
+      },
+      "maxItems": 20,
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "path",
+        "sha256",
+        "byte_count",
+        "git_ref"
+      ],
+      "properties": {
+        "root": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,63}$"
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 1000,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))[^\\u0000]+$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "git_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}

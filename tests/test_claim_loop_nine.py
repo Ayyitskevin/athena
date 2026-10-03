@@ -1,6 +1,7 @@
 """The 8→9 loop: desk narration, optional path fence, honest complete."""
 
 from fastapi.testclient import TestClient
+import pytest
 
 from athena.aegis import issue_commands, issues, lease_commands
 from athena.core import db
@@ -49,7 +50,11 @@ def _tag(conn, issue):
     return issue_etags.current_etag(conn, issues.get_issue(conn, issue["id"]))
 
 
-def test_declared_paths_conflict_across_issues(tmp_path):
+@pytest.mark.parametrize(
+    "other_path", ["src/athena/aegis", "src/athena/mentor/pages.py"]
+)
+def test_unresolved_declared_paths_conflict_across_issues(tmp_path, other_path):
+    # Without a qualified root, lexical nonoverlap does not prove separation.
     conn = _migrated(tmp_path, "paths.db")
     first, second = _delegated_pair(conn)
     lease_commands.claim_issue(
@@ -59,26 +64,16 @@ def test_declared_paths_conflict_across_issues(tmp_path):
         if_match=[_tag(conn, first)],
         paths=["src/athena/aegis/api.py"],
     )
-    try:
+    with pytest.raises(issue_commands.IssueCommandError) as caught:
         lease_commands.claim_issue(
             conn,
             actor=_actor(conn, 3),
             issue_id=second["id"],
             if_match=[_tag(conn, second)],
-            paths=["src/athena/aegis"],
+            paths=[other_path],
         )
-        raise AssertionError("prefix overlap should 409")
-    except issue_commands.IssueCommandError as exc:
-        assert exc.kind == "conflict"
-        assert "src/athena/aegis" in exc.detail
-    other = lease_commands.claim_issue(
-        conn,
-        actor=_actor(conn, 3),
-        issue_id=second["id"],
-        if_match=[_tag(conn, second)],
-        paths=["src/athena/mentor/pages.py"],
-    )
-    assert other["declared_paths"] == ["src/athena/mentor/pages.py"]
+    assert caught.value.kind == "conflict"
+    assert caught.value.detail == "declared paths conflict with another active lease"
 
 
 def test_path_overlap_uses_directory_boundaries(tmp_path):

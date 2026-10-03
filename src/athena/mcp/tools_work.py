@@ -132,12 +132,18 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         generation: LeaseGeneration | None = None,
         lease_seconds: int | None = None,
         paths: list[str] | None = None,
+        coordination_root: dict | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Claim or renew an issue only against the exact root issue revision reviewed.
         Copy `issue_etag` from my_desk() or get_issue_work_context — never the
-        work-context packet's top-level `_etag`. Optional `paths` is a file fence:
-        repo-relative POSIX paths; overlap with another active lease is 409.
+        work-context packet's top-level `_etag`. Optional `paths` declares relative
+        POSIX files. coordination_root selects a current qualified operator catalog
+        digest/root_key/relative_prefix, not authority or caller-location proof.
+        Unknown nonempty origins conflict conservatively. Renewal omission/null
+        retains root/paths; explicit [] means issue-only under generation/ETag/audit.
+        Actual root changes need new possession. Explicit root echo must confirm;
+        an unconfirmed success may already exist: read state, never weaken/retry.
         Omit generation to acquire only a free/expired lease. lease_seconds defaults
         to 30 minutes."""
         return client.claim_issue(
@@ -146,6 +152,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             generation=generation,
             lease_seconds=lease_seconds,
             paths=paths,
+            coordination_root=coordination_root,
             idempotency_key=idempotency_key,
         )
 

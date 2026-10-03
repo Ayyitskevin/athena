@@ -21,7 +21,9 @@ import secrets
 import sqlite3
 from typing import TypeGuard
 
+from athena import config
 from athena.aegis import statuses
+from athena.core import coordination_roots
 
 # A claim lasts this long by default before it must be renewed (re-claimed). Long enough
 # for a real work session, short enough that an abandoned claim frees the work within the
@@ -43,7 +45,7 @@ def is_valid_generation(value: object) -> TypeGuard[str]:
 
 _SELECT = (
     "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
+    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
     "(l.expires_at > datetime('now')) AS active "
     "FROM issue_leases l JOIN users u ON u.id = l.holder_id"
 )
@@ -54,7 +56,7 @@ _SELECT = (
 #: Callers append their own WHERE/ORDER/LIMIT and pass the stamp first.
 _HELD_SELECT = (
     "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
+    "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
     "(l.expires_at > ?) AS active "
     "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
 )
@@ -83,6 +85,16 @@ def _row_to_lease(row: sqlite3.Row) -> dict:
     lease = dict(row)
     lease["active"] = bool(lease["active"])  # SQLite returns 0/1 for the comparison
     lease["declared_paths"] = _parse_declared_paths(lease.get("declared_paths"))
+    lease["coordination_root"] = coordination_roots.read_binding(
+        lease.get("coordination_root"), lease["generation"], config.LEASE_ROOT_CATALOG
+    )
+    lease["path_fence"] = (
+        "issue_only"
+        if not lease["declared_paths"]
+        else "rooted"
+        if lease["coordination_root"] is not None
+        else "unresolved"
+    )
     return lease
 
 
@@ -118,7 +130,7 @@ def leases_held_by(
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
     rows = conn.execute(
         "SELECT l.issue_id, l.holder_id, u.name AS holder_name, "
-        "l.claimed_at, l.expires_at, l.generation, l.declared_paths, "
+        "l.claimed_at, l.expires_at, l.generation, l.declared_paths, l.coordination_root, "
         "(l.expires_at > ?) AS active "
         "FROM issue_leases l JOIN users u ON u.id = l.holder_id "
         "WHERE l.holder_id = ? ORDER BY l.claimed_at DESC, l.issue_id DESC LIMIT ?",
@@ -247,7 +259,9 @@ def upsert_lease(
     lease_seconds: int,
     generation: str | None = None,
     declared_paths: list[str] | None = None,
+    coordination_root: dict | None = None,
     *,
+    preserve_coordination_root: bool = False,
     commit: bool = True,
 ) -> dict:
     """Acquire or renew the lease with one opaque possession generation.
@@ -269,18 +283,21 @@ def upsert_lease(
     paths_json = json.dumps(list(declared_paths or []))
     conn.execute(
         "INSERT INTO issue_leases "
-        "(issue_id, holder_id, claimed_at, expires_at, generation, declared_paths) "
-        "VALUES (?, ?, datetime('now'), datetime('now', ?), ?, ?) "
+        "(issue_id, holder_id, claimed_at, expires_at, generation, declared_paths, coordination_root) "
+        "VALUES (?, ?, datetime('now'), datetime('now', ?), ?, ?, ?) "
         "ON CONFLICT(issue_id) DO UPDATE SET "
         "holder_id = excluded.holder_id, claimed_at = excluded.claimed_at, "
         "expires_at = excluded.expires_at, generation = excluded.generation, "
-        "declared_paths = excluded.declared_paths",
+        "declared_paths = excluded.declared_paths, coordination_root = "
+        "CASE WHEN ? THEN issue_leases.coordination_root ELSE excluded.coordination_root END",
         (
             issue_id,
             holder_id,
             f"+{lease_seconds} seconds",
             lease_generation,
             paths_json,
+            coordination_roots.encode_binding(coordination_root, lease_generation),
+            preserve_coordination_root,
         ),
     )
     if commit:
