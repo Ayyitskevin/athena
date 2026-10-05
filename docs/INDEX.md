@@ -54,6 +54,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 |---|---|
 | [TRAIL_INTEGRITY.md](TRAIL_INTEGRITY.md) | The hash chain over the activity log — tamper-evidence for the append-only trail. |
 | [UNDO.md](UNDO.md) | Undo by compensation: reversing agent writes without mutating an append-only history. |
+| [plans/undo-agent-verbs.md](plans/undo-agent-verbs.md) | Working spec for classifying claim, parent, sprint, and link verbs. UNDO.md stays the design of record until a slice lands. |
 | [EXCEPTION_SURFACES.md](EXCEPTION_SURFACES.md) | The attention rollup and security signals — surfacing decisions, not noise. |
 | [WORKFLOW_GATES.md](WORKFLOW_GATES.md) | The opt-in blocked-issue close policy (off by default). |
 | [AUTOMATION_SCHEDULES.md](AUTOMATION_SCHEDULES.md) | Scheduled automation rules: trigger types, occurrence state, firing history. |

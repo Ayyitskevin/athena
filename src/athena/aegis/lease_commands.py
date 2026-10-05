@@ -28,9 +28,9 @@ from athena.aegis import (
 )
 from athena.aegis.issue_commands import (
     IssueCommandError,
-    _check_issue_precondition,
-    _require_issue_writer,
-    _visible_issue,
+    check_issue_precondition,
+    require_issue_writer,
+    visible_issue,
 )
 from athena.core import db, identity
 
@@ -199,7 +199,7 @@ def claim_issue(
     Read-then-write runs under BEGIN IMMEDIATE, so two agents racing to claim the same
     free issue serialize: the first acquires, the second re-reads the now-active lease and
     is rejected."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     if not (leases.MIN_LEASE_SECONDS <= lease_seconds <= leases.MAX_LEASE_SECONDS):
         raise IssueCommandError(
             "invalid",
@@ -207,7 +207,7 @@ def claim_issue(
             f"{leases.MAX_LEASE_SECONDS}",
         )
     with db.transaction(conn, immediate=True):
-        issue = _visible_issue(conn, actor, issue_id)
+        issue = visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)
         renewed = False
@@ -231,7 +231,7 @@ def claim_issue(
                 "lease_generation_mismatch",
                 "lease generation is stale; acquire again without a generation",
             )
-        _check_issue_precondition(
+        check_issue_precondition(
             conn,
             issue,
             if_match,
@@ -364,7 +364,7 @@ def yield_claim(
     assignment, contributors, status, and dependencies, and never auto-routes
     the issue. The lease deletion and run-stamped activity event are atomic.
     """
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     reason, note = _normalize_claim_yield(reason, note)
     normalized_attempted_work = _normalize_handoff_text(
         attempted_work,
@@ -389,7 +389,7 @@ def yield_claim(
     assert normalized_blocking_question is not None
     assert normalized_resume_instructions is not None
     with db.transaction(conn, immediate=True):
-        _visible_issue(conn, actor, issue_id)
+        visible_issue(conn, actor, issue_id)
         existing = leases.get_lease(conn, issue_id)
         if existing is None or not existing["active"]:
             raise IssueCommandError("conflict", "no active claim to yield")
@@ -450,7 +450,7 @@ def resume_claim_handoff(
     This transition means the context was received. It never asserts that the
     blocker was solved, work completed, approval granted, or instructions trusted.
     """
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     normalized_token = _normalize_handoff_token(handoff_token)
     normalized_note = _normalize_handoff_text(
         resume_note,
@@ -459,7 +459,7 @@ def resume_claim_handoff(
         required=False,
     )
     with db.transaction(conn, immediate=True):
-        _visible_issue(conn, actor, issue_id)
+        visible_issue(conn, actor, issue_id)
         existing = leases.get_lease(conn, issue_id)
         if existing is None or not existing["active"]:
             raise IssueCommandError(
@@ -514,9 +514,9 @@ def complete_claim(
     row, or it belongs to someone else; 404 for an unseeable issue. Completion releases the
     coordination lease only — it does not change the issue's status; the agent transitions
     status through the ordinary (audited) status command."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
-        issue = _visible_issue(conn, actor, issue_id)
+        issue = visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)
         mine = existing is not None and existing["holder_id"] == actor["id"]
@@ -594,9 +594,9 @@ def decline_delegation(
     with IssueCommandError('not_found') if the actor was not a delegated contributor. Any
     lease the actor held on the issue is released with the same act (giving up the
     delegation gives up the claim)."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
-        _visible_issue(conn, actor, issue_id)
+        visible_issue(conn, actor, issue_id)
         if not contributors_data.is_contributor(conn, issue_id, actor["id"]):
             raise IssueCommandError(
                 "not_found", "you are not a delegated contributor on this issue"

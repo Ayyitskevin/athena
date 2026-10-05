@@ -1,21 +1,21 @@
 """Shared Aegis REST adapters.
 
 Issue, project, and claim routes share the If-Match parser, the issue-command
-status map, and the visibility read. Those helpers live here so a route module
-does not import another route module's private names. This module does not
-import ``aegis.api``: ``api`` imports it, then side-imports the route modules
-that attach to its routers.
+status map, the visibility read, and the label/ETag composition on an issue.
+Those helpers live here so a route module does not import another route
+module's private names. This module does not import ``aegis.api``: ``api``
+imports it, then side-imports the route modules that attach to its routers.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from athena.aegis import issue_commands, issues
-from athena.core import access
+from athena.aegis import issue_commands, issue_etags, issues
+from athena.core import access, labels
 
 _ISSUE_COMMAND_STATUS = {
     "unauthorized": 401,
@@ -158,14 +158,48 @@ PROJECT_POLICY_STATUS = {
 
 
 def issue_for_read(conn: sqlite3.Connection, issue_id: int, actor: dict | None) -> dict:
-    """Fetch an issue the actor may READ, or raise 404. The read counterpart of
-    ``api._issue_for_write``: a missing issue and one in a private project the actor can't see
-    are the same 404, so a sub-resource (comments/children/links/contributors/
-    attachments) never leaks for a hidden issue. Backlog issues (no project) read like
-    a public one. No write check — reads stay open within what's visible."""
+    """Fetch an issue the actor may READ, or raise 404.
+
+    A missing issue and one in a private project the actor can't see are the
+    same 404, so a sub-resource (comments, children, links, contributors,
+    attachments) never leaks for a hidden issue. Backlog issues (no project)
+    read like a public one. This helper does not check write permission; reads
+    stay open within what is visible. Mutations use
+    ``issue_commands.visible_issue`` and ``issue_commands.require_issue_writer``.
+    """
     issue = issues.get_issue(conn, issue_id)
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
         raise HTTPException(status_code=404, detail="no such issue")
     return issue
+
+
+def with_labels(conn: sqlite3.Connection, issue: dict) -> dict:
+    """Attach the issue's labels under a "labels" key.
+
+    Issues own their core row (issues.py); labels are composed on here so the
+    two modules stay in their lanes and reads still come back as one object
+    for the client. Saved filters use the same helper as the issue routes.
+    """
+    issue["labels"] = labels.labels_for_issue(conn, issue["id"])
+    return issue
+
+
+def tagged_issue(
+    conn: sqlite3.Connection,
+    issue: dict,
+    response: Response,
+) -> dict:
+    """Return the exact public representation and its matching strong ETag."""
+    public, current_etag = issue_etags.resource_and_etag(conn, issue)
+    response.headers["ETag"] = current_etag
+    return public
+
+
+def with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
+    """Same as with_labels but for a list, using one bulk query (no N+1)."""
+    by_issue = labels.labels_for_issues(conn, [r["id"] for r in rows])
+    for row in rows:
+        row["labels"] = by_issue.get(row["id"], [])
+    return rows

@@ -90,7 +90,8 @@ BLOCKED_CLOSE_POLICY_ERROR_CODE = "blocked_issue_close_policy"
 BLOCKED_CLOSE_POLICY_ERROR_DETAIL = "blocked issue close policy denied this update"
 
 
-def _require_issue_writer(actor: dict | None) -> dict:
+def require_issue_writer(actor: dict | None) -> dict:
+    """The issue-write gate: a signed-in writer whose token carries issue:write."""
     if actor is None:
         raise IssueCommandError("unauthorized", "authentication required")
     if not identity.can_write(actor):
@@ -102,7 +103,8 @@ def _require_issue_writer(actor: dict | None) -> dict:
     return actor
 
 
-def _visible_issue(conn: sqlite3.Connection, actor: dict, issue_id: int) -> dict:
+def visible_issue(conn: sqlite3.Connection, actor: dict, issue_id: int) -> dict:
+    """The issue this actor may see. Missing and hidden are both not_found."""
     issue = issues.get_issue(conn, issue_id)
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
@@ -122,10 +124,10 @@ def _modifiable_issue(conn: sqlite3.Connection, issue: dict, actor: dict) -> dic
 
 
 def _writable_issue(conn: sqlite3.Connection, actor: dict, issue_id: int) -> dict:
-    return _modifiable_issue(conn, _visible_issue(conn, actor, issue_id), actor)
+    return _modifiable_issue(conn, visible_issue(conn, actor, issue_id), actor)
 
 
-def _check_issue_precondition(
+def check_issue_precondition(
     conn: sqlite3.Connection,
     issue: dict,
     if_match: list[str] | None,
@@ -188,8 +190,8 @@ def get_writable_issue(
     # Preserve the browser's visibility-first contract: a hidden or missing
     # issue returns the same 404 for every signed-in actor. Only a visible issue
     # proceeds to the role/scope and creator-or-assignee checks.
-    issue = _visible_issue(conn, actor, issue_id)
-    _require_issue_writer(actor)
+    issue = visible_issue(conn, actor, issue_id)
+    require_issue_writer(actor)
     return _modifiable_issue(conn, issue, actor)
 
 
@@ -207,7 +209,7 @@ def create_issue(
 
     Metered: an actor with a durable budget spends one action here (see
     ``core.budgets``). Unbudgeted actors — the default — are unaffected."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     if not isinstance(title, str):
         raise IssueCommandError("invalid", "title must be a string")
     if not isinstance(body, str):
@@ -278,7 +280,7 @@ def update_issue(
 
     Metered: an actor with a durable budget spends one action here (see
     ``core.budgets``). Unbudgeted actors — the default — are unaffected."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     return _update_issue(
         conn,
         actor=actor,
@@ -510,7 +512,7 @@ def _update_issue(
         if actor.get("paused_at"):
             raise IssueCommandError("forbidden", "account is paused")
         if enforce_actor_policy:
-            actor = _require_issue_writer(actor)
+            actor = require_issue_writer(actor)
             before = _writable_issue(conn, actor, issue_id)
         else:
             if actor.get("email") != AUTOMATION_ACTOR_EMAIL or not actor.get(
@@ -594,7 +596,7 @@ def _update_issue(
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two
         # writers holding the same tag cannot both pass and mutate.
-        _check_issue_precondition(conn, before, if_match)
+        check_issue_precondition(conn, before, if_match)
 
         final_status = status_value or before["status"]
         if (
@@ -702,7 +704,7 @@ def set_issue_archived(
     atomically. Same gate as any issue write (visible + creator/assignee/
     delegated/admin). Idempotent: re-archiving an archived issue re-stamps the
     time but records no new event. Raises IssueCommandError(404/403)."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         before = _writable_issue(conn, actor, issue_id)
         updated = issues.set_archived(conn, issue_id, archived, commit=False)
@@ -731,7 +733,7 @@ def set_issue_parent(
     a missing one gives, so a write can't nest under (or probe) a private issue.
     Same write gate as status/assign; validation (self, cycle, existence) runs in
     the command. Raises IssueCommandError(404/403/422). No event when unchanged."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         before = _writable_issue(conn, actor, issue_id)
         if parent_id is not None and not access.can_see_issue(conn, actor, parent_id):
@@ -783,7 +785,7 @@ def _resolve_write_actor(
     if resolved.get("paused_at"):
         raise IssueCommandError("forbidden", "account is paused")
     if enforce_actor_policy:
-        resolved = _require_issue_writer(resolved)
+        resolved = require_issue_writer(resolved)
         return resolved, _writable_issue(conn, resolved, issue_id)
     if resolved.get("email") != AUTOMATION_ACTOR_EMAIL or not resolved.get("is_agent"):
         raise IssueCommandError("forbidden", "automation actor required")
@@ -903,7 +905,7 @@ def detach_label(
     """Detach a label and record the 'unlabeled' event atomically. Same write gate.
     Raises IssueCommandError(404/403) for the issue gate, (404) when the label isn't
     on this issue."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         issue = _writable_issue(conn, actor, issue_id)
         if not labels.remove_label_from_issue(conn, issue_id, label_id, commit=False):
@@ -1010,7 +1012,7 @@ def remove_contributor(
     """Remove a contributor and record the 'removed_contributor' event atomically.
     Same write gate. Raises IssueCommandError(404/403) for the issue gate, (404)
     when the user isn't a contributor. Returns the remaining contributor list."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         _writable_issue(conn, actor, issue_id)
         if not contributors_data.remove_contributor(
@@ -1046,7 +1048,7 @@ def link_issues(
     so a write can't probe a private issue's existence. Idempotent: re-adding an
     identical edge records no second event. Returns issue_id's relationship summary.
     """
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         _writable_issue(conn, actor, issue_id)
         target = issues.get_by_ref(conn, target_ref)
@@ -1091,7 +1093,7 @@ def unlink_issues(
     as link_issues. Raises not_found with detail "no such relationship" when no such
     edge exists — REST turns that into a 404; the HTML form treats it as an idempotent
     redirect (its buttons only appear for edges that exist). Returns the summary."""
-    actor = _require_issue_writer(actor)
+    actor = require_issue_writer(actor)
     with db.transaction(conn, immediate=True):
         _writable_issue(conn, actor, issue_id)
         removed = dependencies.remove_link(

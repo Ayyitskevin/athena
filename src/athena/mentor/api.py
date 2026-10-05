@@ -204,15 +204,16 @@ class PageCommentOut(BaseModel):
 def _with_labels(conn: sqlite3.Connection, page: dict) -> dict:
     """Attach a page's labels under a "labels" key, so PageOut carries them. The page
     OWNS its core columns; labels are a join, resolved here in the one place every
-    page response funnels through (the Mentor twin of aegis _with_labels)."""
+    page response funnels through (the Mentor twin of aegis.rest_support.with_labels)."""
     page["labels"] = labels.labels_for_page(conn, page["id"])
     return page
 
 
 def _with_labels_many(conn: sqlite3.Connection, page_rows: list[dict]) -> list[dict]:
     """Labels for a list of pages, attached in place — ONE bulk query, not one per
-    page (a wiki space can hold hundreds). The Mentor twin of aegis _with_labels_many,
-    now on the same core bulk helper so the two can't drift again."""
+    page (a wiki space can hold hundreds). The Mentor twin of
+    aegis.rest_support.with_labels_many, on the same core bulk helper so the two
+    can't drift again."""
     by_page = labels.labels_for_pages(conn, [p["id"] for p in page_rows])
     for page in page_rows:
         page["labels"] = by_page.get(page["id"], [])
