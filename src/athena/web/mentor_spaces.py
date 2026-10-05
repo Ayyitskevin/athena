@@ -25,12 +25,13 @@ from athena.mentor import (
 )
 from athena.web import html_export
 from athena.web.csrf import verify_csrf
-from athena.web.router import _readonly_response, get_templates
+from athena.web.browsing import readonly_response
+from athena.web.router import get_templates
 
 from athena.web.mentor import (
-    _signin_required,
-    _tree_rows,
-    _write_required,
+    signin_required,
+    tree_rows,
+    write_required,
 )
 
 router = APIRouter()
@@ -74,10 +75,10 @@ def create_space(
     key normalized to UPPERCASE (so "eng" == "ENG"), key + name required, duplicate
     key → 409. Actor is the session, never a form field."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "create spaces")
+    err = write_required(user, "create spaces")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
     key = key.strip().upper()
     name = name.strip()
@@ -112,10 +113,10 @@ def delete_space(
     409 if the space still holds pages: we don't cascade, so the pages must be moved
     or deleted first. On success the space is gone, so we 303 back to /mentor."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "delete spaces")
+    err = write_required(user, "delete spaces")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
     space = spaces.get_space(conn, space_id)
     if space is None:
@@ -157,7 +158,7 @@ def edit_space_form(
     so a logged-out caller gets a sign-in prompt rather than a dead form."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit spaces")
+    err = write_required(user, "edit spaces")
     if err is not None:
         return err
 
@@ -188,10 +189,10 @@ def edit_space(
     uppercased, key + name required, a key clash with a DIFFERENT space → 409.
     303 back to the space detail on success."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "edit spaces")
+    err = write_required(user, "edit spaces")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
     before = spaces.get_space(conn, space_id)
     # Can't edit a space you can't see — a private space reads as "not found", no leak.
@@ -245,7 +246,7 @@ def _authorize_space_manage(conn, space_id: int, user: dict):
             '<div class="error">Space not found.</div>', status_code=404
         )
     if not identity.can_write(user):
-        return None, _readonly_response()
+        return None, readonly_response()
     if space["created_by"] != user["id"] and not identity.is_admin(user):
         return None, HTMLResponse(
             '<div class="blocked">Only the space creator or an admin may manage access.</div>',
@@ -263,7 +264,7 @@ def space_access(
     templates = get_templates()
     user = getattr(request.state, "user", None)
     if user is None:
-        return _signin_required("manage access")
+        return signin_required("manage access")
     space, err = _authorize_space_manage(conn, space_id, user)
     if err is not None:
         return err
@@ -290,7 +291,7 @@ def space_set_visibility(
     private auto-adds the creator to the roster. 303 back to the access page."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return _signin_required("manage access")
+        return signin_required("manage access")
     space, err = _authorize_space_manage(conn, space_id, user)
     if err is not None:
         return err
@@ -320,7 +321,7 @@ def space_add_member(
     400 on a missing/blank user; a re-add is idempotent. 303 back to the access page."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return _signin_required("manage access")
+        return signin_required("manage access")
     _, err = _authorize_space_manage(conn, space_id, user)
     if err is not None:
         return err
@@ -352,7 +353,7 @@ def space_remove_member(
     (they weren't a member) still 303s back — the roster reflects reality."""
     user = getattr(request.state, "user", None)
     if user is None:
-        return _signin_required("manage access")
+        return signin_required("manage access")
     _, err = _authorize_space_manage(conn, space_id, user)
     if err is not None:
         return err
@@ -409,7 +410,7 @@ def space_detail(
         name="mentor/space_detail.html",
         context={
             "space": space,
-            "tree": _tree_rows(page_rows),
+            "tree": tree_rows(page_rows),
             # Flat list (alpha) for the optional "nest under" parent select.
             "all_pages": page_rows,
             # The space's template pages, driving the "new page from template"
@@ -445,10 +446,10 @@ def open_daily_note(
     so a double-click cannot produce two notes.
     """
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "open the daily note")
+    err = write_required(user, "open the daily note")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
@@ -479,10 +480,10 @@ def create_page_from_template(
     """Create a page whose body starts as a template's. The command re-checks that
     the chosen page is still a template under the write lock."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "create pages")
+    err = write_required(user, "create pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
         conn, user, space_id
     ):
@@ -524,10 +525,10 @@ def create_page(
     THIS SAME SPACE (the cross-space tree rule the FK can't express). 303 to the new
     page on success."""
     user = getattr(request.state, "user", None)
-    err = _write_required(user, "create pages")
+    err = write_required(user, "create pages")
     if err is not None:
         return err
-    assert user is not None, "_write_required accepted a missing user"
+    assert user is not None, "write_required accepted a missing user"
 
     # Can't add a page to a space you can't see — a private space reads as "not found".
     if spaces.get_space(conn, space_id) is None or not access.can_see_space(
@@ -611,7 +612,7 @@ def export_space_html(
 
 def _space_visible_or_response(conn, space_id: int, user):
     """(space, None) when this user may read the space, (None, 404 response) otherwise —
-    the space twin of _page_visible_or_response, so "private" and "missing" stay
+    the space twin of page_visible_or_response, so "private" and "missing" stay
     indistinguishable to someone who may not see it.
 
     The message is a fixed string, like the page twin's: echoing the requested id back

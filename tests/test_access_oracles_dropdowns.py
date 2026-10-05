@@ -2,7 +2,7 @@
 
 Three remaining gaps: (1) GET /issues/{id}/backlinks used a bare existence check, so a
 hidden issue returned 200 (with a viewer-gated list) vs 404 for a missing one — a
-200-vs-404 existence oracle; it now funnels through _issue_for_read. (2) The REST
+200-vs-404 existence oracle; it now funnels through issue_for_read. (2) The REST
 privacy-manage gates (_project_for_privacy / _space_for_privacy) returned 403 for a
 private container the actor can't see, leaking its existence; they now 404 first, like
 their web twins. (3) The issue-list / board status filter and the sprint filter

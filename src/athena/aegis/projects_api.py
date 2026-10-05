@@ -32,10 +32,12 @@ from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
 from athena.aegis.api import (
     STATUS_BY_KIND,
-    _PROJECT_POLICY_PRECONDITION_HTTP,
-    _PROJECT_POLICY_STATUS,
-    _if_match_values,
     projects_router,
+)
+from athena.aegis.rest_support import (
+    PROJECT_POLICY_PRECONDITION_HTTP,
+    PROJECT_POLICY_STATUS,
+    if_match_values,
 )
 
 
@@ -131,7 +133,7 @@ def _project_policy_error_response(
     exc: project_commands.ProjectPolicyCommandError,
 ) -> JSONResponse:
     """Map guarded policy failures without weakening project visibility."""
-    spec = _PROJECT_POLICY_PRECONDITION_HTTP.get(exc.kind)
+    spec = PROJECT_POLICY_PRECONDITION_HTTP.get(exc.kind)
     if spec is not None:
         status_code, code = spec
         headers = {}
@@ -145,7 +147,7 @@ def _project_policy_error_response(
             headers=headers,
         )
     raise HTTPException(
-        status_code=_PROJECT_POLICY_STATUS[exc.kind], detail=exc.detail
+        status_code=PROJECT_POLICY_STATUS[exc.kind], detail=exc.detail
     ) from exc
 
 
@@ -234,7 +236,7 @@ def set_project_policy(
             actor=actor,
             project_id=project_id,
             enabled=payload.block_agent_closes_when_blocked,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
         )
     except project_commands.ProjectPolicyCommandError as exc:
         return _project_policy_error_response(exc)

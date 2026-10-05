@@ -1,10 +1,9 @@
-"""Mentor web surface: the browser-facing thin client over the spaces/pages API.
+"""Shared Mentor browser gates.
 
-Mirrors web/auth.py's split-router shape (its own APIRouter, templates fetched
-via web.router.get_templates) and web/router.py's Aegis conventions. It owns NO
-data: every route reads through mentor.spaces / mentor.pages (the same data-access
-the REST API uses) and every write is gated on the browser session
-(request.state.user), never a form field — the cardinal AGENTS.md rule.
+The page, space, and graph routes live in mentor_pages, mentor_spaces, and
+mentor_graph. This module owns the sign-in, write, and visibility checks those
+routes share, so they do not import private names from each other. It owns no
+data: every check reads through mentor.pages and core.access.
 
 Mentor's authorization is deliberately simpler than Aegis's: reads are open and
 writes are open to ANY authenticated actor (a page has no creator-only lock — it's
@@ -26,15 +25,12 @@ from athena.mentor import (
     pages,
 )
 
-from athena.web.router import _readonly_response
-
-# Attachment-command refusal codes this browser adapter answers with.
-_ATTACHMENT_STATUS_BY_KIND = {"invalid": 422, "not_found": 404, "forbidden": 403}
+from athena.web.browsing import readonly_response
 
 router = APIRouter()
 
 
-def _signin_required(verb: str) -> HTMLResponse:
+def signin_required(verb: str) -> HTMLResponse:
     """The 401 body shown when a logged-out browser tries to write."""
     return HTMLResponse(
         f'<div class="blocked">Please <a href="/login">sign in</a> to {verb}.</div>',
@@ -42,15 +38,15 @@ def _signin_required(verb: str) -> HTMLResponse:
     )
 
 
-def _write_required(user: dict | None, verb: str) -> HTMLResponse | None:
+def write_required(user: dict | None, verb: str) -> HTMLResponse | None:
     if user is None:
-        return _signin_required(verb)
+        return signin_required(verb)
     if not identity.can_write(user):
-        return _readonly_response()
+        return readonly_response()
     return None
 
 
-def _page_visible_or_response(conn, page_id, user):
+def page_visible_or_response(conn, page_id, user):
     """Return (page, None) if the user may SEE this page (its space is visible to them),
     else (None, 404 response). The web write-side visibility gate — a page in a private
     space the user can't read is "not found", so its existence and content never leak
@@ -64,7 +60,7 @@ def _page_visible_or_response(conn, page_id, user):
     return page, None
 
 
-def _tree_rows(page_rows: list[dict]) -> list[dict]:
+def tree_rows(page_rows: list[dict]) -> list[dict]:
     """Flatten a space's pages into display order with a nesting depth on each.
 
     The data layer hands us a flat list (alphabetical by title, each row carrying
@@ -89,24 +85,3 @@ def _tree_rows(page_rows: list[dict]) -> list[dict]:
 
     walk(None, 0)
     return ordered
-
-
-# --- The knowledge graph ----------------------------------------------------
-
-
-# --- Spaces -----------------------------------------------------------------
-
-
-# --- Space access: privacy toggle + member management (web) ----------------
-#
-# The Mentor twin of the project access page. Managing access is creator-OR-admin
-# (wider than delete, creator-only), so it uses its own gate rather than _write_required.
-
-
-# --- Pages ------------------------------------------------------------------
-
-
-# --- Page comments ----------------------------------------------------------
-
-
-# --- Page labels ------------------------------------------------------------

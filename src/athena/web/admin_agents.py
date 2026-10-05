@@ -43,9 +43,9 @@ from athena.web.router import get_templates
 from athena.workflows import fleet_assign_commands
 
 from athena.web.admin import (
-    _ACTIVE_WORK_PRIVATE_HEADERS,
-    _admin_required,
-    _selected_scopes,
+    ACTIVE_WORK_PRIVATE_HEADERS,
+    admin_required,
+    selected_scopes,
 )
 
 router = APIRouter()
@@ -122,10 +122,10 @@ def agents_admin(
 ):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     # Post/redirect/get carries the outcome back as a query param so a refresh
     # doesn't re-post the destructive action.
     if revoked is not None:
@@ -198,7 +198,7 @@ def fleet_roster_page(
     """Who we declared, plus assign-to-desk + optional Buzz radio."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     notice = None
@@ -231,7 +231,7 @@ def fleet_assign_issue(
 ):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     assert user is not None
@@ -299,10 +299,10 @@ def onboard_agent(
     never ride a query string."""
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     # Validation (blank email/name, missing scopes) lives in the command — the
     # except branch below renders its message inline.
     try:
@@ -311,7 +311,7 @@ def onboard_agent(
             actor=user,
             name=name,
             email=email or None,
-            scopes=_selected_scopes(
+            scopes=selected_scopes(
                 scope_read, scope_issue_write, scope_docs_write, scope_admin
             ),
             token_name=token_name.strip() or None,
@@ -357,10 +357,10 @@ def decide_approval(
     MCP call. Approving opens the gate for exactly one retry by the requester; it
     does not perform the action."""
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     try:
         approvals_api.decide_for_actor(
             conn,
@@ -393,10 +393,10 @@ def request_worker_kill(
     instruction and cannot end a process. The worker learns of it on its next
     heartbeat, and the registry reports only what has actually been said."""
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     withdrawing = cancel.strip().lower() in ("1", "true", "on", "yes")
     try:
         if withdrawing:
@@ -426,10 +426,10 @@ def set_approval_policy(
 ):
     """Gate or ungate an action kind for one agent."""
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     try:
         if gate == "off":
             approval_commands.clear_policy(
@@ -464,10 +464,10 @@ def set_agent_budget(
     """Set an agent's durable action ceiling from the cockpit — the same command
     the REST endpoint and MCP tool call, so the three cannot drift."""
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     raw = action_limit.strip()
     if not raw.isdigit():
         return RedirectResponse(
@@ -496,10 +496,10 @@ def clear_agent_budget(
 ):
     """Return an agent to unlimited metered writes. Idempotent."""
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
-    assert user is not None, "_admin_required accepted a missing user"
+    assert user is not None, "admin_required accepted a missing user"
     budget_commands.clear_budget(conn, actor_id=user["id"], target_user_id=user_id)
     return RedirectResponse("/admin/agents?budget_cleared=1", status_code=303)
 
@@ -512,7 +512,7 @@ def pause_agent(
     request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     try:
@@ -532,7 +532,7 @@ def resume_agent(
     request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     try:
@@ -552,7 +552,7 @@ def revoke_agent_tokens(
     request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     try:
@@ -574,7 +574,7 @@ def offboard_agent(
     request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     try:
@@ -592,7 +592,7 @@ def remove_agent(
     request: Request, user_id: int, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     try:
@@ -609,9 +609,9 @@ def agent_runs_admin(
 ):
     templates = get_templates()
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
-        err.headers.update(_ACTIVE_WORK_PRIVATE_HEADERS)
+        err.headers.update(ACTIVE_WORK_PRIVATE_HEADERS)
         return err
     try:
         # `panel` is this page's own refresh marker, not an active-work criterion.
@@ -638,7 +638,7 @@ def agent_runs_admin(
         return HTMLResponse(
             f"<h1>Invalid active-work request</h1><p>{escape(exc.detail)}</p>",
             status_code=400,
-            headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+            headers=ACTIVE_WORK_PRIVATE_HEADERS,
         )
     context = agents.agent_run_health(conn, agent_id=agent_id)
     context["active_work"] = fleet_work.build_active_work(
@@ -648,7 +648,7 @@ def agent_runs_admin(
     context["automation_failures"] = automation.list_rules(conn, failing_only=True)
     context["live"] = live.build(request, live.ACTIVE_WORK)
     # The table refreshes itself, and its poll re-enters this route — past the same
-    # _admin_required above, through the same parse of the same query string. The
+    # admin_required above, through the same parse of the same query string. The
     # filter an operator chose therefore survives a refresh instead of silently
     # widening to the whole fleet, and there is no partial-only path that could
     # forget a gate this one applies.
@@ -657,13 +657,13 @@ def agent_runs_admin(
             request=request,
             name="admin/partials/fleet_active_work.html",
             context=context,
-            headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+            headers=ACTIVE_WORK_PRIVATE_HEADERS,
         )
     return templates.TemplateResponse(
         request=request,
         name="admin/agent_runs.html",
         context=context,
-        headers=_ACTIVE_WORK_PRIVATE_HEADERS,
+        headers=ACTIVE_WORK_PRIVATE_HEADERS,
     )
 
 
@@ -672,7 +672,7 @@ def agent_run_replay_admin(
     request: Request, run_id: str, conn: sqlite3.Connection = Depends(get_conn)
 ):
     user = getattr(request.state, "user", None)
-    err = _admin_required(user)
+    err = admin_required(user)
     if err is not None:
         return err
     if not agents.agent_run_exists(conn, run_id):

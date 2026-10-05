@@ -87,9 +87,9 @@ Therefore:
   `attachment_commands`, and `project_commands`' access errors) were migrated
   2026-08-24, so `grep -l status_code src/athena/*/*commands*.py` returns
   nothing, and that grep — not this sentence — stays the authority. Do not
-  reintroduce the old shape into anything new. (Non-`commands` modules are
-  outside that grep; `core/approvals.py`'s `ApprovalDecisionError` still
-  carries a status code and is the known candidate when someone touches it.)
+  reintroduce the old shape into anything new. `ApprovalDecisionError` lives
+  in `core/approval_commands.py` with a `kind` and a `detail`; the route
+  adapter maps the kind to a status.
 - If the endpoint you need doesn't exist, that is a **blocker to flag**, not a
   reason to fake it. Stop and say so (see "When scope grows").
 - One concept, one owner. Two code paths that both "create an issue" is a bug,

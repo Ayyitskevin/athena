@@ -1,22 +1,20 @@
-"""Browser routes for Aegis issues — list, detail, edit, and the writes on one issue.
+"""Browser routes for the Aegis issue pages: list, create, edit, detail, history.
 
-Split out of web/router.py. A thin client: mutations go through an Aegis
-command or a documented personal-state writer. Helpers that other web
-routers share stay in web.router."""
+Split out of the issue browser so the field writes and the discussion writes
+live beside it. A thin client: mutations go through an Aegis command. Shared
+HTML helpers live in web.issue_html; shared list helpers live in web.browsing.
+"""
 
 from __future__ import annotations
+
 import html
 import sqlite3
 from urllib.parse import urlencode
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from athena import config
+
 from athena.aegis import (
-    claim_handoffs,
-    comment_commands,
-    comments,
-    contributors,
-    dependencies,
     issue_commands,
     issue_drafts,
     issue_etags,
@@ -24,62 +22,38 @@ from athena.aegis import (
     issue_narrative,
     issues,
     projects,
-    rollups,
     sprints,
-    statuses,
 )
 from athena.core import (
     access,
     activity,
-    attachment_commands,
-    attachments,
-    event_sources,
     graph,
     identity,
     labels,
-    links,
     mentions,
-    notifications,
     users,
 )
 from athena.core.deps import get_conn
+from athena.web.browsing import (
+    attach_labels,
+    int_or_none,
+    readonly_response,
+    statuses_in_use,
+)
 from athena.web.csrf import verify_csrf
+from athena.web.issue_html import (
+    authorize_issue_write,
+    issue_command_response,
+    issue_visible_or_404,
+    render_issue_detail,
+)
 from athena.web.render import (
     MAX_PREVIEW_CHARS,
-    render_comment,
     render_issue_body,
 )
-
-from athena.web.router import (
-    _ATTACHMENT_STATUS_BY_KIND,
-    _attach_labels,
-    _int_or_none,
-    _readonly_response,
-    _statuses_in_use,
-    get_templates,
-)
+from athena.web.router import get_templates
 
 router = APIRouter()
-
-
-def _issue_command_response(
-    exc: issue_commands.IssueCommandError,
-) -> HTMLResponse:
-    """Translate a shared issue-command rejection at the HTML boundary."""
-    status_code = {
-        "unauthorized": 401,
-        "forbidden": 403,
-        "not_found": 404,
-        "invalid": 400,
-        "conflict": 409,
-    }[exc.kind]
-    css_class = (
-        "blocked" if exc.kind in {"unauthorized", "forbidden", "conflict"} else "error"
-    )
-    return HTMLResponse(
-        f'<div class="{css_class}">{html.escape(exc.detail.capitalize())}.</div>',
-        status_code=status_code,
-    )
 
 
 def _issues_url(
@@ -209,7 +183,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         limit=per_page,
         offset=(page - 1) * per_page,
     )
-    _attach_labels(conn, paged)  # one bulk query over this page's rows
+    attach_labels(conn, paged)  # one bulk query over this page's rows
 
     def page_url(page_num: int, *, sort_by: str = sort, order_by: str = order) -> str:
         return _issues_url(
@@ -278,7 +252,7 @@ def issues_list(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
         context={
             "issues": paged,
             "status_filter": status_filter or "",
-            "all_statuses": _statuses_in_use(conn, visible_project_ids),
+            "all_statuses": statuses_in_use(conn, visible_project_ids),
             "priority_filter": priority_filter,
             "priorities": issues.PRIORITIES,
             "assignee_filter": assignee_raw,
@@ -310,7 +284,7 @@ def new_issue_form(request: Request, conn: sqlite3.Connection = Depends(get_conn
     """Render the new issue creation form."""
     user = getattr(request.state, "user", None)
     if user is not None and not identity.can_write(user):
-        return _readonly_response()
+        return readonly_response()
     return get_templates().TemplateResponse(
         request=request,
         name="aegis/issue_form.html",
@@ -346,7 +320,7 @@ def create_issue(
             status_code=401,
         )
     if not identity.can_write(user):
-        return _readonly_response()
+        return readonly_response()
 
     # Project is optional ("" = no project); parsing the HTML value is a transport
     # concern, while existence/visibility belongs to the shared command.
@@ -369,41 +343,12 @@ def create_issue(
             project_id=project,
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
+        return issue_command_response(exc)
     # HTMX follows HX-Redirect after the successful create without an inline script.
     return HTMLResponse(
         f'<div class="success">Created issue #{issue["id"]}.</div>',
         headers={"HX-Redirect": f"/aegis/issues/{issue['id']}"},
     )
-
-
-def _authorize_issue_write(conn, issue_id, user):
-    """Return (issue, None) if the session user may modify this issue, else
-    (None, HTMLResponse) with the right status. 404 if no such issue, 403 if the
-    user is neither its creator nor its current assignee. Delegates to the shared
-    command policy owner; the 401 (logged-out) check stays at each call site."""
-    try:
-        return issue_commands.get_writable_issue(
-            conn, actor=user, issue_id=issue_id
-        ), None
-    except issue_commands.IssueCommandError as exc:
-        return None, _issue_command_response(exc)
-
-
-def _issue_visible_or_404(conn, issue_id, user):
-    """Return (issue, None) if the user may SEE this issue, else (None, 404 response).
-    The visibility-ONLY gate for additive web writes (comments, attachments) and the
-    personal watch toggle — any writer may act on a VISIBLE issue, so this stops short of
-    the creator/assignee check _authorize_issue_write applies. A hidden issue reads as
-    "not found", so its existence never leaks through a write path."""
-    issue = issues.get_issue(conn, issue_id)
-    if issue is None or not access.can_see_project_or_backlog(
-        conn, user, issue["project_id"]
-    ):
-        return None, HTMLResponse(
-            '<div class="error">Issue not found.</div>', status_code=404
-        )
-    return issue, None
 
 
 @router.get("/aegis/issues/{issue_id}/edit", response_class=HTMLResponse)
@@ -419,7 +364,7 @@ def edit_issue_form(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     return get_templates().TemplateResponse(
@@ -495,7 +440,7 @@ def edit_issue(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     # An empty if_match means a form rendered before this field existed (a tab
@@ -530,9 +475,9 @@ def edit_issue(
                     conn, actor=user, issue_id=issue_id, title=title, body=body
                 )
             except issue_commands.IssueCommandError as retry_exc:
-                return _issue_command_response(retry_exc)
+                return issue_command_response(retry_exc)
         else:
-            return _issue_command_response(exc)
+            return issue_command_response(exc)
     # The text IS the issue now, so the author's draft of it is a stale copy of
     # something that finally has a real home on the trail. Dropping it is what
     # makes "you have unsaved work" mean it the next time it appears.
@@ -617,7 +562,7 @@ def autosave_issue_draft(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
+    issue, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     try:
@@ -664,7 +609,7 @@ def discard_issue_draft(
             '<div class="blocked">Please <a href="/login">sign in</a> to edit issues.</div>',
             status_code=401,
         )
-    _, err = _authorize_issue_write(conn, issue_id, user)
+    _, err = authorize_issue_write(conn, issue_id, user)
     if err is not None:
         return err
     issue_drafts.discard_draft(conn, issue_id=issue_id, owner_id=user["id"])
@@ -675,110 +620,6 @@ def discard_issue_draft(
         f"/aegis/issues/{int(issue_id)}/edit?notice=Draft+discarded.",
         status_code=303,
     )
-
-
-@router.post("/aegis/issues/{issue_id}/status", dependencies=[Depends(verify_csrf)])
-def change_issue_status(
-    request: Request,
-    issue_id: int,
-    status: str = Form(...),
-    confirm: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Move an issue to a new status from the detail page. Gated on the session
-    user (same actor rule as create), validates against the lifecycle, then
-    303-redirects back to the issue so the page reloads with the new state.
-
-    Closing (status -> done) an issue that still has OPEN blockers re-renders the
-    page with a visibility-safe warning. The default project behavior remains an
-    advisory confirmation. When the optional project policy is enabled, agents are
-    refused and an eligible human must explicitly request the audited override."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to change status.</div>',
-            status_code=401,
-        )
-    issue, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    closing = not statuses.is_done(
-        conn, issue["project_id"], issue["status"]
-    ) and statuses.is_done(conn, issue["project_id"], status)
-    project = (
-        projects.get_project(conn, issue["project_id"])
-        if issue["project_id"] is not None
-        else None
-    )
-    policy_enabled = bool(
-        project and project.get("block_agent_closes_when_blocked", False)
-    )
-    confirming = confirm.strip() == "1"
-    if closing and not confirming and not policy_enabled:
-        # Gate the blocker warning by the viewer: a blocker in a private project they
-        # can't see is omitted, so its key/title never leaks through the close warning.
-        blockers = dependencies.open_blockers(conn, issue_id, actor=user)
-        if blockers:
-            # Don't apply the close — show the warning and let the user confirm.
-            return _render_issue_detail(
-                request,
-                conn,
-                issue,
-                extra={"blocked_warning": blockers, "pending_status": status},
-            )
-    try:
-        issue_commands.update_issue(
-            conn,
-            actor=user,
-            issue_id=issue_id,
-            status=status,
-            override_blocked_close=confirming,
-        )
-    except issue_commands.IssueCommandError as exc:
-        if exc.code == issue_commands.BLOCKED_CLOSE_POLICY_ERROR_CODE:
-            blockers = dependencies.open_blockers(conn, issue_id, actor=user)
-            return _render_issue_detail(
-                request,
-                conn,
-                issue,
-                extra={
-                    "blocked_policy_warning": True,
-                    "blocked_warning": blockers,
-                    "pending_status": status,
-                    "allow_blocked_override": not bool(user.get("is_agent")),
-                },
-                status_code=409,
-            )
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/priority", dependencies=[Depends(verify_csrf)])
-def change_issue_priority(
-    request: Request,
-    issue_id: int,
-    priority: str = Form(...),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Change an issue's priority from the detail page. Same gate as status:
-    logged in (401) and creator-or-assignee (404/403), validated against
-    PRIORITIES, then 303 back to the issue."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to change priority.</div>',
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    try:
-        issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, priority=priority
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
 
 
 @router.post("/aegis/issues/preview", dependencies=[Depends(verify_csrf)])
@@ -820,7 +661,7 @@ def issue_graph(
     should not pay for.
     """
     user = getattr(request.state, "user", None)
-    issue, err = _issue_visible_or_404(conn, issue_id, user)
+    issue, err = issue_visible_or_404(conn, issue_id, user)
     if err is not None:
         return err
     assert issue is not None
@@ -861,8 +702,8 @@ def link_issue_mention(
             status_code=401,
         )
     if not identity.can_write(user):
-        return _readonly_response()
-    issue, err = _issue_visible_or_404(conn, issue_id, user)
+        return readonly_response()
+    issue, err = issue_visible_or_404(conn, issue_id, user)
     if err is not None:
         return err
     assert issue is not None
@@ -887,7 +728,7 @@ def link_issue_mention(
     try:
         issue_commands.update_issue(conn, actor=user, issue_id=issue_id, body=body)
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
+        return issue_command_response(exc)
     back = (
         f"/mentor/pages/{target_id}/graph"
         if target_kind == "page"
@@ -927,116 +768,7 @@ def issue_detail(
             status_code=404,
         )
 
-    return _render_issue_detail(request, conn, issue)
-
-
-def _render_issue_detail(
-    request: Request,
-    conn: sqlite3.Connection,
-    issue: dict,
-    *,
-    extra: dict | None = None,
-    status_code: int = 200,
-):
-    """Assemble the issue-detail page. One place builds the context so the normal
-    view and the warn-on-close re-render can never drift on what the page needs.
-    `extra` overlays warning state (e.g. the open blockers banner) without the
-    caller re-listing every base key."""
-    issue_id = issue["id"]
-    user = getattr(request.state, "user", None)
-    can_write = user is not None and identity.can_write(user)
-    can_modify = user is not None and can_write and issues.can_act_on(conn, issue, user)
-    comment_rows = comments.list_comments(conn, issue_id)
-    for comment in comment_rows:
-        comment["body_html"] = render_comment(conn, comment["body"])
-    # Gate children by viewer visibility (a child can sit in a private project the
-    # viewer isn't in), matching the JSON API — else the detail page leaks it.
-    visible_project_ids = access.visible_project_filter(conn, user)
-    children = issues.list_children(
-        conn, issue_id, visible_project_ids=visible_project_ids
-    )
-    visible_projects = projects.list_projects(conn, visible_project_ids)
-    visible_project_names = {
-        project["id"]: project["name"] for project in visible_projects
-    }
-    placement_sprints = [
-        {**sprint, "project_name": visible_project_names[sprint["project_id"]]}
-        for sprint in sprints.list_sprints(conn)
-        if sprint["project_id"] in visible_project_names
-    ]
-
-    context = {
-        "issue": issue,
-        "body_html": render_issue_body(conn, issue["body"], actor=user),
-        # "Referenced by" hides sources in projects/spaces the viewer can't see.
-        "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
-        # Typed dependencies, gated like the backlinks: a blocks/relates edge to an
-        # issue in a private project the viewer can't see is dropped, so its key/title
-        # never leaks through this issue's relationship list.
-        "links": dependencies.list_links(conn, issue_id, actor=user),
-        "comments": comment_rows,
-        "attachments": attachments.list_for(conn, "issue", issue_id),
-        # The types the download route serves inline — the template offers a
-        # thumbnail and an embed snippet for exactly these, so the affordance
-        # and the actual behaviour come from one list.
-        "inline_image_types": attachments.INLINE_CONTENT_TYPES,
-        "is_watching": user is not None
-        and notifications.is_watching(conn, user["id"], "issue", issue_id),
-        "users": users.list_users(conn),
-        "contributors": contributors.list_contributors(conn, issue_id),
-        "open_claim_handoff": claim_handoffs.get_open_handoff(conn, issue_id),
-        "issue_labels": labels.labels_for_issue(conn, issue_id),
-        "all_labels": labels.list_labels(conn),
-        "all_projects": visible_projects,
-        # Paired placement can target any sprint in a project the viewer may see.
-        # Project names keep the no-JavaScript selector unambiguous without leaking
-        # private project vocabulary.
-        "placement_sprints": placement_sprints,
-        # The sprint the issue is currently in (for the read-view label), or None.
-        "issue_sprint": (
-            sprints.get_sprint(conn, issue["sprint_id"])
-            if issue.get("sprint_id")
-            else None
-        ),
-        "issue_statuses": statuses.list_statuses(conn, issue["project_id"]),
-        # Only render the parent if the viewer may see it — a parent in a private
-        # project the viewer isn't in renders as none (no key/title leak), the same as
-        # if it were unset.
-        "parent": (
-            issues.get_issue(conn, issue["parent_id"])
-            if issue.get("parent_id")
-            and access.can_see_issue(conn, user, issue["parent_id"])
-            else None
-        ),
-        "children": children,
-        # One owner for the number: the same rollup the embed resolves, so the
-        # page and a dashboard-in-a-page can never disagree about progress.
-        "rollup": rollups.child_rollup(
-            conn, issue_id, visible_project_ids=visible_project_ids
-        ),
-        "can_modify": can_modify,
-        "can_write": can_write,
-        # Admins may moderate (delete) any comment, not just their own — drives the
-        # per-comment Delete control the same way the server-side override gates it.
-        "is_admin": user is not None and identity.is_admin(user),
-        # This issue's own audit trail (newest first) — the same data-layer read
-        # the REST feed serves, scoped to this target.
-        "activity": activity.list_activity(
-            conn, target_kind="issue", target_id=issue_id, actor=user
-        ),
-        # Hosts Athena was told to expect events from. The trail links a forge
-        # URL only when its host is one of these — otherwise anyone holding a
-        # source secret could plant an arbitrary outbound link on an issue.
-        "forge_hosts": event_sources.registered_hosts(conn),
-    }
-    if extra:
-        context.update(extra)
-    return get_templates().TemplateResponse(
-        request=request,
-        name="aegis/issue_detail.html",
-        context=context,
-        status_code=status_code,
-    )
+    return render_issue_detail(request, conn, issue)
 
 
 @router.get("/aegis/issues/{ref}/history", response_class=HTMLResponse)
@@ -1068,7 +800,7 @@ def issue_history_view(
             },
             status_code=404,
         )
-    as_of = _int_or_none(request.query_params.get("as_of"))
+    as_of = int_or_none(request.query_params.get("as_of"))
     try:
         snapshot = issue_history.project_issue_state(
             conn, issue["id"], as_of_event_id=as_of, actor=user
@@ -1153,746 +885,3 @@ def issue_history_view(
             "timeline_items": timeline_items,
         },
     )
-
-
-@router.post("/aegis/issues/{issue_id}/assignee", dependencies=[Depends(verify_csrf)])
-def change_issue_assignee(
-    request: Request,
-    issue_id: int,
-    assignee_id: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Assign or unassign an issue from the detail page. Gated on the session
-    user (same actor rule as status/comments). An empty form value means
-    "Unassigned" (None); otherwise the value must be a real user id."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to assign.</div>',
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-
-    assignee_id = assignee_id.strip()
-    if assignee_id == "":
-        target: int | None = None
-    else:
-        try:
-            target = int(assignee_id)
-        except ValueError:
-            return HTMLResponse(
-                '<div class="error">Invalid user.</div>', status_code=400
-            )
-
-    try:
-        issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, assignee_id=target
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/project", dependencies=[Depends(verify_csrf)])
-def change_issue_project(
-    request: Request,
-    issue_id: int,
-    project_id: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Move an issue into a project, or remove it, from the detail page. Same gate
-    as status/assign (a write). An empty form value means "no project" (None);
-    otherwise the value must be a real project id."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to change project.</div>',
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-
-    project_id = project_id.strip()
-    if project_id == "":
-        target: int | None = None
-    elif not project_id.isdigit():
-        return HTMLResponse(
-            '<div class="error">No such project.</div>', status_code=400
-        )
-    else:
-        target = int(project_id)
-
-    try:
-        issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, project_id=target
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/placement", dependencies=[Depends(verify_csrf)])
-def change_issue_placement(
-    request: Request,
-    issue_id: int,
-    project_id: str = Form(""),
-    sprint_id: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Set project and sprint as one placement transition from the detail page.
-
-    Both form controls are submitted together so a user can move directly into a
-    destination project sprint. Empty values explicitly clear their relationship;
-    the command owns destination visibility, pair validation, status remapping,
-    persistence, and audit in one transaction.
-    """
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> '
-            "to change placement.</div>",
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-
-    project_id = project_id.strip()
-    if project_id == "":
-        project_target: int | None = None
-    elif not project_id.isdigit():
-        return HTMLResponse(
-            '<div class="error">No such project.</div>', status_code=400
-        )
-    else:
-        project_target = int(project_id)
-
-    sprint_id = sprint_id.strip()
-    if sprint_id == "":
-        sprint_target: int | None = None
-    elif not sprint_id.isdigit():
-        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-    else:
-        sprint_target = int(sprint_id)
-
-    try:
-        issue_commands.update_issue(
-            conn,
-            actor=user,
-            issue_id=issue_id,
-            project_id=project_target,
-            sprint_id=sprint_target,
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/sprint", dependencies=[Depends(verify_csrf)])
-def change_issue_sprint(
-    request: Request,
-    issue_id: int,
-    sprint_id: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Move an issue into a sprint, or back to the backlog, from the detail page.
-    Same write gate as status/assign. An empty value means "no sprint" (None);
-    otherwise the sprint must exist AND belong to the issue's OWN project — the
-    same rule the REST PUT /issues/{id}/sprint enforces (there a 422), surfaced
-    here as a 400."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to change sprint.</div>',
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-
-    sprint_id = sprint_id.strip()
-    if sprint_id == "":
-        target: int | None = None
-    elif not sprint_id.isdigit():
-        return HTMLResponse('<div class="error">No such sprint.</div>', status_code=400)
-    else:
-        target = int(sprint_id)
-
-    try:
-        issue_commands.update_issue(
-            conn, actor=user, issue_id=issue_id, sprint_id=target
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/parent", dependencies=[Depends(verify_csrf)])
-def change_issue_parent(
-    request: Request,
-    issue_id: int,
-    parent_ref: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Nest an issue under a parent (by id or key), or clear it (empty value). Same
-    write gate as status/labels. Self/cycle/unknown parents are rejected with a 400."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to set a parent.</div>',
-            status_code=401,
-        )
-    parent_ref = parent_ref.strip()
-    if parent_ref == "":
-        parent_id: int | None = None
-    else:
-        parent = issues.get_by_ref(conn, parent_ref)
-        # An unresolvable ref is a web parsing failure (400); a ref that resolves to
-        # a HIDDEN issue is caught by the command's see-the-parent check, which
-        # collapses to the same "No such parent issue." — no existence probe.
-        if parent is None:
-            return HTMLResponse(
-                '<div class="error">No such parent issue.</div>', status_code=400
-            )
-        parent_id = parent["id"]
-    # The command owns the see-the-parent check, self/cycle validation, the write,
-    # and the atomic audit event — the same one the REST route calls.
-    try:
-        issue_commands.set_issue_parent(
-            conn, actor=user, issue_id=issue_id, parent_id=parent_id
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/labels", dependencies=[Depends(verify_csrf)])
-def add_issue_label(
-    request: Request,
-    issue_id: int,
-    name: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Attach a label to an issue by typing its name. Find-or-create so the user
-    doesn't manage a separate vocabulary first. Same gate as status/assign — a
-    label change is a write. Empty name → 400."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
-            status_code=401,
-        )
-    name = name.strip()
-    if not name:
-        return HTMLResponse(
-            '<div class="error">Label name is required.</div>', status_code=400
-        )
-    # One command owns the whole write: the gate FIRST, then find-or-create, the
-    # attach, and its atomic 'labeled' event — one transaction, like REST. When
-    # the find-or-create ran here (before the gate), a refused request still
-    # grew the shared vocabulary.
-    try:
-        issue_commands.attach_label_by_name(
-            conn, actor=user, issue_id=issue_id, name=name
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/labels/{label_id}/delete",
-    dependencies=[Depends(verify_csrf)],
-)
-def remove_issue_label(
-    request: Request,
-    issue_id: int,
-    label_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Detach a label from an issue. Same write gate. POST (not DELETE) because
-    HTML forms can't issue DELETE."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to label issues.</div>',
-            status_code=401,
-        )
-    try:
-        issue_commands.detach_label(
-            conn, actor=user, issue_id=issue_id, label_id=label_id
-        )
-    except issue_commands.IssueCommandError as exc:
-        # A label that isn't attached is a no-op in the UI (double-submit) — land
-        # back on the issue rather than 404. Real gate failures still surface.
-        if exc.detail == "label not on this issue":
-            return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/contributors", dependencies=[Depends(verify_csrf)]
-)
-def add_issue_contributor(
-    request: Request,
-    issue_id: int,
-    user_id: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Delegate the issue to a teammate (human or agent) by adding them as a
-    contributor — the assignee stays the accountable owner. Same write gate as
-    labels/status. An unknown user is a 400; idempotent re-add is a no-op."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to add contributors.</div>',
-            status_code=401,
-        )
-    try:
-        target = int(user_id)
-    except ValueError:
-        return HTMLResponse('<div class="error">Pick a user.</div>', status_code=400)
-    # The command owns the gate, the user-exists check, the add + auto-watch, and
-    # the atomic 'added_contributor' event — the same one REST calls.
-    try:
-        issue_commands.add_contributor(
-            conn, actor=user, issue_id=issue_id, user_id=target
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/contributors/{user_id}/delete",
-    dependencies=[Depends(verify_csrf)],
-)
-def remove_issue_contributor(
-    request: Request,
-    issue_id: int,
-    user_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Remove a contributor. Same write gate. POST (not DELETE) because HTML forms
-    can't issue DELETE."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to manage contributors.</div>',
-            status_code=401,
-        )
-    try:
-        issue_commands.remove_contributor(
-            conn, actor=user, issue_id=issue_id, user_id=user_id
-        )
-    except issue_commands.IssueCommandError as exc:
-        # Not a contributor → no-op redirect (double-submit); real gate failures
-        # still surface as the shared HTML rejection.
-        if exc.detail == "not a contributor on this issue":
-            return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/links", dependencies=[Depends(verify_csrf)])
-def add_issue_link(
-    request: Request,
-    issue_id: int,
-    target_ref: str = Form(""),
-    relation: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Declare a relationship from this issue to another (addressed by id or key).
-    Same write gate as labels/status. The other issue is resolved from its ref
-    (400 if unknown); add_link enforces shape (self-ref, contradiction) and
-    returns a reason we surface as a 400."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
-            status_code=401,
-        )
-    # Visibility-first gate on THIS issue (hidden -> 404 even for a viewer) before the
-    # command owns the target check, the edge, and — new — the atomic audit event.
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    try:
-        issue_commands.link_issues(
-            conn,
-            actor=user,
-            issue_id=issue_id,
-            target_ref=target_ref.strip(),
-            relation=relation,
-        )
-    except issue_commands.IssueCommandError as exc:
-        # Only the target/relation validation and the block-each-other contradiction
-        # reach here (the issue gate ran above); render the raw reason at 400, exactly
-        # as the pre-command handler did.
-        return HTMLResponse(
-            f'<div class="error">{html.escape(exc.detail)}</div>', status_code=400
-        )
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/links/{relation}/{target_id}/delete",
-    dependencies=[Depends(verify_csrf)],
-)
-def remove_issue_link(
-    request: Request,
-    issue_id: int,
-    relation: str,
-    target_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Remove a relationship. Same write gate. POST (not DELETE) because HTML forms
-    can't issue DELETE. relation is the user-facing form used to create it."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to link issues.</div>',
-            status_code=401,
-        )
-    _, err = _authorize_issue_write(conn, issue_id, user)
-    if err is not None:
-        return err
-    try:
-        issue_commands.unlink_issues(
-            conn, actor=user, issue_id=issue_id, target_id=target_id, relation=relation
-        )
-    except issue_commands.IssueCommandError:
-        # Removing a link that isn't there is not an error on the form path (its
-        # buttons only render for edges that exist); redirect either way, as before.
-        pass
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/archive", dependencies=[Depends(verify_csrf)])
-def archive_issue_web(
-    request: Request,
-    issue_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Archive (soft-delete) an issue from its detail page. Same creator-or-assignee
-    gate as status/assign. The row is kept; it just drops out of the default lists
-    and boards until restored. 303 back to the issue (now shown as archived)."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to archive.</div>',
-            status_code=401,
-        )
-    # The command owns the gate, the soft-delete, and its atomic 'archived' event.
-    try:
-        issue_commands.set_issue_archived(
-            conn, actor=user, issue_id=issue_id, archived=True
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/unarchive", dependencies=[Depends(verify_csrf)])
-def unarchive_issue_web(
-    request: Request,
-    issue_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Restore an archived issue to the active lists, from its detail page. Same
-    gate as archive."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to restore.</div>',
-            status_code=401,
-        )
-    try:
-        issue_commands.set_issue_archived(
-            conn, actor=user, issue_id=issue_id, archived=False
-        )
-    except issue_commands.IssueCommandError as exc:
-        return _issue_command_response(exc)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/comments", dependencies=[Depends(verify_csrf)])
-def add_issue_comment(
-    request: Request,
-    issue_id: int,
-    body: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Post a comment from the detail page. Gated on the session user (the
-    author is the session, never a form field), then 303-redirects back to the
-    issue so the new comment shows."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to comment.</div>',
-            status_code=401,
-        )
-    if not identity.can_write(user):
-        return _readonly_response()
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    body = body.strip()
-    if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
-
-    # The command owns the insert AND its atomic 'commented' event (auto-watch + mentions).
-    comment_commands.create_comment(conn, actor=user, issue_id=issue_id, body=body)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-def _own_comment_or_response(conn, issue_id, comment_id, user, *, allow_admin=False):
-    """Return the comment if it belongs to this issue and the session user is its
-    author; otherwise an HTMLResponse (404/403) to return as-is. Mirrors the
-    API's author-ownership rule on the web write paths. allow_admin lets an admin
-    through for moderation — used only on delete, matching the API override; edit
-    stays author-only."""
-    existing = comments.get_comment(conn, comment_id)
-    if existing is None or existing["issue_id"] != issue_id:
-        return None, HTMLResponse(
-            '<div class="error">Comment not found.</div>', status_code=404
-        )
-    if existing["author_id"] != user["id"] and not (
-        allow_admin and identity.is_admin(user)
-    ):
-        return None, HTMLResponse(
-            '<div class="error">You can only change your own comments.</div>',
-            status_code=403,
-        )
-    return existing, None
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/comments/{comment_id}/edit",
-    dependencies=[Depends(verify_csrf)],
-)
-def edit_issue_comment(
-    request: Request,
-    issue_id: int,
-    comment_id: int,
-    body: str = Form(""),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Edit a comment from the detail page. Gated on the session user AND on
-    author-ownership (you may only edit your own), then 303 back to the issue."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to edit comments.</div>',
-            status_code=401,
-        )
-    if not identity.can_write(user):
-        return _readonly_response()
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    _, err = _own_comment_or_response(conn, issue_id, comment_id, user)
-    if err is not None:
-        return err
-    body = body.strip()
-    if not body:
-        return HTMLResponse(
-            '<div class="error">Comment cannot be empty.</div>', status_code=400
-        )
-    # The command owns the edit AND its atomic 'comment_edited' event — this web path
-    # previously rewrote the body with NO audit trail at all.
-    try:
-        comment_commands.edit_comment(
-            conn,
-            actor=user,
-            issue_id=issue_id,
-            comment_id=comment_id,
-            body=body,
-        )
-    except comment_commands.CommentCommandError:
-        # vanished between the author check and the write (a race) — 404, not a
-        # silent "success" redirect.
-        return HTMLResponse(
-            '<div class="error">Comment not found.</div>', status_code=404
-        )
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/comments/{comment_id}/delete",
-    dependencies=[Depends(verify_csrf)],
-)
-def delete_issue_comment(
-    request: Request,
-    issue_id: int,
-    comment_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Delete a comment from the detail page. Same author-ownership rule as edit.
-    Uses POST (not DELETE) because HTML forms can't issue DELETE."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to delete comments.</div>',
-            status_code=401,
-        )
-    if not identity.can_write(user):
-        return _readonly_response()
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    _, err = _own_comment_or_response(
-        conn, issue_id, comment_id, user, allow_admin=True
-    )
-    if err is not None:
-        return err
-    # The command owns the delete AND its atomic 'comment_deleted' event; a comment that
-    # vanished in a race records nothing and 404s.
-    if not comment_commands.delete_comment(
-        conn, actor=user, issue_id=issue_id, comment_id=comment_id
-    ):
-        return HTMLResponse(
-            '<div class="error">Comment not found.</div>', status_code=404
-        )
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/attachments", dependencies=[Depends(verify_csrf)]
-)
-def add_issue_attachment(
-    request: Request,
-    issue_id: int,
-    file: UploadFile = File(...),
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Attach a file to an issue from the detail page. Same write gate as comments.
-    Empty file → 400, oversize → 413; otherwise 303 back to the issue."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to attach files.</div>',
-            status_code=401,
-        )
-    if not identity.can_write(user):
-        return _readonly_response()
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    data = file.file.read()
-    if not data:
-        return HTMLResponse('<div class="error">File is empty.</div>', status_code=400)
-    if len(data) > config.ATTACH_MAX_BYTES:
-        return HTMLResponse(
-            '<div class="error">File is too large.</div>', status_code=413
-        )
-    try:
-        attachment_commands.create_attachment(
-            conn,
-            actor=user,
-            target_kind="issue",
-            target_id=issue_id,
-            filename=file.filename,
-            content_type=file.content_type,
-            data=data,
-            attach_dir=config.ATTACH_DIR,
-        )
-    except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
-        )
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post(
-    "/aegis/issues/{issue_id}/attachments/{attachment_id}/delete",
-    dependencies=[Depends(verify_csrf)],
-)
-def remove_issue_attachment(
-    request: Request,
-    issue_id: int,
-    attachment_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
-):
-    """Delete an attachment from the issue detail page. Uploader-only (mirrors
-    comment ownership). POST, not DELETE, because HTML forms can't issue DELETE."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to remove files.</div>',
-            status_code=401,
-        )
-    if not identity.can_write(user):
-        return _readonly_response()
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    att = attachments.get(conn, attachment_id)
-    if att is None or att["target_kind"] != "issue" or att["target_id"] != issue_id:
-        return HTMLResponse(
-            '<div class="error">Attachment not found.</div>', status_code=404
-        )
-    if att["uploaded_by"] != user["id"]:
-        return HTMLResponse(
-            '<div class="error">Only the uploader may remove this file.</div>',
-            status_code=403,
-        )
-    try:
-        attachment_commands.remove_attachment(
-            conn,
-            actor=user,
-            attachment_id=attachment_id,
-            attach_dir=config.ATTACH_DIR,
-        )
-    except attachment_commands.AttachmentCommandError as exc:
-        return HTMLResponse(
-            f'<div class="error">{html.escape(str(exc).capitalize())}.</div>',
-            status_code=_ATTACHMENT_STATUS_BY_KIND[exc.kind],
-        )
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/watch", dependencies=[Depends(verify_csrf)])
-def watch_issue(
-    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
-):
-    """Start watching an issue (any signed-in user, including viewers — it's a
-    personal subscription, not a write to shared state)."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a> to watch.</div>',
-            status_code=401,
-        )
-    # You can't watch what you can't see: a hidden issue is "not found", and gating here
-    # also stops a subscription that would later leak the issue through notifications.
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    notifications.watch(conn, user["id"], "issue", issue_id)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)
-
-
-@router.post("/aegis/issues/{issue_id}/unwatch", dependencies=[Depends(verify_csrf)])
-def unwatch_issue(
-    request: Request, issue_id: int, conn: sqlite3.Connection = Depends(get_conn)
-):
-    """Stop watching an issue."""
-    user = getattr(request.state, "user", None)
-    if user is None:
-        return HTMLResponse(
-            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
-            status_code=401,
-        )
-    _, err = _issue_visible_or_404(conn, issue_id, user)
-    if err is not None:
-        return err
-    notifications.unwatch(conn, user["id"], "issue", issue_id)
-    return RedirectResponse(f"/aegis/issues/{issue_id}", status_code=303)

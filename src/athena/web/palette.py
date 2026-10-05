@@ -35,7 +35,7 @@ from athena.aegis import (
     lease_commands,
     leases,
 )
-from athena.aegis.api import issue_command_status
+from athena.aegis.rest_support import issue_command_status
 from athena.core import access, approvals, approvals_api, identity
 from athena.core.deps import get_conn
 from athena.core.ids import RowIdPath

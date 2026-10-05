@@ -3,8 +3,8 @@
 Split out of web/router.py (the god-file) to keep each web surface navigable,
 following the same one-module-per-area pattern as web/projects.py and friends. Its
 own APIRouter, mounted by main.py. A thin client over the issues data layer — it
-owns no data. The shared label/status render helpers and the template accessor are
-imported from web.router (where the issues cluster still lives).
+owns no data. Label chips and the status dropdown live in web.browsing.
+Templates come from web.router.
 """
 
 from __future__ import annotations
@@ -26,7 +26,8 @@ from athena.aegis import (
 from athena.core import access
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
-from athena.web.router import _attach_labels, _statuses_in_use, get_templates
+from athena.web.browsing import attach_labels, statuses_in_use
+from athena.web.router import get_templates
 
 router = APIRouter()
 
@@ -124,7 +125,7 @@ def _render_board(
     board_total = issues.count_issues(conn, **board_filters)
     filtered = issues.list_issues(conn, **board_filters, limit=BOARD_CARD_CAP)
     board_clipped = board_total > len(filtered)
-    _attach_labels(conn, filtered)
+    attach_labels(conn, filtered)
     if user is not None:
         for issue in filtered:
             issue["etag"] = issue_etags.representation_and_etag(issue, issue["labels"])[
@@ -202,7 +203,7 @@ def _render_board(
 
     # The status filter offers every status currently in use on issues THIS VIEWER may
     # see — the same gated option set the issue list uses.
-    all_statuses = _statuses_in_use(conn, visible_project_ids)
+    all_statuses = statuses_in_use(conn, visible_project_ids)
 
     # Placement filter options are visibility-safe. Sprint labels carry their
     # project key to disambiguate same-named sprints across projects.

@@ -31,13 +31,15 @@ from athena.core.identity import issue_write_actor, optional_actor
 from athena.aegis.api import (
     HandoffEvidenceItem,
     LeaseGenerationIn,
-    _CLAIM_IF_MATCH_OPENAPI,
-    _PRIVATE_LEASE_HEADERS,
-    _if_match_values,
-    _issue_command_error_response,
-    _issue_command_http_error,
-    _issue_for_read,
     router,
+)
+from athena.aegis.rest_support import (
+    CLAIM_IF_MATCH_OPENAPI,
+    PRIVATE_LEASE_HEADERS,
+    if_match_values,
+    issue_command_error_response,
+    issue_command_http_error,
+    issue_for_read,
 )
 
 
@@ -164,7 +166,7 @@ def list_issue_contributors(
 ) -> list[dict]:
     # Open read, like listing comments/labels. 404 if the issue is missing or not
     # visible.
-    _issue_for_read(conn, issue_id, actor)
+    issue_for_read(conn, issue_id, actor)
     return contributors.list_contributors(conn, issue_id)
 
 
@@ -184,7 +186,7 @@ def add_issue_contributor(
             conn, actor=actor, issue_id=issue_id, user_id=payload.user_id
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
 
 
 @router.post(
@@ -209,7 +211,7 @@ def delegate_issue_to_agent(
             require_agent=True,
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
 
 
 @router.delete(
@@ -226,7 +228,7 @@ def remove_issue_contributor(
             conn, actor=actor, issue_id=issue_id, user_id=user_id
         )
     except issue_commands.IssueCommandError as exc:
-        raise _issue_command_http_error(exc) from exc
+        raise issue_command_http_error(exc) from exc
 
 
 @router.get("/{issue_id}/lease", response_model=LeaseOut | None)
@@ -245,7 +247,7 @@ def get_issue_lease(
         conn, actor, issue["project_id"]
     ):
         raise HTTPException(status_code=404, detail="no such issue")
-    response.headers.update(_PRIVATE_LEASE_HEADERS)
+    response.headers.update(PRIVATE_LEASE_HEADERS)
     lease = leases.get_lease(conn, issue_id)
     if lease is not None:
         lease["open_claim_handoff"] = claim_handoffs.get_open_handoff(conn, issue_id)
@@ -256,7 +258,7 @@ def get_issue_lease(
     "/{issue_id}/claim",
     response_model=LeaseOut,
     status_code=201,
-    openapi_extra=_CLAIM_IF_MATCH_OPENAPI,
+    openapi_extra=CLAIM_IF_MATCH_OPENAPI,
 )
 def claim_issue(
     issue_id: RowIdPath,
@@ -269,21 +271,21 @@ def claim_issue(
     # Accept only against the exact root issue revision the claimant reviewed.
     # The command checks the raw If-Match under the lease's write transaction.
     lease_seconds = payload.lease_seconds if payload else None
-    response.headers.update(_PRIVATE_LEASE_HEADERS)
+    response.headers.update(PRIVATE_LEASE_HEADERS)
     kwargs = {} if lease_seconds is None else {"lease_seconds": lease_seconds}
     try:
         return lease_commands.claim_issue(
             conn,
             actor=actor,
             issue_id=issue_id,
-            if_match=_if_match_values(request),
+            if_match=if_match_values(request),
             generation=payload.generation if payload else None,
             paths=payload.paths if payload else None,
             coordination_root=payload.coordination_root if payload else None,
             **kwargs,
         )
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
 
 
 @router.post(
@@ -313,10 +315,10 @@ def yield_issue_claim(
             blocking_question=payload.blocking_question,
             resume_instructions=payload.resume_instructions,
         )
-        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        response.headers.update(PRIVATE_LEASE_HEADERS)
         return handoff
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
 
 
 @router.post(
@@ -340,10 +342,10 @@ def resume_issue_claim_handoff(
             generation=payload.generation,
             resume_note=payload.resume_note,
         )
-        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        response.headers.update(PRIVATE_LEASE_HEADERS)
         return handoff
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)
 
 
 @router.post("/{issue_id}/decline", response_model=list[ContributorOut])
@@ -364,7 +366,7 @@ def decline_issue_delegation(
             issue_id=issue_id,
             generation=payload.generation if payload else None,
         )
-        response.headers.update(_PRIVATE_LEASE_HEADERS)
+        response.headers.update(PRIVATE_LEASE_HEADERS)
         return result
     except issue_commands.IssueCommandError as exc:
-        return _issue_command_error_response(exc)
+        return issue_command_error_response(exc)

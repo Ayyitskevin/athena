@@ -98,7 +98,7 @@ class BudgetExhausted(Exception):
         self.retry_after_seconds = retry_after_seconds
 
 
-def _stamp(moment) -> str:
+def stamp_window(moment) -> str:
     return moment.strftime(_TS_FMT)
 
 
@@ -141,7 +141,7 @@ def _rolled(budget: Budget, now) -> Budget:
         window=budget.window,
         action_limit=budget.action_limit,
         action_used=0,
-        window_started_at=_stamp(now),
+        window_started_at=stamp_window(now),
         set_by=budget.set_by,
     )
 

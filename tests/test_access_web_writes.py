@@ -4,8 +4,8 @@ The detail pages are already read-gated (a private issue/page 404s), but the act
 routes that POST from them — edit, status, comment, attachment, watch, label, page
 move/delete, space edit — were gated only by can_modify / existence. A logged-in
 outsider who knew an id could craft the POST. Now every web write funnels through a
-visibility check (_issue_visible_or_404 / _authorize_issue_write for issues,
-_page_visible_or_response / _authorize_project_write for pages & projects) and 404s for
+visibility check (issue_visible_or_404 / authorize_issue_write for issues,
+page_visible_or_response / _authorize_project_write for pages & projects) and 404s for
 anyone who can't see the container — no existence leak, no blind write.
 """
 

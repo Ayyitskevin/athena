@@ -3,8 +3,8 @@
 Split out of web/router.py (the god-file) to keep each web surface navigable,
 following the same one-module-per-area pattern as web/projects.py and friends. Its
 own APIRouter, mounted by main.py. A thin client over the saved_filters/issue_search
-data layers — it owns no data. The shared label helper and template accessor are
-imported from web.router.
+data layers — it owns no data. Label chips live in web.browsing. Templates
+come from web.router.
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ from athena.core import access, labels, users
 from athena.core.deps import get_conn
 from athena.web.csrf import verify_csrf
 from athena.web.render import render_snippet
-from athena.web.router import _attach_labels, get_templates
+from athena.web.browsing import attach_labels
+from athena.web.router import get_templates
 
 router = APIRouter()
 
@@ -240,7 +241,7 @@ def filter_detail(
             if crit is not None
             else []
         )
-        _attach_labels(conn, matches)
+        attach_labels(conn, matches)
         context.update(issues=matches, total=len(matches))
     return get_templates().TemplateResponse(
         request=request, name="aegis/filter_detail.html", context=context

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from athena.aegis import api as issue_api
+from athena.aegis import rest_support
 from athena.aegis import issue_activity, issue_commands, issues
 from athena.core import labels, undo
 
@@ -27,13 +27,13 @@ def _refusal(exc: issue_commands.IssueCommandError) -> undo.UndoRefused:
     ``IssueCommandError`` is transport-neutral and every REST route translates it
     at the boundary — but the undo route lives in ``core`` and cannot import
     ``aegis`` to do the same. So the translation happens here, on the aegis side of
-    the wall, reusing the SAME status mapping the issue API uses rather than a
+    the wall, reusing the SAME status mapping the issue routes use rather than a
     second one that could drift. The command's message survives intact: an actor
     refused for role, scope, or visibility should read the real reason."""
     return undo.UndoRefused(
         exc.detail,
         code=undo.COMMAND_REFUSED_CODE,
-        status_code=issue_api.issue_command_status(exc),
+        status_code=rest_support.issue_command_status(exc),
     )
 
 
