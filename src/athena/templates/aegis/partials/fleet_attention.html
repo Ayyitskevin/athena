@@ -14,10 +14,9 @@
         </h3>
     </div>
     <div class="panel-body">
-        {% if fleet_attention.total %}
         <ul class="dashboard-list">
             {% for signal in fleet_attention.signals %}
-            {% if signal.count %}
+            {% if signal.count or signal.key in ('pending_approvals', 'unanswered_kills') %}
             <li>
                 <a href="{{ signal.href }}">{{ signal.label }}</a>
                 <strong>{{ signal.count }}</strong>
@@ -26,13 +25,17 @@
             {% endif %}
             {% endfor %}
         </ul>
-        {% else %}
+        {% if not fleet_attention.total %}
         <p class="muted">
-            Nothing is asking for you right now. That is what the last
-            {{ fleet_attention.window_hours }} hours recorded — not a promise that every
-            agent is healthy.
+            No attention found in the examined sources — not a promise that every
+            agent is healthy or that unexamined input is clear.
         </p>
         {% endif %}
+        <p class="muted">
+            Standing queues are not time-windowed; event counts use their stated windows.
+            Counts sum signals, not unique tasks or fleet health.
+            Input caps alone prove neither overflow nor completeness.
+        </p>
         {% if fleet_attention.now["items"] %}
         <h4>Now queue</h4>
         <ol class="dashboard-list">
@@ -44,7 +47,7 @@
                     <a href="{{ item.source_link }}">{{ item.source_kind | replace('_', ' ') }} #{{ item.source_id }}</a>
                     · owner {{ item.owner_name or 'unassigned' }}
                     · {{ item.freshness }}
-                    · examined {{ item.examined }} of {{ item.total }}
+                    · examined {{ item.examined }} of {{ item.total }} considered candidates, not a full input population
                 </span>
                 {% if item.next_action == "operator-link" and item.link %}
                 <a href="{{ item.link }}">Open owning surface</a>
@@ -58,8 +61,9 @@
         </ol>
         {% if fleet_attention.now.clipped %}
         <p class="muted">
-            Showing {{ fleet_attention.now.returned }} ranked rows after examining
-            {{ fleet_attention.now.examined }} candidates.
+            Ranked output clipped: showing {{ fleet_attention.now.returned }} ranked rows after examining
+            {{ fleet_attention.now.examined }} considered candidates;
+            output clipping does not establish input completeness.
         </p>
         {% endif %}
         {% endif %}
