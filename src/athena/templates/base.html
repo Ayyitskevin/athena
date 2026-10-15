@@ -96,16 +96,19 @@
                     Intervene
                     {% set intervene_total = request.state.unread_count + request.state.attention_total %}
                     {% if intervene_total %}
-                    <span class="nav-count" aria-label="{{ intervene_total }} things asking for you">{{ intervene_total }}</span>
+                    <span class="nav-count" aria-label="{{ intervene_total }} recorded inbox and attention signals; not unique tasks or fleet health">{{ intervene_total }}</span>
                     {% endif %}
                 </summary>
                 <div class="nav-menu">
-                    <p>Asking for a human right now. Counts only — each links to the surface that owns it.</p>
+                    <p>Recorded inbox and attention signals. Counts only — each links to the surface that owns it.</p>
                     <a href="/inbox">Inbox{% if request.state.unread_count %} <span class="chip" data-tone="accent">{{ request.state.unread_count }}</span>{% endif %} <span class="route">/inbox</span></a>
-                    {% for signal in request.state.attention_signals %}{% if signal.count %}
-                    <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span></a>
+                    {% for signal in request.state.attention_signals %}{% if signal.count or signal.key in ('pending_approvals', 'unanswered_kills') %}
+                    <a href="{{ signal.href }}">{{ signal.label }} <span class="chip" data-tone="accent">{{ signal.count }}</span> <span class="muted">{{ signal.scope }}</span></a>
                     {% endif %}{% endfor %}
                     {% if request.state.user.role == "admin" %}
+                    <p>Standing queues are not time-windowed; event counts use their stated windows.
+                        Counts sum signals, not unique tasks or fleet health.
+                        Input caps alone prove neither overflow nor completeness.</p>
                     <a href="/admin/run-controls">Run controls <span class="route">/admin/run-controls</span></a>
                     {% endif %}
                 </div>

@@ -619,3 +619,47 @@ def test_ranking_sorts_by_severity_then_freshness(tmp_path):
             i for i, s in enumerate(signals) if s == "budget_exhaustion"
         )
         assert high_index < medium_index
+
+
+@pytest.mark.parametrize("count", [200, 201])
+def test_ranked_pending_input_is_not_output_completeness(tmp_path, count):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        conn = db.connect(db_file)
+        conn.executemany(
+            "INSERT INTO approval_requests "
+            "(action_kind, target_kind, target_id, requested_by) "
+            "VALUES ('issue.close', 'issue', ?, 1)",
+            [(index + 1,) for index in range(count)],
+        )
+        conn.commit()
+        conn.close()
+        body = c.get(
+            "/attention/ranking?signals=pending_approval&limit=1",
+            headers=H1,
+        ).json()
+        assert set(body) == {
+            "items",
+            "examined",
+            "total",
+            "signals",
+            "returned",
+            "limit",
+            "clipped",
+        }
+        assert body["returned"] == body["limit"] == 1
+        assert body["examined"] == body["total"] == 200
+        assert body["clipped"] is True
+        assert body["items"][0]["source_id"] == count
+        assert body["items"][0]["examined"] == body["items"][0]["total"] == 200
+        assert body["items"][0]["link"] == "/admin/agents"
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        html = " ".join(c.get("/aegis/dashboard?panel=fleet-attention").text.split())
+        assert "considered candidates, not a full input population" in html
+        assert "Ranked output clipped" in html
+        assert "output clipping does not establish input completeness" in html

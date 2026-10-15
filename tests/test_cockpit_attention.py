@@ -26,6 +26,20 @@ from athena.main import create_app
 H1 = {"X-Athena-Actor": "1"}
 
 
+def test_nav_disclosures_have_a_viewport_bound_and_internal_scroll(tmp_path):
+    # Long truthful disclosure text must not remove later keyboard actions.
+    # The retained real-browser probe proves geometry/focus; this served-asset
+    # contract makes accidental removal of the no-JS scroll affordance fail CI.
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/static/styles.css")
+        assert response.status_code == 200
+        menu = response.text.split(".nav-menu {", 1)[1].split("}", 1)[0]
+        assert "max-height: calc(100vh - 6rem);" in menu
+        assert "max-height: calc(100dvh - 6rem);" in menu
+        assert "overflow-y: auto;" in menu
+
+
 def _app(tmp_path, name="cockpit.db"):
     return create_app(tmp_path / name), tmp_path / name
 
@@ -414,7 +428,7 @@ def test_a_quiet_fleet_says_so_without_claiming_health(tmp_path):
             follow_redirects=False,
         )
         page = c.get("/aegis/dashboard")
-        assert "Nothing is asking for you right now" in page.text
+        assert "No attention found in the examined sources" in page.text
         # The distinction the whole projection is built on.
         assert "not a promise that every" in page.text
 
@@ -462,3 +476,156 @@ def test_security_reads_validate_their_bounds(tmp_path):
         security_events.SECURITY_VERBS
     )
     conn.close()
+
+
+def _seed_pending_attention(db_file, count):
+    # Synthetic stored asks, not a change to approval policy or a real grant.
+    conn = db.connect(db_file)
+    conn.executemany(
+        "INSERT INTO approval_requests "
+        "(action_kind, target_kind, target_id, requested_by) "
+        "VALUES ('issue.close', 'issue', ?, 1)",
+        [(index + 1,) for index in range(count)],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _attention_surfaces(client):
+    # The panel response excludes navigation; /find has navigation but no card.
+    # Both must disclose bounds: one matching string elsewhere cannot pass both.
+    return (
+        " ".join(client.get("/aegis/dashboard?panel=fleet-attention").text.split()),
+        " ".join(client.get("/find").text.split()),
+    )
+
+
+@pytest.mark.parametrize("count", [0, 1, 200, 201])
+def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        _seed_pending_attention(db_file, count)
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        conn = db.connect(db_file)
+        projection = fleet_attention.build_attention(conn)
+        conn.close()
+        signals = projection["signals"]
+        pending = next(s for s in signals if s["key"] == "pending_approvals")
+        assert pending["count"] == min(count, 200)
+        assert pending["href"] == "/admin/agents"
+        assert [s["key"] for s in signals] == [
+            "claims_needing_attention",
+            "pending_approvals",
+            "unanswered_kills",
+            "open_run_controls",
+            "failing_automation_rules",
+            "failing_webhooks",
+            "budget_exhaustions",
+            "security_refusals",
+        ]
+        assert projection["total"] == min(count, 200)
+        for html in _attention_surfaces(c):
+            assert "up to 200 newest pending requests" in html
+            assert "input completeness unknown" in html
+            assert "Standing queues are not time-windowed" in html
+            assert "not unique tasks or fleet health" in html
+            assert "neither overflow nor completeness" in html
+            assert "/admin/agents" in html
+            assert "more than 200" not in html
+            assert "Nothing is asking for you right now" not in html
+
+
+@pytest.mark.parametrize("count, expected", [(0, 0), (1, 1), (500, 1), (501, 0)])
+def test_worker_input_bound_precedes_stop_filter_on_both_surfaces(
+    tmp_path, count, expected
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        if count:
+            first = c.put(
+                "/workers/heartbeat",
+                json={"worker_key": "old-stop"},
+                headers=_bearer(agent),
+            ).json()
+            conn = db.connect(db_file)
+            conn.execute(
+                "UPDATE agent_workers SET first_seen_at = '2000-01-01 00:00:00', "
+                "last_seen_at = '2000-01-01 00:00:00', "
+                "kill_requested_at = '2000-01-01 00:00:00', kill_requested_by = 1 "
+                "WHERE id = ?",
+                (first["id"],),
+            )
+            conn.executemany(
+                "INSERT INTO agent_workers "
+                "(agent_id, worker_key, first_seen_at, last_seen_at, last_token_id) "
+                "SELECT agent_id, ?, '2000-01-01 00:00:00', "
+                "'2999-01-01 00:00:00', last_token_id "
+                "FROM agent_workers WHERE id = ?",
+                [(f"recent-{index}", first["id"]) for index in range(count - 1)],
+            )
+            conn.commit()
+            assert (
+                conn.execute("SELECT COUNT(*) FROM agent_workers").fetchone()[0]
+                == count
+            )
+            conn.close()
+        c.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        conn = db.connect(db_file)
+        projection = fleet_attention.build_attention(conn)
+        conn.close()
+        stop = next(s for s in projection["signals"] if s["key"] == "unanswered_kills")
+        assert stop["count"] == expected
+        assert projection["total"] == expected
+        for html in _attention_surfaces(c):
+            assert "up to 500 most-recently-reporting workers" in html
+            assert "before stop-state filtering" in html
+            assert "input completeness unknown" in html
+            assert "Nothing is asking for you right now" not in html
+            if expected == 0:
+                assert (
+                    "No attention found in the examined sources" in html
+                    or "Recorded inbox" in html
+                )
+
+
+def test_new_bound_descriptions_stay_inside_admin_browser_visibility(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        _seed_pending_attention(db_file, 1)
+        reader = _agent(c, scopes=("read",))
+        c.post(
+            "/users",
+            json={"email": "m@e.com", "name": "Mem", "password": "pw"},
+            headers=H1,
+        )
+        for headers in ({}, _bearer(reader)):
+            for path in ("/aegis/dashboard", "/find"):
+                html = c.get(path, headers=headers).text
+                assert "up to 200 newest pending requests" not in html
+                assert "before stop-state filtering" not in html
+        c.post(
+            "/login",
+            data={"email": "m@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        for html in _attention_surfaces(c):
+            assert "up to 200 newest pending requests" not in html
+            assert "before stop-state filtering" not in html
+        ranking = c.get(
+            "/attention/ranking?signals=pending_approval",
+            headers=_bearer(reader),
+        ).json()
+        assert ranking["items"] == []
+        assert ranking["examined"] == ranking["total"] == 0

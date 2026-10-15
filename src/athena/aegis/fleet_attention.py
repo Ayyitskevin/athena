@@ -130,14 +130,20 @@ def build_attention(
             "label": "Approvals waiting on you",
             "count": len(pending_approvals),
             "href": "/admin/agents",
-            "scope": "open requests",
+            "scope": (
+                "standing queue; up to 200 newest pending requests read; "
+                "input completeness unknown"
+            ),
         },
         {
             "key": "unanswered_kills",
             "label": "Workers told to stop",
             "count": len(unanswered_kills),
             "href": "/admin/agents",
-            "scope": "asked, not yet confirmed",
+            "scope": (
+                "standing state; up to 500 most-recently-reporting workers read "
+                "before stop-state filtering; input completeness unknown"
+            ),
         },
         {
             "key": "open_run_controls",
@@ -718,7 +724,8 @@ def build_attention_ranking(
     The returned dict includes:
       - items: ranked list of ``AttentionRankItem`` dicts
       - examined: total candidates examined across all signals
-      - total: total candidates considered across all signals
+      - total: total candidates considered across all signals, not a full input
+        population; a collector's input bound is separate from output clipping
       - signals: the signal types that contributed to this response
     """
     if isinstance(window_hours, bool) or not isinstance(window_hours, int):
