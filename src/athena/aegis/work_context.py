@@ -11,7 +11,7 @@ from collections.abc import Callable
 import sqlite3
 from typing import Any
 
-from athena.aegis import claim_handoffs, issue_etags, issues, statuses
+from athena.aegis import claim_handoffs, issue_etags, issues, lease_commands, statuses
 from athena.core import (
     access,
     activity,
@@ -533,6 +533,7 @@ def build_work_context(
         )
 
         dependencies = _dependencies(conn, issue["id"], visible_project_ids)
+        claimant_eligible = lease_commands.claimant_is_eligible(conn, issue, actor)
         handoff_history = claim_handoffs.list_handoffs(conn, issue["id"])
         payload: dict[str, Any] = {
             "schema": SCHEMA,
@@ -575,6 +576,16 @@ def build_work_context(
                 "complete_does_not_close_issue": True,
             },
             "how_to_claim": {
+                "claimant_prerequisite": {
+                    "satisfied_at_read": claimant_eligible,
+                    "policy": "assignee, delegated contributor, or admin; creator alone is insufficient",
+                    "next_operation": (
+                        "get_issue_lease then claim_issue with issue_etag"
+                        if claimant_eligible
+                        else "request assignment or contributor delegation from an authorized actor"
+                    ),
+                    "meaning": "claimant policy snapshot, not authority or full claim eligibility; write-time scope, visibility, ETag, generation and conflict checks still apply",
+                },
                 "header": "If-Match",
                 "from": "issue_etag",
                 "not": "the work-context packet's top-level _etag",

@@ -136,10 +136,15 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
         """Claim or renew an issue only against the exact root issue revision reviewed.
-        Copy `issue_etag` from my_desk() or get_issue_work_context — never the
+        Copy `issue_etag` from get_issue_work_context — never the
         work-context packet's top-level `_etag`. Optional `paths` declares relative
         POSIX files. coordination_root selects a current qualified operator catalog
         digest/root_key/relative_prefix, not authority or caller-location proof.
+        No selector leaves nonempty paths unresolved; this does not diagnose
+        whether the operator has configured a qualified catalog. A stale explicit
+        selector refuses, never falls back. See docs/ACTIVE_WORK.md, Qualified
+        declared work roots, for the operator qualification workflow; never infer
+        a root from host/repo/branch strings or use [] as a conflict bypass.
         Unknown nonempty origins conflict conservatively. Renewal omission/null
         retains root/paths; explicit [] means issue-only under generation/ETag/audit.
         Actual root changes need new possession. Explicit root echo must confirm;

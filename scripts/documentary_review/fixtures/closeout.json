@@ -1,0 +1,12 @@
+{
+  "schema": "athena.agent_desk.v2",
+  "work": {"leases": {
+    "items": [{"issue_id": 1, "generation": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "claimed_at": "2026-10-15 10:00:00", "expires_at": "2026-10-15 15:00:00", "active": true}],
+    "total": 1,
+    "lapsed": [{"issue_id": 2, "generation": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "claimed_at": "2026-10-13 10:00:00", "expires_at": "2026-10-14 10:00:00", "active": false}],
+    "lapsed_total": 1
+  }},
+  "signals": {"unread_notifications": 2, "notifications": [{"id": 3, "created_at": "2026-10-14 22:00:00", "read_at": null, "target_kind": "issue", "target_id": 4}]},
+  "cursor": {"after_id": 20},
+  "asks": {"run_controls": {"items": [{"id": 5, "state": "pending"}]}}
+}

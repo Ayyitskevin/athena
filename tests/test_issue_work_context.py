@@ -164,10 +164,16 @@ def test_rest_numeric_key_mcp_and_web_share_the_public_contract(tmp_path):
             headers=H_ADMIN,
         ).json()["token"]
         client.headers.update({"Authorization": f"Bearer {token}"})
+        # Claimant guidance is intentionally actor-specific. Compare transports
+        # for the SAME actor, not the anonymous read above against an admin token.
+        same_actor, same_actor_etag = _context(client, issue["id"])
+        assert not by_id["how_to_claim"]["claimant_prerequisite"]["satisfied_at_read"]
+        assert same_actor["how_to_claim"]["claimant_prerequisite"]["satisfied_at_read"]
+        assert same_actor_etag != etag_by_id
         mcp_packet = AthenaClient(client=client).get_issue_work_context(issue["key"])
         mcp_etag = mcp_packet.pop("_etag")
-        assert mcp_packet == by_id
-        assert mcp_etag == etag_by_id
+        assert mcp_packet == same_actor
+        assert mcp_etag == same_actor_etag
 
 
 def test_hidden_and_missing_roots_are_identical_404s_on_json_and_html(tmp_path):

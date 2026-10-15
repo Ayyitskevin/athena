@@ -1,0 +1,11 @@
+{
+  "label": "FICTIONAL finite analogue of buildout -> implementation -> closure, not a real acceptance",
+  "stages": [
+    {"name": "buildout", "date": "2026-10-15T04:49:00Z", "six": "DRAFT", "seven": "DRAFT"},
+    {"name": "implementation", "date": "2026-10-15T05:42:00Z", "six": "RE_REVIEW", "seven": "RE_REVIEW"},
+    {"name": "closure", "date": "2026-10-15T06:03:00Z", "six": "ACCEPTED_DESIGN", "seven": "ACCEPTED_OFFLINE"}
+  ],
+  "unchanged": ["installed-1", "installed-2", "installed-3", "installed-4", "installed-5", "installed-8"],
+  "hold": "LIVE UNRUN; Kevin path decision pending",
+  "old_failure": "FAIL retained wrong-cwd check"
+}

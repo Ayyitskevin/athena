@@ -143,7 +143,8 @@ composes other calls or local state instead of one fixed route.
 | `decline_run_control` | `POST /run-controls/{control_id}/decline` | Decline a control addressed to your run, with the reason the operator … |
 | `heartbeat_agent_run` | `PUT /agent-runs/heartbeat` | Report that this authenticated agent is still working on `run_id`. |
 | `link_mention` | `POST /{base}/{source_id}/link-mention` | Rewrite the SOURCE document so its first unlinked mention of the target … |
-| `mark_notifications_read` | `POST /notifications/read_all` | Mark every unread notification in YOUR inbox as read (returns the … |
+| `mark_notification_read` | `POST /notifications/{notification_id}/read` | Mark ONE visible unread notification in YOUR inbox as read. |
+| `mark_notifications_read` | `POST /notifications/read_all` | Mark ALL unread notifications in YOUR inbox as read, including rows not shown … |
 | `set_watch_preference` | `PUT /watches/{target_kind}/{target_id}/preference` | Replace YOUR preference for an active watch. Omit or pass null for a … |
 | `undo_action` | `POST /activity/{event_id}/undo` | Undo one activity event by applying its registered inverse. |
 | `unwatch` | `DELETE /watches/{target_kind}/{target_id}` | Unsubscribe YOUR inbox from a target you are watching. Errors 404 if … |
@@ -176,4 +177,4 @@ composes other calls or local state instead of one fixed route.
 
 ---
 
-*133 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*134 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

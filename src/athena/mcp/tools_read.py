@@ -423,10 +423,25 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.get_watch_preference(target_kind, target_id)
 
     @mutation_tool
+    def mark_notification_read(
+        notification_id: WatchTargetId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> None:
+        """Mark ONE visible unread notification in YOUR inbox as read.
+        Other items, new arrivals, desk cursor and run controls are unchanged.
+        This acknowledges reading, not completion of the requested work.
+        Already-read, hidden or another actor's items return the existing REST
+        404; an exact keyed retry can replay its original success."""
+        return client.mark_notification_read(
+            notification_id, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
     def mark_notifications_read() -> dict:
-        """Mark every unread notification in YOUR inbox as read (returns the
-        cleared count). Do this after acting on the inbox, so the next read
-        surfaces only what is genuinely new."""
+        """Mark ALL unread notifications in YOUR inbox as read, including rows not shown
+        in a bounded read and arrivals since that read (returns the cleared count).
+        Use mark_notification_read for one handled item. Bulk acknowledgment is
+        deliberate, never implied by reading the desk or completing work."""
         return client.mark_all_notifications_read()
 
     @mutation_tool
