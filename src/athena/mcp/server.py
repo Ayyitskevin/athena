@@ -293,6 +293,7 @@ TOOL_SCOPES: dict[str, str] = {
     "list_page_versions": READ_ONLY,
     "get_page_version": READ_ONLY,
     # personal state and agent lifecycle — any write scope
+    "mark_notification_read": ANY_WRITE_SCOPE,
     "mark_notifications_read": ANY_WRITE_SCOPE,
     "watch": ANY_WRITE_SCOPE,
     "unwatch": ANY_WRITE_SCOPE,

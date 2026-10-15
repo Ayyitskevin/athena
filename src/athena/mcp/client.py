@@ -1180,6 +1180,16 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def mark_notification_read(
+        self, notification_id: int, *, idempotency_key: str | None = None
+    ) -> Any:
+        """Acknowledge one own visible unread item, using the existing REST owner."""
+        return self._mutate(
+            self._client.post,
+            f"/notifications/{notification_id}/read",
+            idempotency_key=idempotency_key,
+        )
+
     def mark_all_notifications_read(self) -> Any:
         """Clear the authenticated actor's inbox; returns how many were cleared."""
         return self._mutate(self._client.post, "/notifications/read_all")

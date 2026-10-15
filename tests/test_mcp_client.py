@@ -87,6 +87,12 @@ class _RecordingClient:
 
 MUTATION_CASES = [
     (
+        "mark_notification_read",
+        "POST",
+        "/notifications/7/read",
+        lambda c, k: c.mark_notification_read(7, idempotency_key=k),
+    ),
+    (
         "start_playbook",
         "POST",
         "/pages/5/start-playbook",

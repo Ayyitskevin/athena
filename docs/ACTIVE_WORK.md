@@ -157,6 +157,23 @@ never create actionable handoffs. A full SQLite backup/restore preserves them.
 
 ## Qualified declared work roots
 
+### Reading an unresolved result
+
+- **No selector supplied:** nonempty paths remain `unresolved`. The caller did
+  not select a qualified root; this does **not** tell you whether a private
+  operator catalog is configured. Ask the operator for a reviewed selector via
+  the qualification workflow below. Do not infer it from a host, repo or branch.
+- **Explicit selector stale/missing:** the write refuses; it never silently
+  downgrades to unresolved. Re-read the relevant operator qualification evidence
+  and obtain a current selector before a new deliberate attempt. Do not weaken
+  the fence or send empty paths to bypass a conflict.
+- **Unresolved competitor:** separation is unproven, not proof of a physical
+  collision or worker liveness. Hidden competing details remain hidden.
+
+This is guidance only. There is no capability-hint endpoint, private catalog
+dump, automatic root registration or permission grant. A capability hint remains
+unadmitted pending operator evidence; the qualification rules below are unchanged.
+
 Optional `paths` reserve declared relative POSIX paths on a lease. Optional
 `coordination_root` selects an operator-qualified lexical work surface:
 
