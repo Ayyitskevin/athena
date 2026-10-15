@@ -1,13 +1,14 @@
 """Approved desk improvements: public MCP -> client -> real REST, isolated DB."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues, lease_commands
-from athena.core import db, users
+from athena.core import db, run_controls, users
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
 from athena.mcp.server import build_server
@@ -125,8 +126,14 @@ def test_bulk_help_and_scope_do_not_suggest_acknowledging_unseen_work(desk):
     assert "not completion" in tools["mark_notification_read"].description
 
 
-def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk):
+def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk, monkeypatch):
     admin, client, user, _ = desk
+    clock = datetime.now(UTC).replace(microsecond=0)
+    monkeypatch.setattr(
+        run_controls,
+        "_utc_now",
+        lambda supplied: clock if supplied is None else supplied,
+    )
     client.heartbeat_agent_run("desk-proof")
     control = AthenaClient(client=admin).create_run_control(
         run_id="desk-proof", kind="steer", payload="Inspect only"
@@ -144,9 +151,18 @@ def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk):
             notification_id=notification_id,
             idempotency_key="one-explicit-ack",
         )
+    clock += timedelta(seconds=1)
     after = client.my_desk()
     assert after["signals"]["unread_notifications"] == 0
     assert after["cursor"] == before["cursor"]
+    # A desk read derives the countdown anew; crossing a second is not a
+    # control mutation. Require that exact clock delta, then compare EVERY
+    # remaining control field and envelope (including pending state).
+    before_seconds = before["asks"]["run_controls"]["items"][0].pop(
+        "expires_in_seconds"
+    )
+    after_seconds = after["asks"]["run_controls"]["items"][0].pop("expires_in_seconds")
+    assert after_seconds == before_seconds - 1
     assert after["asks"]["run_controls"] == before["asks"]["run_controls"]
     assert client.get_run_control(control["id"])["state"] == "requested"
 
