@@ -20,18 +20,16 @@ env:
   PIP_NO_INPUT: "1"
 
 jobs:
-  test:
+  coverage:
     runs-on: ubuntu-latest
-    # Measured, not guessed: the suite runs 19m37s here at 3580 tests (PR #363,
-    # 2026-08-21) and 17m32s on a docs-only change. `ubuntu-latest` is a 2-vCPU
-    # runner, so coverage.sh's `-n 4` oversubscribes and coverage tracing adds
-    # its own overhead on top. At a 20-minute ceiling the job was passing with
-    # 23 seconds to spare — close enough that ordinary runner variance, not a
-    # real regression, would have started failing the gate and blocking merges.
-    # 30 leaves ~50% headroom for suite growth. If a run ever approaches THIS
-    # ceiling, shard the job rather than raising the number again: a timeout
-    # that only ever moves up stops being a signal.
+    # PR #412's monolithic coverage workers exceeded 18 GiB locally. Hosted
+    # runs received runner shutdowns before the 30-minute timeout. Bound both
+    # memory and critical-path time; do not turn the timeout upward or drop tests.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,8 +67,61 @@ jobs:
         run: .venv/bin/python scripts/check_template_styles.py
       - name: Check template routes
         run: .venv/bin/python scripts/check_template_routes.py
-      - name: Run required tests with full-source branch coverage
-        run: scripts/coverage.sh "$RUNNER_TEMP/athena-coverage"
+      - name: Record runner resources
+        run: |
+          nproc
+          free -m
+          df -h "$RUNNER_TEMP"
+      - name: Run assigned tests with full-source branch coverage
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: /usr/bin/time -v .venv/bin/python scripts/coverage_shards.py run "$SHARD" "$RUNNER_TEMP/athena-shard"
+      - name: Upload complete shard evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/athena-shard
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  # Keep the required check name. always() + an explicit success guard refuses
+  # failed/cancelled/skipped shards instead of turning a skipped fan-in green.
+  test:
+    needs: [coverage]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require every shard to succeed
+        env:
+          SHARD_RESULT: ${{ needs.coverage.result }}
+        run: test "$SHARD_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Create isolated test environment
+        run: python -m venv .venv
+      - name: Install hash-verified package installer
+        run: |
+          .venv/bin/python -I -m pip install --only-binary :all: --require-hashes -r constraints/bootstrap-py312.txt
+      - name: Install and verify pinned test extras
+        run: |
+          .venv/bin/python -I -m pip install -c constraints/ci-py312.txt -e ".[dev,mcp]"
+          .venv/bin/python -I -m pip check
+          .venv/bin/python -I -m pip freeze --exclude-editable | diff -u constraints/ci-py312.txt -
+      - name: Download this run's shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: coverage-shard-*
+          path: ${{ runner.temp }}/athena-shards
+          merge-multiple: false
+          digest-mismatch: error
+      - name: Verify exact test inventory and combined coverage floors
+        run: .venv/bin/python scripts/coverage_shards.py combine "$RUNNER_TEMP/athena-shards" "$RUNNER_TEMP/athena-coverage"
       - name: Upload coverage evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
