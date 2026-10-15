@@ -318,6 +318,11 @@ code, kbd, pre, samp { font-family: var(--font-mono); }
   left: 0;
   z-index: 50;
   min-width: 232px;
+  /* Keep long disclosures reachable by keyboard without shortening them.
+     Reserve room for the nav anchor; --bar is auto on narrow screens. */
+  max-height: calc(100vh - 6rem);
+  max-height: calc(100dvh - 6rem);
+  overflow-y: auto;
   padding: var(--sp-1);
   background: var(--surface);
   border: 1px solid var(--border-strong);

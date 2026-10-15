@@ -26,6 +26,20 @@ from athena.main import create_app
 H1 = {"X-Athena-Actor": "1"}
 
 
+def test_nav_disclosures_have_a_viewport_bound_and_internal_scroll(tmp_path):
+    # Long truthful disclosure text must not remove later keyboard actions.
+    # The retained real-browser probe proves geometry/focus; this served-asset
+    # contract makes accidental removal of the no-JS scroll affordance fail CI.
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/static/styles.css")
+        assert response.status_code == 200
+        menu = response.text.split(".nav-menu {", 1)[1].split("}", 1)[0]
+        assert "max-height: calc(100vh - 6rem);" in menu
+        assert "max-height: calc(100dvh - 6rem);" in menu
+        assert "overflow-y: auto;" in menu
+
+
 def _app(tmp_path, name="cockpit.db"):
     return create_app(tmp_path / name), tmp_path / name
 
