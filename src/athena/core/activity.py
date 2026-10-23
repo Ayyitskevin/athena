@@ -227,7 +227,8 @@ def record(
     lives here, in the single writer, rather than in each caller: forgetting it
     would let an inbound source forge a native-looking row.
 
-    An imported row still gets the full access envelope and watcher fan-out. That
+    An imported row still gets the full access envelope and hash-chain entry;
+    the notification owner skips its generic watcher fan-out. That access envelope
     is the reason inbound history is recorded through this function instead of a
     direct INSERT — a forge event landing on a private project's issue must obey
     the same visibility rules as every other event on that issue.
@@ -330,7 +331,8 @@ def record(
                 for project_scope_key in sorted(resolved_scope_keys)
             ],
         )
-        # Fan the event out to the inbox of anyone watching this target (not the actor).
+        # The notification owner fans native events out to watchers (not the actor)
+        # and suppresses generic fan-out for imported history.
         # Scope rows are already present, and notify_watchers doesn't commit, so the
         # event, its access envelope, and notifications land or roll back together.
         notifications.notify_watchers(

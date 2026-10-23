@@ -228,8 +228,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool
     def my_office() -> dict:
-        """Your cubicle. Athena's unique seat: at most one chair (one active
-        lease), fenced paths, and a checkout branch hint. START HERE if you
+        """Your cubicle: active leases, declared paths, and a checkout branch hint.
+        At most one active lease is workflow guidance, not a server quota. START HERE if you
         already know who you are and only need the job.
 
         `seated` is true only when you hold exactly one active lease. `chair`

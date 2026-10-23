@@ -54,7 +54,7 @@ composes other calls or local state instead of one fixed route.
 | `list_dispatches` | `GET /dispatches` | What Athena has handed to the executor, newest first. Filter by … |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | Read one issue's comment thread, oldest first — the discussion a … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | Read an issue's dependency links — what it blocks, what blocks it, and … |
-| `list_issues` | `GET /issues` | List Aegis issues, optionally filtered by status (open/in_progress/done), … |
+| `list_issues` | `GET /issues` | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | List the shared label vocabulary (id, name, color). |
 | `list_my_delegated_work` | `GET /delegations/me` | List issues delegated to the authenticated contributor. By default this … |
 | `list_notifications` | `GET /notifications` | Read YOUR notification inbox — mentions, watched-issue changes, and … |
@@ -69,7 +69,7 @@ composes other calls or local state instead of one fixed route.
 | `list_subtasks` | `GET /issues/{issue_id}/children` | List the direct child issues (sub-tasks) nested under this issue. |
 | `list_workers` | `GET /workers` | The worker registry — which agent processes are reporting, on what node, … |
 | `my_desk` | `GET /desk` | START HERE. Your desk: who you are, what is asked of you, what you … |
-| `my_office` | `GET /office` | Your cubicle. Athena's unique seat: at most one chair (one active … |
+| `my_office` | `GET /office` | Your cubicle: active leases, declared paths, and a checkout branch hint. |
 | `notification_priority_summary` | `GET /notifications/priority/summary` | Count YOUR visible notifications by resolved priority and mute state. |
 | `page_backlinks` | `GET /pages/{page_id}/backlinks` | What references this page — the INCOMING edges of the knowledge graph. Each … |
 | `page_outgoing_links` | `GET /pages/{page_id}/outgoing-links` | What this page references — the OUTGOING edges of the knowledge graph (the … |
@@ -115,7 +115,7 @@ composes other calls or local state instead of one fixed route.
 | `start_sprint` | `POST /sprints/{sprint_id}/start` | Move a planned sprint to active. A project may have only one active … |
 | `unarchive_issue` | `POST /issues/{issue_id}/unarchive` | Restore a previously archived issue to the active lists. Returns the issue. |
 | `unlink_issues` | `DELETE /issues/{issue_id}/links/{relation}/{target_id}` | Remove a dependency from this issue: the same relation used to add it … |
-| `update_issue` | `PATCH /issues/{issue_id}` | Update an issue. Send only the fields to change. status is one of … |
+| `update_issue` | `PATCH /issues/{issue_id}` | Update an issue. Send only the fields to change. status must be a name … |
 | `update_sprint` | `PATCH /sprints/{sprint_id}` | Update a sprint's name, goal, or dates without changing its state. |
 | `yield_claim` | `POST /issues/{issue_id}/yield` | Honestly release your exact active claim with a structured continuation … |
 

@@ -660,8 +660,8 @@ def decline_delegation(
                 released_generation = _matching_lease_generation(held, generation)
             else:
                 # An expired row is not a current possession. A generationless
-                # pre-claim decline therefore leaves it for the next acquisition
-                # to replace instead of performing any unfenced deletion.
+                # decline releases our expired row using the server-observed
+                # generation under this immediate writer lock, never unfenced.
                 if generation is not None:
                     released_generation = _matching_lease_generation(held, generation)
                 else:

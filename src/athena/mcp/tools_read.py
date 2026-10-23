@@ -75,12 +75,13 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         search: str | None = None,
         include_archived: bool = False,
     ) -> list:
-        """List Aegis issues, optionally filtered by status (open/in_progress/done),
+        """List Aegis issues, optionally filtered by a project-configured status,
         project (id or 'none' for the backlog), sprint id, label name, or a text
         substring. Omit sprint to include every sprint (there is no unsprinted-only
         value). Each result's assignee_is_agent is true for an agent, false for a
         human, and null when unassigned. Archived issues are hidden by default; pass
-        include_archived=true to see them."""
+        include_archived=true to see them. The backlog defaults to
+        open/in_progress/done; other projects may define different status names."""
         return client.list_issues(
             status=status,
             project=project,

@@ -111,7 +111,7 @@ def leases_held_by(
     limit: int = 20,
     now: datetime | None = None,
 ) -> list[dict]:
-    """One holder's leases, most recently claimed first — "what am I holding?".
+    """One holder's leases, most recently acquired/renewed first — "what do I hold?".
 
     The self-read twin of ``get_lease``: that answers "who holds this issue",
     this answers "which issues do I hold". Both derive ``active`` from

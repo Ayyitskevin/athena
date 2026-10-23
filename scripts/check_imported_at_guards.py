@@ -125,6 +125,13 @@ MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
 # projections that already carry the filter. (path, function, pattern, why).
 EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
     (
+        "core/notifications.py",
+        "notify_watchers",
+        r'if event is not None and event\["imported_at"\] is not None:\s+return\b',
+        "generic watcher fan-out is native-only; explicit mentions remain "
+        "a separate path with their existing deduplication",
+    ),
+    (
         "aegis/fleet_work.py",
         "build_active_work",
         r"imported_at IS NULL",

@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_imported_at_guards.py"
@@ -67,6 +69,28 @@ def test_a_new_activity_reader_fails(tmp_path):
     assert result.returncode == 1
     assert "new activity reader" in result.stderr
     assert "dashboard.py::count_events" in result.stderr
+
+
+@pytest.mark.parametrize("mutation", ["condition", "return"])
+def test_imported_watcher_guard_loss_fails(tmp_path, mutation):
+    package_root = _tree_copy(tmp_path)
+    target = package_root / "core" / "notifications.py"
+    source = target.read_text(encoding="utf-8")
+    guard = 'if event is not None and event["imported_at"] is not None:\n        return'
+    assert source.count(guard) == 1
+    broken = (
+        guard.replace(
+            'event["imported_at"] is not None', 'event["imported_at"] is None'
+        )
+        if mutation == "condition"
+        else guard.replace("return", "pass")
+    )
+    target.write_text(source.replace(guard, broken), encoding="utf-8")
+
+    result = _run(package_root)
+
+    assert result.returncode == 1
+    assert "core/notifications.py::notify_watchers lost its guard" in result.stderr
 
 
 def test_an_exemption_that_stops_reading_the_trail_fails_as_stale(tmp_path):

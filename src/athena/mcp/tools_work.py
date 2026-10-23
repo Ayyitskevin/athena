@@ -56,8 +56,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Update an issue. Send only the fields to change. status is one of
-        open/in_progress/done; priority is low/medium/high/urgent."""
+        """Update an issue. Send only the fields to change. status must be a name
+        configured for its project (the backlog defaults to open/in_progress/done);
+        priority is low/medium/high/urgent."""
         return client.update_issue(
             issue_id,
             title=title,

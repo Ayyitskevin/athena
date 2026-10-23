@@ -1280,8 +1280,10 @@ def complete_issue_claim(
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
     # Complete: release the lease you hold (the issue is freed for the next claimant),
-    # or clear your own row the clock already expired. 409 if the lease is absent or
-    # someone else's. Releases the coordination lease only — status
+    # or clear your own row the clock already expired. An eligible admin may also
+    # release another holder's ACTIVE lease; no actor may complete another's
+    # lapsed row (lease_commands.complete_claim owns these checks). Releases the
+    # coordination lease only — status
     # changes go through the ordinary status command. The body says so explicitly so
     # an agent does not have to read source to learn the issue is still open.
     try:
