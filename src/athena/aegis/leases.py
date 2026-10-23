@@ -207,8 +207,8 @@ def lapsed_leases_held_by(
     limit: int = 20,
     now: datetime | None = None,
 ) -> tuple[list[dict], int]:
-    """This holder's EXPIRED rows on issues that are still open, newest first,
-    with the count of everything that passed the filter.
+    """This holder's EXPIRED rows on existing issues, newest claim first,
+    with the count before clipping and each issue's current done-category flag.
 
     A lease row outlives its window: nothing sweeps it, and only the next
     acquisition or the holder's own release removes it. So "the clock released
@@ -216,18 +216,10 @@ def lapsed_leases_held_by(
     renew it, or clear it — and it belongs on a surface that says so, not folded
     in among the leases they actually hold.
 
-    Rows on issues whose status category is ``done`` are omitted: there is no
-    possession left to lose on finished work, and surfacing it would grow an
-    unclearable list on every seat. The row itself is not hidden — it stays
-    readable at ``get_lease`` for as long as it exists, which is where "who held
-    this last" is answered.
-
-    The returned count is the count AFTER that filter, not the number of expired
-    rows: a total that counts rows the list can never show would be the same
-    lie in a smaller font. The filter runs in Python (a holder has at most one
-    row per issue, so this is bounded by their own lease count) rather than
-    duplicating the delegation inbox's category SQL, which would put a second
-    copy of "what closed means" in the tree.
+    Finishing an issue does not settle its lease row. Include done issues so
+    the holder can deliberately release their own residual row; this read
+    neither settles it nor changes who may do so. The status owner derives
+    ``issue_done``; a missing original is never replaced or invented.
     """
     bounded = max(1, min(int(limit), 100))
     stamp = _clock_stamp(now)
@@ -236,7 +228,7 @@ def lapsed_leases_held_by(
         "ORDER BY l.claimed_at DESC, l.issue_id DESC",
         (stamp, holder_id, stamp),
     ).fetchall()
-    still_open = []
+    lapsed = []
     for row in rows:
         issue = conn.execute(
             "SELECT project_id, status FROM issues WHERE id = ?",
@@ -244,10 +236,12 @@ def lapsed_leases_held_by(
         ).fetchone()
         if issue is None:
             continue
-        if statuses.is_done(conn, issue["project_id"], issue["status"]):
-            continue
-        still_open.append(_row_to_lease(row))
-    return still_open[:bounded], len(still_open)
+        lease = _row_to_lease(row)
+        lease["issue_done"] = statuses.is_done(
+            conn, issue["project_id"], issue["status"]
+        )
+        lapsed.append(lease)
+    return lapsed[:bounded], len(lapsed)
 
 
 def upsert_lease(
