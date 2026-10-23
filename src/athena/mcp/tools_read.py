@@ -16,6 +16,7 @@ from athena.mcp.server import (
     DelegationLimit,
     DelegationOffset,
     DigestWindowMinutes,
+    EventLimit,
     FleetActorLimit,
     FleetAgentId,
     FleetMetricDate,
@@ -371,11 +372,42 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.get_issue_state(issue_id, as_of_event_id=as_of_event_id)
 
     @tool
-    def recent_events(after: int | None = None, kind: str | None = None) -> dict:
-        """Read the audit/event feed in order. Pass the last event id you saw as
-        `after` to get only newer events; optionally filter by kind (issue/page).
-        Returns {events, next_after, has_more}."""
-        return client.recent_events(after=after, kind=kind)
+    def recent_events(
+        after: int | None = None,
+        kind: str | None = None,
+        target: int | None = None,
+        actor_id: int | None = None,
+        actor_type: Literal["agent", "human"] | None = None,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
+        verb: str | None = None,
+        limit: EventLimit = 50,
+    ) -> dict:
+        """Read the audit/event feed in ascending event-id order, with REST filters.
+
+        Pass `after` for newer events. Filters may be combined: kind, target
+        (requires kind), actor_id, actor_type (agent/human), run_id,
+        parent_run_id (events in child runs), and verb. limit defaults to 50,
+        from 1 to 200. Returns {events, next_after, has_more}; an empty page
+        retains the input after. Each event's stored imported_at is null for a
+        native event; any non-null value marks an import, regardless of verb.
+
+        A filtered read can omit intervening events: its next_after cannot
+        justify advancing the desk cursor. Advance only after processing the
+        unfiltered contiguous visible prefix from your last processed boundary.
+        Reading never advances the desk cursor or acknowledges notifications.
+        """
+        return client.recent_events(
+            after=after,
+            kind=kind,
+            target=target,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            verb=verb,
+            limit=limit,
+        )
 
     @tool
     def whoami() -> dict:

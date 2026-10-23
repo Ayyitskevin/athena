@@ -116,6 +116,7 @@ def test_events_replay_envelope_is_stable(tmp_path):
             "run_id",
             "parent_run_id",
             "forked_from_event_id",
+            "imported_at",
         }
         assert event["verb"] == "created"
         assert event["target_kind"] == "issue"

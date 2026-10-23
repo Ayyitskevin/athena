@@ -76,7 +76,7 @@ composes other calls or local state instead of one fixed route.
 | `project_timeline` | `GET /projects/{project_id}/timeline` | A project's roadmap: sprint lanes, the issues in them, and the declared … |
 | `query_help` | `GET /issues/query/help` | The work-query vocabulary as data: every field, its accepted values, … |
 | `read_page_embeds` | `GET /pages/{page_id}` | Resolve a Mentor page's live embeds to DATA, as you. |
-| `recent_events` | `GET /events` | Read the audit/event feed in order. Pass the last event id you saw as … |
+| `recent_events` | `GET /events` | Read the audit/event feed in ascending event-id order, with REST filters. |
 | `related_items` | `GET /{base}/{node_id}/related` | What cites what this cites, but is NOT linked to it yet. |
 | `resolve_embeds` | `POST /embeds/resolve` | Resolve embed directives in arbitrary text, as you. |
 | `search` | `GET /search` | Full-text search across Aegis issues and Mentor pages. Optionally narrow … |

@@ -190,6 +190,7 @@ WatchKind = Literal["issue", "page", "space"]
 WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 NotificationPriority = Literal["low", "normal", "medium", "high", "urgent"]
 NotificationLimit = Annotated[int, Field(strict=True, ge=1, le=200)]
+EventLimit = Annotated[int, Field(strict=True, ge=1, le=200)]
 WatchPreferencePriority = Literal["low", "medium", "high", "urgent"]
 DigestWindowMinutes = Annotated[
     int,
