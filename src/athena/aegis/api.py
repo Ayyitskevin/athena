@@ -200,6 +200,19 @@ class IssueOut(BaseModel):
     labels: list[LabelOut] = []
 
 
+class HeldLeaseNote(BaseModel):
+    generation: str
+    expires_at: str
+    active: bool
+    message: str
+
+
+class IssueUpdateOut(IssueOut):
+    # PATCH-only, transient advice. Unset means absent; canonical issue null
+    # fields remain explicit. GET/list and the issue-v1 validator stay unchanged.
+    held_lease: HeldLeaseNote | None = None
+
+
 class LinkOut(BaseModel):
     # One resolved cross-reference: the kind/id it points at, that target's
     # current title, and whether it still exists (title is null when broken).
@@ -722,7 +735,11 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
     return issue
 
 
-@router.patch("/{issue_id}", response_model=IssueOut)
+@router.patch(
+    "/{issue_id}",
+    response_model=IssueUpdateOut,
+    response_model_exclude_unset=True,
+)
 def update(
     issue_id: RowIdPath,
     payload: IssueUpdate,
@@ -744,7 +761,13 @@ def update(
         )
     except issue_commands.IssueCommandError as exc:
         return issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    public = _tagged_issue(conn, updated, response)
+    # ETag identifies the canonical target issue revision used by If-Match,
+    # not this actor-specific, transition-time advisory. Do not put the note
+    # into issue_etags or unrelated GET/list response models.
+    if "held_lease" in updated:
+        public["held_lease"] = updated["held_lease"]
+    return public
 
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)

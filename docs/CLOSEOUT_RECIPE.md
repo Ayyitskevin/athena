@@ -23,6 +23,25 @@ and advancing the event cursor are FIVE distinct operations. Advance a cursor
 only through events actually handled. No bulk acknowledgment, cleanup, takeover,
 auto-close or "finish everything" action is performed or recommended here.
 
+A successful `PATCH /issues/{id}` / `update_issue` transition from a non-done
+category into a done category may include `held_lease` for the updating actor's
+own lease row. It carries `generation`, `expires_at`, `active`, and an
+informational message. `active=false` means a lapsed residual row, not active
+possession. This describes the row at the successful transition; it can be stale
+when read or replayed by an idempotency key. It is not authority or an instruction
+to auto-complete. A human/agent must separately choose `complete_claim` with that
+exact generation; the existing command rechecks it. Marking done changes no lease.
+Other actors' rows, non-done updates, already-done updates and refused writes do
+not receive the note. GET/list representations do not carry it.
+
+PATCH's `ETag` (client `_etag`) continues to identify the canonical target issue
+revision used by `If-Match`, equal to a subsequent unchanged GET's validator.
+The transient advisory is excluded from that resource validator; the ETag is not
+a hash of the entire advisory-bearing PATCH body. Existing null issue fields
+remain present. Replayed responses retain the original observation and validator;
+read the current resource before relying on present state. This keeps the two-write
+contract intact and does not decide the separate OD-L2 close-and-release proposal.
+
 The targeted MCP tool `mark_notification_read(notification_id, idempotency_key=...)`
 is implemented through the official client and the owning REST operation
 `POST /notifications/{id}/read` (`mcp/tools_read.py`, `mcp/client.py`,
