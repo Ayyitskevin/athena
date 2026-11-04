@@ -16,6 +16,22 @@ only sees the tools it can use ([RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)),
 and `admin` implies every scope. A tool shown as *(client-side)*
 composes other calls or local state instead of one fixed route.
 
+## Reported claim completion
+
+`complete_claim` and `POST /issues/{id}/complete` accept optional
+`results`, `unfinished`, `uncertainty`, and typed, source-qualified
+`evidence`. They are actor-reported data, not a verified success verdict.
+`not_assessed` means the condition was not evaluated; for example, an
+integration check was never run. `inconclusive` means an evaluation was
+attempted but did not establish `met` or `not_met`; for example, an
+integration check ran but timed out before producing a result.
+Reported `not_met` results and `unrun` evidence do not block lease release
+under the existing generation rules. Issue status and gates are unchanged.
+Omitted fields retain the legacy response and event detail. References are
+inert text: never submit credentials or secret-bearing URLs. See
+[CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md#optional-reported-completion) for
+the bounded grammar, evidence scopes, example, and preservation limits.
+
 ## Read tools — scope: `read`
 
 | MCP tool | REST call(s) | Summary |
@@ -96,7 +112,7 @@ composes other calls or local state instead of one fixed route.
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | Release the lease you hold, or clear your own lapsed lease. This does … |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | Release a claim with optional reported conditions, residuals, and evidence. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
 | `create_issue` | `POST /issues` | Create an Aegis issue. Omit status to use the target project's default; … |
 | `create_label` | `POST /labels` | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |

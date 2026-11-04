@@ -1,5 +1,85 @@
 # Closeout debt: inspect, then choose one deliberate action
 
+## Optional reported completion
+
+`complete_claim` / `POST /issues/{id}/complete` may carry `results`,
+`unfinished`, `uncertainty`, and `evidence` alongside the exact observed
+`generation`. These fields record what the actor **reported**, not what Athena
+verified. Omit them (or use null) for the existing release behavior and unchanged
+response. Empty lists report an empty list; they do not mean every check passed.
+
+```json
+{
+  "generation": "<exact observed generation>",
+  "results": [
+    {"condition": "review original source", "state": "met", "note": "source read"},
+    {"condition": "exercise real integration", "state": "not_assessed", "note": "unrun"}
+  ],
+  "unfinished": ["Integration rehearsal is still owed."],
+  "uncertainty": ["The source read does not establish runtime behavior."],
+  "evidence": [
+    {"kind": "file", "source": "checkout@<commit>", "ref": "src/example.py:42", "scope": "source-only"},
+    {"kind": "manifest", "source": "local synthetic fixture", "ref": "checks.json", "scope": "unrun"}
+  ]
+}
+```
+
+Each reported result has exactly `condition`, `state`, and `note`; state is
+`met`, `not_met`, `not_assessed`, or `inconclusive`. There is no overall success
+boolean or score. Up to 20 results are allowed, with a nonblank condition and
+optional blank note, each at most 500 characters. `unfinished` and `uncertainty`
+each accept up to 10 nonblank strings of at most 500 characters.
+
+`not_assessed` means the condition was not evaluated; for example, an
+integration check was never run. `inconclusive` means an evaluation was attempted
+but did not establish `met` or `not_met`; for example, an integration check ran
+but timed out before producing a result.
+
+History and work-context summaries show counts of each reported state present,
+plus reported unfinished and uncertainty counts. These are counts, not an overall
+verdict. Reports open by default when a result is other than `met`, or unfinished
+work or uncertainty is non-empty. A report containing only `met` stays collapsed;
+its counts remain visible in the summary. The narrative repeats the same counts
+as reported and advisory.
+
+Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`.
+Kinds are `event`, `handoff`, `doc`, `file`, or `manifest`. Source qualifies where
+the original record/bytes belong (for example an Athena instance or a checkout
+and revision), at most 200 characters; `ref` identifies the original event,
+handoff, document, file, or manifest, at most 1000 characters. Scope is explicitly
+`source-only`, `synthetic`, `actual-run`, or `unrun`. Scope is the actor's report,
+never a verified execution verdict. References are not resolved, fetched,
+executed, or made into active URLs. Keep finite original bytes and any actual
+verification outside this advisory record; a digest identifies bytes, not truth.
+
+The complete compact JSON report is limited to 8000 characters. The evidence
+reference list also uses the existing yield-evidence count, text/control, and
+8000-character encoded-reference checks. Valid report strings are retained
+exactly, including whitespace; unsupported controls are refused. As with yield
+evidence, these are bounds and grammar checks, **not a secret detector**. Never
+submit credentials, tokens, private payloads, or secret-bearing URLs. Use a safe
+reference to the evidence instead. Malformed/oversized input returns the
+existing `invalid` error and leaves the lease and event unchanged.
+
+A reported `not_met` result or `unrun` reference still permits release under the
+existing lease/generation rules. Reporting does not close an issue, change its
+status, grant or consume approval, or satisfy a gate. A false PASS is never the
+price of releasing a claim. Stale generations and open-handoff rules still
+apply. Use the ordinary status command separately if appropriate.
+
+The existing `claim_completed` event carries the report after its generation
+prefix, under the versioned `reported_completion_v1` marker. With no report,
+the detail remains exactly `generation <generation>`. There is no new verb,
+table, migration, or status. Recent work-context items expose full validated
+reports as `reported_completion` (null for legacy/non-report/imported rows),
+even if their separate raw detail excerpt is clipped. Context still includes
+only its 30 newest actor-visible activity rows and reports clipping. Issue
+history labels these fields **reported** and escapes their text. Replay and
+exports preserve the original detail; imported history cannot become a native
+reported completion or actionable handoff merely by copying that text.
+
+## Deliberate closeout actions
+
 Read `my_desk()` first. Keep active leases, lapsed residual rows and unread
 notifications separate. The local-only `scripts/documentary_review/closeout.py`
 renders an explicitly supplied desk snapshot and explicit `as_of` time; it does

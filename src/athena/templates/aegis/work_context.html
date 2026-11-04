@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "aegis/partials/completion_report.html" import show_report %}
 
 {% block title %}Agent work context — {{ issue.key or "#" ~ issue.id }} — Aegis{% endblock %}
 
@@ -398,6 +399,7 @@
             <span class="muted">imported {{ event.imported_at }}</span>
             {% endif %}
             {{ excerpt(event.detail, "No event detail.") }}
+            {{ show_report(event.get("reported_completion")) }}
         </li>
         {% endfor %}
     </ol>

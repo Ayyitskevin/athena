@@ -22,6 +22,7 @@ from athena.aegis import issues, projects, sprints
 from athena.core import activity, db, labels, notifications, users
 
 _INFER_PROJECT = object()
+COMPLETION_REPORT_MARKER = "; reported_completion_v1 "
 
 
 def _project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str | None:
@@ -786,6 +787,7 @@ def record_claim_completed(
     actor_id: int,
     issue_id: int,
     generation: str,
+    reported: dict | None = None,
     commit: bool = True,
 ) -> None:
     """Record that the leaseholder released the issue by completing its claimed work —
@@ -797,7 +799,17 @@ def record_claim_completed(
         verb="claim_completed",
         target_kind="issue",
         target_id=issue_id,
-        detail=f"generation {generation}",
+        detail=(
+            f"generation {generation}"
+            + (
+                COMPLETION_REPORT_MARKER
+                + json.dumps(
+                    reported, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+                if reported is not None
+                else ""
+            )
+        ),
         commit=commit,
     )
 

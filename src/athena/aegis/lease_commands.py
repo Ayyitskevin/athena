@@ -15,6 +15,7 @@ MCP share one boundary.
 
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from typing import Literal
@@ -45,6 +46,16 @@ MAX_HANDOFF_EVIDENCE_JSON_CHARS = 8_000
 MAX_HANDOFF_BLOCKING_QUESTION_CHARS = 1_000
 MAX_HANDOFF_RESUME_INSTRUCTIONS_CHARS = 4_000
 MAX_HANDOFF_RESUME_NOTE_CHARS = 2_000
+MAX_COMPLETION_RESULTS = 20
+MAX_COMPLETION_TEXT_ITEMS = 10
+MAX_COMPLETION_TEXT_CHARS = 500
+MAX_COMPLETION_SOURCE_CHARS = 200
+MAX_COMPLETION_REPORT_JSON_CHARS = 8_000
+COMPLETION_RESULT_STATES = frozenset({"met", "not_met", "not_assessed", "inconclusive"})
+COMPLETION_EVIDENCE_KINDS = frozenset({"event", "handoff", "doc", "file", "manifest"})
+COMPLETION_EVIDENCE_SCOPES = frozenset(
+    {"source-only", "synthetic", "actual-run", "unrun"}
+)
 CLAIM_PRECONDITION_REQUIRED_DETAIL = (
     "If-Match with exactly one strong issue ETag is required to claim"
 )
@@ -396,6 +407,175 @@ def _normalize_handoff_token(handoff_token: object) -> str:
     return handoff_token
 
 
+def _completion_text(
+    value: object, *, name: str, maximum: int, blank: bool = False
+) -> str:
+    """Use handoff text validation, retaining the exact submitted reference/text."""
+    if not isinstance(value, str):
+        raise IssueCommandError("invalid", f"{name} must be a string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise IssueCommandError(
+            "invalid", f"{name} must be valid Unicode text"
+        ) from exc
+    _normalize_handoff_text(value, name=name, maximum=maximum, required=not blank)
+    return value
+
+
+def _normalize_completion_report(
+    *,
+    results: object = None,
+    unfinished: object = None,
+    uncertainty: object = None,
+    evidence: object = None,
+) -> dict | None:
+    """Bound advisory data only: no lookup, execution, verdict, or secret scanning.
+
+    As with yield evidence, text is checked for size, blanks and controls, not
+    credential content. Callers must never submit credentials or secret URLs.
+    """
+    report: dict = {}
+    for name, raw, maximum in (
+        ("results", results, MAX_COMPLETION_RESULTS),
+        ("unfinished", unfinished, MAX_COMPLETION_TEXT_ITEMS),
+        ("uncertainty", uncertainty, MAX_COMPLETION_TEXT_ITEMS),
+        ("evidence", evidence, MAX_HANDOFF_EVIDENCE_ITEMS),
+    ):
+        if raw is None:
+            continue
+        if not isinstance(raw, list) or len(raw) > maximum:
+            raise IssueCommandError(
+                "invalid", f"{name} must be an array of at most {maximum} items"
+            )
+        items: list = []
+        for index, item in enumerate(raw):
+            label = f"{name}[{index}]"
+            if name in {"unfinished", "uncertainty"}:
+                items.append(
+                    _completion_text(
+                        item, name=label, maximum=MAX_COMPLETION_TEXT_CHARS
+                    )
+                )
+                continue
+            keys = (
+                {"condition", "state", "note"}
+                if name == "results"
+                else {"kind", "source", "ref", "scope"}
+            )
+            if not isinstance(item, dict) or set(item) != keys:
+                raise IssueCommandError(
+                    "invalid", f"{label} must contain exactly {', '.join(sorted(keys))}"
+                )
+            if name == "results":
+                if (
+                    not isinstance(item["state"], str)
+                    or item["state"] not in COMPLETION_RESULT_STATES
+                ):
+                    raise IssueCommandError(
+                        "invalid",
+                        f"{label}.state must be met, not_met, not_assessed, or inconclusive",
+                    )
+                items.append(
+                    {
+                        "condition": _completion_text(
+                            item["condition"],
+                            name=f"{label}.condition",
+                            maximum=MAX_COMPLETION_TEXT_CHARS,
+                        ),
+                        "state": item["state"],
+                        "note": _completion_text(
+                            item["note"],
+                            name=f"{label}.note",
+                            maximum=MAX_COMPLETION_TEXT_CHARS,
+                            blank=True,
+                        ),
+                    }
+                )
+            else:
+                if (
+                    not isinstance(item["kind"], str)
+                    or item["kind"] not in COMPLETION_EVIDENCE_KINDS
+                ):
+                    raise IssueCommandError(
+                        "invalid",
+                        f"{label}.kind must be event, handoff, doc, file, or manifest",
+                    )
+                if (
+                    not isinstance(item["scope"], str)
+                    or item["scope"] not in COMPLETION_EVIDENCE_SCOPES
+                ):
+                    raise IssueCommandError(
+                        "invalid",
+                        f"{label}.scope must be source-only, synthetic, actual-run, or unrun",
+                    )
+                items.append(
+                    {
+                        "kind": item["kind"],
+                        "source": _completion_text(
+                            item["source"],
+                            name=f"{label}.source",
+                            maximum=MAX_COMPLETION_SOURCE_CHARS,
+                        ),
+                        "ref": _completion_text(
+                            item["ref"],
+                            name=f"{label}.ref",
+                            maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+                        ),
+                        "scope": item["scope"],
+                    }
+                )
+        if name == "evidence":
+            # The same item-count, text/control and encoded-ref envelope as yield.
+            # Validation trims there; retain the original bytes in this report.
+            _normalize_handoff_evidence([item["ref"] for item in items])
+        report[name] = items
+    if not report:
+        return None
+    if (
+        len(
+            json.dumps(
+                report, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+        )
+        > MAX_COMPLETION_REPORT_JSON_CHARS
+    ):
+        raise IssueCommandError(
+            "invalid",
+            f"encoded reported completion must be at most {MAX_COMPLETION_REPORT_JSON_CHARS} characters",
+        )
+    return report
+
+
+def reported_completion(event: dict) -> dict | None:
+    """Read bounded native report data; imported text never becomes a native report."""
+    if event["verb"] != "claim_completed" or event.get("imported_at") is not None:
+        return None
+    header, separator, payload = event["detail"].partition(
+        issue_activity.COMPLETION_REPORT_MARKER
+    )
+    if (
+        not separator
+        or not header.startswith("generation ")
+        or not leases.is_valid_generation(header.removeprefix("generation "))
+    ):
+        return None
+    if len(payload) > MAX_COMPLETION_REPORT_JSON_CHARS:
+        return None
+    try:
+        raw = json.loads(payload)
+        if (
+            not isinstance(raw, dict)
+            or not raw
+            or set(raw) - {"results", "unfinished", "uncertainty", "evidence"}
+        ):
+            return None
+        report = _normalize_completion_report(**raw)
+        return report if report == raw else None
+    except (ValueError, RecursionError, IssueCommandError):
+        return None
+
+
 def yield_claim(
     conn: sqlite3.Connection,
     *,
@@ -556,6 +736,10 @@ def complete_claim(
     actor: dict | None,
     issue_id: int,
     generation: object | None,
+    results: object = None,
+    unfinished: object = None,
+    uncertainty: object = None,
+    evidence: object = None,
 ) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
@@ -567,6 +751,12 @@ def complete_claim(
     coordination lease only — it does not change the issue's status; the agent transitions
     status through the ordinary (audited) status command."""
     actor = _require_issue_writer(actor)
+    report = _normalize_completion_report(
+        results=results,
+        unfinished=unfinished,
+        uncertainty=uncertainty,
+        evidence=evidence,
+    )
     with db.transaction(conn, immediate=True):
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
@@ -613,6 +803,7 @@ def complete_claim(
             actor_id=actor["id"],
             issue_id=issue_id,
             generation=current_generation,
+            reported=report,
             commit=False,
         )
         still_open = (

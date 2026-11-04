@@ -1283,6 +1283,14 @@ class LeaseGenerationIn(BaseModel):
     generation: str | None = None
 
 
+class CompleteClaimIn(LeaseGenerationIn):
+    # The shared command owns the bounded report grammar and its invalid error.
+    results: object | None = None
+    unfinished: object | None = None
+    uncertainty: object | None = None
+    evidence: object | None = None
+
+
 # --- Delegation claim/lease: accept / decline / complete -------------------
 #
 # The run-time interlock that stops two delegated agents from silently working the same
@@ -1298,7 +1306,7 @@ class LeaseGenerationIn(BaseModel):
 def complete_issue_claim(
     issue_id: RowIdPath,
     response: Response,
-    payload: LeaseGenerationIn | None = None,
+    payload: CompleteClaimIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
@@ -1315,6 +1323,10 @@ def complete_issue_claim(
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
+            results=payload.results if payload is not None else None,
+            unfinished=payload.unfinished if payload is not None else None,
+            uncertainty=payload.uncertainty if payload is not None else None,
+            evidence=payload.evidence if payload is not None else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released

@@ -571,13 +571,23 @@ class AthenaClient:
         *,
         generation: str,
         idempotency_key: str | None = None,
+        results: list[dict] | None = None,
+        unfinished: list[str] | None = None,
+        uncertainty: list[str] | None = None,
+        evidence: list[dict] | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/complete",
-            json={"generation": generation},
+            json=self._params(
+                generation=generation,
+                results=results,
+                unfinished=unfinished,
+                uncertainty=uncertainty,
+                evidence=evidence,
+            ),
             idempotency_key=idempotency_key,
         )
 
