@@ -52,6 +52,9 @@ When in doubt, optimize for **operator + agent fleet on one machine**, not
 enterprise parity or consumer polish.
 
 Full design rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Read the [glossary and decision index](docs/GLOSSARY.md) before changing domain
+meanings. New consequential decisions need a dated record with a cited accepting
+source and supersession links; recommendations remain proposals until accepted.
 
 ---
 
@@ -135,14 +138,13 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 ## Definition of done (all must hold before you call it done)
 
-1. `ruff check .`, `ruff format --check .`, `python scripts/check_import_contracts.py`,
-   `python scripts/check_write_ownership.py`,
-   `python scripts/check_imported_at_guards.py`,
-   `python scripts/check_template_styles.py`,
-   `python scripts/check_template_routes.py`, and `pytest -q`
-   are **green** — no skipped or mocked-away tests passed off as passing.
-   `scripts/gate.sh` chains exactly this list and stops loudly at the first
-   failure; if the gate changes, change AGENTS.md and that script together.
+1. Run `scripts/gate.sh` (default `product` profile): it executes the local product
+   inventory in `scripts/gate.py`, including dependency validation, lint, formatting,
+   type checks, architectural checks and full-suite coverage. Explicit `--profile quick`
+   is partial and cannot replace product evidence. The product profile does not run CI's container
+   or release-candidate audit jobs; obtain those separately. If the gate changes, change
+   AGENTS.md, CONTRIBUTING.md and the script together.
+
 2. You **ran it**: the installed `athena-serve` entrypoint passes preflight,
    boots against a real DB, and the feature works over real HTTP. The retained
    `scripts/smoke_app.py` lifecycle is the minimum release-path proof; hit the
@@ -180,12 +182,15 @@ tests/       pytest
 docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the design of record
 ```
 
-Run the gate: `ruff check .`, `ruff format --check .`, `python scripts/check_import_contracts.py`,
-`python scripts/check_write_ownership.py`,
-`python scripts/check_imported_at_guards.py`,
-`python scripts/check_template_styles.py`,
-`python scripts/check_template_routes.py`, and `pytest -q -n 4` (plain
-`pytest -q` remains valid) — or `scripts/gate.sh`, which chains exactly these.
+Run `scripts/gate.sh` for the complete local product profile (also selectable with
+`--profile product`) or `scripts/gate.sh --profile quick` for partial, fast feedback.
+The receipt names the commit, worktree state, Python/import identity, run and omitted
+stages, and CI-only jobs. See CONTRIBUTING.md for the CI and release evidence boundaries.
+The wrapper uses this checkout's `.venv/bin/python` without activation and refuses
+with a CONTRIBUTING.md setup pointer if that executable is unavailable. Inventory
+tests compare complete CI command lines after dropping blank and comment-only
+lines, and reject unnamed steps with commands. Action version bumps do not change that
+inventory.
 Run the app: configure the absolute storage paths and bootstrap/start through
 `athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
 unsupported development escape hatch and intentionally has no authority unless

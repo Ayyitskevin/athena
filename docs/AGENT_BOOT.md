@@ -63,12 +63,17 @@ file's section census.
 - Read one issue properly with `get_issue_work_context(ref)` — the bounded
   packet (issue, neighbours, blockers, runbook) — not five separate reads.
 - Tag your writes: `begin_run(run_id=...)` at the start, heartbeat while
-  working. Untagged writes are attributable but not replayable as a unit.
+  working. Heartbeat records an authenticated report, not process liveness
+  or lease renewal. Renew before expiry with the generation and a freshly
+  reviewed issue ETag. Untagged writes are not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
   advance the desk cursor to the last event you actually handled. Complete
   or yield every claim before the session ends — one you let lapse lists
   under `work.leases.lapsed` until you `complete_claim` it with its
   generation.
+- Acknowledge only notifications you actually handled, by their notification
+  ID with `mark_notification_read(id)`; never bulk `mark_notifications_read`.
+  A desk preview, cursor advance, or claim completion is not acknowledgment.
 - Escape hatch: reading `athena.db` directly is last-resort triage — say so
   out loud when you do it. Writing to it directly is NEVER allowed: it
   bypasses scopes, the activity trail, undo, and the hash chain.
@@ -91,9 +96,9 @@ desk was bypassed and why.
 
 ## Keeping it from drifting
 
-- The block names six verbs. If a rename or removal touches one
+- If a rename or removal touches a named operation
   (`my_desk`, `get_issue_lease`, `claim_issue`, `get_issue_work_context`,
-  `begin_run`, the desk cursor), update this file in the same PR — the
+  `begin_run`, the desk cursor, `mark_notification_read`), update this file in the same PR — the
   Definition of Done's "you ran it" applies to this document too.
 - Seats adopt by copy, so drift is possible by construction. The sentinels
   exist for exactly that: a fleet that byte-diffs its shared doctrine (as

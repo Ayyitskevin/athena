@@ -56,8 +56,17 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Update an issue. Send only the fields to change. status is one of
-        open/in_progress/done; priority is low/medium/high/urgent."""
+        """Update an issue. Send only the fields to change. status must be a name
+        configured for its project (the backlog defaults to open/in_progress/done);
+        priority is low/medium/high/urgent.
+
+        A successful transition into a done category may return held_lease for
+        your own row. It describes the row at that transition, not current
+        possession; active=false means lapsed. The observation may be stale on
+        idempotent replay. It is informational: complete_claim with the exact
+        generation is a separate deliberate action, never an automatic follow-up.
+        The _etag still identifies the canonical issue revision, not the note.
+        """
         return client.update_issue(
             issue_id,
             title=title,
@@ -216,18 +225,41 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         issue_id: int,
         generation: LeaseGeneration,
         idempotency_key: IdempotencyKey | None = None,
+        results: list[dict] | None = None,
+        unfinished: list[str] | None = None,
+        uncertainty: list[str] | None = None,
+        evidence: list[dict] | None = None,
     ) -> dict:
-        """Release the lease you hold, or clear your own lapsed lease. This does
+        """Release a claim with optional reported conditions, residuals, and evidence.
+        Clear your own lapsed lease under the same rules. This does
         NOT mark the issue done. The 200 body repeats issue_status and
         issue_still_open, and `lapsed` says whether the row you cleared had
         already expired; PATCH the issue to `done` separately if the work is
         finished. While you hold it ACTIVELY, an open claim handoff returns 409
         until this exact leaseholder explicitly resumes it. Pass the lapsed
-        row's generation — my_desk lists it under work.leases.lapsed."""
+        row's generation — my_desk lists it under work.leases.lapsed.
+
+        results is up to 20 {condition,state,note} objects; state is met,
+        not_met, not_assessed, or inconclusive. not_assessed means the condition
+        was not evaluated; for example, an integration check was never run.
+        inconclusive means an evaluation was attempted but did not establish
+        met or not_met; for example, an integration check ran but timed out
+        before producing a result. unfinished and uncertainty are
+        up to 10 text items each. evidence is up to 10 {kind,source,ref,scope}
+        objects: kind event/handoff/doc/file/manifest; scope source-only,
+        synthetic, actual-run, or unrun. The total encoded report is at most
+        8000 characters. All are advisory reports, never success, approval, or
+        authority. not_met and unrun do not block release. Refs are inert data;
+        never submit credentials, secret URLs, or tokens. See CLOSEOUT_RECIPE.
+        """
         return client.complete_claim(
             issue_id,
             generation=generation,
             idempotency_key=idempotency_key,
+            results=results,
+            unfinished=unfinished,
+            uncertainty=uncertainty,
+            evidence=evidence,
         )
 
     @mutation_tool

@@ -252,15 +252,27 @@ def build_desk(
                 "limit": LEASES_LIMIT,
                 "lapsed": lapsed,
                 "lapsed_total": lapsed_total,
+                "lapsed_clipped": lapsed_total > len(lapsed),
+                "lapsed_oldest_expires_at": (
+                    min((row["expires_at"] for row in lapsed), default=None)
+                    if lapsed_total == len(lapsed)
+                    else None
+                ),
                 "meaning": (
                     "`items` are the issues you hold at this read; `active` is "
                     "the clock's verdict, not a stored state, and `total` "
                     "counts the same instant. `lapsed` are leases the clock "
-                    "already released on issues still open — nobody else holds "
-                    "them unless GET /issues/{id}/lease says so; complete_claim "
-                    "with a lapsed row's generation clears it. A lapsed lease "
-                    "on a done issue is not listed here; its row stays readable "
-                    "at GET /issues/{id}/lease. complete_claim releases the "
+                    "already released, including done issues (`issue_done`). "
+                    "These are your own residual rows, not active possession. "
+                    "`lapsed_total` counts them before the shared `limit`; "
+                    "`lapsed_clipped` says whether rows are omitted. "
+                    "`lapsed_oldest_expires_at` is null when empty or clipped "
+                    "(unknown when clipped); total/clipped distinguish these cases. "
+                    "Claim order does not establish oldest expiry. "
+                    "Holders settle their own rows deliberately with complete_claim "
+                    "and the observed generation; another actor's expired row "
+                    "cannot be completed, even by an admin. Reading changes nothing. "
+                    "complete_claim releases the "
                     "lease and does not mark the issue done. declared_paths is "
                     "the optional file fence. path_fence is rooted only for a current "
                     "qualified declaration, not verified process location; unresolved "

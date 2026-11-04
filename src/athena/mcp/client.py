@@ -571,13 +571,23 @@ class AthenaClient:
         *,
         generation: str,
         idempotency_key: str | None = None,
+        results: list[dict] | None = None,
+        unfinished: list[str] | None = None,
+        uncertainty: list[str] | None = None,
+        evidence: list[dict] | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
         return self._mutate(
             self._client.post,
             f"/issues/{issue_id}/complete",
-            json={"generation": generation},
+            json=self._params(
+                generation=generation,
+                results=results,
+                unfinished=unfinished,
+                uncertainty=uncertainty,
+                evidence=evidence,
+            ),
             idempotency_key=idempotency_key,
         )
 
@@ -1091,11 +1101,32 @@ class AthenaClient:
     # --- events -------------------------------------------------------------
 
     def recent_events(
-        self, *, after: int | None = None, kind: str | None = None, limit: int = 50
+        self,
+        *,
+        after: int | None = None,
+        kind: str | None = None,
+        target: int | None = None,
+        actor_id: int | None = None,
+        actor_type: str | None = None,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
+        verb: str | None = None,
+        limit: int = 50,
     ) -> Any:
         return self._result(
             self._client.get(
-                "/events", params=self._params(after=after, kind=kind, limit=limit)
+                "/events",
+                params=self._params(
+                    after=after,
+                    kind=kind,
+                    target=target,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    run_id=run_id,
+                    parent_run_id=parent_run_id,
+                    verb=verb,
+                    limit=limit,
+                ),
             )
         )
 

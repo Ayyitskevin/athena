@@ -200,6 +200,7 @@ class ActivityOut(BaseModel):
     parent_run_id: str | None
     forked_from_event_id: int | None
     imported_at: str | None
+    reported_completion: dict | None = None
 
 
 class ActivityGroupOut(BaseModel):

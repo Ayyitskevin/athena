@@ -9,7 +9,18 @@ claim_issue(issue_id, if_match=...)  # take it
 `claim_issue` requires `if_match` — the issue's ETag. Copy `issue_etag` from
 `my_desk()` or `get_issue_work_context`. Do **not** use the work-context
 packet's top-level `_etag`. Without the issue tag you get `428`, not a silent
-success.
+success. Renewing an active claim requires a freshly reviewed issue ETag as well
+as that possession's generation; your own issue edits can stale the earlier tag.
+Default TTL is 1800 seconds, allowed range 60–86400. Renew with `claim_issue`
+before `expires_at`; after expiry re-read and deliberately acquire a new claim.
+Heartbeat records that the authenticated agent reported for a run, not process
+liveness or lease renewal. Sources: `aegis/lease_commands.py::claim_issue`,
+`aegis/leases.py` lease constants, `core/agent_run_commands.py::heartbeat`.
+
+`protocol.claim_one_issue=true` is coordination guidance, not an enforced
+per-actor claim-count limit. Keep that discipline yourself; the command enforces
+per-issue possession and declared-path conflicts (`aegis/desk.py`,
+`aegis/work_context.py`, `aegis/lease_commands.py`).
 
 Optional `paths` declares a relative POSIX file fence. Optional
 `coordination_root` selects the current operator catalog digest/root key and
@@ -34,17 +45,40 @@ A lease **expires**. Nothing sweeps it in the background — expiry is computed
 when someone reads it, against the server's clock. So "active" on your desk is
 a verdict, not a stored flag that a crashed process could have left behind.
 
-Three ways to end a claim, and they mean different things:
+Four distinct operations; changing issue status alone does not end a claim:
 
 | Verb | What you are saying |
 |---|---|
 | `complete_claim` | I release the lease. The issue stays in its current status. |
-| `update_issue(..., status="done")` | the work itself is finished |
+| `update_issue(..., status=<project's done-category status>)` | the work itself is finished; the lease is separate |
 | `yield_claim` | I am stopping, and here is why — someone else can take it |
 | `decline_delegation` | I am not the right holder for this at all |
 
 `complete_claim` is not "the work is done." The 200 body repeats
 `issue_still_open` so you do not have to guess.
+
+You may include an optional **reported completion**: `results` contains
+`{condition, state, note}` entries with state `met`, `not_met`, `not_assessed`,
+or `inconclusive`. `not_assessed` means the condition was not evaluated; for
+example, an integration check was never run. `inconclusive` means an evaluation
+was attempted but did not establish `met` or `not_met`; for example, an integration
+check ran but timed out before producing a result. `unfinished` and `uncertainty`
+list what remains. Typed,
+source-qualified `evidence` refs contain `{kind, source, ref, scope}`, with scope
+`source-only`, `synthetic`, `actual-run`, or `unrun`. These are your reports,
+not Athena's verification. `not_met` and `unrun` still allow release under the
+same lease rules. No report closes an issue, changes status, or spends a gate.
+Omit the fields for the existing behavior. Work context and issue history show
+them as reported; references are inert data and text is escaped. Never put
+secrets or secret URLs in evidence: the existing yield-style validator bounds
+text but does not detect credentials. Bounds, exact field shapes, and a worked
+example are in `docs/CLOSEOUT_RECIPE.md`.
+
+Status names belong to each project; backlog defaults are `open`, `in_progress`,
+`done`. Use the selected project's vocabulary and its `done` category, not a
+hard-coded global name (`aegis/statuses.py`). `claimed_at` is refreshed on
+renewal, so it cannot measure time since the first claim of a generation
+(`aegis/leases.py::upsert_lease`).
 
 Yielding is not failure, and Athena does not score you for it. What it records
 is what you said and when. Silence is the only genuinely unhelpful outcome: an
@@ -54,9 +88,18 @@ anyone reading the workspace that looks like progress.
 ## Generations, and why your write can be refused
 
 Each lease carries a **generation**. If your lease expired and someone else
-claimed the issue, your late write is refused rather than applied — the
-generation you were holding is no longer the current one. This is the fence that
-stops a paused-then-resumed agent from acting on a world that moved.
+claimed the issue, a late generation-fenced lease operation is refused rather
+than applied. This does **not** fence every ordinary issue write: those use
+their own authorization and ETag checks, not lease generations. Re-read and
+coordinate before resuming work; do not treat the absence of a lease check as
+permission (`aegis/lease_commands.py`, `aegis/issue_commands.py::update_issue`).
+
+MCP completion requires your observed generation. At the REST/command layer,
+your own lapsed row may also be completed with an omitted/null generation under
+the writer transaction; a supplied stale token refuses. An admin cannot clear
+another actor's lapsed row. This is documented behavior, not advice to drop a
+token after a refusal (`aegis/lease_commands.py::complete_claim`,
+`aegis/api.py::complete_issue_claim`, `mcp/tools_work.py::complete_claim`).
 
 If you get that refusal, do not retry blindly. Re-read the issue, find out what
 happened while you were gone, and decide again.

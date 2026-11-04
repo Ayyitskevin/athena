@@ -5,6 +5,7 @@ from collections.abc import Iterator
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -13,7 +14,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 CODEQL_WORKFLOW = WORKFLOWS / "codeql.yml"
 CODEQL_CONFIG = ROOT / ".github" / "codeql" / "codeql-config.yml"
 EXTERNAL_ACTION = re.compile(r"^[^@\s]+@([0-9a-f]{40})$")
-CODEQL_ACTION_SHA = "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd"
 
 
 def _mapping_action_reference(value: object) -> str | None:
@@ -56,6 +56,47 @@ def _action_references(document: object) -> Iterator[str]:
 def _read_action_references(path: Path) -> list[str]:
     document = yaml.safe_load(path.read_text(encoding="utf-8"))
     return list(_action_references(document))
+
+
+def _assert_codeql_init_analyze_share_full_commit(workflow: str) -> None:
+    document = yaml.safe_load(workflow)
+    references = list(_action_references(document))
+    commits: dict[str, str] = {}
+
+    for step in ("init", "analyze"):
+        prefix = f"github/codeql-action/{step}@"
+        matches = [
+            reference for reference in references if reference.startswith(prefix)
+        ]
+        assert len(matches) == 1, (
+            f"CodeQL {step} step must appear exactly once; found {len(matches)}"
+        )
+        match = EXTERNAL_ACTION.fullmatch(matches[0])
+        assert match is not None, (
+            f"CodeQL {step} must use a full 40-hex commit SHA, got {matches[0]}"
+        )
+        commits[step] = match.group(1)
+
+    assert commits["init"] == commits["analyze"], (
+        "CodeQL init and analyze must use the same commit SHA"
+    )
+
+
+def _codeql_workflow_text(
+    init_references: tuple[str, ...], analyze_references: tuple[str, ...]
+) -> str:
+    return yaml.safe_dump(
+        {
+            "jobs": {
+                "analyze": {
+                    "steps": [
+                        {"uses": reference}
+                        for reference in (*init_references, *analyze_references)
+                    ]
+                }
+            }
+        }
+    )
 
 
 def _local_action_document(reference: str, *, root: Path = ROOT) -> Path:
@@ -203,8 +244,52 @@ def test_codeql_workflow_scans_first_party_languages_on_every_gate() -> None:
     assert "autobuild" not in workflow
     assert "upload: always" in workflow
     assert "wait-for-processing: true" in workflow
-    assert workflow.count(f"github/codeql-action/init@{CODEQL_ACTION_SHA}") == 1
-    assert workflow.count(f"github/codeql-action/analyze@{CODEQL_ACTION_SHA}") == 1
+    _assert_codeql_init_analyze_share_full_commit(workflow)
+
+
+@pytest.mark.parametrize(
+    ("init_references", "analyze_references", "message"),
+    [
+        (
+            ("github/codeql-action/init@v4",),
+            ("github/codeql-action/analyze@" + "a" * 40,),
+            "full 40-hex",
+        ),
+        (
+            ("github/codeql-action/init@a1b2c3d4",),
+            ("github/codeql-action/analyze@" + "a" * 40,),
+            "full 40-hex",
+        ),
+        (
+            ("github/codeql-action/init@" + "a" * 40,),
+            ("github/codeql-action/analyze@" + "b" * 40,),
+            "same commit SHA",
+        ),
+        (
+            (
+                "github/codeql-action/init@" + "a" * 40,
+                "github/codeql-action/init@" + "a" * 40,
+            ),
+            ("github/codeql-action/analyze@" + "a" * 40,),
+            "appear exactly once",
+        ),
+        (
+            (),
+            ("github/codeql-action/analyze@" + "a" * 40,),
+            "appear exactly once",
+        ),
+    ],
+    ids=("movable-tag", "short-sha", "split-commits", "duplicate-init", "missing-init"),
+)
+def test_codeql_init_analyze_pair_rejects_unpinned_or_incomplete_workflows(
+    init_references: tuple[str, ...],
+    analyze_references: tuple[str, ...],
+    message: str,
+) -> None:
+    workflow = _codeql_workflow_text(init_references, analyze_references)
+
+    with pytest.raises(AssertionError, match=message):
+        _assert_codeql_init_analyze_share_full_commit(workflow)
 
 
 def test_codeql_config_covers_declared_sources() -> None:

@@ -209,6 +209,22 @@ def render() -> str:
         "and `admin` implies every scope. A tool shown as *(client-side)*",
         "composes other calls or local state instead of one fixed route.",
         "",
+        "## Reported claim completion",
+        "",
+        "`complete_claim` and `POST /issues/{id}/complete` accept optional",
+        "`results`, `unfinished`, `uncertainty`, and typed, source-qualified",
+        "`evidence`. They are actor-reported data, not a verified success verdict.",
+        "`not_assessed` means the condition was not evaluated; for example, an",
+        "integration check was never run. `inconclusive` means an evaluation was",
+        "attempted but did not establish `met` or `not_met`; for example, an",
+        "integration check ran but timed out before producing a result.",
+        "Reported `not_met` results and `unrun` evidence do not block lease release",
+        "under the existing generation rules. Issue status and gates are unchanged.",
+        "Omitted fields retain the legacy response and event detail. References are",
+        "inert text: never submit credentials or secret-bearing URLs. See",
+        "[CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md#optional-reported-completion) for",
+        "the bounded grammar, evidence scopes, example, and preservation limits.",
+        "",
     ]
 
     by_scope: dict[str, list[str]] = {s: [] for s in SCOPE_ORDER}

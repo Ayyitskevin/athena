@@ -16,6 +16,22 @@ only sees the tools it can use ([RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)),
 and `admin` implies every scope. A tool shown as *(client-side)*
 composes other calls or local state instead of one fixed route.
 
+## Reported claim completion
+
+`complete_claim` and `POST /issues/{id}/complete` accept optional
+`results`, `unfinished`, `uncertainty`, and typed, source-qualified
+`evidence`. They are actor-reported data, not a verified success verdict.
+`not_assessed` means the condition was not evaluated; for example, an
+integration check was never run. `inconclusive` means an evaluation was
+attempted but did not establish `met` or `not_met`; for example, an
+integration check ran but timed out before producing a result.
+Reported `not_met` results and `unrun` evidence do not block lease release
+under the existing generation rules. Issue status and gates are unchanged.
+Omitted fields retain the legacy response and event detail. References are
+inert text: never submit credentials or secret-bearing URLs. See
+[CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md#optional-reported-completion) for
+the bounded grammar, evidence scopes, example, and preservation limits.
+
 ## Read tools — scope: `read`
 
 | MCP tool | REST call(s) | Summary |
@@ -54,7 +70,7 @@ composes other calls or local state instead of one fixed route.
 | `list_dispatches` | `GET /dispatches` | What Athena has handed to the executor, newest first. Filter by … |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | Read one issue's comment thread, oldest first — the discussion a … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | Read an issue's dependency links — what it blocks, what blocks it, and … |
-| `list_issues` | `GET /issues` | List Aegis issues, optionally filtered by status (open/in_progress/done), … |
+| `list_issues` | `GET /issues` | List Aegis issues, optionally filtered by a project-configured status, … |
 | `list_labels` | `GET /labels` | List the shared label vocabulary (id, name, color). |
 | `list_my_delegated_work` | `GET /delegations/me` | List issues delegated to the authenticated contributor. By default this … |
 | `list_notifications` | `GET /notifications` | Read YOUR notification inbox — mentions, watched-issue changes, and … |
@@ -69,14 +85,14 @@ composes other calls or local state instead of one fixed route.
 | `list_subtasks` | `GET /issues/{issue_id}/children` | List the direct child issues (sub-tasks) nested under this issue. |
 | `list_workers` | `GET /workers` | The worker registry — which agent processes are reporting, on what node, … |
 | `my_desk` | `GET /desk` | START HERE. Your desk: who you are, what is asked of you, what you … |
-| `my_office` | `GET /office` | Your cubicle. Athena's unique seat: at most one chair (one active … |
+| `my_office` | `GET /office` | Your cubicle: active leases, declared paths, and a checkout branch hint. |
 | `notification_priority_summary` | `GET /notifications/priority/summary` | Count YOUR visible notifications by resolved priority and mute state. |
 | `page_backlinks` | `GET /pages/{page_id}/backlinks` | What references this page — the INCOMING edges of the knowledge graph. Each … |
 | `page_outgoing_links` | `GET /pages/{page_id}/outgoing-links` | What this page references — the OUTGOING edges of the knowledge graph (the … |
 | `project_timeline` | `GET /projects/{project_id}/timeline` | A project's roadmap: sprint lanes, the issues in them, and the declared … |
 | `query_help` | `GET /issues/query/help` | The work-query vocabulary as data: every field, its accepted values, … |
 | `read_page_embeds` | `GET /pages/{page_id}` | Resolve a Mentor page's live embeds to DATA, as you. |
-| `recent_events` | `GET /events` | Read the audit/event feed in order. Pass the last event id you saw as … |
+| `recent_events` | `GET /events` | Read the audit/event feed in ascending event-id order, with REST filters. |
 | `related_items` | `GET /{base}/{node_id}/related` | What cites what this cites, but is NOT linked to it yet. |
 | `resolve_embeds` | `POST /embeds/resolve` | Resolve embed directives in arbitrary text, as you. |
 | `search` | `GET /search` | Full-text search across Aegis issues and Mentor pages. Optionally narrow … |
@@ -96,7 +112,7 @@ composes other calls or local state instead of one fixed route.
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | Release the lease you hold, or clear your own lapsed lease. This does … |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | Release a claim with optional reported conditions, residuals, and evidence. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
 | `create_issue` | `POST /issues` | Create an Aegis issue. Omit status to use the target project's default; … |
 | `create_label` | `POST /labels` | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |
@@ -115,7 +131,7 @@ composes other calls or local state instead of one fixed route.
 | `start_sprint` | `POST /sprints/{sprint_id}/start` | Move a planned sprint to active. A project may have only one active … |
 | `unarchive_issue` | `POST /issues/{issue_id}/unarchive` | Restore a previously archived issue to the active lists. Returns the issue. |
 | `unlink_issues` | `DELETE /issues/{issue_id}/links/{relation}/{target_id}` | Remove a dependency from this issue: the same relation used to add it … |
-| `update_issue` | `PATCH /issues/{issue_id}` | Update an issue. Send only the fields to change. status is one of … |
+| `update_issue` | `PATCH /issues/{issue_id}` | Update an issue. Send only the fields to change. status must be a name … |
 | `update_sprint` | `PATCH /sprints/{sprint_id}` | Update a sprint's name, goal, or dates without changing its state. |
 | `yield_claim` | `POST /issues/{issue_id}/yield` | Honestly release your exact active claim with a structured continuation … |
 

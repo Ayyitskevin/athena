@@ -22,9 +22,12 @@ The chain is honest about its edges (docs/TRAIL_INTEGRITY.md):
   chain. The HEAD hash exists so an operator can note it outside Athena and make
   even those detectable.
 
-``append_entry`` is called from exactly one place — ``activity.record``, inside
-the caller's write transaction — so the head it links to cannot move underneath
-it (SQLite's single-writer reservation serializes appenders).
+``append_entry`` has two declared paths: ``activity.record`` for native writes
+and ``portability._insert_activity`` for foreign-history replay. Both chain the
+inserted row inside their write transaction; portability's replay owner supplies
+that transaction. SQLite's single-writer reservation serializes appenders. The
+AST census in ``scripts/check_write_ownership.py`` pins both insert/append pairs
+without treating imported history as native activity.
 """
 
 from __future__ import annotations

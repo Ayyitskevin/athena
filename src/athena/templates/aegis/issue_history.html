@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "aegis/partials/completion_report.html" import show_report %}
 
 {% block title %}History — issue #{{ issue.id }} — Aegis{% endblock %}
 
@@ -59,6 +60,7 @@
                     <span class="muted activity-time">{{ item.at }}</span>
                     <span class="muted narrative-source">{{ item.source_label }}</span>
                 </a>
+                {{ show_report(item.get("reported_completion")) }}
             </li>
             {% endfor %}
         </ul>

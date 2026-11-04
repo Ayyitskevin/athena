@@ -200,6 +200,19 @@ class IssueOut(BaseModel):
     labels: list[LabelOut] = []
 
 
+class HeldLeaseNote(BaseModel):
+    generation: str
+    expires_at: str
+    active: bool
+    message: str
+
+
+class IssueUpdateOut(IssueOut):
+    # PATCH-only, transient advice. Unset means absent; canonical issue null
+    # fields remain explicit. GET/list and the issue-v1 validator stay unchanged.
+    held_lease: HeldLeaseNote | None = None
+
+
 class LinkOut(BaseModel):
     # One resolved cross-reference: the kind/id it points at, that target's
     # current title, and whether it still exists (title is null when broken).
@@ -722,7 +735,11 @@ def _issue_for_write(conn: sqlite3.Connection, issue_id: int, actor: dict) -> di
     return issue
 
 
-@router.patch("/{issue_id}", response_model=IssueOut)
+@router.patch(
+    "/{issue_id}",
+    response_model=IssueUpdateOut,
+    response_model_exclude_unset=True,
+)
 def update(
     issue_id: RowIdPath,
     payload: IssueUpdate,
@@ -744,7 +761,13 @@ def update(
         )
     except issue_commands.IssueCommandError as exc:
         return issue_command_error_response(exc)
-    return _tagged_issue(conn, updated, response)
+    public = _tagged_issue(conn, updated, response)
+    # ETag identifies the canonical target issue revision used by If-Match,
+    # not this actor-specific, transition-time advisory. Do not put the note
+    # into issue_etags or unrelated GET/list response models.
+    if "held_lease" in updated:
+        public["held_lease"] = updated["held_lease"]
+    return public
 
 
 @router.put("/{issue_id}/assignee", response_model=IssueOut)
@@ -1260,6 +1283,14 @@ class LeaseGenerationIn(BaseModel):
     generation: str | None = None
 
 
+class CompleteClaimIn(LeaseGenerationIn):
+    # The shared command owns the bounded report grammar and its invalid error.
+    results: object | None = None
+    unfinished: object | None = None
+    uncertainty: object | None = None
+    evidence: object | None = None
+
+
 # --- Delegation claim/lease: accept / decline / complete -------------------
 #
 # The run-time interlock that stops two delegated agents from silently working the same
@@ -1275,13 +1306,15 @@ class LeaseGenerationIn(BaseModel):
 def complete_issue_claim(
     issue_id: RowIdPath,
     response: Response,
-    payload: LeaseGenerationIn | None = None,
+    payload: CompleteClaimIn | None = None,
     actor: dict = Depends(issue_write_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict | JSONResponse:
     # Complete: release the lease you hold (the issue is freed for the next claimant),
-    # or clear your own row the clock already expired. 409 if the lease is absent or
-    # someone else's. Releases the coordination lease only — status
+    # or clear your own row the clock already expired. An eligible admin may also
+    # release another holder's ACTIVE lease; no actor may complete another's
+    # lapsed row (lease_commands.complete_claim owns these checks). Releases the
+    # coordination lease only — status
     # changes go through the ordinary status command. The body says so explicitly so
     # an agent does not have to read source to learn the issue is still open.
     try:
@@ -1290,6 +1323,10 @@ def complete_issue_claim(
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
+            results=payload.results if payload is not None else None,
+            unfinished=payload.unfinished if payload is not None else None,
+            uncertainty=payload.uncertainty if payload is not None else None,
+            evidence=payload.evidence if payload is not None else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released

@@ -8,6 +8,29 @@ Before changing code, read [`AGENTS.md`](AGENTS.md),
 [`docs/VISION.md`](docs/VISION.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). They are the contribution
 contract, product north star, and design of record.
+Read the [glossary and decision index](docs/GLOSSARY.md) for shared terms and the
+sources behind accepted rules.
+
+## Local gate profiles
+
+After setup, `scripts/gate.sh` defaults to the `product` profile, including the
+pinned dependency set, types, and full-suite, full-source coverage. Explicit
+`scripts/gate.sh --profile product` selects the same checks.
+`scripts/gate.sh --profile quick` opts into fast, **partial** feedback without
+the dependency, type, or coverage stages. Both profiles report the
+commit, dirty state, Python and import path, stages run and omitted, and fail at
+the first failed stage. The script refuses an Athena import from another checkout.
+The product pass covers local product stages, not CI's container job or its
+release-candidate supply-chain job; obtain those results separately. CI shards
+coverage and combines evidence; `scripts/coverage.sh` runs and checks it locally.
+The stage inventory is in `scripts/gate.py`; tests compare it with CI's named
+checks and complete command lines after dropping blank and comment-only lines.
+Unnamed steps with commands are rejected. Action version bumps do not change that
+inventory; removed, replaced, or added commands in mapped steps require an
+inventory review.
+The wrapper requires this checkout's executable `.venv/bin/python`, as created
+below, and refuses with a setup pointer if it is missing or broken. It does not
+require activating the environment.
 
 ## Development setup
 

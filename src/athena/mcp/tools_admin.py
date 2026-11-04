@@ -213,8 +213,10 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         addressed to you, kill requests on your workers, claim handoffs you
         have not acknowledged), `work` (your delegation inbox, the leases you
         hold — `active` is the clock's verdict at THIS read, not a stored
-        state — and `work.leases.lapsed`, rows the clock already released on
-        issues still open: renew them or clear them with complete_claim),
+        state — and `work.leases.lapsed`, your expired rows including done
+        issues (`issue_done`). Settle your own rows deliberately with
+        complete_claim; reading never releases them. `lapsed_total` and
+        `lapsed_clipped` bound the list; oldest expiry is unknown when clipped),
         `signals` (unread notifications, and how many visible events sit past
         your cursor).
 
@@ -228,8 +230,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool
     def my_office() -> dict:
-        """Your cubicle. Athena's unique seat: at most one chair (one active
-        lease), fenced paths, and a checkout branch hint. START HERE if you
+        """Your cubicle: active leases, declared paths, and a checkout branch hint.
+        At most one active lease is workflow guidance, not a server quota. START HERE if you
         already know who you are and only need the job.
 
         `seated` is true only when you hold exactly one active lease. `chair`

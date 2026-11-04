@@ -37,7 +37,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues
+from athena.aegis import claim_handoffs, issues, lease_commands
 from athena.core import (
     activity,
     agent_run_checkins,
@@ -89,6 +89,24 @@ _COMPLETE_VERB = "claim_completed"
 #: Open control states read as an outstanding ask; anything past them is the
 #: record of how the steering ended.
 _ASK_STATES = {run_controls.STATE_REQUESTED, run_controls.STATE_ACKNOWLEDGED}
+
+
+def _reported_completion_summary(actor_name: str, report: dict) -> str:
+    """Expose reported counts without turning them into an overall assessment."""
+    counts = []
+    for state in ("met", "not_met", "not_assessed", "inconclusive"):
+        count = sum(result["state"] == state for result in report.get("results", []))
+        if count:
+            counts.append(f"{count} reported {state}")
+    for field in ("unfinished", "uncertainty"):
+        count = len(report.get(field, []))
+        if count:
+            counts.append(f"{count} reported {field}")
+    reported_counts = f"{' · '.join(counts)}; " if counts else ""
+    return (
+        f"{actor_name} reported completion and released the claim; "
+        f"{reported_counts}reported conditions and evidence are advisory"
+    )
 
 
 def _bounded_limit(limit: int) -> int:
@@ -183,13 +201,18 @@ def _build(
                 }
             )
         elif verb == _COMPLETE_VERB:
+            report = lease_commands.reported_completion(event)
             items.append(
                 {
                     **base,
                     "signal": SIGNAL_OUTCOME,
                     "state": "claim_completed",
-                    "summary": f"{event['actor_name']} completed the claim "
-                    f"({event['detail']})",
+                    "summary": (
+                        _reported_completion_summary(event["actor_name"], report)
+                        if report is not None
+                        else f"{event['actor_name']} completed the claim ({event['detail']})"
+                    ),
+                    **({"reported_completion": report} if report is not None else {}),
                 }
             )
         elif verb == _YIELD_VERB and event["id"] not in handoff_by_yield_event:

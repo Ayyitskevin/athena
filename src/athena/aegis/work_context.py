@@ -496,6 +496,7 @@ def _recent_activity(
                 "parent_run_id": row["parent_run_id"],
                 "forked_from_event_id": row["forked_from_event_id"],
                 "imported_at": row["imported_at"],
+                "reported_completion": lease_commands.reported_completion(row),
             }
             for row in rows
         ],

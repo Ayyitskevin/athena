@@ -22,6 +22,7 @@ from athena.aegis import (
     issue_activity,
     issue_etags,
     issues,
+    leases,
     projects,
     sprints,
     statuses,
@@ -692,6 +693,27 @@ def _update_issue(
             project_changed=project_changed,
             policy_override_used=policy_override_used,
         )
+        if closing:
+            lease = leases.get_lease(conn, issue_id)
+            if lease is not None and lease["holder_id"] == actor["id"]:
+                # A transient observation from this successful transaction, not
+                # issue state or authority to perform the separate lease write.
+                state = (
+                    "Your lease row was active at this transition. "
+                    if lease["active"]
+                    else "Your lease row was lapsed at this transition, not active possession. "
+                )
+                updated["held_lease"] = {
+                    "generation": lease["generation"],
+                    "expires_at": lease["expires_at"],
+                    "active": lease["active"],
+                    "message": (
+                        state
+                        + "Informational only; this observation may be stale, including on replay. "
+                        "Marking the issue done did not release it. complete_claim with this "
+                        "generation is a separate deliberate action; do not auto-complete."
+                    ),
+                }
     return updated
 
 
