@@ -1,4 +1,4 @@
-"""Enforce one-command-owns-each-write at the transport boundary.
+"""Enforce transport write ownership and the activity append-path census.
 
 The doctrine (AGENTS.md's cardinal rule, docs/COMMAND_MIGRATION.md): transports
 — ``web/*``, ``mcp/*``, and ``*_api.py`` — parse transport input and translate
@@ -23,6 +23,32 @@ shrink with the debt it records. Arbitrary computed dispatch (getattr chains,
 string-built calls) is out of scope, as it is for the import checker — which
 already forbids the internal wildcard imports that would defeat name
 resolution here.
+
+The activity census also scans internal modules. A small SQL tokenizer skips
+comments, keeps quoted content opaque, splits statements, and finds INSERT or
+REPLACE INTO targets even after WITH or a preceding statement. It compares the
+complete identifier (including SQLite's single-quoted target form), optionally
+qualified by main, with activity. SQL words inside string values are not writes.
+A new path, a stale declaration, or an empty census fails.
+
+Each declared insert must be one statement with one VALUES tuple, not an
+INSERT SELECT or multi-row VALUES source. It must capture cursor.lastrowid and
+call activity_chain.append_entry with that row id and the same named connection
+in the same straight-line statement block. Only lastrowid capture and call-free
+assertions may intervene, so an intervening commit, helper call, branch, or
+return is refused rather than guessed safe. Other source/tail shapes are
+refused: this is a conservative witness, not a general SQL parser.
+
+This is a syntactic witness, not a proof of transaction ownership or runtime
+atomicity. activity.record opens/reuses its transaction; portability's replay
+owner supplies its transaction. The census cannot prove those callers hold a
+transaction, connection/import names are not shadowed, callees do not commit,
+or exceptional paths roll back. Computed SQL (variables, string assembly,
+formatting, and f-string expressions), dynamic dispatch, and trigger effects
+remain outside this literal/static-name analysis. Literal f-string fragments
+may be recognized but are not a proof about the assembled SQL. Runtime
+transaction and import-provenance tests remain necessary; imports keep their
+own semantics.
 """
 
 from __future__ import annotations
@@ -47,6 +73,20 @@ _WRITE_SQL_RE = re.compile(
     r"^\s*(?:--[^\n]*\n\s*)*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO"
     r"|DELETE\s+FROM|UPDATE\s+(?:OR\s+\w+\s+)?[\w.]+(?:\s+SET\b|\s*$))"
 )
+
+_SQL_TOKEN_RE = re.compile(
+    r"(?P<comment>--[^\n]*|/\*.*?(?:\*/|\Z))"
+    r"|(?P<quoted>'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\])"
+    r"|(?P<word>[\w$]+)|(?P<symbol>[^\s])",
+    re.DOTALL,
+)
+
+# Both paths chain the inserted row. Import replay deliberately preserves
+# foreign provenance rather than going through activity.record's native path.
+ACTIVITY_APPEND_PATHS = {
+    ("athena.core.activity", "record"),
+    ("athena.core.portability", "_insert_activity"),
+}
 
 # The explicit exceptions, each one a (transport, writer module, function)
 # triple with the reason the doctrine permits it. "*" as the transport means
@@ -124,7 +164,7 @@ class WriteOwnershipError(RuntimeError):
 
 @dataclass(frozen=True)
 class Violation:
-    """One transport-side write that bypasses the command layer."""
+    """One transport ownership or activity append-path violation."""
 
     path: Path
     line: int
@@ -331,13 +371,291 @@ def build_writer_registry(
     return registry
 
 
+@dataclass(frozen=True)
+class _SqlToken:
+    kind: str
+    value: str
+
+
+def _sql_statements(sql: str) -> list[list[_SqlToken]]:
+    """Discard comments; quoted contents never become keywords or separators."""
+    statements: list[list[_SqlToken]] = [[]]
+    for match in _SQL_TOKEN_RE.finditer(sql):
+        kind = match.lastgroup
+        if kind == "comment":
+            continue
+        raw = match.group()
+        if kind == "symbol" and raw == ";":
+            if statements[-1]:
+                statements.append([])
+            continue
+        if kind == "quoted":
+            value = raw[1:-1]
+            if raw[0] != "[":
+                value = value.replace(raw[0] * 2, raw[0])
+        else:
+            value = raw
+        statements[-1].append(_SqlToken(kind or "symbol", value.casefold()))
+    return [statement for statement in statements if statement]
+
+
+def _keyword(tokens: list[_SqlToken], index: int, word: str) -> bool:
+    return index < len(tokens) and tokens[index] == _SqlToken("word", word)
+
+
+def _activity_targets(tokens: list[_SqlToken]) -> Iterable[int]:
+    """Yield the position after each complete activity target, not its prefix."""
+    for index, token in enumerate(tokens):
+        if token.kind != "word" or token.value not in {"insert", "replace"}:
+            continue
+        if (
+            token.value == "replace"
+            and index >= 2
+            and _keyword(tokens, index - 2, "insert")
+            and _keyword(tokens, index - 1, "or")
+        ):
+            continue  # INSERT OR REPLACE is one insert, not two.
+        target = index + 1
+        if token.value == "insert" and _keyword(tokens, target, "or"):
+            target += 2  # OR's conflict action precedes INTO.
+        if not _keyword(tokens, target, "into"):
+            continue
+        target += 1
+        if target >= len(tokens) or tokens[target].kind not in {"word", "quoted"}:
+            continue
+        if target + 1 < len(tokens) and tokens[target + 1] == _SqlToken("symbol", "."):
+            if tokens[target].value != "main":
+                continue
+            target += 2
+        if (
+            target < len(tokens)
+            and tokens[target].kind in {"word", "quoted"}
+            and tokens[target].value == "activity"
+        ):
+            yield target + 1
+
+
+def _after_sql_group(tokens: list[_SqlToken], start: int) -> int | None:
+    """Skip one balanced parenthesized group; quoted parentheses are opaque."""
+    if start >= len(tokens) or tokens[start] != _SqlToken("symbol", "("):
+        return None
+    depth = 0
+    for index in range(start, len(tokens)):
+        token = tokens[index]
+        if token == _SqlToken("symbol", "("):
+            depth += 1
+        elif token == _SqlToken("symbol", ")"):
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _single_values_tuple(tokens: list[_SqlToken], after_target: int) -> bool:
+    # Only the current, auditable shape is accepted. A future UPSERT/RETURNING
+    # or another source form needs its own row-coverage witness, not a guess.
+    source = after_target
+    if _keyword(tokens, source, "as"):
+        source += 1
+        if source >= len(tokens) or tokens[source].kind not in {"word", "quoted"}:
+            return False
+        source += 1
+    if source < len(tokens) and tokens[source] == _SqlToken("symbol", "("):
+        after_columns = _after_sql_group(tokens, source)
+        if after_columns is None:
+            return False
+        source = after_columns
+    if not _keyword(tokens, source, "values"):
+        return False
+    return _after_sql_group(tokens, source + 1) == len(tokens)
+
+
+def _has_activity_chain_pair(
+    constant: ast.Constant,
+    parents: dict[ast.AST, ast.AST],
+    imports: _ImportTable,
+    module: str,
+) -> bool:
+    """Witness insert -> lastrowid -> append on one named connection/block."""
+    call = parents.get(constant)
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and isinstance(call.func.value, ast.Name)
+        and call.args
+        and call.args[0] is constant
+    ):
+        return False
+    connection = call.func.value.id
+    insert = parents.get(call)
+    if not (
+        isinstance(insert, ast.Assign)
+        and len(insert.targets) == 1
+        and isinstance(insert.targets[0], ast.Name)
+    ):
+        return False
+    cursor = insert.targets[0].id
+    block = parents.get(insert)
+    if block is None:
+        return False
+    statements = next(
+        (
+            value
+            for _, value in ast.iter_fields(block)
+            if isinstance(value, list) and insert in value
+        ),
+        [],
+    )
+    following = statements[statements.index(insert) + 1 :]
+    if not following:
+        return False
+    capture = following[0]
+    if not (
+        isinstance(capture, ast.Assign)
+        and len(capture.targets) == 1
+        and isinstance(capture.targets[0], ast.Name)
+        and isinstance(capture.value, ast.Attribute)
+        and capture.value.attr == "lastrowid"
+        and isinstance(capture.value.value, ast.Name)
+        and capture.value.value.id == cursor
+    ):
+        return False
+    event_id = capture.targets[0].id
+    for statement in following[1:]:
+        if isinstance(statement, ast.Assert) and not any(
+            isinstance(child, (ast.Call, ast.NamedExpr))
+            for child in ast.walk(statement)
+        ):
+            continue
+        if not isinstance(statement, ast.Expr) or not isinstance(
+            statement.value, ast.Call
+        ):
+            return False
+        append = statement.value
+        return (
+            ("athena.core.activity_chain", "append_entry")
+            in _call_candidates(append, imports, module=module)
+            and not append.keywords
+            and len(append.args) == 2
+            and isinstance(append.args[0], ast.Name)
+            and append.args[0].id == connection
+            and isinstance(append.args[1], ast.Name)
+            and append.args[1].id == event_id
+        )
+    return False
+
+
+def find_activity_append_violations(
+    modules: dict[str, Path], trees: dict[str, ast.AST]
+) -> list[Violation]:
+    """Census literal activity inserts, including non-transport modules."""
+    seen: set[tuple[str, str]] = set()
+    violations: list[Violation] = []
+    for module, tree in sorted(trees.items()):
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        imports = _import_table(tree, module=module, path=modules[module])
+        for constant in _non_docstring_constants(tree):
+            statements = _sql_statements(constant.value)
+            inserts = [
+                (statement, after_target)
+                for statement in statements
+                for after_target in _activity_targets(statement)
+            ]
+            if not inserts:
+                continue
+            names = []
+            owner: ast.AST = constant
+            while owner in parents:
+                owner = parents[owner]
+                if isinstance(
+                    owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    names.append(owner.name)
+            function = ".".join(reversed(names)) or "<module>"
+            key = (module, function)
+            seen.add(key)
+            if key not in ACTIVITY_APPEND_PATHS:
+                violations.append(
+                    Violation(
+                        path=modules[module],
+                        line=constant.lineno,
+                        transport=module,
+                        kind="undeclared-activity-writer",
+                        detail=(
+                            f"{module}.{function} inserts activity outside the census; "
+                            "route native writes through activity.record and foreign "
+                            "history through the existing portability replay path"
+                        ),
+                    )
+                )
+            elif (
+                len(statements) != 1
+                or len(inserts) != 1
+                or not _single_values_tuple(*inserts[0])
+            ):
+                violations.append(
+                    Violation(
+                        path=modules[module],
+                        line=constant.lineno,
+                        transport=module,
+                        kind="activity-single-row",
+                        detail=(
+                            f"{module}.{function} must use one VALUES tuple in one "
+                            "statement: multi-row VALUES, SELECT sources, and other "
+                            "source/tail shapes are not covered by lastrowid; split "
+                            "into single-row execute/capture/append operations "
+                            "inside the existing transaction"
+                        ),
+                    )
+                )
+            elif not _has_activity_chain_pair(constant, parents, imports, module):
+                violations.append(
+                    Violation(
+                        path=modules[module],
+                        line=constant.lineno,
+                        transport=module,
+                        kind="activity-chain-pair",
+                        detail=(
+                            f"{module}.{function}: capture cursor.lastrowid and call "
+                            "activity_chain.append_entry on that row and the same "
+                            "connection in the same straight-line block"
+                        ),
+                    )
+                )
+    if not seen:
+        raise WriteOwnershipError(
+            "empty activity append census: no activity inserts found; "
+            "restore the existing native and portability append paths"
+        )
+    for module, function in sorted(ACTIVITY_APPEND_PATHS - seen):
+        violations.append(
+            Violation(
+                path=modules.get(module, next(iter(modules.values()))),
+                line=1,
+                transport=module,
+                kind="stale-activity-writer",
+                detail=(
+                    f"{module}.{function} is declared but no longer inserts activity; "
+                    "restore its insert/chain pair or request review of an intentional "
+                    "writer removal"
+                ),
+            )
+        )
+    return violations
+
+
 def find_violations(
     modules: dict[str, Path],
     trees: dict[str, ast.AST],
 ) -> list[Violation]:
     writers = build_writer_registry(modules, trees)
     exercised: set[tuple[str, str, str]] = set()
-    violations: list[Violation] = []
+    violations = find_activity_append_violations(modules, trees)
 
     for module in sorted(modules):
         if not _is_transport(module):
@@ -426,7 +744,7 @@ def _display_path(path: Path, package_root: Path) -> str:
 
 
 def check_write_ownership(package_root: Path = PACKAGE_ROOT) -> list[Violation]:
-    """Analyze ``package_root`` and return every transport-side write."""
+    """Analyze ``package_root`` for transport and activity append violations."""
     modules = _inventory_modules(package_root.absolute())
     trees: dict[str, ast.AST] = {}
     for module, path in sorted(modules.items()):
@@ -441,7 +759,7 @@ def check_write_ownership(package_root: Path = PACKAGE_ROOT) -> list[Violation]:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="check that transports never write except through commands"
+        description="check transport write ownership and declared activity append paths"
     )
     parser.add_argument(
         "--package-root",
@@ -461,8 +779,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     if violations:
         count = len(violations)
         print(
-            f"Athena write ownership failed: {count} transport-side "
-            f"{'write' if count == 1 else 'writes'}",
+            f"Athena write ownership failed: {count} "
+            f"{'violation' if count == 1 else 'violations'}",
             file=sys.stderr,
         )
         for violation in violations:
@@ -475,7 +793,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print(
         "Athena write ownership passed: transports write only through "
-        "commands and designated writers"
+        "commands and designated writers; activity append census matches"
     )
     return 0
 
