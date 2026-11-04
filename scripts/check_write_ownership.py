@@ -1,4 +1,4 @@
-"""Enforce one-command-owns-each-write at the transport boundary.
+"""Enforce transport write ownership and the activity append-path census.
 
 The doctrine (AGENTS.md's cardinal rule, docs/COMMAND_MIGRATION.md): transports
 — ``web/*``, ``mcp/*``, and ``*_api.py`` — parse transport input and translate
@@ -23,6 +23,22 @@ shrink with the debt it records. Arbitrary computed dispatch (getattr chains,
 string-built calls) is out of scope, as it is for the import checker — which
 already forbids the internal wildcard imports that would defeat name
 resolution here.
+
+The activity census also scans internal modules. Its two declared paths must
+still contain literal INSERT/REPLACE SQL for the exact activity table; a new
+path, a stale declaration, or an empty census fails. Each insert must capture
+cursor.lastrowid and call activity_chain.append_entry with that row id and
+the same named connection in the same straight-line statement block. Only
+lastrowid capture and call-free assertions may intervene, so an intervening
+commit, helper call, branch, or return is refused rather than guessed safe.
+
+This is a syntactic witness, not a proof of transaction ownership or runtime
+atomicity. activity.record opens/reuses its transaction; portability's replay
+owner supplies its transaction. The census cannot prove those callers hold a
+transaction, connection/import names are not shadowed, callees do not commit,
+or exceptional paths roll back. Dynamic SQL, dynamic dispatch, and database
+triggers remain outside this literal/static-name analysis. Runtime transaction
+and import-provenance tests remain necessary; imports keep their own semantics.
 """
 
 from __future__ import annotations
@@ -47,6 +63,19 @@ _WRITE_SQL_RE = re.compile(
     r"^\s*(?:--[^\n]*\n\s*)*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO"
     r"|DELETE\s+FROM|UPDATE\s+(?:OR\s+\w+\s+)?[\w.]+(?:\s+SET\b|\s*$))"
 )
+
+_ACTIVITY_INSERT_RE = re.compile(
+    r"^\s*(?:--[^\n]*\n\s*)*(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO)"
+    r"\s+(?:main\.)?[\"`\[]?activity(?:[\"`\]]|\b)",
+    re.IGNORECASE,
+)
+
+# Both paths chain the inserted row. Import replay deliberately preserves
+# foreign provenance rather than going through activity.record's native path.
+ACTIVITY_APPEND_PATHS = {
+    ("athena.core.activity", "record"),
+    ("athena.core.portability", "_insert_activity"),
+}
 
 # The explicit exceptions, each one a (transport, writer module, function)
 # triple with the reason the doctrine permits it. "*" as the transport means
@@ -124,7 +153,7 @@ class WriteOwnershipError(RuntimeError):
 
 @dataclass(frozen=True)
 class Violation:
-    """One transport-side write that bypasses the command layer."""
+    """One transport ownership or activity append-path violation."""
 
     path: Path
     line: int
@@ -331,13 +360,156 @@ def build_writer_registry(
     return registry
 
 
+def _has_activity_chain_pair(
+    constant: ast.Constant,
+    parents: dict[ast.AST, ast.AST],
+    imports: _ImportTable,
+    module: str,
+) -> bool:
+    """Witness insert -> lastrowid -> append on one named connection/block."""
+    call = parents.get(constant)
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "execute"
+        and isinstance(call.func.value, ast.Name)
+        and call.args
+        and call.args[0] is constant
+    ):
+        return False
+    connection = call.func.value.id
+    insert = parents.get(call)
+    if not (
+        isinstance(insert, ast.Assign)
+        and len(insert.targets) == 1
+        and isinstance(insert.targets[0], ast.Name)
+    ):
+        return False
+    cursor = insert.targets[0].id
+    block = parents.get(insert)
+    if block is None:
+        return False
+    statements = next(
+        (
+            value
+            for _, value in ast.iter_fields(block)
+            if isinstance(value, list) and insert in value
+        ),
+        [],
+    )
+    following = statements[statements.index(insert) + 1 :]
+    if not following:
+        return False
+    capture = following[0]
+    if not (
+        isinstance(capture, ast.Assign)
+        and len(capture.targets) == 1
+        and isinstance(capture.targets[0], ast.Name)
+        and isinstance(capture.value, ast.Attribute)
+        and capture.value.attr == "lastrowid"
+        and isinstance(capture.value.value, ast.Name)
+        and capture.value.value.id == cursor
+    ):
+        return False
+    event_id = capture.targets[0].id
+    for statement in following[1:]:
+        if isinstance(statement, ast.Assert) and not any(
+            isinstance(child, (ast.Call, ast.NamedExpr))
+            for child in ast.walk(statement)
+        ):
+            continue
+        if not isinstance(statement, ast.Expr) or not isinstance(
+            statement.value, ast.Call
+        ):
+            return False
+        append = statement.value
+        return (
+            ("athena.core.activity_chain", "append_entry")
+            in _call_candidates(append, imports, module=module)
+            and not append.keywords
+            and len(append.args) == 2
+            and isinstance(append.args[0], ast.Name)
+            and append.args[0].id == connection
+            and isinstance(append.args[1], ast.Name)
+            and append.args[1].id == event_id
+        )
+    return False
+
+
+def find_activity_append_violations(
+    modules: dict[str, Path], trees: dict[str, ast.AST]
+) -> list[Violation]:
+    """Census literal activity inserts, including non-transport modules."""
+    seen: set[tuple[str, str]] = set()
+    violations: list[Violation] = []
+    for module, tree in sorted(trees.items()):
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        imports = _import_table(tree, module=module, path=modules[module])
+        for constant in _non_docstring_constants(tree):
+            if not _ACTIVITY_INSERT_RE.search(constant.value):
+                continue
+            names = []
+            owner: ast.AST = constant
+            while owner in parents:
+                owner = parents[owner]
+                if isinstance(
+                    owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                ):
+                    names.append(owner.name)
+            function = ".".join(reversed(names)) or "<module>"
+            key = (module, function)
+            seen.add(key)
+            if key not in ACTIVITY_APPEND_PATHS:
+                violations.append(
+                    Violation(
+                        path=modules[module],
+                        line=constant.lineno,
+                        transport=module,
+                        kind="undeclared-activity-writer",
+                        detail=f"{module}.{function} inserts activity outside the census",
+                    )
+                )
+            elif not _has_activity_chain_pair(constant, parents, imports, module):
+                violations.append(
+                    Violation(
+                        path=modules[module],
+                        line=constant.lineno,
+                        transport=module,
+                        kind="activity-chain-pair",
+                        detail=(
+                            f"{module}.{function} must chain its inserted lastrowid "
+                            "on the same connection in the same straight-line block"
+                        ),
+                    )
+                )
+    if not seen:
+        raise WriteOwnershipError(
+            "empty activity append census: no activity inserts found"
+        )
+    for module, function in sorted(ACTIVITY_APPEND_PATHS - seen):
+        violations.append(
+            Violation(
+                path=modules.get(module, next(iter(modules.values()))),
+                line=1,
+                transport=module,
+                kind="stale-activity-writer",
+                detail=f"{module}.{function} is declared but no longer inserts activity",
+            )
+        )
+    return violations
+
+
 def find_violations(
     modules: dict[str, Path],
     trees: dict[str, ast.AST],
 ) -> list[Violation]:
     writers = build_writer_registry(modules, trees)
     exercised: set[tuple[str, str, str]] = set()
-    violations: list[Violation] = []
+    violations = find_activity_append_violations(modules, trees)
 
     for module in sorted(modules):
         if not _is_transport(module):
@@ -426,7 +598,7 @@ def _display_path(path: Path, package_root: Path) -> str:
 
 
 def check_write_ownership(package_root: Path = PACKAGE_ROOT) -> list[Violation]:
-    """Analyze ``package_root`` and return every transport-side write."""
+    """Analyze ``package_root`` for transport and activity append violations."""
     modules = _inventory_modules(package_root.absolute())
     trees: dict[str, ast.AST] = {}
     for module, path in sorted(modules.items()):
@@ -441,7 +613,7 @@ def check_write_ownership(package_root: Path = PACKAGE_ROOT) -> list[Violation]:
 
 def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="check that transports never write except through commands"
+        description="check transport write ownership and declared activity append paths"
     )
     parser.add_argument(
         "--package-root",
@@ -461,8 +633,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     if violations:
         count = len(violations)
         print(
-            f"Athena write ownership failed: {count} transport-side "
-            f"{'write' if count == 1 else 'writes'}",
+            f"Athena write ownership failed: {count} "
+            f"{'violation' if count == 1 else 'violations'}",
             file=sys.stderr,
         )
         for violation in violations:
@@ -475,7 +647,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print(
         "Athena write ownership passed: transports write only through "
-        "commands and designated writers"
+        "commands and designated writers; activity append census matches"
     )
     return 0
 
