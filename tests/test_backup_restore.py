@@ -12,7 +12,15 @@ import sys
 import pytest
 
 from athena import config, ops
-from athena.core import activity, attachments, backup, db, recovery, users
+from athena.core import (
+    activity,
+    activity_chain,
+    attachments,
+    backup,
+    db,
+    recovery,
+    users,
+)
 
 
 def _seed_database(path, *, email="admin@example.com", issue="Saved issue"):
@@ -361,7 +369,9 @@ def test_doctor_cli_checks_database_and_attachment_dir(tmp_path, capsys):
 
 
 def test_doctor_plain_mode_reports_omitted_checks(tmp_path, capsys):
-    source = _seed_database(tmp_path / "athena.db")
+    private_path = tmp_path / "path-token-SYNTHETIC_SECRET"
+    private_path.mkdir()
+    source = _seed_database(private_path / "athena.db")
 
     assert ops.doctor_main([str(source)]) == 0
 
@@ -373,6 +383,8 @@ def test_doctor_plain_mode_reports_omitted_checks(tmp_path, capsys):
     assert "check deployment-configuration: not evaluated" in output
     assert "check recovery-bundle: not evaluated" in output
     assert "check data-recovery-drill: not evaluated" in output
+    assert 'subject="athena.db"' in output
+    assert "SYNTHETIC_SECRET" not in output
 
 
 def test_doctor_reconciles_attachment_rows_and_blobs(tmp_path, capsys):
@@ -692,6 +704,12 @@ def _record_activity(database, *, detail="synthetic audit event"):
         conn.close()
 
 
+def _tamper_activity_detail(database, detail):
+    with sqlite3.connect(database) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.execute("UPDATE activity SET detail = ? WHERE id = 1", (detail,))
+
+
 def _write_manifest(bundle_path, manifest):
     (bundle_path / "manifest.json").write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
@@ -706,6 +724,11 @@ def _refresh_database_manifest(bundle_path):
     manifest["database"]["byte_size"] = len(payload)
     manifest["database"]["sha256"] = hashlib.sha256(payload).hexdigest()
     _write_manifest(bundle_path, manifest)
+
+
+def _tamper_bundle_chain(bundle_path, detail="forged candidate detail"):
+    _tamper_activity_detail(bundle_path / "athena.db", detail)
+    _refresh_database_manifest(bundle_path)
 
 
 def _tree_evidence(root):
@@ -824,9 +847,193 @@ def test_recovery_bundle_refuses_broken_activity_chain_without_changing_source(
     assert "athena-doctor: mode=recovery-bundle" in output
     assert "check activity-chain: failed" in output
     assert "entry_hash_mismatch" in output
+    assert "--accept-broken-chain" in output
     assert "check attachments: not evaluated" in output
     assert "private synthetic event detail" not in output
     assert "forged candidate detail" not in output
+
+
+def test_create_recovery_bundle_publishes_broken_chain_capture(tmp_path):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    _tamper_activity_detail(database, "broken source detail")
+    source_before = database.read_bytes()
+    bundle_path = tmp_path / "bundle"
+
+    created = recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+
+    assert created.path == bundle_path
+    assert bundle_path.is_dir()
+    assert created.activity_chain.mismatch_event_id == 1
+    assert created.activity_chain.mismatch_reason == "entry_hash_mismatch"
+    assert [(phase.name, phase.status) for phase in created.phase_results] == [
+        ("database", "passed"),
+        ("activity-chain", "failed"),
+        ("attachments", "passed"),
+    ]
+    assert database.read_bytes() == source_before
+    assert _read_manifest(bundle_path)["schema"] == "athena.recovery_bundle.v1"
+
+
+def test_backup_cli_publishes_broken_chain_and_warns_with_follow_up(tmp_path, capsys):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    _tamper_activity_detail(database, "broken source detail")
+    bundle_path = tmp_path / "scheduled-bundle"
+
+    result = ops.backup_main(
+        [
+            str(database),
+            str(bundle_path),
+            "--recovery-bundle",
+            "--attach-dir",
+            str(attach_dir),
+        ]
+    )
+
+    output = capsys.readouterr()
+    assert result == 0
+    assert bundle_path.is_dir()
+    assert "Created recovery bundle" in output.out
+    assert "warning" in output.err.casefold()
+    assert "event 1" in output.err
+    assert "entry_hash_mismatch" in output.err
+    assert f"athena-doctor {bundle_path / 'athena.db'}" in output.err
+
+
+def test_broken_bundle_verification_and_materialization_refuse_without_acceptance(
+    tmp_path,
+):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    good_bundle = tmp_path / "good-bundle"
+    broken_bundle = tmp_path / "broken-bundle"
+    recovery.create_recovery_bundle(database, attach_dir, good_bundle)
+    recovery.create_recovery_bundle(database, attach_dir, broken_bundle)
+    _tamper_bundle_chain(broken_bundle)
+
+    assert recovery.verify_recovery_bundle(good_bundle).activity_chain.checked == 1
+    good_drill = recovery.materialize_recovery_bundle(
+        good_bundle, tmp_path / "good-drill"
+    )
+    assert good_drill.path.is_dir()
+
+    source_before = _tree_evidence(broken_bundle)
+    with pytest.raises(ValueError, match="entry_hash_mismatch"):
+        recovery.verify_recovery_bundle(broken_bundle)
+    with pytest.raises(ValueError, match="entry_hash_mismatch"):
+        recovery.materialize_recovery_bundle(broken_bundle, tmp_path / "refused-drill")
+    assert _tree_evidence(broken_bundle) == source_before
+    assert not (tmp_path / "refused-drill").exists()
+
+
+def test_accept_broken_chain_materializes_drill_but_reports_failed_chain(
+    tmp_path, capsys
+):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    bundle_path = tmp_path / "broken-bundle"
+    recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+    _tamper_bundle_chain(bundle_path)
+    drill_path = tmp_path / "emergency-drill"
+
+    assert (
+        ops.doctor_main(
+            [
+                str(bundle_path),
+                "--recovery-bundle",
+                "--drill-dir",
+                str(drill_path),
+                "--accept-broken-chain",
+            ]
+        )
+        == 0
+    )
+
+    out = capsys.readouterr()
+    assert drill_path.is_dir()
+    assert "check activity-chain: failed" in out.out
+    assert "entry_hash_mismatch" in out.out
+    assert "operator accepted" in out.out
+    assert "check activity-chain: passed" not in out.out
+    assert "completed with accepted broken activity chain" in out.out
+    with sqlite3.connect(drill_path / "athena.db") as conn:
+        conn.row_factory = sqlite3.Row
+        report = activity_chain.verify_all(conn)
+    assert report["mismatch"]["reason"] == "entry_hash_mismatch"
+
+
+def test_recovery_receipt_reports_completed_phases_before_attachment_failure(
+    tmp_path, capsys
+):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+    (bundle_path / "attachments" / "unexpected.bin").write_bytes(b"extra")
+
+    assert ops.doctor_main([str(bundle_path), "--recovery-bundle"]) == 1
+
+    error = capsys.readouterr().err
+    assert "check database: passed" in error
+    assert "check activity-chain: passed" in error
+    assert "check attachments: failed" in error
+    assert "check recovery-bundle: failed" in error
+    assert "check database: not evaluated" not in error
+    assert "check activity-chain: not evaluated" not in error
+
+
+def test_recovery_receipt_reports_drill_before_stale_age_failure(tmp_path, capsys):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+    drill_path = tmp_path / "drill"
+
+    assert (
+        ops.doctor_main(
+            [
+                str(bundle_path),
+                "--recovery-bundle",
+                "--drill-dir",
+                str(drill_path),
+                "--max-recovery-point-age-seconds",
+                "0",
+            ]
+        )
+        == 1
+    )
+
+    error = capsys.readouterr().err
+    assert drill_path.is_dir()
+    assert "check data-recovery-drill: passed" in error
+    assert "check recovery-freshness: failed" in error
+    assert "check data-recovery-drill: not evaluated" not in error
+
+
+def test_deployment_receipt_reports_network_before_database_failure(
+    tmp_path, monkeypatch, capsys
+):
+    source = tmp_path / "unmigrated.db"
+    sqlite3.connect(source).close()
+    attach_dir = tmp_path / "attachments"
+    attach_dir.mkdir()
+    monkeypatch.setattr(config, "DB_PATH", source)
+    monkeypatch.setattr(config, "ATTACH_DIR", attach_dir)
+    monkeypatch.setattr(config, "NETWORK_MODE", "local")
+    monkeypatch.setattr(config, "ALLOWED_AUTHORITIES", ())
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", "")
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+    assert (
+        ops.doctor_main([str(source), "--attach-dir", str(attach_dir), "--deployment"])
+        == 1
+    )
+
+    error = capsys.readouterr().err
+    assert "check deployment-configuration: passed" in error
+    assert "check network: passed" in error
+    assert "check database: failed" in error
+    assert "check network: not evaluated" not in error
 
 
 def test_recovery_bundle_keeps_pre_adoption_history_outside_chain_claim(tmp_path):
@@ -872,7 +1079,9 @@ def test_recovery_bundle_cli_create_verify_and_drill(tmp_path, capsys):
         )
         == 0
     )
-    assert "Created recovery bundle" in capsys.readouterr().out
+    created_output = capsys.readouterr()
+    assert "Created recovery bundle" in created_output.out
+    assert created_output.err == ""
     assert (
         ops.doctor_main(
             [
@@ -953,6 +1162,11 @@ def test_recovery_backup_option_matrix_rejects_ambiguous_modes(
     [
         (["--recovery-bundle", "--migrate"], "cannot be combined"),
         (["--recovery-bundle", "--attach-dir", "attachments"], "cannot be combined"),
+        (
+            ["--recovery-bundle", "--accept-broken-chain"],
+            "requires --drill-dir",
+        ),
+        (["--accept-broken-chain"], "requires --recovery-bundle"),
         (["--drill-dir", "drill"], "require --recovery-bundle"),
         (
             ["--recovery-bundle", "--max-data-recovery-seconds", "1"],
@@ -3009,8 +3223,11 @@ def test_recovery_cli_uses_the_materialized_bundle_for_its_age_decision(
     stale_summary = recovery.verify_recovery_bundle(stale_bundle)
     drill_path = tmp_path / "drill"
 
-    def materialize_swapped_bundle(bundle_path, requested_drill_path):
+    def materialize_swapped_bundle(
+        bundle_path, requested_drill_path, *, accept_broken_chain=False
+    ):
         assert bundle_path == fresh_bundle
+        assert accept_broken_chain is False
         requested_drill_path.mkdir(mode=0o700)
         return recovery.RecoveryDrill(
             path=requested_drill_path,

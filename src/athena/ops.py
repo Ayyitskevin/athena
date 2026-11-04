@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shlex
 import socket
 import sqlite3
 import stat
@@ -25,6 +27,7 @@ from athena.core.backup import (
 from athena.core.recovery import (
     RecoveryActivityChainVerification,
     RecoveryChainVerificationError,
+    RecoveryPhaseResult,
     create_recovery_bundle,
     materialize_recovery_bundle,
     validate_current_database,
@@ -269,17 +272,33 @@ def _deployment_checks(
     bootstrap: bool,
     enabled_oidc_issuer: str | None,
     max_request_body_bytes: int,
+    on_check: Callable[[str, str, Exception | None], None] | None = None,
 ) -> list[str]:
     if bootstrap:
         _check_bootstrap_database_before_migration(db_path)
+
+    def run_check(name: str, action: Callable[[], str]) -> str:
+        try:
+            result = action()
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            if on_check is not None:
+                on_check(name, "failed", exc)
+            raise
+        if on_check is not None:
+            on_check(name, "passed", None)
+        return result
+
     return [
-        _check_database(db_path, migrate=bootstrap),
-        _check_attachment_dir(db_path, attach_dir),
-        _check_database_posture(
-            db_path,
-            bootstrap=bootstrap,
-            enabled_oidc_issuer=enabled_oidc_issuer,
-            max_request_body_bytes=max_request_body_bytes,
+        run_check("database", lambda: _check_database(db_path, migrate=bootstrap)),
+        run_check("attachments", lambda: _check_attachment_dir(db_path, attach_dir)),
+        run_check(
+            "administrator-recovery",
+            lambda: _check_database_posture(
+                db_path,
+                bootstrap=bootstrap,
+                enabled_oidc_issuer=enabled_oidc_issuer,
+                max_request_body_bytes=max_request_body_bytes,
+            ),
         ),
     ]
 
@@ -521,6 +540,11 @@ def _validate_doctor_arguments(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
 ) -> None:
+    if args.accept_broken_chain and not args.recovery_bundle:
+        parser.error("--accept-broken-chain requires --recovery-bundle")
+    if args.accept_broken_chain and args.drill_dir is None:
+        parser.error("--accept-broken-chain requires --drill-dir")
+
     if args.recovery_bundle:
         if any(
             (
@@ -555,7 +579,11 @@ def _validate_doctor_arguments(
         parser.error("--deployment requires --attach-dir")
 
 
-_DoctorCheck = tuple[str, str, str]
+@dataclass(slots=True)
+class _DoctorCheck:
+    name: str
+    status: str
+    reason: str
 
 
 def _doctor_mode(args: argparse.Namespace) -> str:
@@ -566,13 +594,98 @@ def _doctor_mode(args: argparse.Namespace) -> str:
     return "plain"
 
 
-def _record_doctor_check(
-    report: list[_DoctorCheck], name: str, status: str, reason: str
-) -> None:
-    bounded_reason = " ".join(reason.split())
-    if len(bounded_reason) > 200:
-        bounded_reason = bounded_reason[:197] + "..."
-    report.append((name, status, bounded_reason))
+class _DoctorReceipt:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.mode = _doctor_mode(args)
+        subject = Path(args.db_path).name or "subject"
+        self.subject = subject if len(subject) <= 200 else subject[:197] + "..."
+        self.checks: dict[str, _DoctorCheck] = {}
+        self.accepted_broken_chain = False
+
+        if self.mode == "plain":
+            self._select("database", "database check did not complete")
+            self._select("activity-chain", "activity-chain check did not complete")
+            if args.attach_dir is not None:
+                self._select("attachments", "attachment check did not complete")
+            else:
+                self._omit("attachments", "--attach-dir was not supplied")
+            omitted = {
+                "deployment-configuration": "--deployment was not selected",
+                "network": "--deployment was not selected",
+                "administrator-recovery": "--deployment was not selected",
+                "recovery-bundle": "--recovery-bundle was not selected",
+                "recovery-freshness": "recovery-bundle mode was not selected",
+                "data-recovery-drill": "recovery-bundle mode was not selected",
+                "data-recovery-duration": "recovery-bundle mode was not selected",
+            }
+        elif self.mode == "deployment":
+            for name in (
+                "deployment-configuration",
+                "network",
+                "database",
+                "attachments",
+                "administrator-recovery",
+            ):
+                self._select(name, f"{name} check did not complete")
+            omitted = {
+                "activity-chain": "deployment mode does not walk the full chain",
+                "recovery-bundle": "--recovery-bundle was not selected",
+                "recovery-freshness": "recovery-bundle mode was not selected",
+                "data-recovery-drill": "recovery-bundle mode was not selected",
+                "data-recovery-duration": "recovery-bundle mode was not selected",
+            }
+        else:
+            for name in (
+                "database",
+                "activity-chain",
+                "attachments",
+                "recovery-bundle",
+            ):
+                self._select(name, f"{name} check did not complete")
+            if args.max_recovery_point_age_seconds is not None:
+                self._select(
+                    "recovery-freshness", "recovery freshness check did not complete"
+                )
+            else:
+                self._omit(
+                    "recovery-freshness",
+                    "--max-recovery-point-age-seconds was not supplied",
+                )
+            if args.drill_dir is not None:
+                self._select(
+                    "data-recovery-drill", "data-recovery drill did not complete"
+                )
+            else:
+                self._omit("data-recovery-drill", "--drill-dir was not supplied")
+            if args.max_data_recovery_seconds is not None:
+                self._select(
+                    "data-recovery-duration",
+                    "data-recovery duration check did not complete",
+                )
+            else:
+                self._omit(
+                    "data-recovery-duration",
+                    "--max-data-recovery-seconds was not supplied",
+                )
+            omitted = {
+                "deployment-configuration": "--deployment was not selected",
+                "network": "--deployment was not selected",
+                "administrator-recovery": "--deployment was not selected",
+            }
+        for name, reason in omitted.items():
+            self._omit(name, reason)
+
+    def _select(self, name: str, reason: str) -> None:
+        self._omit(name, reason)
+
+    def _omit(self, name: str, reason: str) -> None:
+        self.checks[name] = _DoctorCheck(name, "not evaluated", reason)
+
+    def record(self, name: str, status: str, reason: str) -> None:
+        bounded_reason = " ".join(reason.split())
+        if len(bounded_reason) > 200:
+            bounded_reason = bounded_reason[:197] + "..."
+        self.checks[name] = _DoctorCheck(name, status, bounded_reason)
 
 
 def _doctor_failure_reason(name: str, exc: Exception) -> str:
@@ -588,10 +701,7 @@ def _doctor_failure_reason(name: str, exc: Exception) -> str:
             else str(chain.mismatch_event_id)
         )
         reason = chain.mismatch_reason or "unknown_mismatch"
-        return (
-            f"{reason} at event {event}; checked {chain.checked} entries from "
-            f"anchor {anchor} through {through}"
-        )
+        return f"{reason} at event {event}; checked {chain.checked} entries from anchor {anchor} through {through}"
 
     message = str(exc).casefold()
     if name == "activity-chain":
@@ -633,7 +743,7 @@ def _doctor_failure_reason(name: str, exc: Exception) -> str:
 
 
 def _run_doctor_check(
-    report: list[_DoctorCheck],
+    report: _DoctorReceipt,
     name: str,
     passed_reason: str,
     action: Callable[[], str],
@@ -647,49 +757,10 @@ def _run_doctor_check(
         sqlite3.Error,
         ValueError,
     ) as exc:
-        _record_doctor_check(report, name, "failed", _doctor_failure_reason(name, exc))
+        report.record(name, "failed", _doctor_failure_reason(name, exc))
         raise
-    _record_doctor_check(report, name, "passed", passed_reason)
+    report.record(name, "passed", passed_reason)
     return result
-
-
-def _record_mode_omissions(
-    args: argparse.Namespace, report: list[_DoctorCheck]
-) -> None:
-    mode = _doctor_mode(args)
-    omissions = {
-        "plain": (
-            ("deployment-configuration", "--deployment was not selected"),
-            ("recovery-bundle", "--recovery-bundle was not selected"),
-        ),
-        "deployment": (
-            ("activity-chain", "deployment mode does not walk the full chain"),
-            ("recovery-bundle", "--recovery-bundle was not selected"),
-        ),
-        "recovery-bundle": (
-            ("deployment-configuration", "--deployment was not selected"),
-        ),
-    }[mode]
-    for name, reason in omissions:
-        if not any(record[0] == name for record in report):
-            _record_doctor_check(report, name, "not evaluated", reason)
-
-    if mode != "recovery-bundle" or args.max_recovery_point_age_seconds is None:
-        reason = (
-            "--max-recovery-point-age-seconds was not supplied"
-            if mode == "recovery-bundle"
-            else "recovery-bundle mode was not selected"
-        )
-        if not any(record[0] == "recovery-freshness" for record in report):
-            _record_doctor_check(report, "recovery-freshness", "not evaluated", reason)
-    if mode != "recovery-bundle" or args.drill_dir is None:
-        reason = (
-            "--drill-dir was not supplied"
-            if mode == "recovery-bundle"
-            else "recovery-bundle mode was not selected"
-        )
-        if not any(record[0] == "data-recovery-drill" for record in report):
-            _record_doctor_check(report, "data-recovery-drill", "not evaluated", reason)
 
 
 def _recovery_chain_reason(
@@ -704,7 +775,7 @@ def _recovery_chain_reason(
 
 
 def _recovery_doctor_checks(
-    args: argparse.Namespace, report: list[_DoctorCheck]
+    args: argparse.Namespace, report: _DoctorReceipt
 ) -> list[str]:
     recovery_started = time.monotonic()
     drill = None
@@ -712,28 +783,12 @@ def _recovery_doctor_checks(
         if args.drill_dir is None:
             bundle = verify_recovery_bundle(args.db_path)
         else:
-            drill = materialize_recovery_bundle(args.db_path, args.drill_dir)
+            drill = materialize_recovery_bundle(
+                args.db_path,
+                args.drill_dir,
+                accept_broken_chain=args.accept_broken_chain,
+            )
             bundle = drill.source_bundle
-    except RecoveryChainVerificationError as exc:
-        _record_doctor_check(
-            report,
-            "database",
-            "passed",
-            "immutable candidate passed integrity, foreign-key, migration and schema checks",
-        )
-        _record_doctor_check(
-            report,
-            "activity-chain",
-            "failed",
-            _doctor_failure_reason("activity-chain", exc),
-        )
-        _record_doctor_check(
-            report,
-            "recovery-bundle",
-            "failed",
-            "private candidate failed activity-chain verification",
-        )
-        raise
     except (
         FileNotFoundError,
         NotADirectoryError,
@@ -741,48 +796,57 @@ def _recovery_doctor_checks(
         sqlite3.Error,
         ValueError,
     ) as exc:
-        _record_doctor_check(
-            report,
-            "recovery-bundle",
-            "failed",
-            _doctor_failure_reason("recovery-bundle", exc),
+        phase_results: tuple[RecoveryPhaseResult, ...] = getattr(
+            exc,
+            "recovery_phase_results",
+            getattr(exc, "phase_results", ()),
+        )
+        for phase in phase_results:
+            report.record(phase.name, phase.status, phase.reason)
+        failed = next(
+            (phase.name for phase in phase_results if phase.status == "failed"),
+            "bundle validation",
+        )
+        report.record(
+            "recovery-bundle", "failed", f"bundle certification failed at {failed}"
         )
         raise
 
-    _record_doctor_check(
-        report,
-        "database",
-        "passed",
-        "immutable candidate passed integrity, foreign-key, migration and schema checks",
+    phase_results = drill.phase_results if drill is not None else bundle.phase_results
+    if not phase_results:
+        phase_results = bundle.phase_results
+    for phase in phase_results:
+        reason = phase.reason
+        if phase.name == "activity-chain":
+            if phase.status == "passed":
+                reason = _recovery_chain_reason(bundle.activity_chain)
+            elif args.accept_broken_chain and drill is not None:
+                reason += "; operator accepted for emergency drill"
+        report.record(phase.name, phase.status, reason)
+    if drill is not None and not any(
+        phase.name == "data-recovery-drill" for phase in phase_results
+    ):
+        report.record(
+            "data-recovery-drill", "passed", "private scratch copy materialized"
+        )
+    chain_broken = bundle.activity_chain.mismatch_reason is not None
+    report.accepted_broken_chain = bool(
+        args.accept_broken_chain and drill is not None and chain_broken
     )
-    _record_doctor_check(
-        report,
-        "activity-chain",
-        "passed",
-        _recovery_chain_reason(bundle.activity_chain),
-    )
-    _record_doctor_check(
-        report,
-        "attachments",
-        "passed",
-        "bundle attachment inventory and bytes match the database snapshot",
-    )
-    _record_doctor_check(
-        report,
+    report.record(
         "recovery-bundle",
-        "passed",
-        "manifest, database, attachments and activity chain verified",
+        "failed" if chain_broken else "passed",
+        (
+            "activity-chain mismatch explicitly accepted only for emergency drill"
+            if report.accepted_broken_chain
+            else "bundle checks completed"
+            if chain_broken
+            else "manifest, database, attachments and activity chain verified"
+        ),
     )
 
     recovery_age = _recovery_point_age_seconds(bundle.capture_started_at)
-    if args.max_recovery_point_age_seconds is None:
-        _record_doctor_check(
-            report,
-            "recovery-freshness",
-            "not evaluated",
-            "--max-recovery-point-age-seconds was not supplied",
-        )
-    else:
+    if args.max_recovery_point_age_seconds is not None:
 
         def check_recovery_age() -> str:
             if recovery_age > args.max_recovery_point_age_seconds:
@@ -801,20 +865,20 @@ def _recovery_doctor_checks(
             check_recovery_age,
         )
 
-    checks = [
-        "recovery bundle: ok "
-        f"({bundle.attachment_count} attachments, "
-        f"{bundle.attachment_bytes} bytes; age {recovery_age:.3f}s; "
-        "recorded Athena version "
-        f"{json.dumps(bundle.athena_version, ensure_ascii=True)}; {bundle.path})"
-    ]
-    if drill is None:
-        _record_doctor_check(
-            report,
-            "data-recovery-drill",
-            "not evaluated",
-            "--drill-dir was not supplied",
+    if report.accepted_broken_chain:
+        recovery_text = (
+            "recovery bundle: activity-chain mismatch accepted for emergency drill"
         )
+    else:
+        recovery_text = (
+            "recovery bundle: ok "
+            f"({bundle.attachment_count} attachments, "
+            f"{bundle.attachment_bytes} bytes; age {recovery_age:.3f}s; "
+            "recorded Athena version "
+            f"{json.dumps(bundle.athena_version, ensure_ascii=True)})"
+        )
+    checks = [recovery_text]
+    if drill is None:
         return checks
 
     recovery_elapsed = time.monotonic() - recovery_started
@@ -831,12 +895,13 @@ def _recovery_doctor_checks(
             )
         return ""
 
-    drill_reason = (
-        "private scratch database and attachment copy materialized"
-        if args.max_data_recovery_seconds is None
-        else "private scratch copy materialized within the configured time limit"
-    )
-    _run_doctor_check(report, "data-recovery-drill", drill_reason, check_drill_elapsed)
+    if args.max_data_recovery_seconds is not None:
+        _run_doctor_check(
+            report,
+            "data-recovery-duration",
+            "materialization completed within the configured time limit",
+            check_drill_elapsed,
+        )
     checks.append(
         f"data-recovery drill: ok ({recovery_elapsed:.3f}s; retained at {drill.path})"
     )
@@ -844,7 +909,7 @@ def _recovery_doctor_checks(
 
 
 def _deployment_doctor_checks(
-    args: argparse.Namespace, report: list[_DoctorCheck]
+    args: argparse.Namespace, report: _DoctorReceipt
 ) -> list[str]:
     from athena import config
 
@@ -879,6 +944,9 @@ def _deployment_doctor_checks(
                 config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
             ),
         )
+        report.record(
+            "network", "passed", "network mode and listener binding validated"
+        )
         if args.db_path != config.DB_PATH:
             raise ValueError("deployment db_path must exactly match ATHENA_DB")
         if args.attach_dir != config.ATTACH_DIR:
@@ -894,45 +962,35 @@ def _deployment_doctor_checks(
         check_configuration,
     )
     bind_host, bind_port, authority_count = configuration.split("|")
-    checks = [
-        _run_doctor_check(
-            report,
-            "database",
-            "integrity, foreign keys, migrations and schema passed",
-            lambda: _check_database(args.db_path, migrate=False),
-        ),
-        _run_doctor_check(
-            report,
-            "attachments",
-            "attachment directory is writable and reconciles with the database",
-            lambda: _check_attachment_dir(args.db_path, args.attach_dir),
-        ),
-        _run_doctor_check(
-            report,
-            "administrator-recovery",
-            "active administrator recovery path passed",
-            lambda: _check_database_posture(
-                args.db_path,
-                bootstrap=False,
-                enabled_oidc_issuer=(
-                    config.OIDC_ISSUER if config.oidc_enabled() else None
-                ),
-                max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
-            ),
-        ),
-    ]
+
+    def observe_check(name: str, status: str, exc: Exception | None) -> None:
+        if status == "passed":
+            reasons = {
+                "database": "integrity, foreign keys, migrations and schema passed",
+                "attachments": "attachment directory reconciled with the database",
+                "administrator-recovery": "active administrator recovery path passed",
+            }
+            report.record(name, status, reasons[name])
+        else:
+            assert exc is not None
+            report.record(name, status, _doctor_failure_reason(name, exc))
+
+    checks = _deployment_checks(
+        args.db_path,
+        args.attach_dir,
+        bootstrap=False,
+        enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
+        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+        on_check=observe_check,
+    )
     checks.append(
         f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
         f"{authority_count} Host authorities)"
     )
-    _record_doctor_check(
-        report, "network", "passed", "network mode and listener binding validated"
-    )
-    _record_mode_omissions(args, report)
     return checks
 
 
-def _doctor_checks(args: argparse.Namespace, report: list[_DoctorCheck]) -> list[str]:
+def _doctor_checks(args: argparse.Namespace, report: _DoctorReceipt) -> list[str]:
     if args.recovery_bundle:
         return _recovery_doctor_checks(args, report)
     if args.deployment:
@@ -960,80 +1018,19 @@ def _doctor_checks(args: argparse.Namespace, report: list[_DoctorCheck]) -> list
                 lambda: _check_attachment_dir(args.db_path, args.attach_dir),
             )
         )
-    else:
-        _record_doctor_check(
-            report,
-            "attachments",
-            "not evaluated",
-            "--attach-dir was not supplied",
-        )
-    _record_mode_omissions(args, report)
     return checks
 
 
-def _complete_doctor_report(
-    args: argparse.Namespace, report: list[_DoctorCheck]
-) -> None:
-    if not any(status == "failed" for _, status, _ in report):
-        return
-    failure = next(name for name, status, _ in report if status == "failed")
-    expected: tuple[str, ...]
-    if args.recovery_bundle:
-        expected = (
-            "database",
-            "activity-chain",
-            "attachments",
-            "recovery-bundle",
-            "recovery-freshness",
-            "data-recovery-drill",
-            "deployment-configuration",
-        )
-    elif args.deployment:
-        expected = (
-            "deployment-configuration",
-            "database",
-            "attachments",
-            "administrator-recovery",
-            "network",
-            "activity-chain",
-            "recovery-bundle",
-            "recovery-freshness",
-            "data-recovery-drill",
-        )
-    else:
-        expected = (
-            "database",
-            "activity-chain",
-            "attachments",
-            "deployment-configuration",
-            "recovery-bundle",
-            "recovery-freshness",
-            "data-recovery-drill",
-        )
-    seen = {name for name, _, _ in report}
-    for name in expected:
-        if name not in seen:
-            _record_doctor_check(
-                report,
-                name,
-                "not evaluated",
-                f"not run after {failure} failed",
-            )
-
-
-def _print_doctor_report(
-    args: argparse.Namespace, report: list[_DoctorCheck], stream: TextIO
-) -> None:
-    mode = _doctor_mode(args)
-    subject = str(args.db_path)
-    if len(subject) > 200:
-        subject = subject[:197] + "..."
+def _print_doctor_report(report: _DoctorReceipt, stream: TextIO) -> None:
     print(
-        f"athena-doctor: mode={mode} subject={json.dumps(subject, ensure_ascii=True)}",
+        f"athena-doctor: mode={report.mode} subject={json.dumps(report.subject, ensure_ascii=True)}",
         file=stream,
     )
-    for name, status, reason in report:
-        print(f"athena-doctor: check {name}: {status} — {reason}", file=stream)
+    for check in report.checks.values():
+        print(
+            f"athena-doctor: check {check.name}: {check.status} — {check.reason}",
+            file=stream,
+        )
 
 
 def doctor_main(argv: list[str] | None = None) -> int:
@@ -1081,6 +1078,11 @@ def doctor_main(argv: list[str] | None = None) -> int:
         help="materialize a verified bundle into this absent private scratch path",
     )
     parser.add_argument(
+        "--accept-broken-chain",
+        action="store_true",
+        help=("accept an activity-chain mismatch only for an explicit recovery drill"),
+    )
+    parser.add_argument(
         "--max-recovery-point-age-seconds",
         type=_nonnegative_int_argument,
         metavar="N",
@@ -1095,15 +1097,12 @@ def doctor_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _validate_doctor_arguments(parser, args)
 
-    report: list[_DoctorCheck] = []
+    report = _DoctorReceipt(args)
     try:
         checks = _doctor_checks(args, report)
     except KeyboardInterrupt as exc:
-        _record_doctor_check(
-            report, "doctor-execution", "failed", "interrupted by operator"
-        )
-        _complete_doctor_report(args, report)
-        _print_doctor_report(args, report, sys.stderr)
+        report.record("doctor-execution", "failed", "interrupted by operator")
+        _print_doctor_report(report, sys.stderr)
         detail = _recovery_error_text(
             exc,
             recovery_destination=args.drill_dir if args.recovery_bundle else None,
@@ -1117,16 +1116,17 @@ def doctor_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
-        _complete_doctor_report(args, report)
-        _print_doctor_report(args, report, sys.stderr)
+        _print_doctor_report(report, sys.stderr)
         print(f"athena-doctor: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
     for check in checks:
         print(check)
-    _record_mode_omissions(args, report)
-    _print_doctor_report(args, report, sys.stdout)
-    print("athena-doctor: ok")
+    _print_doctor_report(report, sys.stdout)
+    if report.accepted_broken_chain:
+        print("athena-doctor: completed with accepted broken activity chain")
+    else:
+        print("athena-doctor: ok")
     return 0
 
 
@@ -1398,6 +1398,20 @@ def backup_main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.recovery_bundle:
+        assert recovery_bundle is not None
+        if recovery_bundle.activity_chain.mismatch_reason is not None:
+            event = recovery_bundle.activity_chain.mismatch_event_id
+            event_label = "unknown" if event is None else str(event)
+            reason = recovery_bundle.activity_chain.mismatch_reason
+            follow_up = shlex.join(
+                ["athena-doctor", str(recovery_bundle.path / "athena.db")]
+            )
+            print(
+                "athena-backup: warning: captured a bundle with activity-chain "
+                f"mismatch at event {event_label} ({reason}); follow up with: "
+                f"{follow_up}",
+                file=sys.stderr,
+            )
         print(
             "Created recovery bundle "
             f"at {recovery_bundle.path} "

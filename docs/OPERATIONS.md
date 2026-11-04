@@ -497,8 +497,29 @@ receipt gives the number of verified entries, anchor event, checked-through
 event, and count of pre-adoption rows that remain outside the chain claim. A
 mismatch refuses the bundle and reports only its event id and reason code; it
 does not print activity-row details, repair, or rechain. The bundle source stays
-unchanged. This full walk is limited to recovery verification and plain doctor;
-it is not added to service startup or `/readyz`.
+unchanged. This full walk runs during recovery bundle capture and verification,
+and in plain doctor; it is not added to service startup or `/readyz`.
+
+Capture still publishes a complete bundle when its chain walk finds a mismatch.
+`athena-backup` warns on stderr with the event id, reason code, and a follow-up
+`athena-doctor <bundle>/athena.db` command. That ordinary doctor check fails on the
+broken chain, so scheduled jobs still stop before copying the bundle off-host;
+the captured evidence remains at the requested target for investigation. Other
+capture failures still prevent publication.
+
+If all recent bundles have a broken chain and the live database is lost, an
+operator may explicitly materialize one for emergency inspection:
+
+```bash
+athena-doctor "$SNAPSHOT_DIR" --recovery-bundle \
+  --drill-dir "$DRILL_DIR" --accept-broken-chain
+```
+
+This flag is valid only with both `--recovery-bundle` and `--drill-dir`; automated
+jobs must never use it. The doctor reports the chain check as failed with its
+mismatch and states that the operator accepted it for this drill. The scratch
+copy is not a verified recovery point: Athena does not repair or rechain it, and
+the flag does not certify the bundle.
 
 To enforce a local freshness policy, measure conservatively from capture start:
 
