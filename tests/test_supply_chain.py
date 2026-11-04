@@ -75,7 +75,7 @@ def test_current_repository_has_exact_ci_build_and_bootstrap_subjects():
 
     assert len(dependencies) == 65
     assert dependencies["pip"].version == "26.2"
-    assert dependencies["setuptools"].version == "83.0.0"
+    assert dependencies["setuptools"].version == "84.1.0"
     assert dependencies["fastapi"].source.endswith("constraints/ci-py312.txt")
 
 
@@ -129,7 +129,7 @@ def test_current_evidence_tool_lock_is_exact_and_matches_direct_inputs():
     assert dependencies["packaging"].version == "26.2"
     assert dependencies["pip"].version == "26.2"
     assert dependencies["pip-audit"].version == "2.10.1"
-    assert dependencies["setuptools"].version == "83.0.0"
+    assert dependencies["setuptools"].version == "84.1.0"
 
 
 def test_evidence_tool_direct_pin_must_match_lock(tmp_path):
