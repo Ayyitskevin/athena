@@ -845,6 +845,11 @@ def issue_history_view(
                 "summary": item["summary"],
                 "signal": item["signal"],
                 "source_label": f"{source['kind']} #{source['id']}",
+                **(
+                    {"reported_completion": item["reported_completion"]}
+                    if "reported_completion" in item
+                    else {}
+                ),
                 "action_href": action_href,
                 "event_id": event_id,
             }

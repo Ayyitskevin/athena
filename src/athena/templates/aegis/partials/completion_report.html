@@ -1,0 +1,24 @@
+{% macro show_report(report) %}
+{% if report is not none %}
+<details>
+    <summary>Reported completion (advisory)</summary>
+    <p class="muted">Reported by the actor. Athena has not verified these claims; they do not change issue status or grant approval.</p>
+    {% if "results" in report %}
+    <h4>Reported condition results</h4>
+    <ul>{% for result in report.results %}<li>{{ result.condition }} — reported {{ result.state }}{% if result.note %}: {{ result.note }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if "unfinished" in report %}
+    <h4>Reported unfinished work</h4>
+    <ul>{% for text in report.unfinished %}<li>{{ text }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if "uncertainty" in report %}
+    <h4>Reported uncertainty</h4>
+    <ul>{% for text in report.uncertainty %}<li>{{ text }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if "evidence" in report %}
+    <h4>Reported evidence references (not fetched)</h4>
+    <ul>{% for ref in report.evidence %}<li>{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}</li>{% endfor %}</ul>
+    {% endif %}
+</details>
+{% endif %}
+{% endmacro %}

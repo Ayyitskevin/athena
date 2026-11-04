@@ -57,6 +57,19 @@ Four distinct operations; changing issue status alone does not end a claim:
 `complete_claim` is not "the work is done." The 200 body repeats
 `issue_still_open` so you do not have to guess.
 
+You may include an optional **reported completion**: `results` contains
+`{condition, state, note}` entries with state `met`, `not_met`, `not_assessed`,
+or `inconclusive`; `unfinished` and `uncertainty` list what remains. Typed,
+source-qualified `evidence` refs contain `{kind, source, ref, scope}`, with scope
+`source-only`, `synthetic`, `actual-run`, or `unrun`. These are your reports,
+not Athena's verification. `not_met` and `unrun` still allow release under the
+same lease rules. No report closes an issue, changes status, or spends a gate.
+Omit the fields for the existing behavior. Work context and issue history show
+them as reported; references are inert data and text is escaped. Never put
+secrets or secret URLs in evidence: the existing yield-style validator bounds
+text but does not detect credentials. Bounds, exact field shapes, and a worked
+example are in `docs/CLOSEOUT_RECIPE.md`.
+
 Status names belong to each project; backlog defaults are `open`, `in_progress`,
 `done`. Use the selected project's vocabulary and its `done` category, not a
 hard-coded global name (`aegis/statuses.py`). `claimed_at` is refreshed on
