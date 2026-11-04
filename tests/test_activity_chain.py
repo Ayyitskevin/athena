@@ -395,7 +395,11 @@ def test_doctor_walks_the_chain_and_fails_on_a_break(tmp_path, capsys):
     with pytest.raises(ValueError, match="event 2: entry_hash_mismatch"):
         ops._check_activity_chain(db_file)
     assert ops.doctor_main([str(db_file)]) == 1
-    assert "entry_hash_mismatch" in capsys.readouterr().err
+    output = capsys.readouterr().err
+    assert "entry_hash_mismatch" in output
+    assert "athena-doctor: mode=plain" in output
+    assert "check activity-chain: failed — entry_hash_mismatch at event 2" in output
+    assert "forged" not in output
 
 
 def test_doctor_reports_pre_chain_databases_plainly(tmp_path):

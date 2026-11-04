@@ -16,10 +16,10 @@ import secrets
 import sqlite3
 import stat
 import tempfile
-from typing import Iterator, NoReturn
+from typing import Callable, Iterator, NoReturn, TypeVar
 
 from athena import __version__
-from athena.core import attachments, db
+from athena.core import activity_chain, attachments, db
 
 _BUNDLE_SCHEMA = "athena.recovery_bundle.v1"
 _BUNDLE_ROOT_ENTRIES = frozenset({"manifest.json", "athena.db", "attachments"})
@@ -28,6 +28,27 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 _RENAME_NOREPLACE = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryPhaseResult:
+    """The outcome of one bounded recovery-verification phase."""
+
+    name: str
+    status: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryActivityChainVerification:
+    """Bounded chain coverage observed on a private recovery candidate."""
+
+    checked: int
+    anchor_event_id: int | None
+    through_event_id: int | None
+    pre_adoption_count: int
+    mismatch_event_id: int | None = None
+    mismatch_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +63,8 @@ class RecoveryBundle:
     attachment_bytes: int
     athena_version: str
     latest_migration: str
+    activity_chain: RecoveryActivityChainVerification
+    phase_results: tuple[RecoveryPhaseResult, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +73,7 @@ class RecoveryDrill:
 
     path: Path
     source_bundle: RecoveryBundle
+    phase_results: tuple[RecoveryPhaseResult, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +153,87 @@ class RecoveryBundleDurabilityError(OSError):
             f"recovery artifact was published at {path}, but parent-directory "
             "durability could not be confirmed; preserve and verify it"
         )
+
+
+class RecoveryChainVerificationError(ValueError):
+    """A private recovery candidate contains a broken activity chain."""
+
+    def __init__(
+        self,
+        verification: RecoveryActivityChainVerification,
+        phase_results: tuple[RecoveryPhaseResult, ...] = (),
+    ) -> None:
+        self.verification = verification
+        self.phase_results = phase_results
+        anchor = (
+            "none"
+            if verification.anchor_event_id is None
+            else str(verification.anchor_event_id)
+        )
+        through = (
+            "none"
+            if verification.through_event_id is None
+            else str(verification.through_event_id)
+        )
+        mismatch = (
+            "unknown"
+            if verification.mismatch_reason is None
+            else verification.mismatch_reason
+        )
+        event = (
+            "unknown"
+            if verification.mismatch_event_id is None
+            else str(verification.mismatch_event_id)
+        )
+        super().__init__(
+            "activity chain verification failed: "
+            f"checked {verification.checked} entries; anchor event {anchor}; "
+            f"checked through event {through}; mismatch event {event}: {mismatch}; "
+            "emergency materialization requires --accept-broken-chain with "
+            "--drill-dir"
+        )
+
+
+_PhaseValue = TypeVar("_PhaseValue")
+
+
+def _recovery_phase_failure_reason(name: str, exc: Exception) -> str:
+    if name == "database":
+        return (
+            "database content, integrity, foreign-key, migration or schema check failed"
+        )
+    if name == "attachments":
+        return "attachment inventory or bytes failed validation"
+    return f"{name} phase failed ({type(exc).__name__})"
+
+
+def _attach_recovery_phase_results(
+    exc: BaseException, phase_results: tuple[RecoveryPhaseResult, ...]
+) -> None:
+    try:
+        setattr(exc, "recovery_phase_results", phase_results)
+    except (AttributeError, TypeError):
+        pass
+
+
+def _run_recovery_phase(
+    phase_results: list[RecoveryPhaseResult],
+    name: str,
+    passed_reason: str,
+    action: Callable[[], _PhaseValue],
+) -> _PhaseValue:
+    try:
+        result = action()
+    except Exception as exc:
+        phase_results.append(
+            RecoveryPhaseResult(
+                name, "failed", _recovery_phase_failure_reason(name, exc)
+            )
+        )
+        _attach_recovery_phase_results(exc, tuple(phase_results))
+        raise
+    phase_results.append(RecoveryPhaseResult(name, "passed", passed_reason))
+    return result
 
 
 class RecoveryRaceError(OSError):
@@ -292,6 +397,7 @@ def create_recovery_bundle(
 
                     with _verified_bundle(
                         stage.path,
+                        allow_broken_chain=True,
                         allow_root_rename=True,
                         final_root_path=destination.path,
                         pinned_stage=stage,
@@ -341,6 +447,8 @@ def create_recovery_bundle(
                         attachment_bytes=verified.attachment_bytes,
                         athena_version=verified.athena_version,
                         latest_migration=verified.latest_migration,
+                        activity_chain=verified.activity_chain,
+                        phase_results=verified.phase_results,
                     )
                     committed = True
                     return result
@@ -382,12 +490,17 @@ def verify_recovery_bundle(bundle_path: str | Path) -> RecoveryBundle:
 def materialize_recovery_bundle(
     bundle_path: str | Path,
     drill_path: str | Path,
+    *,
+    accept_broken_chain: bool = False,
 ) -> RecoveryDrill:
     """Materialize a verified bundle into a new, private data-recovery drill tree.
 
     This never replaces a live database or attachment directory. The destination
     must be absent, and the source bundle remains descriptor-pinned and read-only
     for the duration of the materialization.
+
+    ``accept_broken_chain`` is reserved for an explicitly requested emergency
+    doctor drill; it never repairs or rechains the staged database.
     """
     bundle = Path(bundle_path)
     bundle_root = _canonical_existing_directory(bundle, label="recovery bundle")
@@ -401,13 +514,17 @@ def materialize_recovery_bundle(
         publication_attempted = False
         committed = False
         summary: RecoveryBundle | None = None
+        materialization_started = False
         try:
             stage = _make_private_stage(destination, owner=stage_owner)
             staged_attachments = stage.path / "attachments"
             staged_attachments.mkdir(mode=0o700)
             os.chmod(staged_attachments, 0o700)
-            with _verified_bundle(bundle) as state:
+            with _verified_bundle(
+                bundle, allow_broken_chain=accept_broken_chain
+            ) as state:
                 summary = state.summary
+                materialization_started = True
                 staged_database = stage.path / "athena.db"
                 copied_database_bytes, copied_database_sha256 = _copy_verified_database(
                     state.database_path, staged_database
@@ -461,10 +578,33 @@ def materialize_recovery_bundle(
                     published = True
 
             assert summary is not None
-            result = RecoveryDrill(path=destination.path, source_bundle=summary)
+            result = RecoveryDrill(
+                path=destination.path,
+                source_bundle=summary,
+                phase_results=(
+                    *summary.phase_results,
+                    RecoveryPhaseResult(
+                        "data-recovery-drill",
+                        "passed",
+                        "private database and attachment copy materialized",
+                    ),
+                ),
+            )
             committed = True
             return result
         except BaseException as exc:
+            if materialization_started and summary is not None:
+                _attach_recovery_phase_results(
+                    exc,
+                    (
+                        *summary.phase_results,
+                        RecoveryPhaseResult(
+                            "data-recovery-drill",
+                            "failed",
+                            "private database or attachment copy failed",
+                        ),
+                    ),
+                )
             owned_stage = stage_owner.stage
             if owned_stage is not None:
                 if committed and published:
@@ -619,6 +759,7 @@ def _attachment_set_sha256(rows: tuple[_AttachmentRow, ...]) -> str:
 def _verified_bundle(
     bundle_path: Path,
     *,
+    allow_broken_chain: bool = False,
     allow_root_rename: bool = False,
     final_root_path: Path | None = None,
     pinned_stage: _PrivateStage | None = None,
@@ -633,6 +774,7 @@ def _verified_bundle(
     manifest_descriptor = -1
     database_descriptor = -1
     attachment_descriptor = -1
+    phase_results: list[RecoveryPhaseResult] = []
     try:
         root_metadata = os.fstat(root_descriptor)
         root_entries = _directory_names(root_descriptor)
@@ -678,36 +820,103 @@ def _verified_bundle(
                 source_metadata=database_metadata,
                 label="recovery database",
             )
-            if (
-                database_bytes != manifest.database_bytes
-                or database_sha256 != manifest.database_sha256
-            ):
-                raise ValueError("recovery database does not match its manifest")
-
             with _immutable_connection(private_database) as conn:
-                status = validate_current_database(conn)
-                attachment_rows = _read_attachment_rows(conn)
-            if status.latest != manifest.latest_migration:
-                raise ValueError("recovery database migration does not match manifest")
 
-            attachment_names = _directory_names(attachment_descriptor)
-            expected_names = frozenset(row.stored_name for row in attachment_rows)
-            if attachment_names != expected_names:
-                raise ValueError(
-                    "recovery attachment directory has missing or unexpected entries"
+                def check_database():
+                    if (
+                        database_bytes != manifest.database_bytes
+                        or database_sha256 != manifest.database_sha256
+                    ):
+                        raise ValueError(
+                            "recovery database does not match its manifest"
+                        )
+                    result = validate_current_database(conn)
+                    if result.latest != manifest.latest_migration:
+                        raise ValueError(
+                            "recovery database migration does not match manifest"
+                        )
+                    return result
+
+                status = _run_recovery_phase(
+                    phase_results,
+                    "database",
+                    "content, integrity, foreign keys, migrations and schema passed",
+                    check_database,
                 )
-            attachment_bytes, attachment_metadata = _hash_attachment_rows(
-                attachment_descriptor,
-                attachment_rows,
-                expected_mode=0o600,
-            )
-            if (
-                len(attachment_rows) != manifest.attachment_count
-                or attachment_bytes != manifest.attachment_bytes
-                or _attachment_set_sha256(attachment_rows)
-                != manifest.attachment_set_sha256
-            ):
-                raise ValueError("recovery attachments do not match their manifest")
+                chain_report, chain_status = _run_recovery_phase(
+                    phase_results,
+                    "activity-chain",
+                    "full bounded activity-chain walk passed",
+                    lambda: (
+                        activity_chain.verify_all(conn),
+                        activity_chain.status(conn),
+                    ),
+                )
+                mismatch = chain_report["mismatch"]
+                chain_verification = RecoveryActivityChainVerification(
+                    checked=int(chain_report["checked"]),
+                    anchor_event_id=chain_status["anchor_event_id"],
+                    through_event_id=chain_report["through_event_id"],
+                    pre_adoption_count=int(chain_status["unchained_count"]),
+                    mismatch_event_id=(
+                        None if mismatch is None else int(mismatch["event_id"])
+                    ),
+                    mismatch_reason=(
+                        None if mismatch is None else str(mismatch["reason"])
+                    ),
+                )
+                if mismatch is not None:
+                    mismatch_reason = (
+                        f"{mismatch['reason']} at event {mismatch['event_id']}; "
+                        f"checked {chain_verification.checked} entries from anchor "
+                        f"{chain_verification.anchor_event_id} through "
+                        f"{chain_verification.through_event_id}"
+                    )
+                    phase_results[-1] = RecoveryPhaseResult(
+                        "activity-chain", "failed", mismatch_reason
+                    )
+                    if not allow_broken_chain:
+                        error = RecoveryChainVerificationError(
+                            chain_verification, tuple(phase_results)
+                        )
+                        _attach_recovery_phase_results(error, tuple(phase_results))
+                        raise error
+
+                def check_attachments():
+                    rows = _read_attachment_rows(conn)
+                    names = _directory_names(attachment_descriptor)
+                    expected_names = frozenset(row.stored_name for row in rows)
+                    if names != expected_names:
+                        raise ValueError(
+                            "recovery attachment directory has missing or unexpected entries"
+                        )
+                    byte_count, metadata = _hash_attachment_rows(
+                        attachment_descriptor,
+                        rows,
+                        expected_mode=0o600,
+                    )
+                    if (
+                        len(rows) != manifest.attachment_count
+                        or byte_count != manifest.attachment_bytes
+                        or _attachment_set_sha256(rows)
+                        != manifest.attachment_set_sha256
+                    ):
+                        raise ValueError(
+                            "recovery attachments do not match their manifest"
+                        )
+                    return rows, names, byte_count, metadata
+
+                (
+                    attachment_rows,
+                    attachment_names,
+                    attachment_bytes,
+                    attachment_metadata,
+                ) = _run_recovery_phase(
+                    phase_results,
+                    "attachments",
+                    "database membership, file inventory and bytes matched",
+                    check_attachments,
+                )
 
             summary = RecoveryBundle(
                 path=bundle,
@@ -718,6 +927,8 @@ def _verified_bundle(
                 attachment_bytes=attachment_bytes,
                 athena_version=manifest.athena_version,
                 latest_migration=status.latest,
+                activity_chain=chain_verification,
+                phase_results=tuple(phase_results),
             )
             state = _VerifiedBundleState(
                 summary=summary,
@@ -746,6 +957,9 @@ def _verified_bundle(
                 attachment_names=attachment_names,
                 attachment_metadata=attachment_metadata,
             )
+    except BaseException as exc:
+        _attach_recovery_phase_results(exc, tuple(phase_results))
+        raise
     finally:
         for descriptor in (
             attachment_descriptor,
