@@ -182,6 +182,191 @@ def test_the_activity_census_does_not_miss_literal_variants(tmp_path, source):
     assert "undeclared-activity-writer" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("method", "sql"),
+    [
+        ("execute", "/* routine append */ INSERT INTO activity(verb) VALUES ('bad')"),
+        (
+            "execute",
+            "WITH v(verb) AS (VALUES ('bad')) INSERT INTO activity(verb) SELECT verb FROM v",
+        ),
+        ("execute", "INSERT INTO 'activity'(verb) VALUES ('bad')"),
+        ("execute", 'INSERT INTO "main"."activity"(verb) VALUES (\'bad\')'),
+        ("execute", "INSERT INTO /* target */ activity(verb) VALUES ('bad')"),
+        ("executescript", "SELECT 1; INSERT INTO activity(verb) VALUES ('bad');"),
+        ("execute", "INSERT\n INTO activity(verb)\n VALUES ('bad')"),
+        ("execute", "INSERT INTO activity AS a(verb) VALUES ('bad')"),
+        ("executemany", "INSERT INTO activity(verb) VALUES (?)"),
+        ("execute", "REPLACE INTO 'activity'(verb) VALUES ('bad')"),
+        ("execute", "INSERT INTO [main].[activity](verb) VALUES ('bad')"),
+        ("execute", "INSERT INTO `main`.`activity`(verb) VALUES ('bad')"),
+    ],
+)
+def test_complete_literal_sql_activity_targets_cannot_hide_from_the_census(
+    tmp_path, method, sql
+):
+    # Keep the SQL shape while changing the complete target: archive is a real
+    # different table, not an excuse to declare another activity writer.
+    arguments = repr(sql)
+    if method == "executemany":
+        arguments += ", [('bad',), ('bad2',)]"
+    source = f"def append(conn):\n    conn.{method}({arguments})\n"
+    control = _package(
+        tmp_path / "control", {"core.surprise": source.replace("activity", "archive")}
+    )
+    assert _run(control).returncode == 0
+
+    result = _run(_package(tmp_path / "bad", {"core.surprise": source}))
+
+    assert result.returncode == 1
+    assert "undeclared-activity-writer" in result.stderr
+    assert "activity.record" in result.stderr
+    assert "portability" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "INSERT INTO activity(verb) VALUES ('bad')",
+        "WITH v(verb) AS (VALUES ('bad')) INSERT INTO activity(verb) SELECT verb FROM v",
+    ],
+)
+def test_activity_writer_called_by_a_declared_path_is_still_refused(tmp_path, sql):
+    native = ACTIVITY_SOURCES["core.activity"]
+    control = _package(tmp_path / "control", {"core.activity": native})
+    assert _run(control).returncode == 0
+    source = native + f"def surprise(conn):\n    conn.execute({sql!r})\n"
+    source = source.replace(
+        "activity_chain.append_entry(conn, event_id)",
+        "activity_chain.append_entry(conn, event_id)\n        surprise(conn)",
+    )
+
+    result = _run(_package(tmp_path / "bad", {"core.activity": source}))
+
+    assert result.returncode == 1
+    assert "athena.core.activity.surprise" in result.stderr
+    assert "undeclared-activity-writer" in result.stderr
+
+
+def test_a_fixed_activity_target_in_an_f_string_fragment_is_still_refused(tmp_path):
+    source = (
+        "def append(conn):\n"
+        "    verb = 'bad'\n"
+        "    conn.execute(f\"INSERT INTO activity(verb) VALUES ('{verb}')\")\n"
+    )
+    control = _package(
+        tmp_path / "control", {"core.surprise": source.replace("activity", "archive")}
+    )
+    assert _run(control).returncode == 0
+
+    result = _run(_package(tmp_path / "bad", {"core.surprise": source}))
+
+    assert result.returncode == 1
+    assert "undeclared-activity-writer" in result.stderr
+
+
+@pytest.mark.parametrize("direct_import", [False, True])
+def test_chain_import_aliases_preserve_the_same_row_pair(tmp_path, direct_import):
+    source = ACTIVITY_SOURCES["core.activity"]
+    if direct_import:
+        source = source.replace(
+            "from athena.core import activity_chain",
+            "from athena.core.activity_chain import append_entry as append",
+        ).replace("activity_chain.append_entry", "append")
+    else:
+        source = source.replace(
+            "import activity_chain", "import activity_chain as chain"
+        )
+        source = source.replace("activity_chain.append_entry", "chain.append_entry")
+    control = _run(_package(tmp_path / "control", {"core.activity": source}))
+    assert control.returncode == 0, control.stderr
+
+    result = _run(
+        _package(
+            tmp_path / "bad",
+            {"core.activity": source.replace("(conn, event_id)", "(conn, 999)")},
+        )
+    )
+    assert result.returncode == 1
+    assert "activity-chain-pair" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("module", "function"),
+    [("core.activity", "record"), ("core.portability", "_insert_activity")],
+)
+@pytest.mark.parametrize(
+    "source_sql",
+    ["VALUES ('first'), ('second')", "SELECT 'first' UNION ALL SELECT 'second'"],
+)
+def test_declared_activity_insert_must_have_one_values_tuple(
+    tmp_path, module, function, source_sql
+):
+    assert _run(_package(tmp_path / "control", {})).returncode == 0
+    sql = f"INSERT INTO activity(verb) {source_sql}"
+    source = (
+        "from athena.core import activity_chain\n"
+        f"def {function}(conn):\n"
+        "    with conn:\n"
+        f"        cur = conn.execute({sql!r})\n"
+        "        event_id = cur.lastrowid\n"
+        "        activity_chain.append_entry(conn, event_id)\n"
+    )
+
+    result = _run(_package(tmp_path / "bad", {module: source}))
+
+    assert result.returncode == 1
+    assert "activity-single-row" in result.stderr
+    assert "one VALUES tuple" in result.stderr
+    assert "split" in result.stderr
+
+
+def test_insert_or_replace_is_one_insert_but_still_requires_one_row(tmp_path):
+    source = ACTIVITY_SOURCES["core.activity"].replace(
+        "INSERT INTO activity", "INSERT OR REPLACE INTO activity"
+    )
+    control = _run(_package(tmp_path / "control", {"core.activity": source}))
+    assert control.returncode == 0, control.stderr
+    multi_row = source.replace(
+        "VALUES (?)', ('created',)", "VALUES (?), (?)', ('created', 'second')"
+    )
+    assert multi_row != source
+
+    result = _run(_package(tmp_path / "bad", {"core.activity": multi_row}))
+
+    assert result.returncode == 1
+    assert "activity-single-row" in result.stderr
+
+
+def test_a_quoted_distinct_table_is_not_an_activity_writer(tmp_path):
+    source = (
+        "def append(conn):\n"
+        "    conn.execute('INSERT INTO \"activity-backup\"(verb) VALUES (?)', ('ok',))\n"
+    )
+    result = _run(_package(tmp_path / "control", {"core.surprise": source}))
+    assert result.returncode == 0, result.stderr
+
+    actual_activity = source.replace('"activity-backup"', '"activity"')
+    bad = _run(_package(tmp_path / "bad", {"core.surprise": actual_activity}))
+    assert bad.returncode == 1
+    assert "undeclared-activity-writer" in bad.stderr
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'INSERT INTO activity(verb) VALUES (1);'",
+        "/* INSERT INTO activity(verb) VALUES (1); */ SELECT 1",
+        "SELECT 1; -- INSERT INTO activity(verb) VALUES (1);\n",
+    ],
+)
+def test_sql_keywords_in_comments_and_string_values_are_not_writes(tmp_path, sql):
+    source = f"def inspect(conn):\n    conn.executescript({sql!r})\n"
+    result = _run(_package(tmp_path, {"core.notes": source}))
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_command_module_call_is_the_doctrine_working(tmp_path):
     package_root = _package(
         tmp_path,
