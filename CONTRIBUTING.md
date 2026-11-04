@@ -9,6 +9,20 @@ Before changing code, read [`AGENTS.md`](AGENTS.md),
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). They are the contribution
 contract, product north star, and design of record.
 
+## Local gate profiles
+
+After setup, `scripts/gate.sh` runs the fast `quick` profile and reports a
+**partial** result. `scripts/gate.sh --profile product` additionally checks the
+pinned dependency set, types, and full-source coverage. Both profiles report the
+commit, dirty state, Python and import path, stages run and omitted, and fail at
+the first failed stage. The script refuses an Athena import from another checkout.
+The product pass covers local product stages, not CI's container job or its
+release-candidate supply-chain job; obtain those results separately. CI shards
+coverage and combines evidence; `scripts/coverage.sh` runs and checks it locally.
+The stage inventory is in `scripts/gate.py`; a test compares it with CI's
+coverage-job commands and pins the workflow bytes without changing it. Any CI
+change must be reviewed against the inventory and update that pin intentionally.
+
 ## Development setup
 
 Athena supports Python 3.12 (`>=3.12,<3.13`). It is the only Python version
