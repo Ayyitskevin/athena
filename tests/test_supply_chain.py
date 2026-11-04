@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -77,6 +78,17 @@ def test_current_repository_has_exact_ci_build_and_bootstrap_subjects():
     assert dependencies["pip"].version == "26.2"
     assert dependencies["setuptools"].version == "84.1.0"
     assert dependencies["fastapi"].source.endswith("constraints/ci-py312.txt")
+
+
+def test_docker_builder_setuptools_pin_matches_build_system():
+    expected = check_supply_chain.expected_dependencies(ROOT)["setuptools"].version
+    dockerfile = "\n".join(
+        line
+        for line in (ROOT / "Dockerfile").read_text().splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    pins = re.findall(r"\bsetuptools==([^\s\\]+)", dockerfile)
+    assert pins == [expected], "Docker's non-isolated build must use the pinned backend"
 
 
 @pytest.mark.parametrize(
