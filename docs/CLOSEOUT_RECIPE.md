@@ -55,11 +55,20 @@ verification outside this advisory record; a digest identifies bytes, not truth.
 The complete compact JSON report is limited to 8000 characters. The evidence
 reference list also uses the existing yield-evidence count, text/control, and
 8000-character encoded-reference checks. Valid report strings are retained
-exactly, including whitespace; unsupported controls are refused. As with yield
-evidence, these are bounds and grammar checks, **not a secret detector**. Never
-submit credentials, tokens, private payloads, or secret-bearing URLs. Use a safe
-reference to the evidence instead. Malformed/oversized input returns the
-existing `invalid` error and leaves the lease and event unchanged.
+exactly, including whitespace; unsupported controls are refused. New completion
+text and new yield evidence also refuse high-confidence credential shapes before
+writing. The credential refusal itself names only the field and credential kind
+and never repeats the submitted text. A request that fails a different validation
+first, such as an over-long or wrongly typed field, can have the submitted value
+repeated back to the caller in that error. That refused input is neither stored
+nor logged. Nothing is redacted: correct the text and retry. Existing stored
+history is not scanned or rewritten. This is an accident guard, **not a security
+boundary**: arbitrary passwords, unknown/changed formats and encoded credentials
+can pass. Never submit credentials, tokens, private payloads, or secret-bearing
+URLs. Use a safe reference instead. The credential refusal uses the existing
+`invalid` error and leaves the lease and event unchanged. See the
+[credential-refusal decision](decisions/2026-11-04-report-credential-refusal.md)
+for the deliberately narrow write-only scope and limitations.
 
 A reported `not_met` result or `unrun` reference still permits release under the
 existing lease/generation rules. Reporting does not close an issue, change its

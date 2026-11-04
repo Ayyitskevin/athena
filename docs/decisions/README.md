@@ -11,6 +11,7 @@ This index creates no runtime authority or automatic consumer.
 | 2026-11-04 | [Approvals authorize intent](2026-11-04-approval-intent.md) | Accepted existing contract |
 | 2026-11-04 | [Preserve broken-chain recovery evidence](2026-11-04-recovery-chain.md) | Accepted, PR #421 |
 | 2026-11-04 | [Completion reports carry no authority](2026-11-04-completion-reports.md) | Accepted, PR #423 |
+| 2026-11-04 | [Refuse recognized credentials in new report writes](2026-11-04-report-credential-refusal.md) | Accepted implementation direction, maintainer request |
 
 Use a dated filename and these plain fields: **Status**, **Context**, **Decision**,
 **Consequences**, **Sources**, and **Superseded-by**. State whether the date is the

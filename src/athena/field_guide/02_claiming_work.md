@@ -70,9 +70,11 @@ not Athena's verification. `not_met` and `unrun` still allow release under the
 same lease rules. No report closes an issue, changes status, or spends a gate.
 Omit the fields for the existing behavior. Work context and issue history show
 them as reported; references are inert data and text is escaped. Never put
-secrets or secret URLs in evidence: the existing yield-style validator bounds
-text but does not detect credentials. Bounds, exact field shapes, and a worked
-example are in `docs/CLOSEOUT_RECIPE.md`.
+secrets or secret URLs in evidence. New report text and yield evidence refuse
+recognized credential shapes without redaction; correct the text and retry.
+The accident guard misses arbitrary passwords and unknown or encoded formats;
+it is not a security boundary and does not scan existing history. Bounds, exact
+field shapes, and a worked example are in `docs/CLOSEOUT_RECIPE.md`.
 
 Status names belong to each project; backlog defaults are `open`, `in_progress`,
 `done`. Use the selected project's vocabulary and its `done` category, not a

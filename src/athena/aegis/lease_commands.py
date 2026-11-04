@@ -26,6 +26,7 @@ from athena.aegis import (
     contributors as contributors_data,
     issue_activity,
     leases,
+    report_credentials,
     statuses,
 )
 from athena.aegis.issue_commands import (
@@ -430,10 +431,10 @@ def _normalize_completion_report(
     uncertainty: object = None,
     evidence: object = None,
 ) -> dict | None:
-    """Bound advisory data only: no lookup, execution, verdict, or secret scanning.
+    """Bound advisory data without lookup, execution, or verdict.
 
-    As with yield evidence, text is checked for size, blanks and controls, not
-    credential content. Callers must never submit credentials or secret URLs.
+    This grammar is reused on reads: credential refusal belongs only to the
+    accepting write commands, so existing stored history remains readable.
     """
     report: dict = {}
     for name, raw, maximum in (
@@ -605,6 +606,13 @@ def yield_claim(
         required=True,
     )
     normalized_evidence = _normalize_handoff_evidence(evidence)
+    for index, text in enumerate(normalized_evidence):
+        kind = report_credentials.credential_kind(text)
+        if kind is not None:
+            raise IssueCommandError(
+                "invalid",
+                f"evidence[{index}] contains {kind}; remove the credential and retry",
+            )
     normalized_blocking_question = _normalize_handoff_text(
         blocking_question,
         name="blocking_question",
@@ -757,6 +765,19 @@ def complete_claim(
         uncertainty=uncertainty,
         evidence=evidence,
     )
+    for name, items in (report or {}).items():
+        for index, item in enumerate(items):
+            fields = item.items() if isinstance(item, dict) else [(None, item)]
+            for field, text in fields:
+                if field in {"state", "kind", "scope"}:
+                    continue
+                kind = report_credentials.credential_kind(text)
+                if kind is not None:
+                    path = f"{name}[{index}]" + (f".{field}" if field else "")
+                    raise IssueCommandError(
+                        "invalid",
+                        f"{path} contains {kind}; remove the credential and retry",
+                    )
     with db.transaction(conn, immediate=True):
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
