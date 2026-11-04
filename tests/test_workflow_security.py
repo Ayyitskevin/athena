@@ -13,7 +13,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 CODEQL_WORKFLOW = WORKFLOWS / "codeql.yml"
 CODEQL_CONFIG = ROOT / ".github" / "codeql" / "codeql-config.yml"
 EXTERNAL_ACTION = re.compile(r"^[^@\s]+@([0-9a-f]{40})$")
-CODEQL_ACTION_SHA = "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd"
+CODEQL_ACTION_SHA = "6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee"
 
 
 def _mapping_action_reference(value: object) -> str | None:
