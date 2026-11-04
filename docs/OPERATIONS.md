@@ -502,10 +502,12 @@ and in plain doctor; it is not added to service startup or `/readyz`.
 
 Capture still publishes a complete bundle when its chain walk finds a mismatch.
 `athena-backup` warns on stderr with the event id, reason code, and a follow-up
-`athena-doctor <bundle>/athena.db` command. That ordinary doctor check fails on the
-broken chain, so scheduled jobs still stop before copying the bundle off-host;
-the captured evidence remains at the requested target for investigation. Other
-capture failures still prevent publication.
+`athena-doctor <bundle>/athena.db` command. Plain doctor refuses that bundle
+database before opening it and directs the operator to the strict
+`athena-doctor <bundle> --recovery-bundle` check, which fails on the broken chain;
+scheduled jobs still stop before copying the bundle off-host, and the captured
+evidence remains at the requested target. Other capture failures still prevent
+publication.
 
 If all recent bundles have a broken chain and the live database is lost, an
 operator may explicitly materialize one for emergency inspection:

@@ -22,7 +22,10 @@ from athena import __version__
 from athena.core import activity_chain, attachments, db
 
 _BUNDLE_SCHEMA = "athena.recovery_bundle.v1"
-_BUNDLE_ROOT_ENTRIES = frozenset({"manifest.json", "athena.db", "attachments"})
+_BUNDLE_DATABASE_NAME = "athena.db"
+_BUNDLE_ROOT_ENTRIES = frozenset(
+    {"manifest.json", _BUNDLE_DATABASE_NAME, "attachments"}
+)
 _MANIFEST_MAX_BYTES = 64 * 1024
 _HASH_CHUNK_BYTES = 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -250,6 +253,31 @@ class RecoveryStagePreservedError(OSError):
             f"recovery operation failed ({reason}); private stage retained at {path}; "
             "inspect it and remove it explicitly"
         )
+
+
+def recovery_bundle_root_for_database(db_path: str | Path) -> Path | None:
+    """Return the exact-layout recovery root containing ``db_path``, if any.
+
+    This structural check is intentionally connection-free so operator commands
+    can refuse the bundle database before SQLite creates journals or sidecars.
+    Full bundle verification remains the authority for contents and metadata.
+    """
+    database = Path(db_path).absolute()
+    if database.name != _BUNDLE_DATABASE_NAME:
+        return None
+    try:
+        root_descriptor = _open_directory_path(
+            database.parent,
+            label="recovery bundle candidate",
+        )
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return None
+    try:
+        if _directory_names(root_descriptor) != _BUNDLE_ROOT_ENTRIES:
+            return None
+        return database.parent
+    finally:
+        os.close(root_descriptor)
 
 
 def validate_current_database(conn: sqlite3.Connection) -> db.MigrationStatus:

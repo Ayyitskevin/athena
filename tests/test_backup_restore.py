@@ -911,7 +911,7 @@ def test_backup_cli_publishes_broken_chain_and_warns_with_follow_up(tmp_path, ca
     ids=("plain", "migrate", "attachments"),
 )
 def test_plain_doctor_refuses_bundle_database_without_mutating_bundle(
-    tmp_path, capsys, arguments
+    tmp_path, monkeypatch, capsys, arguments
 ):
     source, attach_dir, _ = _recovery_source(tmp_path / "source", b"proof")
     ordinary_dir = tmp_path / "ordinary"
@@ -926,7 +926,15 @@ def test_plain_doctor_refuses_bundle_database_without_mutating_bundle(
         str(bundle_path / "attachments") if item == "{attachments}" else item
         for item in arguments
     ]
-    assert ops.doctor_main([str(bundle_path / "athena.db"), *bundle_arguments]) == 1
+    with monkeypatch.context() as connection_guard:
+        connection_guard.setattr(
+            ops.sqlite3,
+            "connect",
+            lambda *args, **kwargs: pytest.fail(
+                "bundle guard must run before opening SQLite"
+            ),
+        )
+        assert ops.doctor_main([str(bundle_path / "athena.db"), *bundle_arguments]) == 1
 
     refused = capsys.readouterr().err
     assert "check database: failed" in refused
@@ -979,7 +987,15 @@ def test_deployment_doctor_refuses_bundle_database_before_any_check(
         str(bundle_path / "attachments"),
         "--deployment",
     ]
-    assert ops.doctor_main(bundle_call) == 1
+    with monkeypatch.context() as connection_guard:
+        connection_guard.setattr(
+            ops.sqlite3,
+            "connect",
+            lambda *args, **kwargs: pytest.fail(
+                "bundle guard must run before opening SQLite"
+            ),
+        )
+        assert ops.doctor_main(bundle_call) == 1
 
     refused = capsys.readouterr().err
     assert "check database: failed" in refused
