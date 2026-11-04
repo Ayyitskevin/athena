@@ -1,5 +1,6 @@
 """Gate receipts must distinguish a complete product check from a partial run."""
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -8,7 +9,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts import gate
+
+_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "gate.py"
+_SPEC = importlib.util.spec_from_file_location("athena_gate", _SCRIPT)
+assert _SPEC is not None and _SPEC.loader is not None
+gate = importlib.util.module_from_spec(_SPEC)
+sys.modules[_SPEC.name] = gate
+_SPEC.loader.exec_module(gate)
 
 
 def test_required_failure_never_claims_full_pass(capsys):
