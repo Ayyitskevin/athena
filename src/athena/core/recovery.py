@@ -290,7 +290,7 @@ def recovery_bundle_root_for_database(db_path: str | Path) -> Path | None:
             label="recovery manifest marker",
         )
         root = _parse_manifest_root(payload)
-        if not _has_recovery_bundle_schema(root):
+        if not _is_recovery_bundle_schema(root.get("schema")):
             return None
         return database.parent
     except (OSError, ValueError):
@@ -1206,8 +1206,8 @@ def _parse_manifest_root(payload: bytes) -> dict[str, object]:
     return _require_json_object(parsed, label="recovery manifest")
 
 
-def _has_recovery_bundle_schema(root: dict[str, object]) -> bool:
-    return root.get("schema") == _BUNDLE_SCHEMA
+def _is_recovery_bundle_schema(value: object) -> bool:
+    return value == _BUNDLE_SCHEMA
 
 
 def _parse_manifest(payload: bytes) -> _BundleManifest:
@@ -1224,7 +1224,7 @@ def _parse_manifest(payload: bytes) -> _BundleManifest:
         },
         label="recovery manifest",
     )
-    if not _has_recovery_bundle_schema(root):
+    if not _is_recovery_bundle_schema(_require_string(root, "schema")):
         raise ValueError("recovery manifest has an unsupported schema")
     athena_version = _require_string(root, "athena_version", maximum_length=64)
     if not athena_version:
