@@ -82,7 +82,7 @@ class ClaimHandoffOut(BaseModel):
 
 
 class LeaseOut(BaseModel):
-    # The exclusive claim on an issue: who holds it, when it was taken, when it expires,
+    # The exclusive claim: holder, latest acquisition/renewal time, expiry,
     # and whether that window is still open (active=false is an expired, reclaimable lease).
     issue_id: int
     holder_id: int

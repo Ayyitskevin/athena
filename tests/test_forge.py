@@ -88,6 +88,52 @@ def _push(message, ref="refs/heads/main", url="https://github.com/o/r/commit/abc
 # --- the parser (no database) -----------------------------------------------
 
 
+def test_signed_import_lands_history_without_notifying_issue_watchers(tmp_path):
+    # The actual ingress still records foreign history; it just stops generic mail.
+    with TestClient(_app(tmp_path)) as client:
+        _bootstrap(client)
+        source = _source(client)
+        issue = _project_issue(client)
+        watcher = client.post(
+            "/users",
+            json={"email": "watcher@example.test", "name": "Watcher"},
+            headers=H1,
+        )
+        assert watcher.status_code == 201
+        headers = {"X-Athena-Actor": str(watcher.json()["id"])}
+        assert (
+            client.post(
+                "/watches",
+                json={"target_kind": "issue", "target_id": issue["id"]},
+                headers=headers,
+            ).status_code
+            == 204
+        )
+        before = client.get("/notifications", headers=headers).json()
+        assert before == []
+        delivered = _deliver(
+            client, "gh", "push", _push("ATH-1 imported history"), source["secret"]
+        )
+        assert delivered.status_code == 202
+        assert delivered.json()["landed"] == 1
+        trail = client.get(
+            f"/activity?target_kind=issue&target_id={issue['id']}", headers=H1
+        ).json()
+        imported = [row for row in trail if row["verb"] == "forge_commit"]
+        assert len(imported) == 1 and imported[0]["imported_at"] is not None
+        assert client.get("/notifications", headers=headers).json() == before
+        assert (
+            client.post(
+                f"/issues/{issue['id']}/comments",
+                json={"body": "native follow-up"},
+                headers=H1,
+            ).status_code
+            == 201
+        )
+        inbox = client.get("/notifications", headers=headers).json()
+        assert len(inbox) == 1 and inbox[0]["verb"] == "commented"
+
+
 @pytest.mark.parametrize(
     "text,expected",
     [

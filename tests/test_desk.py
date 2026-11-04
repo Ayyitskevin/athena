@@ -128,6 +128,8 @@ def test_a_fresh_agent_desk_is_empty_and_says_so_without_lying(tmp_path):
         # lost nothing, and those are two facts, not one missing key.
         "lapsed": [],
         "lapsed_total": 0,
+        "lapsed_clipped": False,
+        "lapsed_oldest_expires_at": None,
         "meaning": board["work"]["leases"]["meaning"],
     }
     assert board["signals"]["unread_notifications"] == 0
@@ -358,12 +360,9 @@ def test_one_desk_read_keeps_lease_lanes_consistent_across_expiry(
     assert board["office"]["chair"]["issue_id"] == issue["id"]
 
 
-def test_a_lapsed_lease_on_a_done_issue_is_not_shown(tmp_path):
-    # WHY: the lapsed lane is a to-do list, and a lease on finished work has
-    # nothing left to lose. Left in, it would grow forever on every seat and
-    # train agents to ignore the lane. It is OMITTED, not deleted: the row is
-    # still the answer to "who held this last", so the surface that owns that
-    # question still returns it.
+def test_a_lapsed_lease_on_a_done_issue_is_shown_to_its_holder(tmp_path):
+    # WHY: marking work done does not release its coordination row. Hiding
+    # that row prevents its holder from seeing and deliberately settling it.
     app, db_file = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap(client)
@@ -379,8 +378,11 @@ def test_a_lapsed_lease_on_a_done_issue_is_not_shown(tmp_path):
 
         leases_lane = _desk(client, bearer)["work"]["leases"]
         assert leases_lane["items"] == []
-        assert leases_lane["lapsed"] == []
-        assert leases_lane["lapsed_total"] == 0
+        assert leases_lane["lapsed"][0]["issue_id"] == issue["id"]
+        assert leases_lane["lapsed"][0]["issue_done"] is True
+        assert leases_lane["lapsed_total"] == 1
+        assert leases_lane["lapsed_clipped"] is False
+        assert leases_lane["lapsed_oldest_expires_at"] == "2000-01-01 00:00:00"
 
         # The owning surface still shows the last holder.
         row = client.get(f"/issues/{issue['id']}/lease", headers=bearer)
@@ -389,10 +391,9 @@ def test_a_lapsed_lease_on_a_done_issue_is_not_shown(tmp_path):
         assert row.json()["active"] is False
 
 
-def test_lapsed_total_counts_after_the_done_filter_not_rows(tmp_path):
-    # WHY: the shape of this bug is "count the rows, then filter the list" — a
-    # total that promises more than the lane can ever show. Two lapsed leases,
-    # one on a done issue: the count must be 1, matching what is listed.
+def test_lapsed_total_counts_open_and_done_rows_without_changing_them(tmp_path):
+    # WHY: open and done are issue states, not different lease lifecycles.
+    # Both expired rows still belong to this holder and must remain visible.
     app, db_file = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap(client)
@@ -410,8 +411,118 @@ def test_lapsed_total_counts_after_the_done_filter_not_rows(tmp_path):
         )
 
         leases_lane = _desk(client, bearer)["work"]["leases"]
-        assert [row["issue_id"] for row in leases_lane["lapsed"]] == [still_open["id"]]
-        assert leases_lane["lapsed_total"] == 1
+        by_issue = {row["issue_id"]: row for row in leases_lane["lapsed"]}
+        assert set(by_issue) == {still_open["id"], finished["id"]}
+        assert by_issue[still_open["id"]]["issue_done"] is False
+        assert by_issue[finished["id"]]["issue_done"] is True
+        assert leases_lane["lapsed_total"] == 2
+
+
+def test_lapsed_done_visibility_survives_real_client_and_is_self_only(tmp_path):
+    # A custom status uses the owning category rule, not literal "done".
+    # Seeing it through the client is read-only and grants no admin release.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        holder = _agent(client)
+        other = _agent(client, email="other@example.test", name="Other")
+        issue = _claimed_issue(client, holder)
+        project = client.post(
+            "/projects", json={"name": "Custom", "key": "CUSTOM"}, headers=H1
+        )
+        assert project.status_code == 201, project.text
+        project_id = project.json()["id"]
+        status = client.post(
+            f"/projects/{project_id}/statuses",
+            json={"name": "shipped", "category": "done"},
+            headers=H1,
+        )
+        assert status.status_code == 201, status.text
+        closed = client.patch(
+            f"/issues/{issue['id']}",
+            json={"project_id": project_id, "status": "shipped"},
+            headers=H1,
+        )
+        assert closed.status_code == 200, closed.text
+        _expire(db_file, issue["id"])
+        generation = client.get(
+            f"/issues/{issue['id']}/lease", headers=_bearer(holder)
+        ).json()["generation"]
+        conn = db.connect(db_file)
+        tables = ("issue_leases", "activity", "notifications", "agent_cursors")
+        before = {
+            table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            for table in tables
+        }
+        client.headers.update(_bearer(holder))
+        lane = AthenaClient(client=client).my_desk()["work"]["leases"]
+        assert len(lane["lapsed"]) == lane["lapsed_total"] == 1
+        assert lane["lapsed"][0]["issue_done"] is True
+        assert lane["lapsed"][0]["generation"] == generation
+        assert lane["lapsed"][0]["holder_id"] == holder["user"]["id"]
+        client.headers.clear()
+        assert _desk(client, _bearer(other))["work"]["leases"]["lapsed"] == []
+        assert _desk(client, H1)["work"]["leases"]["lapsed"] == []
+        after = {
+            table: [tuple(row) for row in conn.execute(f"SELECT * FROM {table}")]
+            for table in tables
+        }
+        conn.close()
+        assert before == after
+
+
+def test_lapsed_bounds_do_not_claim_oldest_from_a_clipped_claim_order(tmp_path):
+    # The oldest expiry is deliberately the oldest claim, outside the page.
+    # A minimum over the returned page must not be passed off as a full-set age.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        holder = _agent(client)
+        ids = []
+        for index in range(22):
+            issue = _claimed_issue(client, holder, title=f"work {index}")
+            ids.append(issue["id"])
+            _expire(db_file, issue["id"])
+        conn = db.connect(db_file)
+        conn.execute(
+            "UPDATE issue_leases SET claimed_at = '1998-01-01 00:00:00', "
+            "expires_at = '1999-01-01 00:00:00' WHERE issue_id = ?",
+            (ids[0],),
+        )
+        conn.commit()
+        conn.close()
+        lane = _desk(client, _bearer(holder))["work"]["leases"]
+        assert lane["lapsed_total"] == 22
+        assert len(lane["lapsed"]) == lane["limit"] == 20
+        assert lane["lapsed_clipped"] is True
+        assert ids[0] not in [row["issue_id"] for row in lane["lapsed"]]
+        assert lane["lapsed_oldest_expires_at"] is None
+
+
+def test_lapsed_projection_does_not_invent_a_missing_original(tmp_path):
+    # Defensive reader proof on a deliberately damaged disposable fixture.
+    # The normal FK cascade removes the lease; bypassing it here tests only
+    # the existing missing-original read behavior, never production repair.
+    from athena.aegis import leases
+
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        holder = _agent(client)
+        issue = _claimed_issue(client, holder)
+        _expire(db_file, issue["id"])
+    conn = db.connect(db_file)
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM issues WHERE id = ?", (issue["id"],))
+    conn.commit()
+    assert conn.execute("SELECT count(*) FROM issue_leases").fetchone()[0] == 1
+    before = conn.total_changes
+    assert leases.lapsed_leases_held_by(conn, holder_id=holder["user"]["id"]) == (
+        [],
+        0,
+    )
+    assert conn.total_changes == before
+    conn.close()
 
 
 def test_notifications_and_delegations_reach_the_desk(tmp_path):
