@@ -19,9 +19,10 @@ The operator's ruling adopted these four constraints; the quoted substance is:
 - **K3:** "no retention clock this round" for `activity`, `activity_chain`,
   `run_bindings`, and `agent_run_checkins`; capacity pressure calls for visibility,
   not automatic pruning.
-- **K4:** "coexistence/projection sorting CONFIRMED"; review proposals as
-  coexistence with current contracts or projections of existing state, and return
-  choices outside those categories to the operator.
+- **K4:** "coexistence/projection sorting CONFIRMED"; coexistence or projection
+  is the working assumption for sorting proposals. The separate third class
+  covers proposals that test a second store, projection surface, journals, habit
+  automation, or ownership; those stop for the operator's decision.
 
 ## Consequences
 
