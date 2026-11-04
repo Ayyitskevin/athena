@@ -45,6 +45,7 @@ _PATTERNS = (
         re.compile(
             r"(?i:\bauthorization)[ \t]*:[ \t]*"
             r"(?:[A-Za-z][A-Za-z0-9_-]*[ \t]+)?"
+            r"(?=[A-Za-z0-9._~+/-]*[0-9])"
             r"[A-Za-z0-9._~+/-]{32,}={0,2}(?![A-Za-z0-9._~+/=-])"
         ),
     ),

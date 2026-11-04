@@ -397,3 +397,68 @@ def test_ordinary_evidence_and_token_near_misses_are_not_entropy_scanned():
     for label, kind, credential, near_miss in _samples():
         assert report_credentials.credential_kind(credential) == kind, label
         assert report_credentials.credential_kind(near_miss) is None, label
+
+
+@pytest.mark.parametrize("operation", ["complete", "yield"])
+@pytest.mark.parametrize("style", ["uppercase-underscore", "lowercase-hyphen"])
+def test_authorization_word_placeholders_pass_and_digit_tokens_still_refuse(
+    possession, operation, style
+):
+    words = ("YOUR", "LONG", "LIVED", "ACCESS", "TOKEN", "HERE")
+    placeholder = (
+        "_".join(words)
+        if style == "uppercase-underscore"
+        else "-".join(word.lower() for word in words)
+    )
+    header = "Authorization: " + "Bearer " + placeholder
+    assert len(placeholder) == 33
+    assert report_credentials.credential_kind(header) is None
+    mixed = "".join(("aB7_", "qR3-", "mN8.", "tU2~")) * 2
+    credential = "Authorization: " + "Bearer " + mixed
+    assert report_credentials.credential_kind(credential) == "Authorization token"
+    conn, actor, issue, generation = possession
+    payload = {"actor": actor, "issue_id": issue["id"], "generation": generation}
+    if operation == "complete":
+        payload["results"] = [
+            {"condition": "check", "state": "not_met", "note": credential}
+        ]
+        field = "results[0].note"
+        command = lease_commands.complete_claim
+    else:
+        payload.update(
+            reason="blocked",
+            attempted_work="source read",
+            evidence=[credential],
+            blocking_question="Choose next step",
+            resume_instructions="Read source",
+        )
+        field = "evidence[0]"
+        command = lease_commands.yield_claim
+    before = _snapshot(conn)
+    with pytest.raises(issue_commands.IssueCommandError) as caught:
+        command(conn, **payload)
+    assert (
+        caught.value.detail
+        == f"{field} contains Authorization token; remove the credential and retry"
+    )
+    assert credential not in caught.value.detail
+    assert _snapshot(conn) == before
+    if operation == "complete":
+        payload["results"][0]["note"] = header
+        assert command(conn, **payload)["released"] is True
+        event = dict(
+            conn.execute(
+                "SELECT * FROM activity WHERE verb='claim_completed'"
+            ).fetchone()
+        )
+        assert lease_commands.reported_completion(event)["results"][0]["note"] == header
+    else:
+        payload["evidence"] = [header]
+        assert command(conn, **payload)["evidence"] == [header]
+    assert activity_chain.verify_all(conn)["ok"] is True
+
+
+def test_authorization_digit_in_scheme_is_not_a_digit_in_the_value():
+    words = ("your", "long", "lived", "access", "token", "here")
+    header = "Authorization: " + "Scheme9 " + "-".join(words)
+    assert report_credentials.credential_kind(header) is None
