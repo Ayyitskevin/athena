@@ -7,6 +7,12 @@ an execution-state protocol.
 
 The public schema is `athena.issue_work_context.v1`.
 
+`protocol.claim_one_issue=true` is agent coordination guidance, not a server
+quota limiting each actor to one claim. The claim command enforces per-issue
+possession and declared-path conflicts; clients must still honor the one-issue
+protocol (`aegis/work_context.py::build_work_context`,
+`aegis/lease_commands.py::claim_issue`). A desk/work-context read reserves nothing.
+
 ## Surfaces
 
 All three surfaces use the same

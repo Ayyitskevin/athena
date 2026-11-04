@@ -56,8 +56,17 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         if_match: str | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Update an issue. Send only the fields to change. status is one of
-        open/in_progress/done; priority is low/medium/high/urgent."""
+        """Update an issue. Send only the fields to change. status must be a name
+        configured for its project (the backlog defaults to open/in_progress/done);
+        priority is low/medium/high/urgent.
+
+        A successful transition into a done category may return held_lease for
+        your own row. It describes the row at that transition, not current
+        possession; active=false means lapsed. The observation may be stale on
+        idempotent replay. It is informational: complete_claim with the exact
+        generation is a separate deliberate action, never an automatic follow-up.
+        The _etag still identifies the canonical issue revision, not the note.
+        """
         return client.update_issue(
             issue_id,
             title=title,
