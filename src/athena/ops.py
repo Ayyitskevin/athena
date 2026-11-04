@@ -1416,7 +1416,7 @@ def backup_main(argv: list[str] | None = None) -> int:
             event_label = "unknown" if event is None else str(event)
             reason = recovery_bundle.activity_chain.mismatch_reason
             follow_up = shlex.join(
-                ["athena-doctor", str(recovery_bundle.path / "athena.db")]
+                ["athena-doctor", str(recovery_bundle.path), "--recovery-bundle"]
             )
             print(
                 "athena-backup: warning: captured a bundle with activity-chain "
