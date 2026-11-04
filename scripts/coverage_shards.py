@@ -1,8 +1,8 @@
 """Finite hosted coverage shards; the required fan-in conserves every test ID.
 
-Run from the repository root with the pinned test interpreter. Ordinary local
-coverage.sh and gate.sh remain unchanged. No shard may substitute for the full
-source/branch/floor check performed after all raw data has been combined.
+Run from the repository root with the pinned test interpreter. The local product
+gate runs coverage.sh for full-suite coverage. No shard may substitute for the
+full source/branch/floor check performed after all raw data has been combined.
 """
 
 from __future__ import annotations

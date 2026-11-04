@@ -41,12 +41,41 @@ def test_product_pass_requires_every_stage(capsys):
     assert "PRODUCT GATE PASS" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ((), "product"),
+        (("--profile", "quick"), "quick"),
+        (("--profile", "product"), "product"),
+    ],
+    ids=["bare-default", "explicit-quick", "explicit-product"],
+)
+def test_cli_defaults_to_product_with_explicit_quick_option(
+    monkeypatch, capsys, arguments, expected
+):
+    # Inspect CLI dispatch without executing the real product/full-suite stages.
+    called = []
+    monkeypatch.setattr(sys, "argv", ["scripts/gate.py", *arguments])
+    monkeypatch.setattr(
+        gate, "run_profile", lambda profile: called.append(profile) or 0
+    )
+    assert gate.main() == 0
+    assert called == [expected]
+    assert f"PROFILE: {expected}" in capsys.readouterr().out
+
+
 def test_ci_check_inventory_cannot_drift():
     _assert_ci_check_inventory(Path(".github/workflows/ci.yml").read_text())
 
 
 def _assert_ci_check_inventory(workflow_text):
     workflow = yaml.safe_load(workflow_text)
+    for job_name, job in workflow["jobs"].items():
+        named = [step["name"] for step in job.get("steps", []) if "name" in step]
+        assert len(named) == len(set(named)), (job_name, "duplicate step names")
+        for step in job.get("steps", []):
+            if _executable_lines(step.get("run", "")):
+                assert step.get("name"), (job_name, "unnamed run step")
     coverage_steps = workflow["jobs"]["coverage"]["steps"]
     # Setup and runner telemetry are not checks; every other named coverage step
     # must be represented in the gate inventory or this test fails.
@@ -82,6 +111,16 @@ def test_ci_stage_commands_match_inventory():
     _assert_ci_stage_commands(Path(".github/workflows/ci.yml").read_text())
 
 
+def _executable_lines(run_text):
+    # Compare physical command lines; do not interpret shell syntax or quoting.
+    commands = []
+    for line in run_text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            commands.append(line)
+    return tuple(commands)
+
+
 def _assert_ci_stage_commands(workflow_text):
     workflow = yaml.safe_load(workflow_text)
     steps = {
@@ -90,16 +129,19 @@ def _assert_ci_stage_commands(workflow_text):
         if "name" in step
     }
     for stage in gate.STAGES:
-        commands = "\n".join(steps[name].get("run", "") for name in stage.ci_steps)
-        for fragment in stage.ci_fragments:
-            assert fragment in commands, (stage.name, fragment)
+        for name, expected in zip(stage.ci_steps, stage.ci_commands, strict=True):
+            assert _executable_lines(steps[name].get("run", "")) == _executable_lines(
+                expected
+            ), (stage.name, name)
     combine = next(
         step
         for step in workflow["jobs"]["test"]["steps"]
         if step.get("name")
         == "Verify exact test inventory and combined coverage floors"
     )
-    assert "scripts/coverage_shards.py combine" in combine["run"]
+    assert _executable_lines(combine["run"]) == _executable_lines(
+        gate.CI_COMBINE_COMMAND
+    )
 
 
 def test_real_stage_runner_handles_failure_and_missing_command(
@@ -177,7 +219,10 @@ def test_wrapper_explains_missing_development_environment(tmp_path, broken_pytho
     assert "GATE PASS" not in result.stdout
 
 
-def test_wrapper_uses_checkout_python_and_forwards_arguments(tmp_path):
+@pytest.mark.parametrize(
+    "arguments", [(), ("--profile", "quick"), ("--profile", "product")]
+)
+def test_wrapper_uses_checkout_python_and_forwards_arguments(tmp_path, arguments):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     (scripts / "gate.sh").write_text(Path("scripts/gate.sh").read_text())
@@ -188,21 +233,25 @@ def test_wrapper_uses_checkout_python_and_forwards_arguments(tmp_path):
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
     result = subprocess.run(
-        ["bash", str(scripts / "gate.sh"), "--profile", "quick"],
+        ["bash", str(scripts / "gate.sh"), *arguments],
         cwd=tmp_path.parent,
         text=True,
         capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == "synthetic gate: --profile quick\n"
+    assert (
+        result.stdout
+        == "synthetic gate:" + (" " + " ".join(arguments) if arguments else "") + "\n"
+    )
 
 
-def test_synthetic_ci_allows_action_bumps_but_rejects_command_drift(monkeypatch):
-    # Exercise the same assertions as the real workflow checks without editing CI.
+@pytest.fixture
+def synthetic_ci_workflow(monkeypatch):
+    # Exercise the real assertions without editing or copying the real workflow.
     lint = next(stage for stage in gate.STAGES if stage.name == "lint")
     monkeypatch.setattr(gate, "STAGES", (lint,))
-    workflow = """\
+    return """\
 jobs:
   coverage:
     steps:
@@ -212,10 +261,16 @@ jobs:
   test:
     steps:
       - name: Verify exact test inventory and combined coverage floors
-        run: .venv/bin/python scripts/coverage_shards.py combine synthetic
+        run: .venv/bin/python scripts/coverage_shards.py combine "$RUNNER_TEMP/athena-shards" "$RUNNER_TEMP/athena-coverage"
   container: {}
   audit: {}
 """
+
+
+def test_synthetic_ci_action_bumps_and_comment_lines_preserve_commands(
+    synthetic_ci_workflow,
+):
+    workflow = synthetic_ci_workflow
     _assert_ci_check_inventory(workflow)
     _assert_ci_stage_commands(workflow)
 
@@ -224,8 +279,64 @@ jobs:
     _assert_ci_check_inventory(bumped)
     _assert_ci_stage_commands(bumped)
 
-    changed_command = bumped.replace("-m ruff check .", "-m ruff --version")
-    assert changed_command != bumped
-    _assert_ci_check_inventory(changed_command)
-    with pytest.raises(AssertionError, match="lint"):
-        _assert_ci_stage_commands(changed_command)
+    formatted = bumped.replace(
+        "run: .venv/bin/python -m ruff check .",
+        "run: |\n          # Run lint\n\n          .venv/bin/python -m ruff check .\n",
+    )
+    assert formatted != bumped
+    _assert_ci_check_inventory(formatted)
+    _assert_ci_stage_commands(formatted)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "",
+        "# formerly: .venv/bin/python -m ruff check .",
+        ".venv/bin/python -m ruff --version",
+        "# formerly: .venv/bin/python -m ruff check .\n"
+        ".venv/bin/python -m ruff --version",
+        ".venv/bin/python -m ruff check .\necho added-command",
+    ],
+    ids=["removed", "commented-out", "replaced", "commented-plus-version", "added"],
+)
+def test_synthetic_ci_rejects_mapped_command_drift(synthetic_ci_workflow, body):
+    workflow = yaml.safe_load(synthetic_ci_workflow)
+    workflow["jobs"]["coverage"]["steps"][1]["run"] = body
+    changed = yaml.safe_dump(workflow)
+    _assert_ci_check_inventory(changed)
+    with pytest.raises(AssertionError):
+        _assert_ci_stage_commands(changed)
+
+
+@pytest.mark.parametrize("job", ["coverage", "test", "container", "audit"])
+def test_synthetic_ci_rejects_added_unnamed_command(synthetic_ci_workflow, job):
+    workflow = yaml.safe_load(synthetic_ci_workflow)
+    workflow["jobs"][job].setdefault("steps", []).append({"run": "echo added-command"})
+    with pytest.raises(AssertionError):
+        _assert_ci_check_inventory(yaml.safe_dump(workflow))
+
+
+def test_synthetic_ci_rejects_added_named_step(synthetic_ci_workflow):
+    workflow = yaml.safe_load(synthetic_ci_workflow)
+    workflow["jobs"]["coverage"]["steps"].append(
+        {"name": "Extra check", "run": "echo added-command"}
+    )
+    with pytest.raises(AssertionError):
+        _assert_ci_check_inventory(yaml.safe_dump(workflow))
+
+
+def test_synthetic_ci_rejects_duplicate_mapped_step(synthetic_ci_workflow):
+    workflow = yaml.safe_load(synthetic_ci_workflow)
+    workflow["jobs"]["coverage"]["steps"].insert(
+        1, {"name": "Lint", "run": ".venv/bin/python -m ruff --version"}
+    )
+    with pytest.raises(AssertionError):
+        _assert_ci_check_inventory(yaml.safe_dump(workflow))
+
+
+def test_synthetic_ci_rejects_added_combine_command(synthetic_ci_workflow):
+    workflow = yaml.safe_load(synthetic_ci_workflow)
+    workflow["jobs"]["test"]["steps"][0]["run"] += "\necho added-command"
+    with pytest.raises(AssertionError):
+        _assert_ci_stage_commands(yaml.safe_dump(workflow))

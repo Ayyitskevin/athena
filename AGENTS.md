@@ -135,10 +135,10 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
 
 ## Definition of done (all must hold before you call it done)
 
-1. Run `scripts/gate.sh --profile product`: it executes the local product inventory in
-   `scripts/gate.py`, including dependency validation, lint, formatting, type checks,
-   architectural checks and full-suite coverage. The default `quick` profile is partial
-   and cannot replace product evidence. The product profile does not run CI's container
+1. Run `scripts/gate.sh` (default `product` profile): it executes the local product
+   inventory in `scripts/gate.py`, including dependency validation, lint, formatting,
+   type checks, architectural checks and full-suite coverage. Explicit `--profile quick`
+   is partial and cannot replace product evidence. The product profile does not run CI's container
    or release-candidate audit jobs; obtain those separately. If the gate changes, change
    AGENTS.md, CONTRIBUTING.md and the script together.
 
@@ -179,14 +179,15 @@ tests/       pytest
 docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the design of record
 ```
 
-Run `scripts/gate.sh` for the partial quick profile or
-`scripts/gate.sh --profile product` for the complete local product profile. The receipt
-names the commit, worktree state, Python/import identity, run and omitted stages, and
-CI-only jobs. See CONTRIBUTING.md for the CI and release evidence boundaries.
+Run `scripts/gate.sh` for the complete local product profile (also selectable with
+`--profile product`) or `scripts/gate.sh --profile quick` for partial, fast feedback.
+The receipt names the commit, worktree state, Python/import identity, run and omitted
+stages, and CI-only jobs. See CONTRIBUTING.md for the CI and release evidence boundaries.
 The wrapper uses this checkout's `.venv/bin/python` without activation and refuses
 with a CONTRIBUTING.md setup pointer if that executable is unavailable. Inventory
-tests compare CI checks and commands semantically; action version bumps do not
-require a workflow-byte pin update.
+tests compare complete CI command lines after dropping blank and comment-only
+lines, and reject unnamed steps with commands. Action version bumps do not change that
+inventory.
 Run the app: configure the absolute storage paths and bootstrap/start through
 `athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
 unsupported development escape hatch and intentionally has no authority unless

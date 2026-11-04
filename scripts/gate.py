@@ -22,7 +22,7 @@ class Stage:
     command: tuple[str, ...]
     quick: bool
     ci_steps: tuple[str, ...]
-    ci_fragments: tuple[str, ...]
+    ci_commands: tuple[str, ...]  # Complete run body for each ci_steps entry.
 
 
 PYTHON = sys.executable
@@ -32,71 +32,82 @@ STAGES = (
         (PYTHON, "-m", "pip", "check"),
         False,
         ("Verify pinned dependency set",),
-        ("-m pip check", "-m pip freeze --exclude-editable"),
+        (
+            ".venv/bin/python -I -m pip check\n"
+            ".venv/bin/python -I -m pip freeze --exclude-editable | "
+            "diff -u constraints/ci-py312.txt -",
+        ),
     ),
     Stage(
         "lint",
         (PYTHON, "-m", "ruff", "check", "."),
         True,
         ("Lint",),
-        ("-m ruff check .",),
+        (".venv/bin/python -m ruff check .",),
     ),
     Stage(
         "format",
         (PYTHON, "-m", "ruff", "format", "--check", "."),
         True,
         ("Check formatting",),
-        ("-m ruff format --check .",),
+        (".venv/bin/python -m ruff format --check .",),
     ),
     Stage(
         "typecheck",
         (PYTHON, "-m", "mypy", "src/athena"),
         False,
         ("Type-check every runtime module",),
-        ("-m mypy src/athena",),
+        (".venv/bin/python -m mypy src/athena",),
     ),
     Stage(
         "imports",
         (PYTHON, "scripts/check_import_contracts.py"),
         True,
         ("Check import contracts",),
-        ("scripts/check_import_contracts.py",),
+        (".venv/bin/python scripts/check_import_contracts.py",),
     ),
     Stage(
         "ownership",
         (PYTHON, "scripts/check_write_ownership.py"),
         True,
         ("Check write ownership",),
-        ("scripts/check_write_ownership.py",),
+        (".venv/bin/python scripts/check_write_ownership.py",),
     ),
     Stage(
         "imported-at",
         (PYTHON, "scripts/check_imported_at_guards.py"),
         True,
         ("Check imported_at guards",),
-        ("scripts/check_imported_at_guards.py",),
+        (".venv/bin/python scripts/check_imported_at_guards.py",),
     ),
     Stage(
         "styles",
         (PYTHON, "scripts/check_template_styles.py"),
         True,
         ("Check template styles",),
-        ("scripts/check_template_styles.py",),
+        (".venv/bin/python scripts/check_template_styles.py",),
     ),
     Stage(
         "routes",
         (PYTHON, "scripts/check_template_routes.py"),
         True,
         ("Check template routes",),
-        ("scripts/check_template_routes.py",),
+        (".venv/bin/python scripts/check_template_routes.py",),
     ),
     Stage(
         "coverage",
         ("bash", "scripts/coverage.sh"),
         False,
         ("Run assigned tests with full-source branch coverage",),
-        ("scripts/coverage_shards.py run",),
+        (
+            '/usr/bin/time -v .venv/bin/python scripts/coverage_shards.py run "$SHARD" '
+            '"$RUNNER_TEMP/athena-shard"',
+        ),
     ),
+)
+CI_COMBINE_COMMAND = (
+    ".venv/bin/python scripts/coverage_shards.py combine "
+    '"$RUNNER_TEMP/athena-shards" "$RUNNER_TEMP/athena-coverage"'
 )
 
 
@@ -175,7 +186,7 @@ def run_profile(profile: str, runner=_run_stage) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("quick", "product"), default="quick")
+    parser.add_argument("--profile", choices=("quick", "product"), default="product")
     args = parser.parse_args()
     commit = subprocess.run(
         ("git", "rev-parse", "HEAD"),
