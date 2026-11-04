@@ -52,6 +52,9 @@ When in doubt, optimize for **operator + agent fleet on one machine**, not
 enterprise parity or consumer polish.
 
 Full design rationale: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Read the [glossary and decision index](docs/GLOSSARY.md) before changing domain
+meanings. New consequential decisions need a dated record with a cited accepting
+source and supersession links; recommendations remain proposals until accepted.
 
 ---
 
