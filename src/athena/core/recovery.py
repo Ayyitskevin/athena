@@ -22,7 +22,10 @@ from athena import __version__
 from athena.core import activity_chain, attachments, db
 
 _BUNDLE_SCHEMA = "athena.recovery_bundle.v1"
-_BUNDLE_ROOT_ENTRIES = frozenset({"manifest.json", "athena.db", "attachments"})
+_BUNDLE_DATABASE_NAME = "athena.db"
+_BUNDLE_ROOT_ENTRIES = frozenset(
+    {"manifest.json", _BUNDLE_DATABASE_NAME, "attachments"}
+)
 _MANIFEST_MAX_BYTES = 64 * 1024
 _HASH_CHUNK_BYTES = 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -250,6 +253,53 @@ class RecoveryStagePreservedError(OSError):
             f"recovery operation failed ({reason}); private stage retained at {path}; "
             "inspect it and remove it explicitly"
         )
+
+
+def recovery_bundle_root_for_database(db_path: str | Path) -> Path | None:
+    """Return the exact-layout recovery root containing ``db_path``, if any.
+
+    This structural check is intentionally connection-free so operator commands
+    can refuse the bundle database before SQLite creates journals or sidecars.
+    Full bundle verification remains the authority for contents and metadata.
+    This operator accident guard is not an atomic security boundary against a
+    concurrent rename between this check and SQLite's later pathname open.
+    """
+    try:
+        database = Path(db_path).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if database.name != _BUNDLE_DATABASE_NAME:
+        return None
+    root_descriptor = -1
+    manifest_descriptor = -1
+    try:
+        root_descriptor = _open_directory_path(
+            database.parent,
+            label="recovery bundle candidate",
+        )
+        if _directory_names(root_descriptor) != _BUNDLE_ROOT_ENTRIES:
+            return None
+        manifest_descriptor, _ = _open_regular_at(
+            root_descriptor,
+            "manifest.json",
+            label="recovery manifest marker",
+        )
+        payload = _read_bounded_descriptor(
+            manifest_descriptor,
+            maximum_bytes=_MANIFEST_MAX_BYTES,
+            label="recovery manifest marker",
+        )
+        root = _parse_manifest_root(payload)
+        if not _is_recovery_bundle_schema(root.get("schema")):
+            return None
+        return database.parent
+    except (OSError, ValueError):
+        return None
+    finally:
+        if manifest_descriptor >= 0:
+            os.close(manifest_descriptor)
+        if root_descriptor >= 0:
+            os.close(root_descriptor)
 
 
 def validate_current_database(conn: sqlite3.Connection) -> db.MigrationStatus:
@@ -1140,7 +1190,7 @@ def _verified_materialized_pair(
         os.close(root_descriptor)
 
 
-def _parse_manifest(payload: bytes) -> _BundleManifest:
+def _parse_manifest_root(payload: bytes) -> dict[str, object]:
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -1153,7 +1203,15 @@ def _parse_manifest(payload: bytes) -> _BundleManifest:
         )
     except (json.JSONDecodeError, RecursionError, ValueError) as exc:
         raise ValueError("recovery manifest is not strict JSON") from exc
-    root = _require_json_object(parsed, label="recovery manifest")
+    return _require_json_object(parsed, label="recovery manifest")
+
+
+def _is_recovery_bundle_schema(value: object) -> bool:
+    return value == _BUNDLE_SCHEMA
+
+
+def _parse_manifest(payload: bytes) -> _BundleManifest:
+    root = _parse_manifest_root(payload)
     _require_exact_keys(
         root,
         {
@@ -1166,7 +1224,7 @@ def _parse_manifest(payload: bytes) -> _BundleManifest:
         },
         label="recovery manifest",
     )
-    if _require_string(root, "schema") != _BUNDLE_SCHEMA:
+    if not _is_recovery_bundle_schema(_require_string(root, "schema")):
         raise ValueError("recovery manifest has an unsupported schema")
     athena_version = _require_string(root, "athena_version", maximum_length=64)
     if not athena_version:

@@ -30,6 +30,7 @@ from athena.core.recovery import (
     RecoveryPhaseResult,
     create_recovery_bundle,
     materialize_recovery_bundle,
+    recovery_bundle_root_for_database,
     validate_current_database,
     verify_recovery_bundle,
 )
@@ -993,6 +994,17 @@ def _deployment_doctor_checks(
 def _doctor_checks(args: argparse.Namespace, report: _DoctorReceipt) -> list[str]:
     if args.recovery_bundle:
         return _recovery_doctor_checks(args, report)
+    bundle_root = recovery_bundle_root_for_database(args.db_path)
+    if bundle_root is not None:
+        report.record(
+            "database",
+            "failed",
+            "plain doctor refuses a recovery bundle database",
+        )
+        command = shlex.join(["athena-doctor", str(bundle_root), "--recovery-bundle"])
+        raise ValueError(
+            f"plain doctor refuses a recovery bundle database; run `{command}` instead"
+        )
     if args.deployment:
         return _deployment_doctor_checks(args, report)
     checks = [
@@ -1404,7 +1416,7 @@ def backup_main(argv: list[str] | None = None) -> int:
             event_label = "unknown" if event is None else str(event)
             reason = recovery_bundle.activity_chain.mismatch_reason
             follow_up = shlex.join(
-                ["athena-doctor", str(recovery_bundle.path / "athena.db")]
+                ["athena-doctor", str(recovery_bundle.path), "--recovery-bundle"]
             )
             print(
                 "athena-backup: warning: captured a bundle with activity-chain "

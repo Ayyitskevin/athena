@@ -898,7 +898,241 @@ def test_backup_cli_publishes_broken_chain_and_warns_with_follow_up(tmp_path, ca
     assert "warning" in output.err.casefold()
     assert "event 1" in output.err
     assert "entry_hash_mismatch" in output.err
-    assert f"athena-doctor {bundle_path / 'athena.db'}" in output.err
+    assert f"athena-doctor {bundle_path} --recovery-bundle" in output.err
+    assert f"athena-doctor {bundle_path / 'athena.db'}" not in output.err
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (),
+        ("--migrate",),
+        ("--attach-dir", "{attachments}"),
+    ],
+    ids=("plain", "migrate", "attachments"),
+)
+def test_plain_doctor_refuses_bundle_database_without_mutating_bundle(
+    tmp_path, monkeypatch, capsys, arguments
+):
+    source, attach_dir, _ = _recovery_source(tmp_path / "source", b"proof")
+    ordinary_dir = tmp_path / "ordinary"
+    ordinary_dir.mkdir()
+    ordinary_database = backup.backup_database(source, ordinary_dir / "athena.db")
+    (ordinary_dir / "manifest.json").write_text("unrelated\n")
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(source, attach_dir, bundle_path)
+    bundle_before = _tree_evidence(bundle_path)
+
+    bundle_arguments = [
+        str(bundle_path / "attachments") if item == "{attachments}" else item
+        for item in arguments
+    ]
+    with monkeypatch.context() as connection_guard:
+        connection_guard.setattr(
+            ops.sqlite3,
+            "connect",
+            lambda *args, **kwargs: pytest.fail(
+                "bundle guard must run before opening SQLite"
+            ),
+        )
+        assert ops.doctor_main([str(bundle_path / "athena.db"), *bundle_arguments]) == 1
+
+    refused = capsys.readouterr().err
+    assert "check database: failed" in refused
+    assert "recovery bundle database" in refused
+    assert f"athena-doctor {bundle_path} --recovery-bundle" in refused
+    assert _tree_evidence(bundle_path) == bundle_before
+    assert recovery.verify_recovery_bundle(bundle_path).path == bundle_path
+
+    ordinary_arguments = [
+        str(attach_dir) if item == "{attachments}" else item for item in arguments
+    ]
+    assert ops.doctor_main([str(ordinary_database), *ordinary_arguments]) == 0
+    assert "athena-doctor: ok" in capsys.readouterr().out
+
+
+def test_deployment_doctor_refuses_bundle_database_before_any_check(
+    tmp_path, monkeypatch, capsys
+):
+    ordinary_dir = tmp_path / "ordinary"
+    ordinary_dir.mkdir()
+    ordinary_database = ordinary_dir / "athena.db"
+    ordinary_attachments = ordinary_dir / "attachments"
+    ordinary_attachments.mkdir()
+    conn = db.connect(ordinary_database)
+    db.migrate(conn)
+    users.create_user(
+        conn,
+        email="admin@example.com",
+        name="Admin",
+        password="password",
+        role="admin",
+    )
+    conn.close()
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(
+        ordinary_database, ordinary_attachments, bundle_path
+    )
+    bundle_before = _tree_evidence(bundle_path)
+
+    monkeypatch.setattr(config, "DB_PATH", bundle_path / "athena.db")
+    monkeypatch.setattr(config, "ATTACH_DIR", bundle_path / "attachments")
+    monkeypatch.setattr(config, "NETWORK_MODE", "local")
+    monkeypatch.setattr(config, "ALLOWED_AUTHORITIES", ())
+    monkeypatch.setattr(config, "BOOTSTRAP_TOKEN", "")
+    monkeypatch.setattr(config, "TRUST_ACTOR_HEADER", False)
+
+    bundle_call = [
+        str(bundle_path / "athena.db"),
+        "--attach-dir",
+        str(bundle_path / "attachments"),
+        "--deployment",
+    ]
+    with monkeypatch.context() as connection_guard:
+        connection_guard.setattr(
+            ops.sqlite3,
+            "connect",
+            lambda *args, **kwargs: pytest.fail(
+                "bundle guard must run before opening SQLite"
+            ),
+        )
+        assert ops.doctor_main(bundle_call) == 1
+
+    refused = capsys.readouterr().err
+    assert "check database: failed" in refused
+    assert "check deployment-configuration: not evaluated" in refused
+    assert "check network: not evaluated" in refused
+    assert f"athena-doctor {bundle_path} --recovery-bundle" in refused
+    assert _tree_evidence(bundle_path) == bundle_before
+    assert recovery.verify_recovery_bundle(bundle_path).path == bundle_path
+
+    monkeypatch.setattr(config, "DB_PATH", ordinary_database)
+    monkeypatch.setattr(config, "ATTACH_DIR", ordinary_attachments)
+    ordinary_call = [
+        str(ordinary_database),
+        "--attach-dir",
+        str(ordinary_attachments),
+        "--deployment",
+    ]
+    assert ops.doctor_main(ordinary_call) == 0
+    assert "athena-doctor: ok" in capsys.readouterr().out
+
+
+def test_plain_doctor_accepts_materialized_drill_database(tmp_path, capsys):
+    source, attach_dir, _ = _recovery_source(tmp_path / "source", b"proof")
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(source, attach_dir, bundle_path)
+    bundle_before = _tree_evidence(bundle_path)
+    drill_path = tmp_path / "drill"
+
+    assert (
+        ops.doctor_main(
+            [
+                str(bundle_path),
+                "--recovery-bundle",
+                "--drill-dir",
+                str(drill_path),
+            ]
+        )
+        == 0
+    )
+    assert {item.name for item in drill_path.iterdir()} == {
+        "athena.db",
+        "attachments",
+    }
+    assert ops.doctor_main([str(drill_path / "athena.db")]) == 0
+    assert "athena-doctor: ok" in capsys.readouterr().out
+    assert _tree_evidence(bundle_path) == bundle_before
+    assert recovery.verify_recovery_bundle(bundle_path).path == bundle_path
+
+
+@pytest.mark.parametrize(
+    "alias_kind",
+    ("different-basename", "same-basename", "directory-alias"),
+)
+def test_plain_doctor_refuses_bundle_database_through_symlink_alias(
+    tmp_path, capsys, alias_kind
+):
+    source, attach_dir, _ = _recovery_source(tmp_path / "source", b"proof")
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(source, attach_dir, bundle_path)
+    bundle_before = _tree_evidence(bundle_path)
+
+    if alias_kind == "different-basename":
+        database_alias = tmp_path / "alias.db"
+        database_alias.symlink_to(bundle_path / "athena.db")
+    elif alias_kind == "same-basename":
+        alias_parent = tmp_path / "ordinary-parent"
+        alias_parent.mkdir()
+        database_alias = alias_parent / "athena.db"
+        database_alias.symlink_to(bundle_path / "athena.db")
+    else:
+        bundle_alias = tmp_path / "bundle-alias"
+        bundle_alias.symlink_to(bundle_path, target_is_directory=True)
+        database_alias = bundle_alias / "athena.db"
+
+    assert ops.doctor_main([str(database_alias)]) == 1
+
+    refused = capsys.readouterr().err
+    assert "check database: failed" in refused
+    assert f"athena-doctor {bundle_path.resolve()} --recovery-bundle" in refused
+    assert _tree_evidence(bundle_path) == bundle_before
+    assert recovery.verify_recovery_bundle(bundle_path).path == bundle_path
+
+
+def test_bundle_manifest_marker_does_not_require_mode_0600_through_alias(
+    tmp_path, capsys
+):
+    source, attach_dir, _ = _recovery_source(tmp_path / "source")
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(source, attach_dir, bundle_path)
+    os.chmod(bundle_path / "manifest.json", 0o644)
+    alias = tmp_path / "alias.db"
+    alias.symlink_to(bundle_path / "athena.db")
+
+    assert ops.doctor_main([str(alias)]) == 1
+
+    refused = capsys.readouterr().err
+    assert "recovery bundle database" in refused
+    assert not (bundle_path / "athena.db-wal").exists()
+    assert not (bundle_path / "athena.db-shm").exists()
+
+
+@pytest.mark.parametrize(
+    "manifest_kind",
+    (
+        "unrelated-json",
+        "invalid-json",
+        "binary",
+        "oversized",
+        "directory",
+        "dangling-symlink",
+    ),
+)
+def test_plain_doctor_accepts_exact_names_without_recovery_manifest_marker(
+    tmp_path, capsys, manifest_kind
+):
+    database = _seed_database(tmp_path / "athena.db")
+    (tmp_path / "attachments").mkdir()
+    manifest = tmp_path / "manifest.json"
+    if manifest_kind == "unrelated-json":
+        manifest.write_text('{"kind":"ordinary"}\n')
+    elif manifest_kind == "invalid-json":
+        manifest.write_text("not json\n")
+    elif manifest_kind == "binary":
+        manifest.write_bytes(b"\xff\xfe\x00")
+    elif manifest_kind == "oversized":
+        manifest.write_bytes(b"x" * (65 * 1024))
+    elif manifest_kind == "directory":
+        manifest.mkdir()
+    else:
+        manifest.symlink_to(tmp_path / "missing-manifest")
+
+    assert ops.doctor_main([str(database)]) == 0
+
+    output = capsys.readouterr()
+    assert "athena-doctor: ok" in output.out
+    assert "recovery bundle database" not in output.err
 
 
 def test_broken_bundle_verification_and_materialization_refuse_without_acceptance(
