@@ -240,7 +240,11 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         row's generation — my_desk lists it under work.leases.lapsed.
 
         results is up to 20 {condition,state,note} objects; state is met,
-        not_met, not_assessed, or inconclusive. unfinished and uncertainty are
+        not_met, not_assessed, or inconclusive. not_assessed means the condition
+        was not evaluated; for example, an integration check was never run.
+        inconclusive means an evaluation was attempted but did not establish
+        met or not_met; for example, an integration check ran but timed out
+        before producing a result. unfinished and uncertainty are
         up to 10 text items each. evidence is up to 10 {kind,source,ref,scope}
         objects: kind event/handoff/doc/file/manifest; scope source-only,
         synthetic, actual-run, or unrun. The total encoded report is at most

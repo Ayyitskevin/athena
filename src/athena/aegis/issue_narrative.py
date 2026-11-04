@@ -91,6 +91,24 @@ _COMPLETE_VERB = "claim_completed"
 _ASK_STATES = {run_controls.STATE_REQUESTED, run_controls.STATE_ACKNOWLEDGED}
 
 
+def _reported_completion_summary(actor_name: str, report: dict) -> str:
+    """Expose reported counts without turning them into an overall assessment."""
+    counts = []
+    for state in ("met", "not_met", "not_assessed", "inconclusive"):
+        count = sum(result["state"] == state for result in report.get("results", []))
+        if count:
+            counts.append(f"{count} reported {state}")
+    for field in ("unfinished", "uncertainty"):
+        count = len(report.get(field, []))
+        if count:
+            counts.append(f"{count} reported {field}")
+    reported_counts = f"{' · '.join(counts)}; " if counts else ""
+    return (
+        f"{actor_name} reported completion and released the claim; "
+        f"{reported_counts}reported conditions and evidence are advisory"
+    )
+
+
 def _bounded_limit(limit: int) -> int:
     if isinstance(limit, bool) or not isinstance(limit, int):
         raise ValueError("limit must be an integer")
@@ -190,8 +208,7 @@ def _build(
                     "signal": SIGNAL_OUTCOME,
                     "state": "claim_completed",
                     "summary": (
-                        f"{event['actor_name']} reported completion and released the claim; "
-                        "reported conditions and evidence are advisory"
+                        _reported_completion_summary(event["actor_name"], report)
                         if report is not None
                         else f"{event['actor_name']} completed the claim ({event['detail']})"
                     ),

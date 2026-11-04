@@ -21,6 +21,10 @@ composes other calls or local state instead of one fixed route.
 `complete_claim` and `POST /issues/{id}/complete` accept optional
 `results`, `unfinished`, `uncertainty`, and typed, source-qualified
 `evidence`. They are actor-reported data, not a verified success verdict.
+`not_assessed` means the condition was not evaluated; for example, an
+integration check was never run. `inconclusive` means an evaluation was
+attempted but did not establish `met` or `not_met`; for example, an
+integration check ran but timed out before producing a result.
 Reported `not_met` results and `unrun` evidence do not block lease release
 under the existing generation rules. Issue status and gates are unchanged.
 Omitted fields retain the legacy response and event detail. References are

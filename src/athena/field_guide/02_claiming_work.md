@@ -59,7 +59,11 @@ Four distinct operations; changing issue status alone does not end a claim:
 
 You may include an optional **reported completion**: `results` contains
 `{condition, state, note}` entries with state `met`, `not_met`, `not_assessed`,
-or `inconclusive`; `unfinished` and `uncertainty` list what remains. Typed,
+or `inconclusive`. `not_assessed` means the condition was not evaluated; for
+example, an integration check was never run. `inconclusive` means an evaluation
+was attempted but did not establish `met` or `not_met`; for example, an integration
+check ran but timed out before producing a result. `unfinished` and `uncertainty`
+list what remains. Typed,
 source-qualified `evidence` refs contain `{kind, source, ref, scope}`, with scope
 `source-only`, `synthetic`, `actual-run`, or `unrun`. These are your reports,
 not Athena's verification. `not_met` and `unrun` still allow release under the

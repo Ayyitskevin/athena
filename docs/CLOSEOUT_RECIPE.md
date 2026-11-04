@@ -30,6 +30,18 @@ boolean or score. Up to 20 results are allowed, with a nonblank condition and
 optional blank note, each at most 500 characters. `unfinished` and `uncertainty`
 each accept up to 10 nonblank strings of at most 500 characters.
 
+`not_assessed` means the condition was not evaluated; for example, an
+integration check was never run. `inconclusive` means an evaluation was attempted
+but did not establish `met` or `not_met`; for example, an integration check ran
+but timed out before producing a result.
+
+History and work-context summaries show counts of each reported state present,
+plus reported unfinished and uncertainty counts. These are counts, not an overall
+verdict. Reports open by default when a result is other than `met`, or unfinished
+work or uncertainty is non-empty. A report containing only `met` stays collapsed;
+its counts remain visible in the summary. The narrative repeats the same counts
+as reported and advisory.
+
 Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`.
 Kinds are `event`, `handoff`, `doc`, `file`, or `manifest`. Source qualifies where
 the original record/bytes belong (for example an Athena instance or a checkout

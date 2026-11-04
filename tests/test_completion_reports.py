@@ -5,6 +5,8 @@ import copy
 import csv
 from io import StringIO
 import json
+from pathlib import Path
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -499,5 +501,132 @@ def test_mcp_and_rest_use_the_same_report_refusal_and_keep_the_claim(tmp_path):
             )
         )
         assert json.loads(accepted[0].text)["released"] is True
+    finally:
+        client.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("report", "labels", "expanded"),
+    [
+        (
+            REPORT,
+            [
+                "1 reported met",
+                "1 reported not_met",
+                "1 reported not_assessed",
+                "1 reported inconclusive",
+                "1 reported unfinished",
+                "1 reported uncertainty",
+            ],
+            True,
+        ),
+        (
+            {"results": [REPORT["results"][0]] * 2},
+            ["2 reported met"],
+            False,
+        ),
+        *[
+            (
+                {"results": [{"condition": "check", "state": state, "note": ""}]},
+                [f"1 reported {state}"],
+                True,
+            )
+            for state in ("not_met", "not_assessed", "inconclusive")
+        ],
+        ({"unfinished": ["Still owed"]}, ["1 reported unfinished"], True),
+        ({"uncertainty": ["Unknown"]}, ["1 reported uncertainty"], True),
+        ({"results": [], "unfinished": [], "uncertainty": []}, [], False),
+    ],
+    ids=[
+        "mixed",
+        "met-only",
+        "not-met",
+        "not-assessed",
+        "inconclusive",
+        "unfinished",
+        "uncertainty",
+        "empty",
+    ],
+)
+def test_reported_counts_are_visible_when_collapsed_and_residuals_expand(
+    tmp_path, report, labels, expanded
+):
+    report = copy.deepcopy(report)
+    if report.get("results"):
+        report["results"][0]["condition"] = (
+            '<img src=x onerror="alert(1)"> pass verified approved'
+        )
+    client = _client(tmp_path)
+    try:
+        issue, generation = _claimed(client)
+        completed = client.post(
+            f"/issues/{issue['id']}/complete",
+            json={"generation": generation, **report},
+            headers=HEADERS,
+        )
+        assert completed.status_code == 200, completed.text
+        narrative = client.get(f"/issues/{issue['id']}/history", headers=HEADERS)
+        assert narrative.status_code == 200, narrative.text
+        line = next(
+            item["summary"]
+            for item in narrative.json()["items"]
+            if item["state"] == "claim_completed"
+        )
+        for view in ("history", "work-context"):
+            page = client.get(f"/aegis/issues/{issue['id']}/{view}", headers=HEADERS)
+            assert page.status_code == 200, page.text
+            if report.get("results"):
+                assert "&lt;img" in page.text
+                assert '<img src=x onerror="alert(1)">' not in page.text
+            summary = re.search(
+                r"<details(?P<attrs>[^>]*)>\s*<summary>(?P<text>Reported completion \(advisory\).*?)</summary>",
+                page.text,
+                re.DOTALL,
+            )
+            assert summary is not None
+            text = " ".join(summary["text"].split())
+            for label in labels:
+                assert label in text
+            assert bool(re.search(r"\bopen(?:\s|=|$)", summary["attrs"])) is expanded
+            assert all(
+                word not in text.lower() for word in ("pass", "verified", "approved")
+            )
+            assert "<" not in text
+        for label in labels:
+            assert label in line
+        assert "advisory" in line
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_registered_tool_and_agent_docs_define_unperformed_and_inconclusive(tmp_path):
+    client = _client(tmp_path)
+    try:
+        server = build_server(AthenaClient(client=client))
+        description = next(
+            tool.description
+            for tool in asyncio.run(server.list_tools())
+            if tool.name == "complete_claim"
+        )
+        root = Path(__file__).resolve().parents[1]
+        sources = [description] + [
+            (root / path).read_text()
+            for path in (
+                "docs/CLOSEOUT_RECIPE.md",
+                "src/athena/field_guide/02_claiming_work.md",
+                "docs/AGENT_API.md",
+            )
+        ]
+        for source in sources:
+            text = " ".join(source.replace("`", "").split())
+            assert "not_assessed means the condition was not evaluated" in text
+            assert "integration check was never run" in text
+            assert (
+                "inconclusive means an evaluation was attempted but did not establish met or not_met"
+                in text
+            )
+            assert (
+                "integration check ran but timed out before producing a result" in text
+            )
     finally:
         client.__exit__(None, None, None)
