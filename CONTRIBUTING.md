@@ -19,9 +19,12 @@ the first failed stage. The script refuses an Athena import from another checkou
 The product pass covers local product stages, not CI's container job or its
 release-candidate supply-chain job; obtain those results separately. CI shards
 coverage and combines evidence; `scripts/coverage.sh` runs and checks it locally.
-The stage inventory is in `scripts/gate.py`; a test compares it with CI's
-coverage-job commands and pins the workflow bytes without changing it. Any CI
-change must be reviewed against the inventory and update that pin intentionally.
+The stage inventory is in `scripts/gate.py`; tests compare it with CI's named
+checks and coverage-job commands. Action version bumps do not change that
+inventory; changes to the checks or commands require an inventory review.
+The wrapper requires this checkout's executable `.venv/bin/python`, as created
+below, and refuses with a setup pointer if it is missing or broken. It does not
+require activating the environment.
 
 ## Development setup
 

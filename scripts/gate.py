@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# CI changes require an explicit review of the inventory and these exclusions.
-CI_WORKFLOW_SHA256 = "51dbf1ca458597f7583a87410c79c2b04333ce22570495ade3e414e9971f3a59"
 
 
 @dataclass(frozen=True)

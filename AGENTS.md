@@ -183,6 +183,10 @@ Run `scripts/gate.sh` for the partial quick profile or
 `scripts/gate.sh --profile product` for the complete local product profile. The receipt
 names the commit, worktree state, Python/import identity, run and omitted stages, and
 CI-only jobs. See CONTRIBUTING.md for the CI and release evidence boundaries.
+The wrapper uses this checkout's `.venv/bin/python` without activation and refuses
+with a CONTRIBUTING.md setup pointer if that executable is unavailable. Inventory
+tests compare CI checks and commands semantically; action version bumps do not
+require a workflow-byte pin update.
 Run the app: configure the absolute storage paths and bootstrap/start through
 `athena-serve` as documented in `docs/OPERATIONS.md`. Raw Uvicorn startup is an
 unsupported development escape hatch and intentionally has no authority unless
