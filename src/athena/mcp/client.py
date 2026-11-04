@@ -1091,11 +1091,32 @@ class AthenaClient:
     # --- events -------------------------------------------------------------
 
     def recent_events(
-        self, *, after: int | None = None, kind: str | None = None, limit: int = 50
+        self,
+        *,
+        after: int | None = None,
+        kind: str | None = None,
+        target: int | None = None,
+        actor_id: int | None = None,
+        actor_type: str | None = None,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
+        verb: str | None = None,
+        limit: int = 50,
     ) -> Any:
         return self._result(
             self._client.get(
-                "/events", params=self._params(after=after, kind=kind, limit=limit)
+                "/events",
+                params=self._params(
+                    after=after,
+                    kind=kind,
+                    target=target,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    run_id=run_id,
+                    parent_run_id=parent_run_id,
+                    verb=verb,
+                    limit=limit,
+                ),
             )
         )
 

@@ -36,6 +36,9 @@ class EventOut(BaseModel):
     target_id: int
     detail: str
     created_at: str
+    # Stored import provenance, not inferred from the verb. Any non-null value
+    # marks an imported event; native events have None.
+    imported_at: str | None = None
     # The run this event belongs to (the X-Athena-Run it was recorded under), or None
     # for untagged actions — so a consumer can group a stream into runs by id; and the
     # run that spawned that run (lineage), or None at top level.

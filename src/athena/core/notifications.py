@@ -6,8 +6,8 @@ points at the activity event which caused it. This module owns:
   * watches (who follows what) — manual, plus auto-watch from the activity
     recorders (a creator/commenter/assignee starts watching);
   * the fan-out: notify_watchers() turns one event into inbox rows for that
-    target's watchers — called once from core.activity.record, so EVERY recorded
-    event feeds the inbox, with no per-call-site wiring;
+    target's watchers — called once from core.activity.record; imported history
+    skips generic fan-out, while explicit mentions remain a separate path;
   * inbox reads (list, unread count) and state (mark read).
 
 It deliberately imports no other module (not even activity): notify_watchers is
@@ -136,6 +136,10 @@ def notify_watchers(
     (activity.record) commits the event and its notifications together. The UNIQUE
     (user_id, event_id) makes a re-run harmless.
 
+    Imported history does not notify generic watchers. Read the persisted event's
+    imported_at marker, not a verb name or caller-supplied classification. Explicit
+    mentions still go through process_mentions, with its existing deduplication.
+
     Two passes, one rule: a watch reaches an event if the event's target IS the
     watched thing, or is a page INSIDE a watched space. The space pass is the only
     indirect fan-out in the system, and it lives here — inside the single fan-out
@@ -152,6 +156,11 @@ def notify_watchers(
     UNIQUE (user_id, event_id) collapses the passes. Notifications are written
     ungated — the inbox reads gate visibility (see list_notifications), so a watcher
     who cannot see the space never renders what landed."""
+    event = conn.execute(
+        "SELECT imported_at FROM activity WHERE id = ?", (event_id,)
+    ).fetchone()
+    if event is not None and event["imported_at"] is not None:
+        return
     recipients = [
         row["user_id"]
         for row in conn.execute(
