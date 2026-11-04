@@ -12,7 +12,7 @@ import sys
 import pytest
 
 from athena import config, ops
-from athena.core import attachments, backup, db, recovery, users
+from athena.core import activity, attachments, backup, db, recovery, users
 
 
 def _seed_database(path, *, email="admin@example.com", issue="Saved issue"):
@@ -360,6 +360,21 @@ def test_doctor_cli_checks_database_and_attachment_dir(tmp_path, capsys):
     assert "athena-doctor: ok" in out.out
 
 
+def test_doctor_plain_mode_reports_omitted_checks(tmp_path, capsys):
+    source = _seed_database(tmp_path / "athena.db")
+
+    assert ops.doctor_main([str(source)]) == 0
+
+    output = capsys.readouterr().out
+    assert "athena-doctor: mode=plain subject=" in output
+    assert "check database: passed" in output
+    assert "check activity-chain: passed" in output
+    assert "check attachments: not evaluated — --attach-dir was not supplied" in output
+    assert "check deployment-configuration: not evaluated" in output
+    assert "check recovery-bundle: not evaluated" in output
+    assert "check data-recovery-drill: not evaluated" in output
+
+
 def test_doctor_reconciles_attachment_rows_and_blobs(tmp_path, capsys):
     source = _seed_database(tmp_path / "athena.db")
     attach_dir = tmp_path / "attachments"
@@ -471,6 +486,12 @@ def test_doctor_deployment_mode_checks_exact_config_and_admin_recovery(
     out = capsys.readouterr()
     assert "administrator recovery: ok (1 active)" in out.out
     assert "network: ok (local; 127.0.0.1:8000; 2 Host authorities)" in out.out
+    assert "athena-doctor: mode=deployment subject=" in out.out
+    assert "check database: passed" in out.out
+    assert "check attachments: passed" in out.out
+    assert "check deployment-configuration: passed" in out.out
+    assert "check activity-chain: not evaluated" in out.out
+    assert "check recovery-bundle: not evaluated" in out.out
 
 
 def test_doctor_deployment_mode_refuses_a_different_configured_database(
@@ -656,6 +677,21 @@ def _read_manifest(bundle_path):
     return json.loads((bundle_path / "manifest.json").read_text())
 
 
+def _record_activity(database, *, detail="synthetic audit event"):
+    conn = db.connect(database)
+    try:
+        activity.record(
+            conn,
+            actor_id=1,
+            verb="created",
+            target_kind="issue",
+            target_id=1,
+            detail=detail,
+        )
+    finally:
+        conn.close()
+
+
 def _write_manifest(bundle_path, manifest):
     (bundle_path / "manifest.json").write_text(
         json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
@@ -738,6 +774,87 @@ def test_recovery_bundle_empty_and_multi_blob_layout_is_private(tmp_path):
     assert "live-orphan.bin" not in {path.name for path in bundle_path.rglob("*")}
 
 
+def test_recovery_bundle_verification_reports_chain_coverage(tmp_path):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database)
+    bundle_path = tmp_path / "bundle"
+
+    created = recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+    verified = recovery.verify_recovery_bundle(bundle_path)
+
+    assert verified == created
+    assert verified.activity_chain.checked == 1
+    assert verified.activity_chain.anchor_event_id == 1
+    assert verified.activity_chain.through_event_id == 1
+    assert verified.activity_chain.pre_adoption_count == 0
+    assert verified.activity_chain.mismatch_reason is None
+
+
+def test_recovery_bundle_refuses_broken_activity_chain_without_changing_source(
+    tmp_path,
+    capsys,
+):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    _record_activity(database, detail="private synthetic event detail")
+    bundle_path = tmp_path / "bundle"
+    recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+
+    candidate = bundle_path / "athena.db"
+    with sqlite3.connect(candidate) as conn:
+        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.execute("UPDATE activity SET detail = 'forged candidate detail'")
+    _refresh_database_manifest(bundle_path)
+    with sqlite3.connect(candidate) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        recovery.validate_current_database(conn)
+
+    source_before = database.read_bytes()
+    with pytest.raises(ValueError, match="entry_hash_mismatch") as failure:
+        recovery.verify_recovery_bundle(bundle_path)
+
+    assert "checked 0 entries" in str(failure.value)
+    assert "anchor event 1" in str(failure.value)
+    assert "private synthetic event detail" not in str(failure.value)
+    assert "forged candidate detail" not in str(failure.value)
+    assert database.read_bytes() == source_before
+
+    assert ops.doctor_main([str(bundle_path), "--recovery-bundle"]) == 1
+    output = capsys.readouterr().err
+    assert "athena-doctor: mode=recovery-bundle" in output
+    assert "check activity-chain: failed" in output
+    assert "entry_hash_mismatch" in output
+    assert "check attachments: not evaluated" in output
+    assert "private synthetic event detail" not in output
+    assert "forged candidate detail" not in output
+
+
+def test_recovery_bundle_keeps_pre_adoption_history_outside_chain_claim(tmp_path):
+    database, attach_dir, _ = _recovery_source(tmp_path)
+    conn = db.connect(database)
+    legacy = conn.execute(
+        "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail) "
+        "VALUES (1, 'legacy', 'issue', 1, 'pre-adoption')"
+    )
+    legacy_event_id = int(legacy.lastrowid)
+    activity.record(
+        conn,
+        actor_id=1,
+        verb="created",
+        target_kind="issue",
+        target_id=1,
+    )
+    conn.close()
+    bundle_path = tmp_path / "bundle"
+
+    verified = recovery.create_recovery_bundle(database, attach_dir, bundle_path)
+
+    assert verified.activity_chain.checked == 1
+    assert verified.activity_chain.anchor_event_id == legacy_event_id + 1
+    assert verified.activity_chain.through_event_id == legacy_event_id + 1
+    assert verified.activity_chain.pre_adoption_count == 1
+
+
 def test_recovery_bundle_cli_create_verify_and_drill(tmp_path, capsys):
     database, attach_dir, names = _recovery_source(tmp_path, b"drill evidence")
     bundle_path = tmp_path / "bundle"
@@ -800,6 +917,9 @@ def test_recovery_doctor_escapes_untrusted_version_provenance(tmp_path, capsys):
     output = capsys.readouterr().out
     assert manifest["athena_version"] not in output
     assert json.dumps(manifest["athena_version"]) in output
+    assert "athena-doctor: mode=recovery-bundle" in output
+    assert "check data-recovery-drill: not evaluated" in output
+    assert "check deployment-configuration: not evaluated" in output
 
 
 @pytest.mark.parametrize(

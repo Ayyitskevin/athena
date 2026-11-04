@@ -12,7 +12,7 @@ import stat
 import sys
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable, TextIO
 from datetime import datetime, timezone
 
 from athena.core import activity_chain, attachments, db, deployment
@@ -23,6 +23,8 @@ from athena.core.backup import (
     validate_retention_plan,
 )
 from athena.core.recovery import (
+    RecoveryActivityChainVerification,
+    RecoveryChainVerificationError,
     create_recovery_bundle,
     materialize_recovery_bundle,
     validate_current_database,
@@ -553,25 +555,250 @@ def _validate_doctor_arguments(
         parser.error("--deployment requires --attach-dir")
 
 
-def _recovery_doctor_checks(args: argparse.Namespace) -> list[str]:
+_DoctorCheck = tuple[str, str, str]
+
+
+def _doctor_mode(args: argparse.Namespace) -> str:
+    if args.recovery_bundle:
+        return "recovery-bundle"
+    if args.deployment:
+        return "deployment"
+    return "plain"
+
+
+def _record_doctor_check(
+    report: list[_DoctorCheck], name: str, status: str, reason: str
+) -> None:
+    bounded_reason = " ".join(reason.split())
+    if len(bounded_reason) > 200:
+        bounded_reason = bounded_reason[:197] + "..."
+    report.append((name, status, bounded_reason))
+
+
+def _doctor_failure_reason(name: str, exc: Exception) -> str:
+    if isinstance(exc, RecoveryChainVerificationError):
+        chain = exc.verification
+        anchor = "none" if chain.anchor_event_id is None else str(chain.anchor_event_id)
+        through = (
+            "none" if chain.through_event_id is None else str(chain.through_event_id)
+        )
+        event = (
+            "unknown"
+            if chain.mismatch_event_id is None
+            else str(chain.mismatch_event_id)
+        )
+        reason = chain.mismatch_reason or "unknown_mismatch"
+        return (
+            f"{reason} at event {event}; checked {chain.checked} entries from "
+            f"anchor {anchor} through {through}"
+        )
+
+    message = str(exc).casefold()
+    if name == "activity-chain":
+        _, marker, remainder = message.partition("event ")
+        if marker:
+            event_id, separator, mismatch = remainder.partition(":")
+            reason = mismatch.strip().split(maxsplit=1)[0].split("(", maxsplit=1)[0]
+            if separator and event_id.isdigit() and reason.isidentifier():
+                return f"{reason} at event {event_id}"
+        return "full activity-chain verification failed"
+    if "integrity check failed" in message:
+        return "SQLite integrity check failed"
+    if "foreign key" in message:
+        return "foreign-key check failed"
+    if "migration" in message:
+        return "migration inventory or checksum validation failed"
+    if "schema" in message:
+        return "schema validation failed"
+    if "attachment" in message or "blob" in message:
+        return "attachment reconciliation failed"
+    if "stale" in message or "age" in message:
+        return "recovery-point age limit failed"
+    if "time limit" in message or "exceeded its limit" in message:
+        return "data-recovery drill time limit failed"
+    if "database path" in message or "athena_db" in message:
+        return "configured database path does not match"
+    if (
+        "attach_dir" in message
+        or "attach-dir" in message
+        or "athena_attach_dir" in message
+        or "attachment path" in message
+    ):
+        return "configured attachment path does not match"
+    if "network" in message or "host" in message or "port" in message:
+        return "deployment network configuration failed"
+    if "recovery bundle" in message:
+        return "recovery-bundle validation failed"
+    return f"{name} check failed ({type(exc).__name__})"
+
+
+def _run_doctor_check(
+    report: list[_DoctorCheck],
+    name: str,
+    passed_reason: str,
+    action: Callable[[], str],
+) -> str:
+    try:
+        result = action()
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        _record_doctor_check(report, name, "failed", _doctor_failure_reason(name, exc))
+        raise
+    _record_doctor_check(report, name, "passed", passed_reason)
+    return result
+
+
+def _record_mode_omissions(
+    args: argparse.Namespace, report: list[_DoctorCheck]
+) -> None:
+    mode = _doctor_mode(args)
+    omissions = {
+        "plain": (
+            ("deployment-configuration", "--deployment was not selected"),
+            ("recovery-bundle", "--recovery-bundle was not selected"),
+        ),
+        "deployment": (
+            ("activity-chain", "deployment mode does not walk the full chain"),
+            ("recovery-bundle", "--recovery-bundle was not selected"),
+        ),
+        "recovery-bundle": (
+            ("deployment-configuration", "--deployment was not selected"),
+        ),
+    }[mode]
+    for name, reason in omissions:
+        if not any(record[0] == name for record in report):
+            _record_doctor_check(report, name, "not evaluated", reason)
+
+    if mode != "recovery-bundle" or args.max_recovery_point_age_seconds is None:
+        reason = (
+            "--max-recovery-point-age-seconds was not supplied"
+            if mode == "recovery-bundle"
+            else "recovery-bundle mode was not selected"
+        )
+        if not any(record[0] == "recovery-freshness" for record in report):
+            _record_doctor_check(report, "recovery-freshness", "not evaluated", reason)
+    if mode != "recovery-bundle" or args.drill_dir is None:
+        reason = (
+            "--drill-dir was not supplied"
+            if mode == "recovery-bundle"
+            else "recovery-bundle mode was not selected"
+        )
+        if not any(record[0] == "data-recovery-drill" for record in report):
+            _record_doctor_check(report, "data-recovery-drill", "not evaluated", reason)
+
+
+def _recovery_chain_reason(
+    chain: RecoveryActivityChainVerification,
+) -> str:
+    anchor = "none" if chain.anchor_event_id is None else str(chain.anchor_event_id)
+    through = "none" if chain.through_event_id is None else str(chain.through_event_id)
+    return (
+        f"checked {chain.checked} entries from anchor {anchor} through {through}; "
+        f"{chain.pre_adoption_count} pre-adoption rows excluded"
+    )
+
+
+def _recovery_doctor_checks(
+    args: argparse.Namespace, report: list[_DoctorCheck]
+) -> list[str]:
     recovery_started = time.monotonic()
     drill = None
-    if args.drill_dir is None:
-        bundle = verify_recovery_bundle(args.db_path)
-    else:
-        drill = materialize_recovery_bundle(args.db_path, args.drill_dir)
-        bundle = drill.source_bundle
+    try:
+        if args.drill_dir is None:
+            bundle = verify_recovery_bundle(args.db_path)
+        else:
+            drill = materialize_recovery_bundle(args.db_path, args.drill_dir)
+            bundle = drill.source_bundle
+    except RecoveryChainVerificationError as exc:
+        _record_doctor_check(
+            report,
+            "database",
+            "passed",
+            "immutable candidate passed integrity, foreign-key, migration and schema checks",
+        )
+        _record_doctor_check(
+            report,
+            "activity-chain",
+            "failed",
+            _doctor_failure_reason("activity-chain", exc),
+        )
+        _record_doctor_check(
+            report,
+            "recovery-bundle",
+            "failed",
+            "private candidate failed activity-chain verification",
+        )
+        raise
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+        sqlite3.Error,
+        ValueError,
+    ) as exc:
+        _record_doctor_check(
+            report,
+            "recovery-bundle",
+            "failed",
+            _doctor_failure_reason("recovery-bundle", exc),
+        )
+        raise
+
+    _record_doctor_check(
+        report,
+        "database",
+        "passed",
+        "immutable candidate passed integrity, foreign-key, migration and schema checks",
+    )
+    _record_doctor_check(
+        report,
+        "activity-chain",
+        "passed",
+        _recovery_chain_reason(bundle.activity_chain),
+    )
+    _record_doctor_check(
+        report,
+        "attachments",
+        "passed",
+        "bundle attachment inventory and bytes match the database snapshot",
+    )
+    _record_doctor_check(
+        report,
+        "recovery-bundle",
+        "passed",
+        "manifest, database, attachments and activity chain verified",
+    )
 
     recovery_age = _recovery_point_age_seconds(bundle.capture_started_at)
-    if (
-        args.max_recovery_point_age_seconds is not None
-        and recovery_age > args.max_recovery_point_age_seconds
-    ):
-        retained = f"; drill retained at {drill.path}" if drill else ""
-        raise ValueError(
-            "recovery bundle is valid but stale: "
-            f"age {recovery_age:.3f}s exceeds "
-            f"{args.max_recovery_point_age_seconds}s{retained}"
+    if args.max_recovery_point_age_seconds is None:
+        _record_doctor_check(
+            report,
+            "recovery-freshness",
+            "not evaluated",
+            "--max-recovery-point-age-seconds was not supplied",
+        )
+    else:
+
+        def check_recovery_age() -> str:
+            if recovery_age > args.max_recovery_point_age_seconds:
+                retained = f"; drill retained at {drill.path}" if drill else ""
+                raise ValueError(
+                    "recovery bundle is valid but stale: "
+                    f"age {recovery_age:.3f}s exceeds "
+                    f"{args.max_recovery_point_age_seconds}s{retained}"
+                )
+            return ""
+
+        _run_doctor_check(
+            report,
+            "recovery-freshness",
+            "capture age is within the configured limit",
+            check_recovery_age,
         )
 
     checks = [
@@ -582,80 +809,231 @@ def _recovery_doctor_checks(args: argparse.Namespace) -> list[str]:
         f"{json.dumps(bundle.athena_version, ensure_ascii=True)}; {bundle.path})"
     ]
     if drill is None:
+        _record_doctor_check(
+            report,
+            "data-recovery-drill",
+            "not evaluated",
+            "--drill-dir was not supplied",
+        )
         return checks
 
     recovery_elapsed = time.monotonic() - recovery_started
-    if (
-        args.max_data_recovery_seconds is not None
-        and recovery_elapsed > args.max_data_recovery_seconds
-    ):
-        raise ValueError(
-            "data-recovery drill completed but exceeded its limit: "
-            f"{recovery_elapsed:.3f}s > "
-            f"{args.max_data_recovery_seconds}s; retained at {drill.path}"
-        )
+
+    def check_drill_elapsed() -> str:
+        if (
+            args.max_data_recovery_seconds is not None
+            and recovery_elapsed > args.max_data_recovery_seconds
+        ):
+            raise ValueError(
+                "data-recovery drill completed but exceeded its limit: "
+                f"{recovery_elapsed:.3f}s > "
+                f"{args.max_data_recovery_seconds}s; retained at {drill.path}"
+            )
+        return ""
+
+    drill_reason = (
+        "private scratch database and attachment copy materialized"
+        if args.max_data_recovery_seconds is None
+        else "private scratch copy materialized within the configured time limit"
+    )
+    _run_doctor_check(report, "data-recovery-drill", drill_reason, check_drill_elapsed)
     checks.append(
         f"data-recovery drill: ok ({recovery_elapsed:.3f}s; retained at {drill.path})"
     )
     return checks
 
 
-def _deployment_doctor_checks(args: argparse.Namespace) -> list[str]:
+def _deployment_doctor_checks(
+    args: argparse.Namespace, report: list[_DoctorCheck]
+) -> list[str]:
     from athena import config
 
     assert args.attach_dir is not None
-    bind_host, bind_port = deployment.validate_bind(
-        args.host or "127.0.0.1",
-        args.port or 8000,
-        config.NETWORK_MODE,
+
+    def check_configuration() -> str:
+        bind_host, bind_port = deployment.validate_bind(
+            args.host or "127.0.0.1",
+            args.port or 8000,
+            config.NETWORK_MODE,
+        )
+        authorities = deployment.validate_static_configuration(
+            db_path=args.db_path,
+            attach_dir=args.attach_dir,
+            network_mode=config.NETWORK_MODE,
+            bind_host=bind_host,
+            bind_port=bind_port,
+            allowed_authorities=config.ALLOWED_AUTHORITIES,
+            bootstrap=False,
+            bootstrap_token=config.BOOTSTRAP_TOKEN,
+            trust_actor_header=config.TRUST_ACTOR_HEADER,
+            cookie_secure=config.COOKIE_SECURE,
+            oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
+            oidc_redirect_url=(
+                config.OIDC_REDIRECT_URL if config.oidc_enabled() else None
+            ),
+            max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+            token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
+            anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
+            login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
+            login_account_rate_limit_per_minute=(
+                config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE
+            ),
+        )
+        if args.db_path != config.DB_PATH:
+            raise ValueError("deployment db_path must exactly match ATHENA_DB")
+        if args.attach_dir != config.ATTACH_DIR:
+            raise ValueError(
+                "deployment --attach-dir must exactly match ATHENA_ATTACH_DIR"
+            )
+        return f"{bind_host}|{bind_port}|{len(authorities)}"
+
+    configuration = _run_doctor_check(
+        report,
+        "deployment-configuration",
+        "configured paths, listener, Host policy and hardening matched",
+        check_configuration,
     )
-    authorities = deployment.validate_static_configuration(
-        db_path=args.db_path,
-        attach_dir=args.attach_dir,
-        network_mode=config.NETWORK_MODE,
-        bind_host=bind_host,
-        bind_port=bind_port,
-        allowed_authorities=config.ALLOWED_AUTHORITIES,
-        bootstrap=False,
-        bootstrap_token=config.BOOTSTRAP_TOKEN,
-        trust_actor_header=config.TRUST_ACTOR_HEADER,
-        cookie_secure=config.COOKIE_SECURE,
-        oidc_issuer=config.OIDC_ISSUER if config.oidc_enabled() else None,
-        oidc_redirect_url=(config.OIDC_REDIRECT_URL if config.oidc_enabled() else None),
-        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
-        token_rate_limit_per_minute=config.TOKEN_RATE_LIMIT_PER_MINUTE,
-        anon_rate_limit_per_minute=config.ANON_RATE_LIMIT_PER_MINUTE,
-        login_rate_limit_per_minute=config.LOGIN_RATE_LIMIT_PER_MINUTE,
-        login_account_rate_limit_per_minute=config.LOGIN_ACCOUNT_RATE_LIMIT_PER_MINUTE,
-    )
-    if args.db_path != config.DB_PATH:
-        raise ValueError("deployment db_path must exactly match ATHENA_DB")
-    if args.attach_dir != config.ATTACH_DIR:
-        raise ValueError("deployment --attach-dir must exactly match ATHENA_ATTACH_DIR")
-    checks = _deployment_checks(
-        args.db_path,
-        args.attach_dir,
-        bootstrap=False,
-        enabled_oidc_issuer=(config.OIDC_ISSUER if config.oidc_enabled() else None),
-        max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
-    )
+    bind_host, bind_port, authority_count = configuration.split("|")
+    checks = [
+        _run_doctor_check(
+            report,
+            "database",
+            "integrity, foreign keys, migrations and schema passed",
+            lambda: _check_database(args.db_path, migrate=False),
+        ),
+        _run_doctor_check(
+            report,
+            "attachments",
+            "attachment directory is writable and reconciles with the database",
+            lambda: _check_attachment_dir(args.db_path, args.attach_dir),
+        ),
+        _run_doctor_check(
+            report,
+            "administrator-recovery",
+            "active administrator recovery path passed",
+            lambda: _check_database_posture(
+                args.db_path,
+                bootstrap=False,
+                enabled_oidc_issuer=(
+                    config.OIDC_ISSUER if config.oidc_enabled() else None
+                ),
+                max_request_body_bytes=config.MAX_REQUEST_BODY_BYTES,
+            ),
+        ),
+    ]
     checks.append(
         f"network: ok ({config.NETWORK_MODE}; {bind_host}:{bind_port}; "
-        f"{len(authorities)} Host authorities)"
+        f"{authority_count} Host authorities)"
     )
+    _record_doctor_check(
+        report, "network", "passed", "network mode and listener binding validated"
+    )
+    _record_mode_omissions(args, report)
     return checks
 
 
-def _doctor_checks(args: argparse.Namespace) -> list[str]:
+def _doctor_checks(args: argparse.Namespace, report: list[_DoctorCheck]) -> list[str]:
     if args.recovery_bundle:
-        return _recovery_doctor_checks(args)
+        return _recovery_doctor_checks(args, report)
     if args.deployment:
-        return _deployment_doctor_checks(args)
-    checks = [_check_database(args.db_path, migrate=args.migrate)]
-    checks.append(_check_activity_chain(args.db_path))
+        return _deployment_doctor_checks(args, report)
+    checks = [
+        _run_doctor_check(
+            report,
+            "database",
+            "integrity, foreign keys, migrations and schema passed",
+            lambda: _check_database(args.db_path, migrate=args.migrate),
+        ),
+        _run_doctor_check(
+            report,
+            "activity-chain",
+            "full bounded activity-chain walk passed",
+            lambda: _check_activity_chain(args.db_path),
+        ),
+    ]
     if args.attach_dir is not None:
-        checks.append(_check_attachment_dir(args.db_path, args.attach_dir))
+        checks.append(
+            _run_doctor_check(
+                report,
+                "attachments",
+                "attachment directory is writable and reconciles with the database",
+                lambda: _check_attachment_dir(args.db_path, args.attach_dir),
+            )
+        )
+    else:
+        _record_doctor_check(
+            report,
+            "attachments",
+            "not evaluated",
+            "--attach-dir was not supplied",
+        )
+    _record_mode_omissions(args, report)
     return checks
+
+
+def _complete_doctor_report(
+    args: argparse.Namespace, report: list[_DoctorCheck]
+) -> None:
+    if not any(status == "failed" for _, status, _ in report):
+        return
+    failure = next(name for name, status, _ in report if status == "failed")
+    expected: tuple[str, ...]
+    if args.recovery_bundle:
+        expected = (
+            "database",
+            "activity-chain",
+            "attachments",
+            "recovery-bundle",
+            "recovery-freshness",
+            "data-recovery-drill",
+            "deployment-configuration",
+        )
+    elif args.deployment:
+        expected = (
+            "deployment-configuration",
+            "database",
+            "attachments",
+            "administrator-recovery",
+            "network",
+            "activity-chain",
+            "recovery-bundle",
+            "recovery-freshness",
+            "data-recovery-drill",
+        )
+    else:
+        expected = (
+            "database",
+            "activity-chain",
+            "attachments",
+            "deployment-configuration",
+            "recovery-bundle",
+            "recovery-freshness",
+            "data-recovery-drill",
+        )
+    seen = {name for name, _, _ in report}
+    for name in expected:
+        if name not in seen:
+            _record_doctor_check(
+                report,
+                name,
+                "not evaluated",
+                f"not run after {failure} failed",
+            )
+
+
+def _print_doctor_report(
+    args: argparse.Namespace, report: list[_DoctorCheck], stream: TextIO
+) -> None:
+    mode = _doctor_mode(args)
+    subject = str(args.db_path)
+    if len(subject) > 200:
+        subject = subject[:197] + "..."
+    print(
+        f"athena-doctor: mode={mode} subject={json.dumps(subject, ensure_ascii=True)}",
+        file=stream,
+    )
+    for name, status, reason in report:
+        print(f"athena-doctor: check {name}: {status} — {reason}", file=stream)
 
 
 def doctor_main(argv: list[str] | None = None) -> int:
@@ -717,9 +1095,15 @@ def doctor_main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _validate_doctor_arguments(parser, args)
 
+    report: list[_DoctorCheck] = []
     try:
-        checks = _doctor_checks(args)
+        checks = _doctor_checks(args, report)
     except KeyboardInterrupt as exc:
+        _record_doctor_check(
+            report, "doctor-execution", "failed", "interrupted by operator"
+        )
+        _complete_doctor_report(args, report)
+        _print_doctor_report(args, report, sys.stderr)
         detail = _recovery_error_text(
             exc,
             recovery_destination=args.drill_dir if args.recovery_bundle else None,
@@ -733,11 +1117,15 @@ def doctor_main(argv: list[str] | None = None) -> int:
         sqlite3.Error,
         ValueError,
     ) as exc:
+        _complete_doctor_report(args, report)
+        _print_doctor_report(args, report, sys.stderr)
         print(f"athena-doctor: {_recovery_error_text(exc)}", file=sys.stderr)
         return 1
 
     for check in checks:
         print(check)
+    _record_mode_omissions(args, report)
+    _print_doctor_report(args, report, sys.stdout)
     print("athena-doctor: ok")
     return 0
 

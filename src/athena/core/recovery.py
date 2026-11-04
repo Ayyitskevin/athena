@@ -19,7 +19,7 @@ import tempfile
 from typing import Iterator, NoReturn
 
 from athena import __version__
-from athena.core import attachments, db
+from athena.core import activity_chain, attachments, db
 
 _BUNDLE_SCHEMA = "athena.recovery_bundle.v1"
 _BUNDLE_ROOT_ENTRIES = frozenset({"manifest.json", "athena.db", "attachments"})
@@ -28,6 +28,18 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$")
 _RENAME_NOREPLACE = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryActivityChainVerification:
+    """Bounded chain coverage observed on a private recovery candidate."""
+
+    checked: int
+    anchor_event_id: int | None
+    through_event_id: int | None
+    pre_adoption_count: int
+    mismatch_event_id: int | None = None
+    mismatch_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +54,7 @@ class RecoveryBundle:
     attachment_bytes: int
     athena_version: str
     latest_migration: str
+    activity_chain: RecoveryActivityChainVerification
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +141,38 @@ class RecoveryBundleDurabilityError(OSError):
         super().__init__(
             f"recovery artifact was published at {path}, but parent-directory "
             "durability could not be confirmed; preserve and verify it"
+        )
+
+
+class RecoveryChainVerificationError(ValueError):
+    """A private recovery candidate contains a broken activity chain."""
+
+    def __init__(self, verification: RecoveryActivityChainVerification) -> None:
+        self.verification = verification
+        anchor = (
+            "none"
+            if verification.anchor_event_id is None
+            else str(verification.anchor_event_id)
+        )
+        through = (
+            "none"
+            if verification.through_event_id is None
+            else str(verification.through_event_id)
+        )
+        mismatch = (
+            "unknown"
+            if verification.mismatch_reason is None
+            else verification.mismatch_reason
+        )
+        event = (
+            "unknown"
+            if verification.mismatch_event_id is None
+            else str(verification.mismatch_event_id)
+        )
+        super().__init__(
+            "activity chain verification failed: "
+            f"checked {verification.checked} entries; anchor event {anchor}; "
+            f"checked through event {through}; mismatch event {event}: {mismatch}"
         )
 
 
@@ -341,6 +386,7 @@ def create_recovery_bundle(
                         attachment_bytes=verified.attachment_bytes,
                         athena_version=verified.athena_version,
                         latest_migration=verified.latest_migration,
+                        activity_chain=verified.activity_chain,
                     )
                     committed = True
                     return result
@@ -686,6 +732,23 @@ def _verified_bundle(
 
             with _immutable_connection(private_database) as conn:
                 status = validate_current_database(conn)
+                chain_report = activity_chain.verify_all(conn)
+                chain_status = activity_chain.status(conn)
+                mismatch = chain_report["mismatch"]
+                chain_verification = RecoveryActivityChainVerification(
+                    checked=int(chain_report["checked"]),
+                    anchor_event_id=chain_status["anchor_event_id"],
+                    through_event_id=chain_report["through_event_id"],
+                    pre_adoption_count=int(chain_status["unchained_count"]),
+                    mismatch_event_id=(
+                        None if mismatch is None else int(mismatch["event_id"])
+                    ),
+                    mismatch_reason=(
+                        None if mismatch is None else str(mismatch["reason"])
+                    ),
+                )
+                if mismatch is not None:
+                    raise RecoveryChainVerificationError(chain_verification)
                 attachment_rows = _read_attachment_rows(conn)
             if status.latest != manifest.latest_migration:
                 raise ValueError("recovery database migration does not match manifest")
@@ -718,6 +781,7 @@ def _verified_bundle(
                 attachment_bytes=attachment_bytes,
                 athena_version=manifest.athena_version,
                 latest_migration=status.latest,
+                activity_chain=chain_verification,
             )
             state = _VerifiedBundleState(
                 summary=summary,
