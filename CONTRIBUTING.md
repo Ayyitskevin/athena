@@ -8,6 +8,8 @@ Before changing code, read [`AGENTS.md`](AGENTS.md),
 [`docs/VISION.md`](docs/VISION.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). They are the contribution
 contract, product north star, and design of record.
+Read the [glossary and decision index](docs/GLOSSARY.md) for shared terms and the
+sources behind accepted rules.
 
 ## Local gate profiles
 
