@@ -29,7 +29,7 @@ COPY constraints ./constraints
 # dependency would arrive unpinned, inside the artifact that ships. The version is
 # pyproject's own `build-system.requires` pin; `build` comes from the CI graph.
 RUN python -m pip install --no-cache-dir \
-        -c constraints/ci-py312.txt build setuptools==83.0.0 \
+        -c constraints/ci-py312.txt build setuptools==84.1.0 \
     && python -m build --no-isolation --wheel --outdir /wheels
 
 

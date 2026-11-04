@@ -67,11 +67,15 @@ uv pip compile constraints/security-tools.in \
   --emit-build-options \
   --python-version 3.12 \
   --python-platform x86_64-manylinux_2_28 \
-  --exclude-newer 2026-07-31T09:54:22Z \
+  --exclude-newer 2026-11-04T17:02:58Z \
   --no-sources \
   --default-index https://pypi.org/simple \
   --index-strategy first-index \
-  --no-annotate
+  --no-annotate \
+  --upgrade-package certifi==2026.10.19 \
+  --upgrade-package filelock==4.2.1 \
+  --upgrade-package msgpack==1.2.3 \
+  --upgrade-package setuptools==84.1.0
 ```
 
 Confirm `uv --version` is `0.11.28`, preserve that fact in the header, review
