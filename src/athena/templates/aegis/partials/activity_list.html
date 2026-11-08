@@ -8,56 +8,60 @@
 <ul class="activity-list">
     {% for e in events %}
     <li class="activity-item">
+        {# The detail as the recorder wrote it; a W3C trace suffix, when the write
+           carried one, is shown on its own line below as the hint it is. #}
+        {% set detail = e.detail | plain_detail %}
+        {% set trace = e.detail | trace_hint %}
         <span class="activity-actor">{{ e.actor_name }}</span>
         {% if e.verb == "created" %}
             created
         {% elif e.verb == "issue_edited" %}
-            edited issue <span class="activity-detail">{{ e.detail }}</span>
+            edited issue <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "changed_status" %}
-            changed status <span class="activity-detail">{{ e.detail }}</span>
+            changed status <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "changed_priority" %}
-            changed priority <span class="activity-detail">{{ e.detail }}</span>
+            changed priority <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "assigned" %}
-            assigned to <span class="activity-detail">{{ e.detail }}</span>
+            assigned to <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "unassigned" %}
             unassigned
         {% elif e.verb == "changed_project" %}
-            moved to <span class="activity-detail">{{ e.detail }}</span>
+            moved to <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "removed_from_project" %}
-            removed from <span class="activity-detail">{{ e.detail }}</span>
+            removed from <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "labeled" %}
-            labeled <span class="activity-detail">{{ e.detail }}</span>
+            labeled <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "unlabeled" %}
-            removed label <span class="activity-detail">{{ e.detail }}</span>
+            removed label <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "commented" %}
             commented
         {% elif e.verb == "comment_deleted" %}
             deleted a comment
         {% elif e.verb == "page_created" %}
-            created page <span class="activity-detail">{{ e.detail }}</span>
+            created page <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "page_edited" %}
-            edited page <span class="activity-detail">{{ e.detail }}</span>
+            edited page <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "page_deleted" %}
-            deleted page <span class="activity-detail">{{ e.detail }}</span>
+            deleted page <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "page_moved" %}
-            {% if e.detail %}moved page under <span class="activity-detail">{{ e.detail }}</span>{% else %}moved page to the top level{% endif %}
+            {% if detail %}moved page under <span class="activity-detail">{{ detail }}</span>{% else %}moved page to the top level{% endif %}
         {% elif e.verb == "page_restored" %}
-            restored page to <span class="activity-detail">{{ e.detail }}</span>
+            restored page to <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "space_created" %}
-            created space <span class="activity-detail">{{ e.detail }}</span>
+            created space <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "space_edited" %}
-            edited space <span class="activity-detail">{{ e.detail }}</span>
+            edited space <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb == "space_deleted" %}
-            deleted space <span class="activity-detail">{{ e.detail }}</span>
+            deleted space <span class="activity-detail">{{ detail }}</span>
         {% elif e.verb in ["forge_commit", "forge_pull_request", "forge_branch"] %}
             {# Foreign history: what a registered source SAID happened. The detail
                names the source and carries its URL; the filter links that URL only
                when its host is one the operator registered, and renders inert text
                otherwise (including when no hosts were passed). #}
             <span class="muted">reported</span>
-            <span class="activity-detail">{{ e.detail | forge_detail(forge_hosts | default([])) }}</span>
+            <span class="activity-detail">{{ detail | forge_detail(forge_hosts | default([])) }}</span>
         {% else %}
-            {{ e.verb }}{% if e.detail %} <span class="activity-detail">{{ e.detail }}</span>{% endif %}
+            {{ e.verb }}{% if detail %} <span class="activity-detail">{{ detail }}</span>{% endif %}
         {% endif %}
         {% if show_target %}
             {% if e.verb in ["page_deleted", "space_deleted"] %}
@@ -78,6 +82,10 @@
         <span class="muted">(undoes #{{ e.reverses_event_id }})</span>
         {% endif %}
         <span class="muted activity-time">{{ e.created_at }}</span>
+        {% if trace %}
+        {# A correlation hint into the agent's tracing stack: never authorization. #}
+        <span class="muted" title="W3C trace context recorded with this event: a hint, never authorization">trace {{ trace.traceparent }}{% if trace.tracestate %} · {{ trace.tracestate }}{% endif %}</span>
+        {% endif %}
         {% if reversed_ids is defined and e.id in reversed_ids %}
         <span class="muted">undone</span>
         {% elif undoable_ids is defined and e.id in undoable_ids %}

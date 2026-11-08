@@ -72,6 +72,7 @@ from athena.core import (
     security_api,
     sessions,
     tokens_api,
+    trace_context,
     undo,
     users_api,
     webhooks,
@@ -770,6 +771,11 @@ def create_app(
     # passes no hosts renders inert text, so a surface that has not opted in
     # degrades to today's behavior rather than breaking.
     templates.env.filters["forge_detail"] = render.render_forge_detail
+    # An event's detail may end in a W3C trace suffix (core/trace_context). The
+    # activity lists show the detail as the recorder wrote it and the trace as a
+    # muted hint; an event without one renders exactly as before.
+    templates.env.filters["plain_detail"] = trace_context.plain_detail
+    templates.env.filters["trace_hint"] = trace_context.trace_hint
     # Chip tone mapping (design system: docs/DESIGN_SYSTEM.md). Presentation-only,
     # no database access — see chips.py for which domains are exact vs. best-effort.
     templates.env.filters["status_tone"] = chips.status_tone

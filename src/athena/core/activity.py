@@ -18,7 +18,13 @@ from io import StringIO
 import sqlite3
 from typing import cast
 
-from athena.core import access, activity_chain, notifications, run_context
+from athena.core import (
+    access,
+    activity_chain,
+    notifications,
+    run_context,
+    trace_context,
+)
 
 # Every read returns the actor's display name alongside the row, so a feed can
 # render "Kevin closed AEGIS-12" without a second lookup.
@@ -297,6 +303,13 @@ def record(
                 run_context.get_parent_run_id(),
                 run_context.get_forked_from_event_id(),
             )
+            # The W3C trace pair of the request in flight, if it carried a valid
+            # one, rides at the end of the detail as a correlation hint (see
+            # trace_context). Native rows only: foreign history took the imported
+            # branch above and carries no hint from the request that delivered it.
+            # After every gate: a trace can never change what is recorded, only
+            # annotate it.
+            detail = trace_context.attach(detail)
         cur = conn.execute(
             "INSERT INTO activity "
             "(actor_id, verb, target_kind, target_id, detail, run_id, parent_run_id, "
@@ -824,9 +837,28 @@ def _run_node(
         events = events[:_LINEAGE_MAX_EVENTS]
     node = _run_summary(events)
     node["partial"] = clipped
-    if not with_events:
+    # Every node carries the key; _descendant_tree fills it for descendants. Set
+    # here so the lineage route can exclude unset fields (which is how a traced
+    # event gains its `trace` key without an untraced one gaining a null).
+    node["children"] = []
+    if with_events:
+        lift_trace(node["events"])
+    else:
         node["events"] = []
     return node
+
+
+def lift_trace(events: list[dict]) -> list[dict]:
+    """Add `trace` to each event that recorded a W3C trace pair in its detail.
+
+    The replay and lineage views show the hint as its own field; `detail` stays
+    the record exactly as stored. An event without one gains no key at all, so it
+    renders exactly as it did before trace context existed."""
+    for event in events:
+        trace = trace_context.split_detail(event["detail"])[1]
+        if trace is not None:
+            event["trace"] = trace
+    return events
 
 
 def _child_run_ids(conn: sqlite3.Connection, run_id: str) -> list[str]:

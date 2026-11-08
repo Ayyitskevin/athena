@@ -11,6 +11,7 @@ httpx and a pure wire normalizer (not the MCP SDK), so it can be unit-tested in 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import contextmanager
 from typing import Any
 import re
 
@@ -71,6 +72,10 @@ class AthenaError(RuntimeError):
 # a set so set_run can replace the whole identity atomically (stale parent/fork
 # headers from a previous run must never leak into the next one).
 _RUN_HEADERS = ("X-Athena-Run", "X-Athena-Parent-Run", "X-Athena-Fork-From-Event")
+# The W3C trace pair the same middleware reads as a correlation hint. Carried per
+# call (trace_context), never as standing client state: a trace belongs to one
+# action, a run to a session.
+_TRACE_HEADERS = ("traceparent", "tracestate")
 
 
 class AthenaClient:
@@ -130,6 +135,30 @@ class AthenaClient:
                     fork_from_event_id
                 )
         return self.current_run()
+
+    @contextmanager
+    def trace_context(self, traceparent: str | None, tracestate: str | None = None):
+        """Carry W3C trace context on the requests made inside the block, as the
+        same two headers a REST client sends next to the run headers. State is
+        meaningless without a parent, so it is only sent beside one. Whatever the
+        headers were before is restored on exit: a trace never outlives its call.
+        The server validates the shape and drops a malformed value with a logged
+        reason; it never refuses the write over it (docs/RUNS.md)."""
+        previous = {name: self._client.headers.get(name) for name in _TRACE_HEADERS}
+        for name in _TRACE_HEADERS:
+            self._client.headers.pop(name, None)
+        if traceparent:
+            self._client.headers["traceparent"] = traceparent
+            if tracestate:
+                self._client.headers["tracestate"] = tracestate
+        try:
+            yield
+        finally:
+            for name in _TRACE_HEADERS:
+                self._client.headers.pop(name, None)
+            for name, value in previous.items():
+                if value is not None:
+                    self._client.headers[name] = value
 
     def current_run(self) -> dict:
         """The run identity this client is currently stamping on requests."""

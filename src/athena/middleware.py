@@ -24,6 +24,7 @@ from athena.core import (
     rate_limits,
     run_context,
     tokens,
+    trace_context,
     users,
 )
 
@@ -411,6 +412,8 @@ class RunContextMiddleware:
         run_raw = None
         parent_raw = None
         forked_from_raw = None
+        traceparent_raw = None
+        tracestate_raw = None
         for name, value in scope.get("headers", []):
             lname = name.lower()
             # Decode as UTF-8 (errors replaced, never raised) to match how Starlette
@@ -423,6 +426,13 @@ class RunContextMiddleware:
                 parent_raw = value.decode("utf-8", "replace")
             elif lname == b"x-athena-fork-from-event":
                 forked_from_raw = value.decode("utf-8", "replace")
+            # The W3C trace pair rides next to the run headers with the same
+            # standing: a correlation hint, validated for shape, dropped with a
+            # logged reason when malformed, never a reason to refuse the request.
+            elif lname == b"traceparent":
+                traceparent_raw = value.decode("utf-8", "replace")
+            elif lname == b"tracestate":
+                tracestate_raw = value.decode("utf-8", "replace")
         # The run id comes straight from an untrusted client header, so a
         # server-reserved namespace (e.g. the automation engine's firing ids) is
         # dropped here — otherwise a client could pre-stamp a rule's predictable
@@ -432,9 +442,11 @@ class RunContextMiddleware:
         run_token = run_context.set_client_run_id(run_raw)
         parent_token = run_context.set_parent_run_id(parent_raw)
         forked_from_token = run_context.set_forked_from_event_id(forked_from_raw)
+        trace_token = trace_context.set_client_trace(traceparent_raw, tracestate_raw)
         try:
             await self.app(scope, receive, send)
         finally:
+            trace_context.reset_trace(trace_token)
             run_context.reset_forked_from_event_id(forked_from_token)
             run_context.reset_parent_run_id(parent_token)
             run_context.reset_run_id(run_token)

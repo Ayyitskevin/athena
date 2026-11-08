@@ -77,6 +77,21 @@ class RunOut(BaseModel):
     events: list[ActivityOut]
 
 
+class TraceOut(BaseModel):
+    # The W3C trace pair recorded with the event (docs/RUNS.md, Trace context): a
+    # correlation hint into another system, never authorization. Present only on
+    # events that carried a valid one; tracestate only when it was sent.
+    traceparent: str
+    tracestate: str | None = None
+
+
+class RunEventOut(ActivityOut):
+    # A replay or lineage event: the activity row plus the trace hint lifted out of
+    # its detail. The routes that serve these exclude unset fields, so an event
+    # that recorded no trace renders exactly as it did before (no `trace` key).
+    trace: TraceOut | None = None
+
+
 class RunNodeOut(BaseModel):
     # One run in a lineage tree. The FOCAL run carries its full events (oldest-first,
     # replayable); ancestors/descendants are light (events empty — drill in by their
@@ -92,7 +107,7 @@ class RunNodeOut(BaseModel):
     first_id: int
     last_id: int
     event_count: int
-    events: list[ActivityOut] = []
+    events: list[RunEventOut] = []
     children: list["RunNodeOut"] = []
 
 
@@ -136,7 +151,7 @@ class RunReplayArtifactOut(BaseModel):
     replay_order: str
     determinism_contract: dict[str, object]
     lineage: RunLineageOut
-    events: list[ActivityOut]
+    events: list[RunEventOut]
 
 
 class AgentIdentityOut(BaseModel):
@@ -424,7 +439,13 @@ def runs(
     )
 
 
-@router.get("/runs/{run_id}/lineage", response_model=RunLineageOut)
+@router.get(
+    "/runs/{run_id}/lineage",
+    response_model=RunLineageOut,
+    # Unset fields are excluded so an event's `trace` appears only when it was
+    # recorded; every other field is always set by the builder.
+    response_model_exclude_unset=True,
+)
 def run_lineage(
     run_id: str,
     actor: dict = Depends(current_actor),
@@ -441,7 +462,11 @@ def run_lineage(
     return lineage
 
 
-@router.get("/runs/{run_id}/replay", response_model=RunReplayArtifactOut)
+@router.get(
+    "/runs/{run_id}/replay",
+    response_model=RunReplayArtifactOut,
+    response_model_exclude_unset=True,
+)
 def run_replay_artifact(
     run_id: str,
     actor: dict = Depends(current_actor),

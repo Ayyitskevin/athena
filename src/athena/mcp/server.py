@@ -390,6 +390,37 @@ def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
     return required in scopes
 
 
+# A `_meta` value longer than this is not a trace; the server would drop it
+# anyway, so it is not worth a header.
+_MAX_TRACE_META_CHARS = 1024
+
+
+def _request_trace_context(mcp: FastMCP) -> tuple[str, str | None] | None:
+    """The W3C trace pair from the current tool call's `_meta`, or None.
+
+    MCP clients put `traceparent` and `tracestate` in a request's `_meta` next to
+    the progress token; the SDK exposes it as the request context's `meta`, with
+    unknown keys kept. Outside a request (a harness calling the tool directly)
+    there is no context and so no trace. Only short strings are forwarded; the
+    REST layer validates the shape and logs a drop (docs/RUNS.md)."""
+    try:
+        meta = mcp.get_context().request_context.meta
+    except (LookupError, ValueError):
+        return None
+    if meta is None:
+        return None
+    traceparent = getattr(meta, "traceparent", None)
+    tracestate = getattr(meta, "tracestate", None)
+    if (
+        not isinstance(traceparent, str)
+        or not 0 < len(traceparent) <= _MAX_TRACE_META_CHARS
+    ):
+        return None
+    if not isinstance(tracestate, str) or len(tracestate) > _MAX_TRACE_META_CHARS:
+        tracestate = None
+    return traceparent, tracestate
+
+
 def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
     """Ask Athena what the session's token may do, failing OPEN to the full
     surface. Filtering is ergonomics; the REST layer is the boundary — so an
@@ -440,12 +471,20 @@ def build_server(
     )
 
     def preserve_athena_errors(function):
-        """Keep REST error metadata machine-readable across the MCP boundary."""
+        """Keep REST error metadata machine-readable across the MCP boundary, and
+        carry the call's trace context (`traceparent`/`tracestate` in the tool
+        call's `_meta`) to the REST request as the same headers, for this call
+        only. The client is touched only when a trace is actually present, so a
+        harness that injects a stub or recording client sees nothing new."""
 
         @wraps(function)
         def guarded(*args, **kwargs):
+            trace = _request_trace_context(mcp)
             try:
-                return function(*args, **kwargs)
+                if trace is None:
+                    return function(*args, **kwargs)
+                with client.trace_context(*trace):
+                    return function(*args, **kwargs)
             except AthenaError as exc:
                 error_json = json.dumps(
                     exc.as_dict(), separators=(",", ":"), ensure_ascii=False
