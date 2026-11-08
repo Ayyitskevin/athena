@@ -154,6 +154,9 @@ async def events(
             "elapsed_seconds": round(elapsed, 3),
             "outcome": outcome,
         }
+        # Tell the slow-request timer how long this request parked on purpose, so
+        # a wait is not reported as a slow read (middleware.SlowRequestLogMiddleware).
+        request.state.parked_ms = elapsed * 1000.0
     has_more = len(rows) > limit
     batch = rows[:limit]
     # Advance the cursor to the last delivered event; if nothing was delivered the
