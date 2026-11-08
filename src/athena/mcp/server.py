@@ -202,6 +202,33 @@ DigestWindowMinutes = Annotated[
 ]
 MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 
+# What every session reads once, instead of the same paragraph on every write
+# tool. The MCP handshake carries it as the server's instructions; each write
+# tool keeps a one-line pointer so a client that ignores instructions still
+# knows the rule exists. Stated once it costs about 250 tokens; appended to
+# 63 tools it cost about 8,300 in every session.
+SERVER_INSTRUCTIONS = (
+    "Every tool is a call to Athena's REST API with your token: the same scopes "
+    "and the same audit trail as any other client. Start with my_desk.\n\n"
+    "Retries: a write you might have to repeat takes idempotency_key. Pick a "
+    "stable, non-secret key of 1-255 visible ASCII characters before the first "
+    "attempt and reuse it only for the exact same call; a different call needs "
+    "a different key.\n\n"
+    "ETags: tools with if_match guard one revision. The issue ETag is one value "
+    "with two names: `_etag` on get_issue and `issue_etag` on "
+    "get_issue_work_context (the same value; the work-context packet's own "
+    "top-level `_etag` is a different tag). A page's is `_etag` on get_page. "
+    "claim_issue requires if_match; elsewhere it is optional and stops you from "
+    "overwriting a revision you have not seen. A 412 means the revision moved: "
+    "read it again, merge your change into the current state, and retry with "
+    "the fresh tag and a new idempotency_key.\n\n"
+    "Leases: claim_issue acquires a free or expired lease. Calling it again "
+    "while you hold the issue is a renewal and needs your current generation "
+    "(the 428 names it). complete_claim releases the lease and does NOT close "
+    "the issue; update_issue with a status does."
+)
+RETRY_POINTER = "Retry keys and ETags: see the server instructions."
+
 # --- tool scopes -------------------------------------------------------------
 #
 # What each tool needs from the token, mirroring the REST layer's enforcement —
@@ -242,7 +269,6 @@ TOOL_SCOPES: dict[str, str] = {
     "unlinked_mentions": READ_ONLY,
     "query_help": READ_ONLY,
     "list_my_delegated_work": READ_ONLY,
-    "get_fleet_active_work": READ_ONLY,
     "get_issue": READ_ONLY,
     "get_issue_work_context": READ_ONLY,
     "get_issue_history": READ_ONLY,
@@ -258,10 +284,6 @@ TOOL_SCOPES: dict[str, str] = {
     "get_watch_preference": READ_ONLY,
     "begin_run": READ_ONLY,
     "current_run": READ_ONLY,
-    "get_agent_run_health": READ_ONLY,
-    "list_automation_rules": READ_ONLY,
-    "get_automation_rule": READ_ONLY,
-    "list_automation_failures": READ_ONLY,
     "list_activity_runs": READ_ONLY,
     "list_run_events": READ_ONLY,
     "get_run_lineage": READ_ONLY,
@@ -272,8 +294,6 @@ TOOL_SCOPES: dict[str, str] = {
     "my_desk": READ_ONLY,
     "my_office": READ_ONLY,
     "get_project_floor": READ_ONLY,
-    "activity_chain_status": READ_ONLY,
-    "verify_activity_chain": READ_ONLY,
     "list_workers": READ_ONLY,
     "list_run_controls": READ_ONLY,
     "get_run_control": READ_ONLY,
@@ -350,6 +370,19 @@ TOOL_SCOPES: dict[str, str] = {
     "record_run_learning": tokens.DOCS_WRITE_SCOPE,
     # operator/admin surfaces (admin-gated reads included, so a non-admin
     # session does not carry tools that can only answer 403)
+    #
+    # Admin-gated READS: each route below carries the admin dependency
+    # (core/activity_api.py chain, chain/verify, agent-runs;
+    # aegis/automation_api.py rules; aegis/fleet_work_api.py active-work).
+    # tests/test_mcp_surface_slim.py walks every read-scoped tool with a seat
+    # token and fails on a 403, so a new admin read cannot be mapped `read`.
+    "activity_chain_status": tokens.ADMIN_SCOPE,
+    "verify_activity_chain": tokens.ADMIN_SCOPE,
+    "get_agent_run_health": tokens.ADMIN_SCOPE,
+    "get_fleet_active_work": tokens.ADMIN_SCOPE,
+    "list_automation_rules": tokens.ADMIN_SCOPE,
+    "get_automation_rule": tokens.ADMIN_SCOPE,
+    "list_automation_failures": tokens.ADMIN_SCOPE,
     "list_security_events": tokens.ADMIN_SCOPE,
     "agent_answerability": tokens.ADMIN_SCOPE,
     "list_approvals": tokens.ADMIN_SCOPE,
@@ -426,18 +459,7 @@ def build_server(
     everything, so embedding callers and tests get the full deterministic
     surface unless they opt in; ``main()`` opts in by wiring ``probe_scopes``."""
     token_scopes = scopes
-    mcp = FastMCP("athena")
-
-    idempotency_guidance = (
-        "For retry-critical calls, choose a stable, non-secret idempotency_key "
-        "containing 1-255 visible ASCII characters before the first attempt and "
-        "reuse it only for the exact same call. For tools exposing if_match, first "
-        "call the matching read (get_issue for an issue, get_page for a page) and "
-        "copy its _etag exactly. If a write returns 412, refetch the resource, merge "
-        "the intended change with its current state, and retry with the refreshed "
-        "_etag plus a new idempotency_key because the changed precondition makes it a "
-        "different call."
-    )
+    mcp = FastMCP("athena", instructions=SERVER_INSTRUCTIONS)
 
     def preserve_athena_errors(function):
         """Keep REST error metadata machine-readable across the MCP boundary."""
@@ -474,11 +496,12 @@ def build_server(
         return mcp.tool()(preserve_athena_errors(function))
 
     def mutation_tool(function):
-        """Register a write tool with the shared retry-key contract."""
+        """Register a write tool with a pointer to the shared retry-key contract,
+        which the server instructions state once (``SERVER_INSTRUCTIONS``)."""
         if not _tool_visible(_required_scope(function), token_scopes):
             return function
         guarded = preserve_athena_errors(function)
-        guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{idempotency_guidance}"
+        guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{RETRY_POINTER}"
         return mcp.tool()(guarded)
 
     from athena.mcp.tools_read import register_read_tools

@@ -387,6 +387,13 @@ def board(tmp_path):
                 scopes = mcp_server.probe_scopes(client)
             return mcp_server.build_server(client, scopes=scopes)
 
+        def http(onboarded):
+            """The raw REST client for this agent's token, for the one check
+            that must bypass the MCP layer's own argument validation."""
+            return TestClient(
+                app, headers={"Authorization": f"Bearer {onboarded['token']['token']}"}
+            )
+
         yield {
             "seat": seat,
             "other": other,
@@ -395,6 +402,7 @@ def board(tmp_path):
             "space": space,
             "page": page,
             "session": session,
+            "http": http,
         }
 
 
@@ -625,31 +633,21 @@ def test_the_generation_is_named_to_the_holder_only(board):
 
 
 def test_other_generation_required_refusals_keep_their_general_wording(board):
-    # Only the repeated claim learned to explain itself; complete_claim without a
-    # generation is still the generic 428, because there is no possession to name
-    # until the caller says which row it means.
+    # Only the repeated claim learned to explain itself. A completion without a
+    # generation is still the generic 428: the caller has not said which row it
+    # means, so there is nothing to name. The MCP tool makes generation a required
+    # argument, so this goes through REST, where the field is optional precisely
+    # so the command can answer 428 instead of a validation error.
     server = board["session"](board["seat"])
     issue_id = board["issue"]["id"]
     etag = _call(server, "get_issue", issue_id=issue_id)["_etag"]
     _call(server, "claim_issue", issue_id=issue_id, if_match=etag)
-    with pytest.raises(ToolError) as caught:
-        asyncio.run(
-            server.call_tool(
-                "yield_claim",
-                {
-                    "issue_id": issue_id,
-                    "reason": "blocked",
-                    "attempted_work": "read the brief",
-                    "evidence": [],
-                    "blocking_question": "which root?",
-                    "resume_instructions": "ask the operator",
-                },
-            )
-        )
-    error = _athena_error(caught.value)
-    assert error is not None
-    assert error["status_code"] == 428
-    assert "generation=" not in json.dumps(error)
+    response = board["http"](board["seat"]).post(
+        f"/issues/{issue_id}/complete", json={}
+    )
+    assert response.status_code == 428, response.text
+    assert "generation=" not in response.text
+    assert "already hold" not in response.text
 
 
 # --- 4. the docstrings an agent reads first --------------------------------------

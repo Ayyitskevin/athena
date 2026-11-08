@@ -299,6 +299,23 @@ swapping back to an old binary is not an accepted rollback. No real catalog shou
 be installed until retained topology evidence and rollout review justify it.
 Synthetic qualification tests verify branches, not real topology.
 
+### Renewing with declared paths
+
+A renewal is the same `claim_issue` call from the current holder with the exact
+current `generation` (a repeated claim without it answers 428 and names the
+generation to the holder). What a renewal does to the declared fence:
+
+- `paths` omitted or null retains the stored root and paths.
+- An explicit `[]` makes the renewal issue-only, under the same generation, ETag
+  and audit rules. It is never a way to bypass a conflict.
+- Changing the coordination root needs a new possession: a renewal that names a
+  different root is refused as a conflict.
+- Never infer a root from host, repository or branch strings.
+  Unknown nonempty origins conflict conservatively.
+- The response echoes the root; confirm it. An unconfirmed success may already
+  exist on the server: read the lease state, never weaken the fence, never retry
+  blindly.
+
 ## Limitations
 
 - An untagged claim cannot be correlated to a replay/check-in run.

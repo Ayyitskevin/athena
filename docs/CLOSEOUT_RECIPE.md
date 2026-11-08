@@ -87,6 +87,18 @@ history labels these fields **reported** and escapes their text. Replay and
 exports preserve the original detail; imported history cannot become a native
 reported completion or actionable handoff merely by copying that text.
 
+### What `complete_claim` tells you
+
+Releasing a claim does not close the issue: `update_issue(status=...)` (REST
+`PATCH /issues/{id}`) is the separate, deliberate second write. The 200 body
+repeats `issue_status` and `issue_still_open`, and `lapsed` says whether the row
+you cleared had already expired. A lapsed row of your own is cleared under the
+same rules; `my_desk()` lists its generation under `work.leases.lapsed`. While
+you hold the issue actively, an open claim handoff answers 409 until this exact
+leaseholder resumes it (`resume_claim_handoff`). Refs are inert data; never
+submit credentials, secret URLs, or tokens. A `not_met` result or an `unrun`
+reference does not block release.
+
 ## Deliberate closeout actions
 
 Read `my_desk()` first. Keep active leases, lapsed residual rows and unread

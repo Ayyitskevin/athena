@@ -39,19 +39,15 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 | MCP tool | REST call(s) | Summary |
 |---|---|---|
-| `activity_chain_status` | `GET /activity/chain` | Where the audit trail's hash chain stands (admin only). |
 | `begin_run` | *(client-side)* | Switch this session's run identity: every write you make afterwards is … |
 | `count_work` | `GET /issues/query/count` | How many issues a work query matches, ignoring paging — so a bounded … |
 | `current_run` | *(client-side)* | Read the run identity this session is currently stamping on writes: |
 | `embed_help` | `GET /embeds/help` | The embed vocabulary as data: every kind, its keys, and the limits. |
 | `find_pages_by_title` | `GET /pages/by-title` | Find Mentor pages by their TITLE instead of a numeric id — the address you can … |
 | `get_agent_budget` | `GET /users/{user_id}/budget` | Read a user's durable action budget — how many metered writes it may … |
-| `get_agent_run_health` | `GET /activity/agent-runs` | Read the admin-only fleet cockpit rollup: each agent's bounded recent … |
 | `get_attention_ranking` | `GET /attention/ranking` | Read the bounded, actor-filtered "Now" queue. Each row cites its … |
-| `get_automation_rule` | `GET /automation/rules/{rule_id}` | Get one admin-only automation rule by id, including schedule progress, … |
-| `get_fleet_active_work` | `GET /fleet/active-work` | Admin-only view of agent-held issue claims. Joins each lease to its … |
 | `get_fleet_metrics` | `GET /fleet/metrics` | Read bounded issue throughput for this token's visible scope. Dates are … |
-| `get_issue` | `GET /issues/{ref}` | Get one issue by numeric id ('12') or project key ('ATH-12'). The … |
+| `get_issue` | `GET /issues/{ref}` | Get one issue by issue_id (the number every write tool takes) or by … |
 | `get_issue_history` | `GET /issues/{issue_id}/history` | Read one issue's bounded operator run narrative. Every item cites … |
 | `get_issue_lease` | `GET /issues/{issue_id}/lease` | Who holds the exclusive claim on this issue right now — {holder_id, holder_name, … |
 | `get_issue_runbook` | `GET /issues/{issue_id}/runbook` | The issue's runbook page — accumulated learnings from earlier runs — or … |
@@ -68,8 +64,6 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_watch_preference` | `GET /watches/{target_kind}/{target_id}/preference` | Read YOUR priority, mute, and digest preference for one active watch. |
 | `link_graph` | `GET /{base}/{node_id}/graph` | The link neighbourhood around an issue or page, as you can see it. |
 | `list_activity_runs` | `GET /activity/runs` | Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run … |
-| `list_automation_failures` | `GET /automation/rules` | Read the admin-only exception list of automation rules whose actions have … |
-| `list_automation_rules` | `GET /automation/rules` | List every admin-only automation rule with its event or schedule … |
 | `list_dispatches` | `GET /dispatches` | What Athena has handed to the executor, newest first. Filter by … |
 | `list_issue_comments` | `GET /issues/{issue_id}/comments` | Read one issue's comment thread, oldest first — the discussion a … |
 | `list_issue_links` | `GET /issues/{issue_id}/links` | Read an issue's dependency links — what it blocks, what blocks it, and … |
@@ -102,7 +96,6 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `search_work` | `GET /issues` | Find issues with a work query — the precise way to ask for work. |
 | `search_workspace` | `GET /search/workspace` | One ask across issues, pages, AND comments — use this when you do not … |
 | `unlinked_mentions` | `GET /{base}/{node_id}/unlinked-mentions` | Documents whose text NAMES this issue/page without linking to it. |
-| `verify_activity_chain` | `GET /activity/chain/verify` | Recompute a bounded window of the audit trail's hash chain (admin only). |
 | `whoami` | `GET /users/me` | Who am I? Your identity (id, email, role, agent flag), the acting … |
 
 ## Aegis write tools — scope: `issue:write`
@@ -113,9 +106,9 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `assign_issue` | `PUT /issues/{issue_id}/assignee` | Assign an issue to a user id, or pass no assignee_id to unassign it. |
 | `attach_label` | `POST /issues/{issue_id}/labels` | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
-| `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
+| `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue against the exact root issue revision you … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
-| `complete_claim` | `POST /issues/{issue_id}/complete` | Release a claim with optional reported conditions, residuals, and evidence. |
+| `complete_claim` | `POST /issues/{issue_id}/complete` | Release your lease. This does NOT close the issue; update_issue does. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
 | `create_issue` | `POST /issues` | Create an Aegis issue. Omit status to use the target project's default; … |
 | `create_label` | `POST /labels` | Create a label in the shared vocabulary. color is a #RRGGBB hex string. |
@@ -174,6 +167,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 | MCP tool | REST call(s) | Summary |
 |---|---|---|
+| `activity_chain_status` | `GET /activity/chain` | Where the audit trail's hash chain stands (admin only). |
 | `agent_answerability` | `GET /fleet/answerability` | The per-agent ask-and-answer ledger (admin only). |
 | `cancel_worker_kill` | `DELETE /workers/{worker_id}/kill` | Admin: withdraw a kill request the worker has not acknowledged yet. |
 | `clear_agent_budget` | `DELETE /users/{user_id}/budget` | Admin: remove a user's budget, returning it to unlimited. Idempotent. |
@@ -181,7 +175,12 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `create_run_control` | `POST /run-controls` | Admin: record a control request against a live run. |
 | `decide_approval` | `POST /approvals/{request_id}/decision` | Approve or reject a pending approval request ('approve' \| 'reject'). |
 | `delete_automation_rule` | `DELETE /automation/rules/{rule_id}` | Permanently delete an admin-only automation rule. Disable it instead when … |
+| `get_agent_run_health` | `GET /activity/agent-runs` | Read the admin-only fleet cockpit rollup: each agent's bounded recent … |
+| `get_automation_rule` | `GET /automation/rules/{rule_id}` | Get one admin-only automation rule by id, including schedule progress, … |
+| `get_fleet_active_work` | `GET /fleet/active-work` | Admin-only view of agent-held issue claims. Joins each lease to its … |
 | `list_approvals` | `GET /approvals` | The operator's approval queue — actions an agent asked to take that are … |
+| `list_automation_failures` | `GET /automation/rules` | Read the admin-only exception list of automation rules whose actions have … |
+| `list_automation_rules` | `GET /automation/rules` | List every admin-only automation rule with its event or schedule … |
 | `list_security_events` | `GET /security/events` | Recent boundary REFUSALS — someone probing where they may not go. |
 | `list_users` | `GET /users` | List users (id, name, role) — useful for resolving an assignee. |
 | `offboard_agent` | `POST /users/{user_id}/offboard` | Admin one-click offboard: demote user_id to viewer, revoke every session, … |
@@ -193,6 +192,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `set_agent_budget` | `PUT /users/{user_id}/budget` | Admin: cap how many metered writes a user may make per fixed window … |
 | `set_approval_policy` | `PUT /approvals/policies/{user_id}` | Admin: require operator approval before this user may take an action … |
 | `set_automation_rule_enabled` | `PATCH /automation/rules/{rule_id}` | Arm or disarm an admin-only automation rule without deleting its … |
+| `verify_activity_chain` | `GET /activity/chain/verify` | Recompute a bounded window of the audit trail's hash chain (admin only). |
 
 ---
 
