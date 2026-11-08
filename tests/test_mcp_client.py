@@ -2284,8 +2284,13 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
 
         work_context_tool = tools["get_issue_work_context"]
         # Either name for the issue, neither required on its own: the tool
-        # insists on exactly one at call time (tests/test_mcp_surface_slim.py).
-        assert set(work_context_tool.inputSchema["properties"]) == {"ref", "issue_id"}
+        # insists on exactly one at call time (tests/test_mcp_surface_slim.py);
+        # brief is the compact packet (tests/test_work_context_brief.py).
+        assert set(work_context_tool.inputSchema["properties"]) == {
+            "ref",
+            "issue_id",
+            "brief",
+        }
         assert "ref" not in work_context_tool.inputSchema.get("required", [])
         work_context_description = work_context_tool.description.lower()
         for contract_term in (
