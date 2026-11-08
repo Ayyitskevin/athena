@@ -8,6 +8,7 @@ from __future__ import annotations
 from html import escape
 import json
 import sqlite3
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from athena import config
@@ -49,6 +50,17 @@ from athena.web.admin import (
 )
 
 router = APIRouter()
+
+
+def _agents_redirect(**query: str) -> RedirectResponse:
+    """Send the operator back to the agents page with one encoded value per key.
+
+    Error and notice text can contain & # ? = (it may echo input), so it must be
+    encoded rather than pasted into the URL."""
+    query_string = "&".join(
+        f"{key}={quote(value, safe='')}" for key, value in query.items()
+    )
+    return RedirectResponse(f"/admin/agents?{query_string}", status_code=303)
 
 
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
@@ -370,7 +382,7 @@ def decide_approval(
             note=note.strip() or None,
         )
     except HTTPException as exc:
-        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
+        return _agents_redirect(error=str(exc.detail))
     return RedirectResponse(
         f"/admin/agents?decided={decision.strip()}", status_code=303
     )
@@ -404,13 +416,13 @@ def request_worker_kill(
         else:
             worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
     except worker_commands.WorkerCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
+        return _agents_redirect(error=str(exc.detail))
     notice = (
         "Kill request withdrawn."
         if withdrawing
         else "Worker asked to stop; it will be told on its next heartbeat."
     )
-    return RedirectResponse(f"/admin/agents?notice={notice}", status_code=303)
+    return _agents_redirect(notice=notice)
 
 
 @router.post(
@@ -446,7 +458,7 @@ def set_approval_policy(
                 action_kind=action_kind.strip(),
             )
     except ValueError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
 
 
@@ -483,7 +495,7 @@ def set_agent_budget(
             action_limit=int(raw),
         )
     except ValueError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
 
 
@@ -520,7 +532,7 @@ def pause_agent(
             conn, actor=user, target_user_id=user_id, paused=True
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?paused=1", status_code=303)
 
 
@@ -540,7 +552,7 @@ def resume_agent(
             conn, actor=user, target_user_id=user_id, paused=False
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?resumed=1", status_code=303)
 
 
@@ -560,7 +572,7 @@ def revoke_agent_tokens(
             conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse(
         f"/admin/agents?revoked={result['revoked_token_count']}", status_code=303
     )
@@ -580,7 +592,7 @@ def offboard_agent(
     try:
         agent_commands.offboard_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
 
 
@@ -598,7 +610,7 @@ def remove_agent(
     try:
         agent_commands.remove_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?removed=1", status_code=303)
 
 
