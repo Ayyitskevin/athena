@@ -1,14 +1,17 @@
-"""REST inbox with read-time target state, composed from core notifications and Aegis issues.
+"""REST inbox with read-time row state, composed from core notifications and Aegis issues.
 
 Core owns the inbox rows and their visibility gate. This route adds ``target_state``
 to each row (see ``athena.aegis.notification_state``). It replaces the plain inbox
 route that used to live in core, so ``GET /notifications`` has exactly one owner.
+
+The response model is core's ``NotificationOut``, so the documented schema keeps its
+name and gains one additive field. The route keeps the ``core`` tag so the generated
+API documentation groups it where it was before.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 
@@ -18,14 +21,10 @@ from athena.core.deps import get_conn
 from athena.core.identity import current_actor
 from athena.core.notifications_api import NotificationOut
 
-router = APIRouter(tags=["aegis"])
+router = APIRouter(tags=["core"])
 
 
-class NotificationStateOut(NotificationOut):
-    target_state: Literal["archived", "completed_by_you", "closed"] | None = None
-
-
-@router.get("/notifications", response_model=list[NotificationStateOut])
+@router.get("/notifications", response_model=list[NotificationOut])
 def inbox(
     unread: bool = Query(False, description="only unread notifications"),
     limit: int = Query(50, ge=1, le=200),

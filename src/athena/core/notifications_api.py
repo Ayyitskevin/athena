@@ -34,6 +34,10 @@ class NotificationOut(BaseModel):
     target_id: int
     detail: str
     event_at: str
+    # Read-time state of the target as this row describes it (see
+    # athena.aegis.notification_state). Null when none applies. Additive; set only by
+    # the inbox list route.
+    target_state: Literal["archived", "completed_by_you", "closed"] | None = None
 
 
 class UnreadCount(BaseModel):

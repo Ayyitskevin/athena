@@ -91,7 +91,23 @@ def test_archived_target_is_annotated_archived_even_when_done(tmp_path):
         assert row["target_state"] == "archived"
 
 
-def test_reader_who_completed_the_target_is_annotated_completed_by_you(tmp_path):
+def _complete_as_reader(db_file, issue_id):
+    conn = db.connect(db_file)
+    activity.record(
+        conn,
+        actor_id=2,
+        verb="claim_completed",
+        target_kind="issue",
+        target_id=issue_id,
+        detail="generation 1",
+    )
+    conn.commit()
+
+
+def test_a_notification_older_than_the_completion_is_labelled_completed_by_you(
+    tmp_path,
+):
+    # Positive control: the row describes an event the reader had already handled.
     app, db_file = _app(tmp_path, "completed.db")
     with TestClient(app) as client:
         _setup_users(client)
@@ -101,24 +117,61 @@ def test_reader_who_completed_the_target_is_annotated_completed_by_you(tmp_path)
             json={"target_kind": "issue", "target_id": issue["id"]},
             headers=H2,
         )
-        # The reader (user 2) completes the claim: their own completion event.
-        conn = db.connect(db_file)
-        activity.record(
-            conn,
-            actor_id=2,
-            verb="claim_completed",
-            target_kind="issue",
-            target_id=issue["id"],
-            detail="generation 1",
-        )
-        conn.commit()
-        # Someone else then comments, so the reader gets a row to annotate.
         client.post(
             f"/issues/{issue['id']}/comments", json={"body": "thanks"}, headers=H1
         )
+        _complete_as_reader(db_file, issue["id"])
 
         row = _row_for(_inbox(client), issue["id"], "commented")
         assert row["target_state"] == "completed_by_you"
+
+
+def test_a_notification_after_the_completion_is_not_labelled_completed_by_you(tmp_path):
+    # The reader finished, then the operator asks for more. The new row describes an
+    # unhandled request, so it must not read as already handled.
+    app, db_file = _app(tmp_path, "later.db")
+    with TestClient(app) as client:
+        _setup_users(client)
+        issue = client.post("/issues", json={"title": "claimed"}, headers=H1).json()
+        client.post(
+            "/watches",
+            json={"target_kind": "issue", "target_id": issue["id"]},
+            headers=H2,
+        )
+        client.post(
+            f"/issues/{issue['id']}/comments", json={"body": "first"}, headers=H1
+        )
+        _complete_as_reader(db_file, issue["id"])
+        client.post(
+            f"/issues/{issue['id']}/comments",
+            json={"body": "please also add the PR link"},
+            headers=H1,
+        )
+
+        rows = _inbox(client)
+        comments = sorted(
+            [
+                r
+                for r in rows
+                if r["verb"] == "commented" and r["target_id"] == issue["id"]
+            ],
+            key=lambda r: r["event_id"],
+        )
+        assert [r["target_state"] for r in comments] == ["completed_by_you", None]
+
+
+def test_the_notification_schema_keeps_its_name_and_gains_the_field(tmp_path):
+    # Contract: the inbox response stays documented as NotificationOut. target_state is
+    # an additive field on that schema, not a renamed type.
+    app, _ = _app(tmp_path, "schema.json.db")
+    with TestClient(app) as client:
+        spec = client.get("/openapi.json").json()
+    schemas = spec["components"]["schemas"]
+    assert "NotificationStateOut" not in schemas
+    assert "target_state" in schemas["NotificationOut"]["properties"]
+    response = spec["paths"]["/notifications"]["get"]["responses"]["200"]
+    items = response["content"]["application/json"]["schema"]["items"]
+    assert items == {"$ref": "#/components/schemas/NotificationOut"}
 
 
 def test_completion_is_per_reader_not_global(tmp_path):
@@ -156,6 +209,11 @@ def test_imported_completion_does_not_mark_the_reader_as_completing(tmp_path):
             json={"target_kind": "issue", "target_id": issue["id"]},
             headers=H2,
         )
+        client.post(
+            f"/issues/{issue['id']}/comments", json={"body": "again"}, headers=H1
+        )
+        # The imported completion is recorded AFTER the row, so it would be labelled
+        # if imported history counted. It must not be.
         conn = db.connect(db_file)
         activity.record(
             conn,
@@ -167,9 +225,6 @@ def test_imported_completion_does_not_mark_the_reader_as_completing(tmp_path):
             imported_at="2026-01-01 00:00:00",
         )
         conn.commit()
-        client.post(
-            f"/issues/{issue['id']}/comments", json={"body": "again"}, headers=H1
-        )
 
         row = _row_for(_inbox(client), issue["id"], "commented")
         assert row["target_state"] is None

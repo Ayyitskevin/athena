@@ -1,13 +1,15 @@
-"""Read-time target state for inbox rows.
+"""Read-time state for inbox rows.
 
-Core notifications say what happened. This module says what the target looks like
-now, from the reader's point of view: is it archived, did this reader complete it, is
-it closed. It is a read. It writes nothing and acknowledges nothing.
+Core notifications say what happened. This module says what each row means now, from
+the reader's point of view. It is a read. It writes nothing and acknowledges nothing.
 
-The four states, in precedence order (first match wins):
+The state describes the ROW, not only the target. Precedence, first match wins:
 
     archived          the target issue is archived
-    completed_by_you  the reader has a claim_completed event on the target
+    completed_by_you  the reader completed a claim on the target at or after this
+                      row's own event, so the row describes something they had
+                      already handled. A row that arrived after their completion is
+                      not labelled, even though the target is the same.
     closed            the target's status is in the done category
     None              none of the above, or the target is not an issue
 
@@ -31,46 +33,54 @@ def annotate_inbox(
 ) -> list[dict]:
     """Return copies of ``rows`` with a ``target_state`` key added to each.
 
-    One query covers every issue in the list, so the cost does not grow per row."""
+    Two queries cover every issue in the list, so the cost does not grow per row."""
     issue_ids = sorted({r["target_id"] for r in rows if r["target_kind"] == "issue"})
-    states: dict[int, TargetState | None] = {}
+    issues: dict[int, tuple[int, int]] = {}
+    last_completion: dict[int, int] = {}
     if issue_ids:
         marks = ",".join("?" for _ in issue_ids)
         category = statuses.category_sql(
             status_column="i.status", category_column="ips.category"
         )
-        completed = (
-            "EXISTS (SELECT 1 FROM activity c "
-            "WHERE c.target_kind = 'issue' AND c.target_id = i.id "
-            "AND c.actor_id = ? AND c.verb = 'claim_completed' "
-            "AND c.imported_at IS NULL)"
-        )
-        found = conn.execute(
+        for row in conn.execute(
             f"SELECT i.id, i.archived_at IS NOT NULL AS archived, "
-            f"{completed} AS completed, ({category}) = 'done' AS closed "
+            f"({category}) = 'done' AS closed "
             f"FROM issues i "
             f"LEFT JOIN project_statuses ips "
             f"ON ips.project_id = i.project_id AND ips.name = i.status "
             f"WHERE i.id IN ({marks})",
+            issue_ids,
+        ).fetchall():
+            issues[row["id"]] = (row["archived"], row["closed"])
+        # The reader's own native completions, newest id per issue. Imported rows are
+        # foreign history and never count as the reader's completion.
+        for row in conn.execute(
+            f"SELECT c.target_id, MAX(c.id) AS last_id FROM activity c "
+            f"WHERE c.target_kind = 'issue' AND c.actor_id = ? "
+            f"AND c.verb = 'claim_completed' AND c.imported_at IS NULL "
+            f"AND c.target_id IN ({marks}) GROUP BY c.target_id",
             (reader_id, *issue_ids),
-        ).fetchall()
-        for row in found:
-            states[row["id"]] = _state(row["archived"], row["completed"], row["closed"])
+        ).fetchall():
+            last_completion[row["target_id"]] = row["last_id"]
     return [
-        {
-            **row,
-            "target_state": states.get(row["target_id"])
-            if row["target_kind"] == "issue"
-            else None,
-        }
-        for row in rows
+        {**row, "target_state": _state(row, issues, last_completion)} for row in rows
     ]
 
 
-def _state(archived: int, completed: int, closed: int) -> TargetState | None:
+def _state(
+    row: dict,
+    issues: dict[int, tuple[int, int]],
+    last_completion: dict[int, int],
+) -> TargetState | None:
+    if row["target_kind"] != "issue" or row["target_id"] not in issues:
+        return None
+    archived, closed = issues[row["target_id"]]
     if archived:
         return "archived"
-    if completed:
+    completed_at = last_completion.get(row["target_id"])
+    # The completion must come at or after this row's own event: the row was already
+    # there when the reader finished.
+    if completed_at is not None and completed_at >= row["event_id"]:
         return "completed_by_you"
     if closed:
         return "closed"
