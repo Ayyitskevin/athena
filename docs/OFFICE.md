@@ -41,7 +41,8 @@ Two agents can still read the same office shape at once. Sitting down is
   },
   "next_to_sit": null,
   "protocol": { "claim_one_issue": true, "do_not_touch_other_work": true },
-  "warnings": []
+  "warnings": [],
+  "fence_overlaps": []
 }
 ```
 
@@ -50,6 +51,24 @@ Two agents can still read the same office shape at once. Sitting down is
 
 `seated` is true only when there is **exactly one** active lease. Two active
 leases set a warning: pick a chair and release the other.
+
+`fence_overlaps` lists every other live lease whose declared paths overlap one
+of yours, on an issue you can see. Each entry gives the other issue and holder,
+both paths, and the basis of the comparison (`same root`, or `lexical, root
+unknown`). Each one also adds a warning line: `your fence overlaps issue X, held
+by Y`.
+
+**How paths are compared.** The lease grammar normalises them: `./` and a
+trailing `/` drop, and a `..` path makes the stored fence unreadable rather than
+collapsed. Two paths overlap when they are equal or one is a directory prefix of
+the other (`src/app` covers `src/app/x.py`, not `src/application`).
+
+**It is shown, never enforced.** The claim command's overlap check stays the only
+gate. An overlap can exist only where something bypassed that check, for example
+a root catalog that changed under live leases.
+
+**Where the operator sees it.** The attention card counts the pairs, and each
+pair is a row in its Now queue linking both issues and naming both holders.
 
 ## The floor
 

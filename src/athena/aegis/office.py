@@ -13,7 +13,15 @@ from __future__ import annotations
 from datetime import datetime
 import sqlite3
 
-from athena.aegis import dependencies, issues, leases, projects, rooms, statuses
+from athena.aegis import (
+    dependencies,
+    fence_overlaps,
+    issues,
+    leases,
+    projects,
+    rooms,
+    statuses,
+)
 from athena.core import access, fleet_roster, users
 
 FLOOR_SCHEMA = "athena.project_floor.v1"
@@ -101,6 +109,11 @@ def build_office(
         )
         chair = _chair_from_lease(conn, active[0], seat_slug, actor=actor)
 
+    # Shown, never enforced: another live lease whose fence overlaps mine, on an
+    # issue I can see. The claim command's overlap check stays the only gate.
+    fence_overlaps_list = fence_overlaps.overlaps_for_holder(conn, actor=actor, now=now)
+    warnings.extend(item["message"] for item in fence_overlaps_list)
+
     next_to_sit = None
     if chair is None and inbox_items:
         first = inbox_items[0].get("issue") or {}
@@ -121,6 +134,7 @@ def build_office(
         "active_lease_count": len(active),
         "protocol": PROTOCOL,
         "warnings": warnings,
+        "fence_overlaps": fence_overlaps_list,
         "semantics": {
             "snapshot": "this_actor_right_now",
             "does_not_assert": ["alive", "running", "repo_exists", "branch_exists"],

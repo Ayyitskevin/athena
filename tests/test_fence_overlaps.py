@@ -153,6 +153,43 @@ def test_equal_paths_overlap_and_one_lease_never_overlaps_itself(tmp_path):
         assert result["total"] == 1
 
 
+def test_the_index_finds_exactly_the_pairs_a_pairwise_check_finds(tmp_path):
+    # The read indexes paths and walks each path's ancestors instead of comparing
+    # every pair. On random fences it must find exactly what the claim command's
+    # own paths_overlap finds pair by pair.
+    import random
+
+    from athena.aegis.lease_commands import paths_overlap
+
+    rng = random.Random(20261108)
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        one, two = _setup(c)
+        fences = {}
+        for n in range(30):
+            issue = _issue(c, f"random {n}")
+            paths = [
+                "/".join(rng.choice("abc") for _ in range(rng.randint(1, 3)))
+                for _ in range(rng.randint(1, 3))
+            ]
+            _lease(db_file, issue["id"], one if n % 2 else two, paths)
+            fences[issue["id"]] = list(dict.fromkeys(paths))
+    expected = {
+        (a, b)
+        for a in fences
+        for b in fences
+        if a < b and any(paths_overlap(x, y) for x in fences[a] for y in fences[b])
+    }
+    result = _pairs(db_file)
+    conn = db.connect(db_file)
+    everything = fence_overlaps.find_overlaps(conn, actor=ADMIN, limit=10_000)
+    conn.close()
+    assert _pair_ids(everything) == expected
+    assert everything["total"] == len(expected) == result["total"]
+    # Positive control: the random data has both overlapping and separate pairs.
+    assert 0 < len(expected) < len(fences) * (len(fences) - 1) // 2
+
+
 # ── normalisation ───────────────────────────────────────────────────────────
 
 
@@ -200,11 +237,12 @@ def test_an_expired_lease_never_counts(tmp_path):
         _lease(db_file, live["id"], one, ["x"])
         _lease(db_file, lapsed["id"], two, ["x"], live=False)
         assert _pairs(db_file)["total"] == 0
-        # Positive control: the same lease, live, overlaps.
+        # Positive control: the same lease, live again, overlaps. (Reactivating a
+        # lapsed row needs a fresh generation: a trigger insists, like a re-claim.)
         conn = db.connect(db_file)
         conn.execute(
-            "UPDATE issue_leases SET expires_at = ? WHERE issue_id = ?",
-            (_stamp(hours=1), lapsed["id"]),
+            "UPDATE issue_leases SET expires_at = ?, generation = ? WHERE issue_id = ?",
+            (_stamp(hours=1), "f" * 32, lapsed["id"]),
         )
         conn.commit()
         conn.close()
@@ -217,6 +255,7 @@ def test_an_expired_lease_never_counts(tmp_path):
 CATALOG = {
     "version": 1,
     "qualification": {
+        "storage_namespace": "fictional-storage",
         "topology_epoch": "epoch-1",
         "coverage": "whole-entry",
         "path_semantics": "posix-case-sensitive-normalization-preserving-v1",

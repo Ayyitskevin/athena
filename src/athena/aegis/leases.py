@@ -119,6 +119,19 @@ def _row_to_lease(row: sqlite3.Row) -> dict:
     return lease
 
 
+def live_leases_at(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> list[dict]:
+    """Every lease the clock still says is live at ``now``, decoded exactly as
+    every other reader decodes it (normalised ``declared_paths``, the verified
+    ``coordination_root`` binding, ``path_fence``). Read-only."""
+    rows = conn.execute(
+        _HELD_SELECT + "WHERE l.expires_at > ? ORDER BY l.issue_id",
+        (_clock_stamp(now), _clock_stamp(now)),
+    ).fetchall()
+    return [_row_to_lease(row) for row in rows]
+
+
 def get_lease(conn: sqlite3.Connection, issue_id: int) -> dict | None:
     """The issue's lease row (with the holder's name and a computed ``active`` flag), or
     None if it was never claimed. A row whose ``active`` is False is an EXPIRED lease —
