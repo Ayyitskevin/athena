@@ -113,6 +113,16 @@ that shows an agent, show these — the data already exists:
 
 - `fleet_attention` computes **counts only** and links out. It must never compute
   state of its own, or it can disagree with the page it points at.
+  - **Composed lanes are allowed beside the counts.** The card may also show
+    bounded, read-only lanes from a projection another surface already serves.
+    Today the progress lanes from `aegis/work_progress.py` (also behind active
+    work and the desk): the oldest request waiting on you, expired leases, and
+    stale in-progress work. The card composes them; it does not compute them.
+  - **Each lane carries its own count and meaning,** caps its rows (20) with
+    "showing N of M", links every row to its owning record, and stays out of the
+    signal total.
+  - **When a lane moves to its own page.** Any fourth lane, or any uncapped list,
+    moves the lanes to a dedicated Observe page instead of growing the card.
 - An unanswered run control reads as **expired, never as obeyed**. Athena cannot
   signal a process.
 - Budgets meter **actions, not tokens or dollars**. Athena never observes model spend.
