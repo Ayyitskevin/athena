@@ -268,6 +268,14 @@
     </section>
 </div>
 
+{% if definition_of_done %}
+<section id="definition-of-done" class="panel">
+    <h2>Definition of done</h2>
+    <p class="muted">From <a href="/mentor/pages/{{ definition_of_done.page_id }}">{{ definition_of_done.title }}</a> ({{ definition_of_done.space_key }}). Advisory: a completion report is annotated against it; nothing is enforced.</p>
+    <ul>{% for item in definition_of_done['items'] %}<li>{{ item }}</li>{% endfor %}</ul>
+    {% if definition_of_done.truncated %}<p class="muted">Only the first {{ definition_of_done['items']|length }} items are shown.</p>{% endif %}
+</section>
+{% endif %}
 <section id="claim-handoffs" class="{{ 'warning' if claim_handoffs.open else 'panel' }}">
     <div class="panel-head"><h2>Claim handoffs</h2></div>
     <div class="panel-body">
@@ -399,7 +407,7 @@
             <span class="muted">imported {{ event.imported_at }}</span>
             {% endif %}
             {{ excerpt(event.detail, "No event detail.") }}
-            {{ show_report(event.get("reported_completion"), event.get("evidence_checks")) }}
+            {{ show_report(event.get("reported_completion"), event.get("evidence_checks"), event.get("checklist_coverage")) }}
         </li>
         {% endfor %}
     </ol>

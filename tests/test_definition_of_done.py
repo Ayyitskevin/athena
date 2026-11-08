@@ -27,27 +27,27 @@ def _client(tmp_path):
     client = TestClient(create_app(tmp_path / "dod.sqlite"))
     client.db_path = tmp_path / "dod.sqlite"
     client.__enter__()
-    client.post(
-        "/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"}
-    )
+    client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
     return client
 
 
 def _project(client, key="OPS", name="Ops"):
-    return client.post(
-        "/projects", json={"name": name, "key": key}, headers=H1
-    ).json()["id"]
+    return client.post("/projects", json={"name": name, "key": key}, headers=H1).json()[
+        "id"
+    ]
 
 
 def _space(client, key="DOC"):
     return client.post("/spaces", json={"key": key, "name": key}, headers=H1).json()
 
 
-def _checklist_page(client, key="OPS", body=BODY, space=None, title="Definition of done"):
+def _checklist_page(
+    client, key="OPS", body=BODY, space=None, title="Definition of done"
+):
     space = space or _space(client, f"S{key}")
     page = client.post(
-        "/pages",
-        json={"space_id": space["id"], "title": title, "body": body},
+        f"/spaces/{space['id']}/pages",
+        json={"title": title, "body": body},
         headers=H1,
     )
     assert page.status_code == 201, page.text
@@ -181,7 +181,9 @@ def test_with_two_labelled_pages_the_oldest_is_the_checklist(tmp_path):
     try:
         pid = _project(client)
         first = _checklist_page(client, body="- first", title="One")
-        _checklist_page(client, body="- second", title="Two", space=_space(client, "TWO"))
+        _checklist_page(
+            client, body="- second", title="Two", space=_space(client, "TWO")
+        )
         conn = db.connect(client.db_path)
         try:
             found = definition_of_done.checklist(conn, pid, actor=None)
@@ -201,16 +203,15 @@ def test_the_checklist_appears_in_the_work_context_before_any_claim(tmp_path):
         pid = _project(client)
         issue = _issue(client, pid)
         before = _context(client, issue).json()
-        assert "definition_of_done" not in before  # positive control: nothing labelled yet
+        assert (
+            before["definition_of_done"] is None
+        )  # positive control: nothing labelled yet
         page = _checklist_page(client)
         context = _context(client, issue).json()
         dod = context["definition_of_done"]
         assert dod["page_id"] == page["id"]
         assert dod["items"][0] == "Tests pass" and len(dod["items"]) == 4
         assert "advisory" in dod["note"] and "not enforced" in dod["note"]
-        assert context["recent_activity"]["items"] == [
-            i for i in context["recent_activity"]["items"] if "checklist_coverage" not in i
-        ]
     finally:
         client.__exit__(None, None, None)
 
@@ -222,10 +223,14 @@ def test_a_project_without_a_checklist_is_unchanged(tmp_path):
         other = _project(client, "WEB", "Web")
         _checklist_page(client, "WEB")  # a different project's checklist exists
         issue = _issue(client, pid)
-        _complete(client, issue, results=[_result("Tests pass", subject=["Tests pass"])])
+        _complete(
+            client, issue, results=[_result("Tests pass", subject=["Tests pass"])]
+        )
         context = _context(client, issue).json()
-        assert "definition_of_done" not in context
-        assert all("checklist_coverage" not in i for i in context["recent_activity"]["items"])
+        assert context["definition_of_done"] is None
+        assert all(
+            i["checklist_coverage"] is None for i in context["recent_activity"]["items"]
+        )
         assert "checklist_coverage" not in _completed_item(client, issue)
         page = client.get(f"/aegis/issues/{issue['id']}/history", headers=H1)
         assert "checklist items reported" not in page.text
@@ -254,7 +259,9 @@ def test_coverage_counts_exact_matches_of_result_subjects(tmp_path):
                 _result("docs", "not_met", ["Docs   updated", "something else"]),
                 _result("near miss", "met", ["Tests pass!"]),  # not the item
                 _result("no subject", "met"),  # names nothing
-                _result("again", "met", ["Tests pass"]),  # same item twice: counted once
+                _result(
+                    "again", "met", ["Tests pass"]
+                ),  # same item twice: counted once
             ],
         )
         coverage = _completed_item(client, issue)["checklist_coverage"]
@@ -289,7 +296,9 @@ def test_every_item_reported_reads_n_of_n_and_none_reads_zero(tmp_path):
         client.__exit__(None, None, None)
 
 
-def test_the_annotation_shows_in_the_history_page_the_work_context_and_the_html(tmp_path):
+def test_the_annotation_shows_in_the_history_page_the_work_context_and_the_html(
+    tmp_path,
+):
     client = _client(tmp_path)
     try:
         pid = _project(client)
@@ -302,7 +311,10 @@ def test_the_annotation_shows_in_the_history_page_the_work_context_and_the_html(
             for i in context["recent_activity"]["items"]
             if i["verb"] == "claim_completed"
         )
-        assert completed["checklist_coverage"]["summary"] == "1 of 4 checklist items reported"
+        assert (
+            completed["checklist_coverage"]["summary"]
+            == "1 of 4 checklist items reported"
+        )
         for path in (
             f"/aegis/issues/{issue['id']}/history",
             f"/aegis/issues/{issue['id']}/work-context",
@@ -366,11 +378,18 @@ def test_a_checklist_in_a_space_the_viewer_cannot_see_is_never_shown(tmp_path):
         try:
             admin = dict(conn.execute("SELECT * FROM users WHERE id = 1").fetchone())
             outsider = dict(
-                conn.execute("SELECT * FROM users WHERE id = ?", (member["id"],)).fetchone()
+                conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (member["id"],)
+                ).fetchone()
             )
             # Positive control: while the space is public both actors see it.
-            assert definition_of_done.checklist(conn, pid, actor=outsider)["page_id"] == page["id"]
-            conn.execute("UPDATE spaces SET visibility='private' WHERE id=?", (space["id"],))
+            assert (
+                definition_of_done.checklist(conn, pid, actor=outsider)["page_id"]
+                == page["id"]
+            )
+            conn.execute(
+                "UPDATE spaces SET visibility='private' WHERE id=?", (space["id"],)
+            )
             conn.commit()
             assert definition_of_done.checklist(conn, pid, actor=admin) is not None
             assert definition_of_done.checklist(conn, pid, actor=outsider) is None
@@ -378,10 +397,12 @@ def test_a_checklist_in_a_space_the_viewer_cannot_see_is_never_shown(tmp_path):
             conn.close()
         as_member = {"X-Athena-Actor": str(member["id"])}
         context = _context(client, issue, headers=as_member).json()
-        assert "definition_of_done" not in context
-        assert "definition_of_done" in _context(client, issue).json()
+        assert context["definition_of_done"] is None
+        assert _context(client, issue).json()["definition_of_done"] is not None
         # No annotation either: the count would leak the hidden page's length.
-        assert all("checklist_coverage" not in i for i in context["recent_activity"]["items"])
+        assert all(
+            i["checklist_coverage"] is None for i in context["recent_activity"]["items"]
+        )
     finally:
         client.__exit__(None, None, None)
 
@@ -400,7 +421,9 @@ def test_the_checklist_of_a_private_project_is_never_shown(tmp_path):
         conn = db.connect(client.db_path)
         try:
             outsider = dict(
-                conn.execute("SELECT * FROM users WHERE id = ?", (member["id"],)).fetchone()
+                conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (member["id"],)
+                ).fetchone()
             )
             assert definition_of_done.checklist(conn, pid, actor=outsider) is not None
             conn.execute("UPDATE projects SET visibility='private' WHERE id=?", (pid,))

@@ -855,6 +855,11 @@ def issue_history_view(
                     if "evidence_checks" in item
                     else {}
                 ),
+                **(
+                    {"checklist_coverage": item["checklist_coverage"]}
+                    if "checklist_coverage" in item
+                    else {}
+                ),
                 "action_href": action_href,
                 "event_id": event_id,
             }

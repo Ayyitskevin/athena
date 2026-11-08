@@ -37,7 +37,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, completion_evidence, issues, lease_commands
+from athena.aegis import (
+    claim_handoffs,
+    completion_evidence,
+    definition_of_done,
+    issues,
+    lease_commands,
+)
 from athena.core import (
     activity,
     agent_run_checkins,
@@ -227,6 +233,16 @@ def _build(
                         if (
                             checks := completion_evidence.evidence_checks(
                                 conn, issue_id, report
+                            )
+                        )
+                        is not None
+                        else {}
+                    ),
+                    **(
+                        {"checklist_coverage": covered}
+                        if (
+                            covered := definition_of_done.coverage(
+                                conn, issue["project_id"], actor=actor, report=report
                             )
                         )
                         is not None
