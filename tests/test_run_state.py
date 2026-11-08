@@ -137,8 +137,10 @@ def _age_run(db_file, agent, run, *, minutes):
     )
     _sql(
         db_file,
-        "UPDATE agent_run_checkins SET last_seen_at = ? WHERE run_id = ?",
-        (stamp, run),
+        # Both columns: a CHECK keeps last_seen_at >= first_seen_at.
+        "UPDATE agent_run_checkins SET first_seen_at = ?, last_seen_at = ? "
+        "WHERE run_id = ?",
+        (stamp, stamp, run),
     )
 
 
@@ -281,6 +283,33 @@ def test_complete_after_complete_claim(tmp_path):
         )
         assert again.status_code in (200, 201), again.text
         assert _state(db_file, agent, "run-done") != "complete"
+
+
+def test_a_run_still_holding_another_claim_is_not_complete(tmp_path):
+    # Completing one claim while the same run still holds another is not the run
+    # being complete: the latest claim act is a completion, but work is held.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        first, first_lease = _claimed(c, agent, "run-two", "first of two")
+        second, second_lease = _claimed(c, agent, "run-two", "second of two")
+        for issue, lease in ((first, first_lease),):
+            done = c.post(
+                f"/issues/{issue['id']}/complete",
+                json={"generation": lease["generation"]},
+                headers=_as(agent, "run-two"),
+            )
+            assert done.status_code == 200, done.text
+        assert _state(db_file, agent, "run-two") != "complete"
+        # Positive control: completing the other one too makes the run complete.
+        done = c.post(
+            f"/issues/{second['id']}/complete",
+            json={"generation": second_lease["generation"]},
+            headers=_as(agent, "run-two"),
+        )
+        assert done.status_code == 200, done.text
+        assert _state(db_file, agent, "run-two") == "complete"
 
 
 # ── a heartbeat never makes a run active ────────────────────────────────────
@@ -430,13 +459,13 @@ def test_awaiting_input_ranks_above_stale_and_quiet_signals(tmp_path):
         conn = db.connect(db_file)
         ranking = fleet_attention.build_attention_ranking(conn, actor=ADMIN)
         conn.close()
-        signals = [item["signal"] for item in ranking["items"]]
+        signals = [item.signal for item in ranking["items"]]
         assert "awaiting_input" in signals and "claim_needs_attention" in signals
         assert signals.index("awaiting_input") < signals.index("claim_needs_attention")
         top = ranking["items"][0]
-        assert top["signal"] == "awaiting_input" and top["severity"] == "critical"
-        assert top["source_id"] == asked["id"]
-        assert "Which path?" in top["reason"]
+        assert top.signal == "awaiting_input" and top.severity == "critical"
+        assert top.source_id == asked["id"]
+        assert "Which path?" in top.reason
         assert "awaiting_input" in fleet_attention.RANKING_SIGNALS
 
 
@@ -446,6 +475,13 @@ def test_questions_lane_sits_beside_approvals_for_the_operator(tmp_path):
         _bootstrap(c)
         agent = _agent(c)
         issue, lease = _claimed(c, agent, "run-ask", "needs you")
+        # One pending approval, so the approval queue renders on the page too.
+        _sql(
+            db_file,
+            "INSERT INTO approval_requests (action_kind, target_kind, target_id, "
+            "requested_by) VALUES ('issue.close', 'issue', ?, 1)",
+            (issue["id"],),
+        )
         _login(c)
         # Positive control: before anyone asks, the lane says it is empty.
         empty = " ".join(c.get("/admin/agents").text.split())
@@ -540,7 +576,7 @@ def test_hidden_projects_stay_hidden(tmp_path):
         conn.close()
         assert [r["issue"]["id"] for r in theirs["items"]] == [public["id"]]
         assert theirs["total"] == 1
-        assert [i["source_id"] for i in ranking["items"]] == [public["id"]]
+        assert [i.source_id for i in ranking["items"]] == [public["id"]]
         assert ranking["total"] == 1
         assert "Secret?" not in str(theirs) + str(ranking)
         # Positive control: the admin sees both.

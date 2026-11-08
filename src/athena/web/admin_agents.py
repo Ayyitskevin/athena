@@ -18,6 +18,7 @@ from athena.aegis import (
     issue_commands,
     issues,
     office,
+    run_state,
     statuses,
 )
 from athena.core import (
@@ -98,6 +99,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         "pending_approvals": pending,
+        # Beside the approvals: blocking questions from yielded claims nobody has
+        # resumed. The page is admin-only; the reader still applies visibility.
+        "open_questions": run_state.open_questions(conn, actor=viewer),
         "notice": None,
         "error": None,
         **extra,
@@ -641,6 +645,13 @@ def agent_runs_admin(
             headers=ACTIVE_WORK_PRIVATE_HEADERS,
         )
     context = agents.agent_run_health(conn, agent_id=agent_id)
+    # Each run row's derived state. The run-health read lives in core, which may
+    # not import aegis, so the state is composed here, one per listed run. A
+    # completed claim has left active work; this row is where "complete" shows.
+    for checkin in context["latest_checkins"]:
+        checkin["run_state"] = run_state.state_for_run(
+            conn, agent_id=int(checkin["agent_id"]), run_id=checkin["run_id"]
+        )["state"]
     context["active_work"] = fleet_work.build_active_work(
         conn, agent_id=agent_id, limit=work_limit, attention_state=attention_state
     )

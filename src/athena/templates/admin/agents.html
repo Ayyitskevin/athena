@@ -126,6 +126,45 @@
 </section>
 {% endif %}
 
+{# Beside the approval queue: the other thing a run can be waiting on you for. A
+   blocking question from a yielded claim stays here until someone resumes the
+   handoff. Read-only; capped with its own total. #}
+<section class="panel" id="questions" aria-labelledby="open-questions-heading">
+    <div class="panel-head">
+        <h2 id="open-questions-heading">
+            Questions waiting on you
+            {% if open_questions.total %}<span class="chip" data-tone="accent">{{ open_questions.total }}</span>{% endif %}
+        </h2>
+    </div>
+    <div class="panel-body">
+        <p class="subtitle">
+            Runs that yielded a claim with a blocking question nobody has resumed,
+            oldest first. The question is the agent's own text, shown as written.
+            It is answered by resuming the handoff. Nothing enforces a response time.
+        </p>
+        {% if open_questions["items"] %}
+        <ul class="dashboard-list">
+            {% for question in open_questions["items"] %}
+            <li>
+                <a href="/aegis/issues/{{ question.issue.id }}">{{ question.issue.key or ('#' ~ question.issue.id) }} · {{ question.issue.title }}</a>
+                <span class="muted">
+                    {{ question.asked_by.name }} asked {{ question.asked_at }} UTC
+                    {% if question.run_id %}· run <code class="checkin-run-id">{{ question.run_id }}</code>{% endif %}
+                    · {{ question.reason | replace('_', ' ') }}
+                </span>
+                <div>{{ question.blocking_question }}</div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if open_questions.clipped %}
+        <p class="muted">Showing {{ open_questions["items"] | length }} of {{ open_questions.total }}.</p>
+        {% endif %}
+        {% else %}
+        <p class="muted">No open questions.</p>
+        {% endif %}
+    </div>
+</section>
+
 {% if answerability %}
 <section class="panel" aria-labelledby="answerability-heading">
     <div class="panel-head"><h2 id="answerability-heading">Answerability</h2></div>

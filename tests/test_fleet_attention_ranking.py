@@ -136,6 +136,26 @@ def test_empty_state_discloses_denominator(tmp_path):
         assert body["signals"] == sorted(fleet_attention.RANKING_SIGNALS)
 
 
+def test_the_signal_vocabulary_and_the_awaiting_input_rank_are_pinned():
+    # Deliberate pin: awaiting_input joined the vocabulary and is the one
+    # critical signal, so a run that stopped to ask a human ranks above stale
+    # claims (high) and the quiet event signals (medium).
+    assert fleet_attention.RANKING_SIGNALS == (
+        "awaiting_input",
+        "pending_approval",
+        "claim_needs_attention",
+        "open_blocker",
+        "open_run_control",
+        "failing_automation_rule",
+        "failing_webhook",
+        "budget_exhaustion",
+        "security_refusal",
+    )
+    critical = fleet_attention.SEVERITY_RANK["critical"]
+    assert critical < fleet_attention.SEVERITY_RANK["high"]
+    assert critical < fleet_attention.SEVERITY_RANK["medium"]
+
+
 def test_unknown_signal_fails_closed(tmp_path):
     app, _ = _app(tmp_path)
     with TestClient(app) as c:

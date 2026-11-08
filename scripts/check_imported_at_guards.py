@@ -191,6 +191,20 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "a delegate's claim is a native act; an imported claimed row must not "
         "make a hand-off look picked up",
     ),
+    (
+        "aegis/run_state.py",
+        "_facts",
+        r"a\.imported_at IS NULL",
+        "a run's derived state reads only its native work, claim acts and yields; "
+        "imported history must not make a run look active, complete or waiting",
+    ),
+    (
+        "aegis/run_state.py",
+        "open_questions",
+        r"ye\.imported_at IS NULL",
+        "an open question is a native yield; an imported row must not put a "
+        "question in front of the operator",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is

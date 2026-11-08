@@ -26,7 +26,14 @@ import sqlite3
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
-from athena.aegis import automation, dependencies, fleet_work, issues, work_progress
+from athena.aegis import (
+    automation,
+    dependencies,
+    fleet_work,
+    issues,
+    run_state,
+    work_progress,
+)
 from athena.core import (
     access,
     approvals,
@@ -243,6 +250,7 @@ def build_attention(
 # Closed signal vocabulary. Each name maps to a collector below. Unknown types
 # fail closed at the boundary so the queue can never be widened by a typo.
 AttentionSignal = Literal[
+    "awaiting_input",
     "pending_approval",
     "claim_needs_attention",
     "open_blocker",
@@ -264,6 +272,7 @@ SourceKind = Literal[
 ]
 
 RANKING_SIGNALS: tuple[AttentionSignal, ...] = (
+    "awaiting_input",
     "pending_approval",
     "claim_needs_attention",
     "open_blocker",
@@ -342,6 +351,45 @@ def _collect_pending_approvals(
             )
         )
     return items, examined, examined
+
+
+def _collect_awaiting_input(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    """Runs that stopped and asked a human: open blocking questions on issues
+    this actor can see. Ranked ``critical`` — above stale claims (``high``) and
+    the quiet event signals (``medium``) — because a run that asked is waiting on
+    a person, not on the clock. Pending approvals keep their own signal."""
+    lane = run_state.open_questions(conn, actor=actor, now=now, limit=200)
+    operator = _has_admin_visibility(actor)
+    items: list[AttentionRankItem] = []
+    examined = len(lane["items"])
+    for question in lane["items"]:
+        issue = question["issue"]
+        text = question["blocking_question"]
+        short = text if len(text) <= 160 else text[:157] + "..."
+        items.append(
+            AttentionRankItem(
+                signal="awaiting_input",
+                severity="critical",
+                source_kind="issue",
+                source_id=issue["id"],
+                owner_id=question["asked_by"]["id"],
+                reason=f"{question['asked_by']['name']} asks: {short}",
+                freshness=question["asked_at"],
+                examined=examined,
+                total=lane["total"],
+                next_action="operator-link",
+                link="/admin/agents#questions"
+                if operator
+                else f"/aegis/issues/{issue['id']}",
+                source_link=f"/aegis/issues/{issue['id']}",
+            )
+        )
+    return items, examined, lane["total"]
 
 
 def _collect_claims_needing_attention(
@@ -773,7 +821,11 @@ def build_attention_ranking(
 
     current = _normalized_now(now)
     for signal in sorted(signals):
-        if signal == "pending_approval":
+        if signal == "awaiting_input":
+            items, examined, total = _collect_awaiting_input(
+                conn, actor=actor, now=current
+            )
+        elif signal == "pending_approval":
             items, examined, total = _collect_pending_approvals(conn, actor=actor)
         elif signal == "claim_needs_attention":
             items, examined, total = _collect_claims_needing_attention(
