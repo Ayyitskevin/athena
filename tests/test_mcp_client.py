@@ -2283,8 +2283,10 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
         assert MUTATION_TOOL_NAMES <= names
 
         work_context_tool = tools["get_issue_work_context"]
-        assert work_context_tool.inputSchema["required"] == ["ref"]
-        assert set(work_context_tool.inputSchema["properties"]) == {"ref"}
+        # Either name for the issue, neither required on its own: the tool
+        # insists on exactly one at call time (tests/test_mcp_surface_slim.py).
+        assert set(work_context_tool.inputSchema["properties"]) == {"ref", "issue_id"}
+        assert "ref" not in work_context_tool.inputSchema.get("required", [])
         work_context_description = work_context_tool.description.lower()
         for contract_term in (
             "bounded",

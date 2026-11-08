@@ -247,6 +247,17 @@ def claim_issue(
                     f"issue is claimed by {existing['holder_name']} until "
                     f"{existing['expires_at']}",
                 )
+            if generation is None:
+                # The holder repeated the claim without saying so. Say what this
+                # call is and what it needs. Only the holder reaches this branch
+                # (a rival was refused above, with no generation in the message),
+                # so the generation is named to its owner alone. Same code and
+                # status as before: 428 lease_generation_required.
+                raise IssueCommandError(
+                    "lease_generation_required",
+                    "you already hold this issue's lease; a repeated claim is a "
+                    f"renewal: pass generation={existing['generation']} to extend it",
+                )
             # Supplying the current generation explicitly selects renew mode. An
             # omitted token may never turn a delayed acquire into a renewal.
             current_generation = _matching_lease_generation(existing, generation)
