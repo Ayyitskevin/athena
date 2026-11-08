@@ -35,6 +35,7 @@ from athena.aegis import (
     issues,
     lease_commands,
     issue_query,
+    similar_issues,
 )
 from athena.core import (
     access,
@@ -200,6 +201,19 @@ class IssueOut(BaseModel):
     labels: list[LabelOut] = []
 
 
+class SimilarOpenOut(BaseModel):
+    id: int
+    key: str | None = None
+    title: str
+    status: str
+
+
+class IssueCreatedOut(IssueOut):
+    # Additive: up to three open issues of the same project, visible to the actor, whose titles
+    # resemble the new one. A prompt to link instead of duplicating; the create already succeeded.
+    similar_open: list[SimilarOpenOut] = []
+
+
 class HeldLeaseNote(BaseModel):
     generation: str
     expires_at: str
@@ -285,7 +299,7 @@ def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
     return rows
 
 
-@router.post("", response_model=IssueOut, status_code=201)
+@router.post("", response_model=IssueCreatedOut, status_code=201)
 def create(
     payload: IssueCreate,
     response: Response,
@@ -306,7 +320,15 @@ def create(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _tagged_issue(conn, issue, response)
+    public = _tagged_issue(conn, issue, response)
+    similar = similar_issues.similar_open(
+        conn,
+        actor=actor,
+        project_id=issue.get("project_id"),
+        title=issue["title"],
+        exclude_id=issue["id"],
+    )
+    return {**public, "similar_open": similar}
 
 
 def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:

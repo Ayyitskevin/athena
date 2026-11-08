@@ -36,7 +36,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         """Create an Aegis issue. Omit status to use the target project's default;
         otherwise status must belong to that project. priority is one of
         low/medium/high/urgent. Bodies support Markdown and [[issue:N]]/[[page:N]]
-        cross-links."""
+        cross-links. The response is the new issue plus similar_open: up to three
+        open issues in the same project, visible to you, whose titles resemble
+        the new one ({id, key, title, status}); the issue is created either way, so
+        use it to link or comment instead of duplicating."""
         return client.create_issue(
             title=title,
             body=body,
