@@ -683,7 +683,9 @@ def _summary(tmp_path, agent_id):
 
     conn = db.connect(tmp_path / "spend.sqlite")
     try:
-        user = dict(conn.execute("SELECT * FROM users WHERE id = ?", (agent_id,)).fetchone())
+        user = dict(
+            conn.execute("SELECT * FROM users WHERE id = ?", (agent_id,)).fetchone()
+        )
         return agents._agent_summary(conn, user)
     finally:
         conn.close()
@@ -699,7 +701,9 @@ def test_many_usage_check_ins_leave_recent_activity_and_last_active_unchanged(tm
         assert [e["verb"] for e in before["recent_activity"]][0] == "claim_completed"
 
         for n in range(10):
-            assert _beat(client, bearer, "run-a", {"input_tokens": n}).status_code == 200
+            assert (
+                _beat(client, bearer, "run-a", {"input_tokens": n}).status_code == 200
+            )
         # Positive control: the ten reports are real events and the ledger reads them.
         assert len(_events(tmp_path, reported_usage.VERB_USAGE_REPORTED)) == 10
         conn = db.connect(tmp_path / "spend.sqlite")
@@ -734,14 +738,16 @@ def test_the_cockpit_says_when_the_totals_window_is_full(tmp_path, monkeypatch):
     try:
         agent_id, bearer = _agent(client)
         client.post(
-            "/login", data={"email": "a@e.com", "password": "pw"}, follow_redirects=False
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
         )
         for _ in range(3):
             _beat(client, bearer, "r", {"input_tokens": 1})
-        assert "recent window only" not in client.get("/admin/agents").text
+        assert "Recent window only" not in client.get("/admin/agents").text
         monkeypatch.setattr(reported_spend, "SCAN_LIMIT", 3)
         page = client.get("/admin/agents").text
-        assert "recent window only" in page
+        assert "Recent window only" in page
     finally:
         client.__exit__(None, None, None)
 
@@ -756,5 +762,25 @@ def test_a_non_object_usage_gets_the_same_refusal_shape_as_any_other(tmp_path):
             assert refused.status_code == 422
             shapes.add(type(refused.json()["detail"]).__name__)
         assert shapes == {"str"}
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_a_full_completion_window_also_counts_as_clipped(tmp_path, monkeypatch):
+    client = _app(tmp_path)
+    try:
+        agent_id, bearer = _agent(client)
+        issue = _issue(client, assignee_id=agent_id)
+        assert (
+            _claim_and_complete(client, issue, bearer, {"input_tokens": 1}).status_code
+            == 200
+        )
+        conn = db.connect(tmp_path / "spend.sqlite")
+        try:
+            assert reported_spend.scan(conn, None).clipped is False
+            monkeypatch.setattr(reported_spend, "SCAN_LIMIT", 1)
+            assert reported_spend.scan(conn, None).clipped is True
+        finally:
+            conn.close()
     finally:
         client.__exit__(None, None, None)

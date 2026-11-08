@@ -56,13 +56,28 @@ class _Totals:
         }
 
 
-def _reports(conn: sqlite3.Connection, viewer: dict | None) -> list[dict]:
+class Scan:
+    """One read of the visible reports, shared by every read model on a page.
+
+    ``clipped`` is true when either event kind filled the scan window, so older reports are
+    not in the totals and the page must say so.
+    """
+
+    def __init__(self, reports: list[dict], clipped: bool) -> None:
+        self.reports = reports
+        self.clipped = clipped
+
+
+def scan(conn: sqlite3.Connection, viewer: dict | None) -> Scan:
     """Visible reports as ``{actor_id, day, run_id, issue_id, usage}``, newest first."""
     gate: dict = {} if viewer is None else {"actor": viewer}
     out: list[dict] = []
-    for event in activity.list_activity(
+    clipped = False
+    checkins = activity.list_activity(
         conn, verb=reported_usage.VERB_USAGE_REPORTED, limit=SCAN_LIMIT, **gate
-    ):
+    )
+    clipped = len(checkins) >= SCAN_LIMIT
+    for event in checkins:
         parsed = reported_usage.from_event(event)
         if parsed is not None:
             out.append(
@@ -74,9 +89,11 @@ def _reports(conn: sqlite3.Connection, viewer: dict | None) -> list[dict]:
                     "usage": parsed["usage"],
                 }
             )
-    for event in activity.list_activity(
+    completions = activity.list_activity(
         conn, verb="claim_completed", target_kind="issue", limit=SCAN_LIMIT, **gate
-    ):
+    )
+    clipped = clipped or len(completions) >= SCAN_LIMIT
+    for event in completions:
         report = lease_commands.reported_completion(event)
         if report is not None and "usage" in report:
             out.append(
@@ -88,15 +105,19 @@ def _reports(conn: sqlite3.Connection, viewer: dict | None) -> list[dict]:
                     "usage": report["usage"],
                 }
             )
-    return out
+    return Scan(out, clipped)
 
 
 def by_run(
-    conn: sqlite3.Connection, *, viewer: dict | None, agent_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    viewer: dict | None,
+    agent_id: int | None = None,
+    reads: Scan | None = None,
 ) -> list[dict]:
     """Totals per ``(agent, run)``; a completion with no run id belongs to no run."""
     groups: dict[tuple[int, str], _Totals] = {}
-    for report in _reports(conn, viewer):
+    for report in (reads or scan(conn, viewer)).reports:
         if report["run_id"] is None or agent_id not in (None, report["actor_id"]):
             continue
         groups.setdefault((report["actor_id"], report["run_id"]), _Totals()).add(
@@ -109,11 +130,15 @@ def by_run(
 
 
 def by_agent_day(
-    conn: sqlite3.Connection, *, viewer: dict | None, agent_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    viewer: dict | None,
+    agent_id: int | None = None,
+    reads: Scan | None = None,
 ) -> list[dict]:
     """Totals per agent per server-clock day, newest day first (``reported_at`` is not used)."""
     groups: dict[tuple[int, str], _Totals] = {}
-    for report in _reports(conn, viewer):
+    for report in (reads or scan(conn, viewer)).reports:
         if agent_id not in (None, report["actor_id"]):
             continue
         groups.setdefault((report["actor_id"], report["day"]), _Totals()).add(
@@ -129,11 +154,15 @@ def by_agent_day(
 
 
 def by_issue(
-    conn: sqlite3.Connection, *, viewer: dict | None, agent_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    viewer: dict | None,
+    agent_id: int | None = None,
+    reads: Scan | None = None,
 ) -> list[dict]:
     """Totals per issue, from completion reports only (a check-in names no issue)."""
     groups: dict[int, _Totals] = {}
-    for report in _reports(conn, viewer):
+    for report in (reads or scan(conn, viewer)).reports:
         if report["issue_id"] is None or agent_id not in (None, report["actor_id"]):
             continue
         groups.setdefault(report["issue_id"], _Totals()).add(report["usage"])

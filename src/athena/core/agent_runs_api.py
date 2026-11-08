@@ -41,7 +41,10 @@ class AgentRunHeartbeatIn(BaseModel):
 
     run_id: RunId
     # The command owns the usage grammar (reported_usage); keep the field opaque here.
-    usage: dict[str, Any] | None = None
+    usage: Annotated[
+        Any,
+        WithJsonSchema({"type": ["object", "null"]}),
+    ] = None
 
 
 class AgentRunHeartbeatOut(BaseModel):
