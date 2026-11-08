@@ -515,10 +515,35 @@ def _has_clipping(value: Any) -> bool:
     return False
 
 
+#: What ``brief=True`` keeps: enough to decide, nothing that repeats on every
+#: call. The brief packet is a PROJECTION of the full one, never a second
+#: build, so a retained value cannot differ from the full packet's and a hidden
+#: issue stays hidden on both paths.
+BRIEF_KEYS = ("issue", "issue_etag", "dependencies", "warnings")
+
+
+def brief_work_context(payload: dict[str, Any]) -> dict[str, Any]:
+    """The compact packet: the issue, its ETag, its dependencies and warnings."""
+    brief: dict[str, Any] = {
+        "schema": payload["schema"],
+        "scope": payload["scope"],
+        "brief": True,
+    }
+    for key in BRIEF_KEYS:
+        brief[key] = payload[key]
+    return brief
+
+
 def build_work_context(
-    conn: sqlite3.Connection, ref: str, *, actor: dict | None
+    conn: sqlite3.Connection,
+    ref: str,
+    *,
+    actor: dict | None,
+    brief: bool = False,
 ) -> dict[str, Any] | None:
-    """Build one deterministic snapshot, or None for missing and hidden roots alike."""
+    """Build one deterministic snapshot, or None for missing and hidden roots alike.
+
+    ``brief`` returns :func:`brief_work_context` of the same snapshot."""
     with db.transaction(conn):
         issue = issues.get_by_ref(conn, ref)
         if issue is None or not access.can_see_project_or_backlog(
@@ -641,4 +666,4 @@ def build_work_context(
         if _has_clipping(payload):
             warnings.append("context_clipped")
         payload["warnings"] = warnings
-        return payload
+        return brief_work_context(payload) if brief else payload

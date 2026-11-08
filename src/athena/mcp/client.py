@@ -295,8 +295,15 @@ class AthenaClient:
     def get_issue(self, ref: str) -> Any:
         return self._result(self._client.get(f"/issues/{ref}"))
 
-    def get_issue_work_context(self, ref: str) -> Any:
-        """Get the bounded work-context packet for one visible issue."""
+    def get_issue_work_context(self, ref: str, *, brief: bool = False) -> Any:
+        """Get the bounded work-context packet for one visible issue. ``brief``
+        keeps only the issue, its ETag, dependencies and warnings."""
+        if brief:
+            return self._result(
+                self._client.get(
+                    f"/issues/{ref}/work-context", params={"brief": "true"}
+                )
+            )
         return self._result(self._client.get(f"/issues/{ref}/work-context"))
 
     def get_issue_history(self, issue_id: int, *, limit: int | None = None) -> Any:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from athena.aegis import work_context
@@ -289,15 +289,39 @@ class IssueWorkContextOut(BaseModel):
     claim_handoffs: ClaimHandoffGroupOut
 
 
-@router.get("/{ref}/work-context", response_model=IssueWorkContextOut)
+class IssueWorkContextBriefOut(BaseModel):
+    """The ``brief=true`` packet: the same issue, ETag, dependencies and
+    warnings as the full packet, from the same snapshot, and nothing that
+    repeats on every call."""
+
+    schema_: Literal["athena.issue_work_context.v1"] = Field(alias="schema")
+    scope: Literal["visible_to_request_actor"]
+    brief: Literal[True]
+    issue: IssueSummaryOut
+    issue_etag: str
+    dependencies: DependenciesOut
+    warnings: list[str]
+
+
+@router.get(
+    "/{ref}/work-context",
+    response_model=IssueWorkContextOut | IssueWorkContextBriefOut,
+)
 def show_issue_work_context(
     ref: str,
     response: Response,
+    brief: bool = Query(
+        False,
+        description=(
+            "true keeps only issue, issue_etag, dependencies and warnings: the "
+            "packet to re-read once the protocol blocks have been read"
+        ),
+    ),
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
     """Return one visibility-safe, bounded snapshot for an agent or operator."""
-    payload = work_context.build_work_context(conn, ref, actor=actor)
+    payload = work_context.build_work_context(conn, ref, actor=actor, brief=brief)
     if payload is None:
         # A hidden issue is deliberately indistinguishable from a missing one.
         raise HTTPException(
