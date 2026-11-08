@@ -279,3 +279,31 @@ def test_a_title_without_significant_words_lists_nothing(tmp_path, title):
             conn.close()
     finally:
         client.__exit__(None, None, None)
+
+
+def test_two_shared_words_are_not_enough_when_they_are_under_half_the_new_title(
+    tmp_path,
+):
+    client = _client(tmp_path)
+    try:
+        pid = _project(client)
+        _create(client, "Login page redesign proposal", pid)
+        # shares "login" and "page" (2 of 5 significant words): too thin to call similar
+        thin = _create(client, "Login page analytics dashboard export rework", pid)
+        assert thin["similar_open"] == []
+        # positive control: the same two shared words out of four are enough
+        enough = _create(client, "Login page redesign mockups", pid)
+        assert len(enough["similar_open"]) >= 1
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_inflections_of_the_same_words_are_matched(tmp_path):
+    client = _client(tmp_path)
+    try:
+        pid = _project(client)
+        existing = _create(client, "Crashes reporting exports failed", pid)
+        created = _create(client, "Crash report export failing", pid)
+        assert [row["id"] for row in created["similar_open"]] == [existing["id"]]
+    finally:
+        client.__exit__(None, None, None)
