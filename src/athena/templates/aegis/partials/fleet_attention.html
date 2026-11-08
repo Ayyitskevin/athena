@@ -67,6 +67,74 @@
         </p>
         {% endif %}
         {% endif %}
+        {% if fleet_attention.progress %}
+        {% set progress = fleet_attention.progress %}
+        <h4>Alive is not progress</h4>
+        <p class="muted">
+            Work means a recorded edit, status change, comment, attachment, link or
+            completion on the issue. Check-ins and lease renewals say a run is still
+            reporting or still holding, not that work happened, so they never count here.
+            Any such event counts, however small; each one is on the issue's history,
+            so activity that only looks busy is visible there.
+        </p>
+        <ul class="dashboard-list">
+            <li>
+                <strong>Oldest request waiting on you</strong>
+                {% if progress.oldest_waiting_on_operator %}
+                {% set waiting = progress.oldest_waiting_on_operator %}
+                <a href="{{ waiting.link }}">approval #{{ waiting.id }}</a>
+                <span class="muted">
+                    {{ waiting.action_kind }} on {{ waiting.target_kind }} #{{ waiting.target_id }}
+                    · asked {{ waiting.created_at }} UTC ({{ waiting.age }} ago)
+                    · {{ waiting.pending_total }} pending in all
+                </span>
+                {% else %}
+                <span class="muted">none pending</span>
+                {% endif %}
+            </li>
+        </ul>
+        <h4>
+            Expired leases
+            <span class="chip">{{ progress.expired_leases.visible_total }}</span>
+        </h4>
+        <p class="muted">Shown as they are, oldest first; reading them never clears or sweeps them.</p>
+        {% if progress.expired_leases["items"] %}
+        <ul class="dashboard-list">
+            {% for lease in progress.expired_leases["items"] %}
+            <li>
+                <a href="/aegis/issues/{{ lease.issue.id }}">{{ lease.issue.key or ('#' ~ lease.issue.id) }} · {{ lease.issue.title }}</a>
+                <span class="muted">
+                    {{ lease.state }} · held by {{ lease.holder.name }}
+                    · expired {{ lease.expires_at }} UTC ({{ lease.expired_for }} ago)
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if progress.expired_leases.clipped %}
+        <p class="muted">Showing {{ progress.expired_leases["items"] | length }} of {{ progress.expired_leases.visible_total }}.</p>
+        {% endif %}
+        {% endif %}
+        <h4>
+            In progress, no recorded work by anyone in {{ progress.stale_in_progress.stale_after_days }} days
+            <span class="chip">{{ progress.stale_in_progress.visible_total }}</span>
+        </h4>
+        {% if progress.stale_in_progress["items"] %}
+        <ul class="dashboard-list">
+            {% for stale in progress.stale_in_progress["items"] %}
+            <li>
+                <a href="/aegis/issues/{{ stale.issue.id }}">{{ stale.issue.key or ('#' ~ stale.issue.id) }} · {{ stale.issue.title }}</a>
+                <span class="muted">
+                    last work
+                    {% if stale.last_work_at %}{{ stale.last_work_at }} UTC ({{ stale.work_age }} ago){% else %}unknown — none recorded{% endif %}
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% if progress.stale_in_progress.clipped %}
+        <p class="muted">Showing {{ progress.stale_in_progress["items"] | length }} of {{ progress.stale_in_progress.visible_total }}.</p>
+        {% endif %}
+        {% endif %}
+        {% endif %}
         <p class="muted">
             <a href="/admin/agents/runs">Mission Control</a> ·
             <a href="/admin/security">Security signals</a>

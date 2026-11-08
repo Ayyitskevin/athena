@@ -328,6 +328,24 @@ def list_requests(
     return [_row(row) for row in rows]
 
 
+def oldest_pending(conn: sqlite3.Connection) -> tuple[ApprovalRequest | None, int]:
+    """The longest-waiting pending ask and how many are pending in all.
+
+    ``list_requests`` reads newest first under a cap, so its last row is not the
+    oldest once the queue is longer than the cap; this reads the oldest directly.
+    Read-only."""
+    row = conn.execute(
+        "SELECT * FROM approval_requests WHERE state = 'pending' "
+        "ORDER BY created_at, id LIMIT 1"
+    ).fetchone()
+    total = int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM approval_requests WHERE state = 'pending'"
+        ).fetchone()["n"]
+    )
+    return (None if row is None else _row(row)), total
+
+
 def request_counts_by_requester(
     conn: sqlite3.Connection,
 ) -> dict[int, dict[str, int]]:

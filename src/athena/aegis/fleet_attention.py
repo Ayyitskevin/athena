@@ -26,7 +26,7 @@ import sqlite3
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
-from athena.aegis import automation, dependencies, fleet_work, issues
+from athena.aegis import automation, dependencies, fleet_work, issues, work_progress
 from athena.core import (
     access,
     approvals,
@@ -195,6 +195,12 @@ def build_attention(
     # of truth. Callers that have an actor get both the count card and its
     # actor-filtered "what next" rows from one request clock.
     if actor is not None:
+        # Alive is not progress: expired leases, in-progress work with no recorded
+        # work, and the oldest request waiting on the operator. Kept out of the
+        # signal total on purpose — each lane carries its own count and meaning.
+        projection["progress"] = work_progress.build_progress(
+            conn, actor=actor, now=current
+        )
         ranking = build_attention_ranking(
             conn,
             signals=ranking_signals,

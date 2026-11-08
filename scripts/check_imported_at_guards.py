@@ -163,6 +163,20 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "native-only read; foreign history must not look like a live ceiling hit",
     ),
     (
+        "aegis/work_progress.py",
+        "last_work_at",
+        r'"imported_at IS NULL"',
+        "last recorded work is a native-only read: a back-dated import bundle "
+        "must not make old work look new or stale work look fresh",
+    ),
+    (
+        "aegis/work_progress.py",
+        "_stale_in_progress",
+        r"AND a\.imported_at IS NULL",
+        "the stale in-progress lane measures native work; foreign history must "
+        "not hide an idle item by resetting its last-work time",
+    ),
+    (
         "aegis/notification_state.py",
         "annotate_inbox",
         r"AND c\.imported_at IS NULL",

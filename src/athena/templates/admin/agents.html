@@ -92,7 +92,7 @@
             </thead>
             <tbody>
             {% for approval in pending_approvals %}
-                <tr>
+                <tr id="approval-{{ approval.id }}">
                     <td>
                         <strong>{{ approval.requested_by_name }}</strong>
                         <div class="muted">{{ approval.created_at }} UTC</div>
