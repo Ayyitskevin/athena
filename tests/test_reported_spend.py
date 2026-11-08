@@ -33,10 +33,9 @@ LABEL = "reported by the agent, not metered by Athena"
 
 def _app(tmp_path):
     client = TestClient(create_app(tmp_path / "spend.sqlite"))
+    client.db_path = tmp_path / "spend.sqlite"
     client.__enter__()
-    client.post(
-        "/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"}
-    )
+    client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
     return client
 
 
@@ -72,12 +71,23 @@ def _events(tmp_path, verb):
 
 
 def _issue(client, title="Work", assignee_id=None, project_id=None):
-    body = {"title": title, "project_id": project_id}
-    if assignee_id is not None:
-        body["assignee_id"] = assignee_id
-    response = client.post("/issues", json=body, headers=H1)
+    response = client.post(
+        "/issues", json={"title": title, "project_id": project_id}, headers=H1
+    )
     assert response.status_code == 201, response.text
-    return response.json()
+    issue = response.json()
+    if assignee_id is not None:
+        conn = db.connect(client.db_path)
+        try:
+            conn.execute(
+                "UPDATE issues SET assignee_id = ? WHERE id = ?",
+                (assignee_id, issue["id"]),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        issue = client.get(f"/issues/{issue['id']}", headers=H1).json()
+    return issue
 
 
 def _claim_and_complete(client, issue, headers, usage=None, run="run-a"):
@@ -312,7 +322,9 @@ def test_complete_claim_refuses_bad_usage_and_keeps_the_lease(tmp_path, bad):
         headers = {**bearer, "X-Athena-Run": "r"}
         etag = client.get(f"/issues/{issue['id']}", headers=headers).headers["etag"]
         gen = client.post(
-            f"/issues/{issue['id']}/claim", json={}, headers={**headers, "If-Match": etag}
+            f"/issues/{issue['id']}/claim",
+            json={},
+            headers={**headers, "If-Match": etag},
         ).json()["generation"]
         refused = client.post(
             f"/issues/{issue['id']}/complete",
@@ -363,11 +375,16 @@ def test_a_credential_in_the_model_name_is_refused_on_both_surfaces(tmp_path):
     try:
         agent_id, bearer = _agent(client)
         # Positive control: an ordinary model name is accepted on both.
-        assert _beat(client, bearer, "r1", {"model": "claude-sonnet-5-5"}).status_code == 200
+        assert (
+            _beat(client, bearer, "r1", {"model": "claude-sonnet-5-5"}).status_code
+            == 200
+        )
         leaked = {"model": _token_shaped_model()}
         refused = _beat(client, bearer, "r2", leaked)
         assert refused.status_code == 422
-        assert "GitHub token" in refused.text and _token_shaped_model() not in refused.text
+        assert (
+            "GitHub token" in refused.text and _token_shaped_model() not in refused.text
+        )
 
         issue = _issue(client, assignee_id=agent_id)
         done = _claim_and_complete(client, issue, bearer, leaked)
@@ -395,12 +412,47 @@ def test_totals_per_run_per_agent_day_and_per_issue(tmp_path):
         two = _issue(client, "two", assignee_id=agent_id)
 
         usd = {"estimated_cost": 0.25, "currency": "USD"}
-        assert _beat(client, bearer, "run-a", {"input_tokens": 100, "output_tokens": 10, **usd}).status_code == 200
-        assert _beat(client, bearer, "run-a", {"input_tokens": 50, "cached_tokens": 5, **usd}).status_code == 200
-        assert _beat(client, bearer, "run-b", {"input_tokens": 7, "estimated_cost": 1, "currency": "EUR"}).status_code == 200
+        assert (
+            _beat(
+                client,
+                bearer,
+                "run-a",
+                {"input_tokens": 100, "output_tokens": 10, **usd},
+            ).status_code
+            == 200
+        )
+        assert (
+            _beat(
+                client, bearer, "run-a", {"input_tokens": 50, "cached_tokens": 5, **usd}
+            ).status_code
+            == 200
+        )
+        assert (
+            _beat(
+                client,
+                bearer,
+                "run-b",
+                {"input_tokens": 7, "estimated_cost": 1, "currency": "EUR"},
+            ).status_code
+            == 200
+        )
         assert _beat(client, other, "run-z", {"input_tokens": 999}).status_code == 200
-        assert _claim_and_complete(client, one, bearer, {"input_tokens": 1000, "output_tokens": 100, **usd}, run="run-a").status_code == 200
-        assert _claim_and_complete(client, two, bearer, {"input_tokens": 2000}, run="run-c").status_code == 200
+        assert (
+            _claim_and_complete(
+                client,
+                one,
+                bearer,
+                {"input_tokens": 1000, "output_tokens": 100, **usd},
+                run="run-a",
+            ).status_code
+            == 200
+        )
+        assert (
+            _claim_and_complete(
+                client, two, bearer, {"input_tokens": 2000}, run="run-c"
+            ).status_code
+            == 200
+        )
 
         conn = db.connect(tmp_path / "spend.sqlite")
         try:
@@ -426,7 +478,8 @@ def test_totals_per_run_per_agent_day_and_per_issue(tmp_path):
             assert days[0]["totals"]["reports"] == 5
 
             issues = {
-                r["issue_id"]: r["totals"] for r in reported_spend.by_issue(conn, viewer=None)
+                r["issue_id"]: r["totals"]
+                for r in reported_spend.by_issue(conn, viewer=None)
             }
             assert issues[one["id"]]["input_tokens"] == 1000
             assert issues[two["id"]]["input_tokens"] == 2000
@@ -462,14 +515,28 @@ def test_a_private_project_is_excluded_for_a_viewer_who_cannot_see_it(tmp_path):
             json={"email": "m@e.com", "name": "M", "password": "pw", "role": "member"},
             headers=H1,
         ).json()
-        project = client.post("/projects", json={"name": "Ops", "key": "OPS"}, headers=H1).json()
-        shown = _issue(client, "visible", assignee_id=agent_id, project_id=project["id"])
+        project = client.post(
+            "/projects", json={"name": "Ops", "key": "OPS"}, headers=H1
+        ).json()
+        shown = _issue(
+            client, "visible", assignee_id=agent_id, project_id=project["id"]
+        )
         hidden_project = client.post(
             "/projects", json={"name": "Vault", "key": "VLT"}, headers=H1
         ).json()
-        hidden = _issue(client, "secret", assignee_id=agent_id, project_id=hidden_project["id"])
-        assert _claim_and_complete(client, shown, bearer, {"input_tokens": 10}).status_code == 200
-        assert _claim_and_complete(client, hidden, bearer, {"input_tokens": 90}).status_code == 200
+        hidden = _issue(
+            client, "secret", assignee_id=agent_id, project_id=hidden_project["id"]
+        )
+        assert (
+            _claim_and_complete(client, shown, bearer, {"input_tokens": 10}).status_code
+            == 200
+        )
+        assert (
+            _claim_and_complete(
+                client, hidden, bearer, {"input_tokens": 90}
+            ).status_code
+            == 200
+        )
         assert _beat(client, bearer, "r", {"input_tokens": 5}).status_code == 200
 
         conn = db.connect(tmp_path / "spend.sqlite")
@@ -480,12 +547,16 @@ def test_a_private_project_is_excluded_for_a_viewer_who_cannot_see_it(tmp_path):
             )
             conn.commit()
             viewer = dict(
-                conn.execute("SELECT * FROM users WHERE id = ?", (member["id"],)).fetchone()
+                conn.execute(
+                    "SELECT * FROM users WHERE id = ?", (member["id"],)
+                ).fetchone()
             )
             admin = dict(conn.execute("SELECT * FROM users WHERE id = 1").fetchone())
 
             # Positive control: the admin sees every report.
-            admin_issues = {r["issue_id"] for r in reported_spend.by_issue(conn, viewer=admin)}
+            admin_issues = {
+                r["issue_id"] for r in reported_spend.by_issue(conn, viewer=admin)
+            }
             assert admin_issues == {shown["id"], hidden["id"]}
 
             seen = {r["issue_id"] for r in reported_spend.by_issue(conn, viewer=viewer)}
@@ -511,7 +582,15 @@ def test_the_cockpit_shows_reported_usage_under_its_honest_label(tmp_path):
     client = _app(tmp_path)
     try:
         agent_id, bearer = _agent(client)
-        empty = client.get("/admin/agents", headers=H1).text
+        assert (
+            client.post(
+                "/login",
+                data={"email": "a@e.com", "password": "pw"},
+                follow_redirects=False,
+            ).status_code
+            == 303
+        )
+        empty = client.get("/admin/agents").text
         assert LABEL not in empty  # nothing reported, nothing to caveat
 
         client.put(
@@ -519,8 +598,21 @@ def test_the_cockpit_shows_reported_usage_under_its_honest_label(tmp_path):
             json={"window": "day", "action_limit": 50},
             headers=H1,
         )
-        assert _beat(client, bearer, "run-a", {"input_tokens": 1234, "output_tokens": 56, "estimated_cost": 0.5, "currency": "USD"}).status_code == 200
-        page = client.get("/admin/agents", headers=H1).text
+        assert (
+            _beat(
+                client,
+                bearer,
+                "run-a",
+                {
+                    "input_tokens": 1234,
+                    "output_tokens": 56,
+                    "estimated_cost": 0.5,
+                    "currency": "USD",
+                },
+            ).status_code
+            == 200
+        )
+        page = client.get("/admin/agents").text
         assert LABEL in page
         assert "1234" in page and "0.5 USD" in page and "run-a" in page
         # Beside the action budget, which still reads as before.
@@ -540,7 +632,15 @@ def test_reported_usage_never_changes_the_action_budget_or_blocks_a_write(tmp_pa
         )
         before = client.get(f"/users/{agent_id}/budget", headers=H1).json()
         for n in range(5):
-            assert _beat(client, bearer, "r", {"input_tokens": 10**9, "estimated_cost": 10**6, "currency": "USD"}).status_code == 200
+            assert (
+                _beat(
+                    client,
+                    bearer,
+                    "r",
+                    {"input_tokens": 10**9, "estimated_cost": 10**6, "currency": "USD"},
+                ).status_code
+                == 200
+            )
         assert client.get(f"/users/{agent_id}/budget", headers=H1).json() == before
     finally:
         client.__exit__(None, None, None)
@@ -557,13 +657,19 @@ def test_mcp_heartbeat_and_complete_accept_usage(tmp_path):
         server = build_server(AthenaClient(client=client))
         beat = asyncio.run(
             server.call_tool(
-                "heartbeat_agent_run", {"run_id": "run-m", "usage": {"input_tokens": 42}}
+                "heartbeat_agent_run",
+                {"run_id": "run-m", "usage": {"input_tokens": 42}},
             )
         )
         assert json.loads(beat[0].text)["run_id"] == "run-m"
-        assert reported_usage.from_event(_events(tmp_path, "usage_reported")[0])["usage"] == {"input_tokens": 42}
+        assert reported_usage.from_event(_events(tmp_path, "usage_reported")[0])[
+            "usage"
+        ] == {"input_tokens": 42}
         tools = {t.name: t.description for t in asyncio.run(server.list_tools())}
-        assert "usage" in tools["heartbeat_agent_run"] and "usage" in tools["complete_claim"]
+        assert (
+            "usage" in tools["heartbeat_agent_run"]
+            and "usage" in tools["complete_claim"]
+        )
         assert "not metered" in tools["complete_claim"]
     finally:
         client.__exit__(None, None, None)

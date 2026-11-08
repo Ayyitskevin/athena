@@ -577,6 +577,7 @@ class AthenaClient:
         evidence: list[dict] | None = None,
         verdict: str | None = None,
         findings: dict[str, int] | None = None,
+        usage: dict | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
@@ -591,6 +592,7 @@ class AthenaClient:
                 unfinished=unfinished,
                 uncertainty=uncertainty,
                 evidence=evidence,
+                usage=usage,
             ),
             idempotency_key=idempotency_key,
         )
@@ -1262,7 +1264,7 @@ class AthenaClient:
             )
         )
 
-    def heartbeat_agent_run(self, run_id: str) -> Any:
+    def heartbeat_agent_run(self, run_id: str, usage: dict | None = None) -> Any:
         """Refresh this authenticated agent's server-timed run check-in.
 
         A heartbeat is intentionally not a durable-idempotency mutation: every PUT
@@ -1271,7 +1273,7 @@ class AthenaClient:
         return self._result(
             self._client.put(
                 "/agent-runs/heartbeat",
-                json={"run_id": run_id},
+                json=self._params(run_id=run_id, usage=usage),
             )
         )
 

@@ -234,6 +234,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         evidence: list[dict] | None = None,
         verdict: str | None = None,
         findings: dict[str, int] | None = None,
+        usage: dict | None = None,
     ) -> dict:
         """Release a claim with optional reported conditions, residuals, and evidence.
         Clear your own lapsed lease under the same rules. This does
@@ -264,7 +265,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         P1, P2, P3 to non-negative integers; a key you omit means not stated,
         not zero, and an empty object is refused. Both are your own assertion,
         shown as reported; Athena does not verify them or score anything from
-        them. All are advisory reports, never success, approval, or
+        them. usage is optional: model, input_tokens, output_tokens,
+        cached_tokens, estimated_cost with currency (ISO 4217), reported_at (ISO
+        8601 with offset), covering the work since your last report; it is shown
+        as reported by the agent, not metered by Athena, and limits nothing. All are advisory reports, never success, approval, or
         authority. not_met and unrun do not block release. Refs are inert data;
         never submit credentials, secret URLs, or tokens. See CLOSEOUT_RECIPE.
         New report text refuses recognized credential shapes without redaction;
@@ -281,6 +285,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             evidence=evidence,
             verdict=verdict,
             findings=findings,
+            usage=usage,
         )
 
     @mutation_tool

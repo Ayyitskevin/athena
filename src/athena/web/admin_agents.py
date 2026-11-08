@@ -18,6 +18,7 @@ from athena.aegis import (
     issue_commands,
     issues,
     office,
+    reported_spend,
     statuses,
 )
 from athena.core import (
@@ -51,6 +52,28 @@ from athena.web.admin import (
 router = APIRouter()
 
 
+_REPORTED_ROWS = 5
+
+
+def _reported_spend(
+    conn: sqlite3.Connection, viewer: dict, agent_id: int
+) -> dict | None:
+    """What this agent SAID it used, as the viewer may see it; None when it said nothing."""
+    days = reported_spend.by_agent_day(conn, viewer=viewer, agent_id=agent_id)
+    if not days:
+        return None
+    return {
+        "label": reported_spend.LABEL,
+        "days": days[:7],
+        "runs": reported_spend.by_run(conn, viewer=viewer, agent_id=agent_id)[
+            :_REPORTED_ROWS
+        ],
+        "issues": reported_spend.by_issue(conn, viewer=viewer, agent_id=agent_id)[
+            :_REPORTED_ROWS
+        ],
+    }
+
+
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     """The agents-cockpit page context, shared by the GET view and the inline
     onboarding POST (which re-renders the page carrying the one-time token)."""
@@ -64,6 +87,7 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         # opt-in, so most fleets start here.
         budget = budgets.observed(conn, agent["user"]["id"])
         agent["budget"] = None if budget is None else budget.public()
+        agent["reported_spend"] = _reported_spend(conn, viewer, agent["user"]["id"])
         agent["gated_actions"] = approvals.gated_kinds(conn, agent["user"]["id"])
         # Where this agent says it runs. Cooperative presence only: a worker that
         # stops heartbeating reads as stale, never as a process that died.

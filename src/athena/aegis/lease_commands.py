@@ -36,7 +36,7 @@ from athena.aegis.issue_commands import (
     _require_issue_writer,
     _visible_issue,
 )
-from athena.core import coordination_roots, db, identity
+from athena.core import coordination_roots, db, identity, reported_usage
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
@@ -451,6 +451,7 @@ def _normalize_completion_report(
     evidence: object = None,
     verdict: object = None,
     findings: object = None,
+    usage: object = None,
 ) -> dict | None:
     """Bound advisory data without lookup, execution, or verification.
 
@@ -460,6 +461,11 @@ def _normalize_completion_report(
     accepting write commands, so existing stored history remains readable.
     """
     report: dict = {}
+    if usage is not None:
+        try:
+            report["usage"] = reported_usage.normalize_usage(usage)
+        except ValueError as exc:
+            raise IssueCommandError("invalid", str(exc)) from exc
     if verdict is not None:
         if not isinstance(verdict, str) or verdict not in COMPLETION_VERDICTS:
             raise IssueCommandError(
@@ -676,6 +682,7 @@ def reported_completion(event: dict) -> dict | None:
             - {
                 "verdict",
                 "findings",
+                "usage",
                 "results",
                 "unfinished",
                 "uncertainty",
@@ -862,6 +869,7 @@ def complete_claim(
     evidence: object = None,
     verdict: object = None,
     findings: object = None,
+    usage: object = None,
 ) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
@@ -880,9 +888,15 @@ def complete_claim(
         evidence=evidence,
         verdict=verdict,
         findings=findings,
+        usage=usage,
     )
+    if report and "usage" in report:
+        try:
+            reported_usage.refuse_credentials(report["usage"])
+        except ValueError as exc:
+            raise IssueCommandError("invalid", str(exc)) from exc
     for name, items in (report or {}).items():
-        if name in {"verdict", "findings"}:
+        if name in {"verdict", "findings", "usage"}:
             continue  # closed words and integers: nothing free-form to scan
         for index, item in enumerate(items):
             fields = item.items() if isinstance(item, dict) else [(None, item)]
