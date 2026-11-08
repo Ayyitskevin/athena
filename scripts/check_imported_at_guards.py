@@ -176,6 +176,14 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "the stale in-progress lane measures native work; foreign history must "
         "not hide an idle item by resetting its last-work time",
     ),
+    (
+        "aegis/notification_state.py",
+        "annotate_inbox",
+        r"AND c\.imported_at IS NULL",
+        "the inbox target-state annotation reads the reader's own completions; "
+        "an imported claim_completed is foreign history and must not mark the "
+        "reader as having completed the target",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is

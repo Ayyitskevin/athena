@@ -11,7 +11,15 @@ from collections.abc import Callable
 import sqlite3
 from typing import Any
 
-from athena.aegis import claim_handoffs, issue_etags, issues, lease_commands, statuses
+from athena.aegis import (
+    claim_handoffs,
+    completion_evidence,
+    definition_of_done,
+    issue_etags,
+    issues,
+    lease_commands,
+    statuses,
+)
 from athena.core import (
     access,
     activity,
@@ -461,8 +469,30 @@ def _related(
     }
 
 
+def _evidence_checks_of(
+    conn: sqlite3.Connection,
+    issue_id: int,
+    report: dict | None,
+    project_id: int | None,
+    actor: dict | None,
+) -> dict[str, Any]:
+    """The read-time annotations of a report: evidence labels (only for a report that asks
+    for a check) and checklist coverage (only where the actor sees a project checklist)."""
+    out: dict[str, Any] = {}
+    checks = completion_evidence.evidence_checks(conn, issue_id, report)
+    if checks is not None:
+        out["evidence_checks"] = checks
+    covered = definition_of_done.coverage(conn, project_id, actor=actor, report=report)
+    if covered is not None:
+        out["checklist_coverage"] = covered
+    return out
+
+
 def _recent_activity(
-    conn: sqlite3.Connection, issue_id: int, actor: dict | None
+    conn: sqlite3.Connection,
+    issue_id: int,
+    actor: dict | None,
+    project_id: int | None,
 ) -> dict[str, Any]:
     gate, gate_params = access.event_visibility_clause(conn, actor, alias="a")
     clauses = ["a.target_kind = 'issue'", "a.target_id = ?"]
@@ -497,6 +527,13 @@ def _recent_activity(
                 "forked_from_event_id": row["forked_from_event_id"],
                 "imported_at": row["imported_at"],
                 "reported_completion": lease_commands.reported_completion(row),
+                **_evidence_checks_of(
+                    conn,
+                    issue_id,
+                    lease_commands.reported_completion(row),
+                    project_id,
+                    actor,
+                ),
             }
             for row in rows
         ],
@@ -621,9 +658,17 @@ def build_work_context(
             # this is the cluster the references cannot show. Derived at read
             # time by core/graph, same visibility rules, bound disclosed.
             "related": _related(conn, issue["id"], actor),
-            "recent_activity": _recent_activity(conn, issue["id"], actor),
+            "recent_activity": _recent_activity(
+                conn, issue["id"], actor, issue["project_id"]
+            ),
             "claim_handoffs": handoff_history,
         }
+
+        # Present only when the project has a checklist this actor may see, so a project
+        # without one returns exactly the payload (and ETag) it always did.
+        checklist = definition_of_done.checklist(conn, issue["project_id"], actor=actor)
+        if checklist is not None:
+            payload["definition_of_done"] = checklist
 
         warnings: list[str] = []
         if issue["archived_at"] is not None:
