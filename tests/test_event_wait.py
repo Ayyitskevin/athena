@@ -12,15 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 
 import pytest
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 
 from athena.core import activity, db, event_wait
-from athena.main import create_app
+from athena.main import SlowRequestLogMiddleware, create_app
 from athena.mcp.client import AthenaClient
 from athena.mcp.server import build_server
 
@@ -376,3 +378,52 @@ def test_the_mcp_tool_is_the_rest_call_and_keeps_its_bounds(feed):
         )
     waited = call("wait_for_events", after=baseline, wait=1)
     assert waited["events"] == [] and waited["wait"]["outcome"] == "timeout"
+
+
+# --- a parked request is not a slow request ------------------------------------------
+#
+# The slow-request log exists to catch reads that got slow. A request that was asked
+# to park for 25 s is not slow, it is waiting; if every parked wait logged a WARNING
+# the signal would drown in them. The route declares how long it parked and the
+# timer excludes exactly that; real work past the threshold is still reported.
+
+
+def _timed_app(threshold_ms: int, *, parked_ms: float):
+    app = FastAPI()
+
+    @app.get("/items/{item_id}")
+    async def read_item(item_id: int, request: Request):
+        await asyncio.sleep(0.05)
+        request.state.parked_ms = parked_ms
+        return {"item_id": item_id}
+
+    app.add_middleware(SlowRequestLogMiddleware, threshold_ms=threshold_ms)
+    return app
+
+
+def _slow_records(caplog):
+    return [r for r in caplog.records if "slow request" in r.getMessage()]
+
+
+def test_time_declared_as_parked_is_excluded_from_the_slow_request_log(caplog):
+    with caplog.at_level(logging.WARNING, logger="athena"):
+        TestClient(_timed_app(10, parked_ms=1000.0)).get("/items/7")
+    assert not _slow_records(caplog), caplog.text
+
+
+def test_work_past_the_threshold_is_still_logged_and_names_the_parked_share(caplog):
+    with caplog.at_level(logging.WARNING, logger="athena"):
+        TestClient(_timed_app(10, parked_ms=1.0)).get("/items/7")
+    records = _slow_records(caplog)
+    assert len(records) == 1, caplog.text
+    assert "parked 1ms" in records[0].getMessage()
+    assert "/items/{item_id}" in records[0].getMessage()
+
+
+def test_a_parked_events_request_does_not_log_as_slow(feed, caplog):
+    client, baseline = feed["client"], feed["baseline"]
+    with caplog.at_level(logging.WARNING, logger="athena"):
+        timed_out = client.get(f"/events?after={baseline}&wait=2", headers=ADMIN)
+    assert timed_out.json()["wait"]["outcome"] == "timeout"
+    assert timed_out.json()["wait"]["elapsed_seconds"] >= 2
+    assert not _slow_records(caplog), caplog.text
