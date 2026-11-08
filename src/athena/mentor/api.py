@@ -37,6 +37,7 @@ from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import docs_write_actor, is_admin, optional_actor
 from athena.mentor import (
+    notebook_commands,
     page_commands,
     page_templates,
     page_comment_commands,
@@ -60,6 +61,27 @@ STATUS_BY_KIND: dict[str, int] = {
 # (a sub-resource, like comments under an issue). A single page is addressable on
 # its own canonical URL via this top-level router, like GET /issues/{id}.
 pages_router = APIRouter(prefix="/pages", tags=["mentor"])
+# The agent's notebook: find-or-create on an explicit call. The desk shows it;
+# reading the desk never creates it.
+notebook_router = APIRouter(prefix="/desk", tags=["mentor"])
+
+
+@notebook_router.post("/notebook")
+def open_notebook(
+    response: Response,
+    actor: dict = Depends(docs_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Your notebook page, created on first use: 201 when this call created it,
+    200 when it already existed. The page carries its ETag for the next If-Match
+    append. Only an agent seat has one."""
+    try:
+        page, created = notebook_commands.ensure_agent_notebook(conn, actor=actor)
+    except notebook_commands.NotebookCommandError as exc:
+        status = {"forbidden": 403, "conflict": 409}.get(exc.kind, 400)
+        raise HTTPException(status_code=status, detail=exc.detail) from exc
+    response.status_code = 201 if created else 200
+    return {"page": _tagged_page(conn, page, response), "created": created}
 
 
 class SpaceCreate(BaseModel):

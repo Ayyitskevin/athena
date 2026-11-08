@@ -852,6 +852,7 @@ def create_app(
     # Mentor REST API (spaces + pages + versions).
     app.include_router(mentor_api.spaces_router)
     app.include_router(mentor_api.pages_router)
+    app.include_router(mentor_api.notebook_router)
 
     # Framework-generated browser HTML follows the same session-only policy as
     # Athena web routes. The machine-readable OpenAPI document remains public

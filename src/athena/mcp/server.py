@@ -342,6 +342,7 @@ TOOL_SCOPES: dict[str, str] = {
     "dispatch_to_icarus": tokens.ISSUE_WRITE_SCOPE,
     # Mentor writes
     "create_page": tokens.DOCS_WRITE_SCOPE,
+    "open_my_notebook": tokens.DOCS_WRITE_SCOPE,
     "update_page": tokens.DOCS_WRITE_SCOPE,
     "archive_page": tokens.DOCS_WRITE_SCOPE,
     "unarchive_page": tokens.DOCS_WRITE_SCOPE,

@@ -69,7 +69,9 @@ def test_the_notebook_is_created_once_on_first_use(tmp_path):
         assert again.status_code == 200 and again.json()["created"] is False
         assert again.json()["page"]["id"] == first.json()["page"]["id"]
         page = first.json()["page"]
-        assert notebook_commands.NOTEBOOK_LABEL in [l["name"] for l in page["labels"]]
+        assert notebook_commands.NOTEBOOK_LABEL in [
+            label["name"] for label in page["labels"]
+        ]
         conn = db.connect(db_file)
         spaces = conn.execute(
             "SELECT COUNT(*) AS n FROM spaces WHERE created_by = ?",
@@ -87,6 +89,32 @@ def test_the_notebook_is_created_once_on_first_use(tmp_path):
         # Positive control: a second agent gets its own, separate notebook.
         other = _agent(c, "two@e.com", "Two")
         assert _open(c, other).json()["page"]["id"] != page["id"]
+
+
+def test_the_mcp_tool_opens_the_same_notebook(tmp_path):
+    from athena.core import tokens
+    from athena.mcp.client import AthenaClient
+    from athena.mcp.server import TOOL_SCOPES
+
+    assert TOOL_SCOPES["open_my_notebook"] == tokens.DOCS_WRITE_SCOPE
+    app, _ = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        tc = TestClient(app)
+        tc.__enter__()
+        try:
+            tc.headers.update(_bearer(agent))
+            client = AthenaClient(client=tc)
+            first = client.open_my_notebook()
+            again = client.open_my_notebook()
+            assert first["created"] is True and again["created"] is False
+            assert again["page"]["id"] == first["page"]["id"]
+            # The page's ETag rides along for the next If-Match append.
+            page_tag = tc.get(f"/pages/{again['page']['id']}").headers["etag"]
+            assert again["_etag"] == page_tag
+        finally:
+            tc.__exit__(None, None, None)
 
 
 def test_a_taken_space_key_does_not_block_the_notebook(tmp_path):

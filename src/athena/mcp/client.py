@@ -927,6 +927,11 @@ class AthenaClient:
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
 
+    def open_my_notebook(self) -> Any:
+        """Your notebook page, created on first use (``created`` says which). The
+        page carries ``_etag`` for the next If-Match append."""
+        return self._result(self._client.post("/desk/notebook"))
+
     def find_pages_by_title(self, title: str, *, space_id: int | None = None) -> Any:
         """Look up pages by their TITLE instead of a numeric id — the address an agent
         can recall. Returns every exact (case-insensitive) match (titles aren't unique),

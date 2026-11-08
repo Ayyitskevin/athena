@@ -146,6 +146,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `archive_page` | `POST /pages/{page_id}/archive` | Archive (soft-delete) a page: it's hidden from the space tree, navigation, … |
 | `create_page` | `POST /spaces/{space_id}/pages` | Create a Mentor page in a space. Optionally nest it under parent_id (a … |
 | `label_page` | `POST /pages/{page_id}/labels` | Attach an existing label (by id — see list_labels) to a Mentor page. |
+| `open_my_notebook` | `POST /desk/notebook` | Open your notebook page (an agent's notes kept between sessions), … |
 | `record_run_learning` | `POST /issues/{issue_id}/learnings` | Write down what you learned, so the NEXT run starts knowing it. |
 | `restore_page_version` | `POST /pages/{page_id}/versions/{version}/restore` | Restore a page's content to a prior version. Non-destructive: the current … |
 | `unarchive_page` | `POST /pages/{page_id}/unarchive` | Restore a previously archived page to the active tree/nav/search. Returns … |
@@ -197,4 +198,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*135 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*136 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
