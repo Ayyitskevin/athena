@@ -307,3 +307,21 @@ def test_stored_history_with_an_unknown_verdict_is_not_read_as_a_report(tmp_path
             assert lease_commands.reported_completion(tampered) is None
     finally:
         conn.close()
+
+
+def test_every_place_the_report_is_documented_names_the_closed_words():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for path in (
+        "docs/CLOSEOUT_RECIPE.md",
+        "docs/AGENT_API.md",
+        "src/athena/field_guide/02_claiming_work.md",
+    ):
+        text = " ".join((root / path).read_text().replace("`", "").split())
+        assert "PASS-WITH-NOTES" in text and "BLOCKED" in text, path
+        assert "P1" in text and "P3" in text, path
+    recipe = (root / "docs/CLOSEOUT_RECIPE.md").read_text()
+    assert (
+        "not an overall\nverdict" not in recipe
+    )  # the old sentence was replaced on purpose

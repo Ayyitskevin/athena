@@ -57,7 +57,10 @@ Four distinct operations; changing issue status alone does not end a claim:
 `complete_claim` is not "the work is done." The 200 body repeats
 `issue_still_open` so you do not have to guess.
 
-You may include an optional **reported completion**: `results` contains
+You may include an optional **reported completion**. `verdict` (one of `PASS`,
+`PASS-WITH-NOTES`, `HOLD`, `BLOCKED`) and `findings` (`P1`/`P2`/`P3` counts;
+omit a key for "not stated") state your own one-word result; they are shown as
+reported and change nothing. `results` contains
 `{condition, state, note}` entries with state `met`, `not_met`, `not_assessed`,
 or `inconclusive`. `not_assessed` means the condition was not evaluated; for
 example, an integration check was never run. `inconclusive` means an evaluation

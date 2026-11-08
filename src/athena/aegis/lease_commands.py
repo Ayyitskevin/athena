@@ -53,6 +53,13 @@ MAX_COMPLETION_TEXT_CHARS = 500
 MAX_COMPLETION_SOURCE_CHARS = 200
 MAX_COMPLETION_REPORT_JSON_CHARS = 8_000
 COMPLETION_RESULT_STATES = frozenset({"met", "not_met", "not_assessed", "inconclusive"})
+# The reporter's own one-word result, in the words this fleet's reviews already use. A closed
+# vocabulary, exact and case-sensitive, so a typo refuses instead of becoming a new category.
+# It is a fact the reporter asserts, never a score or a verification (docs/ANSWERABILITY.md).
+COMPLETION_VERDICTS = ("PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED")
+# Severity keys for the reporter's finding counts. A key that is absent means "not stated",
+# not zero; an empty object is refused so that ambiguity cannot be written.
+COMPLETION_FINDING_SEVERITIES = ("P1", "P2", "P3")
 COMPLETION_EVIDENCE_KINDS = frozenset({"event", "handoff", "doc", "file", "manifest"})
 COMPLETION_EVIDENCE_SCOPES = frozenset(
     {"source-only", "synthetic", "actual-run", "unrun"}
@@ -430,13 +437,42 @@ def _normalize_completion_report(
     unfinished: object = None,
     uncertainty: object = None,
     evidence: object = None,
+    verdict: object = None,
+    findings: object = None,
 ) -> dict | None:
-    """Bound advisory data without lookup, execution, or verdict.
+    """Bound advisory data without lookup, execution, or verification.
+
+    ``verdict`` and ``findings`` are optional reporter assertions in closed vocabularies.
 
     This grammar is reused on reads: credential refusal belongs only to the
     accepting write commands, so existing stored history remains readable.
     """
     report: dict = {}
+    if verdict is not None:
+        if not isinstance(verdict, str) or verdict not in COMPLETION_VERDICTS:
+            raise IssueCommandError(
+                "invalid", f"verdict must be one of {', '.join(COMPLETION_VERDICTS)}"
+            )
+        report["verdict"] = verdict
+    if findings is not None:
+        severities = ", ".join(COMPLETION_FINDING_SEVERITIES)
+        if not isinstance(findings, dict) or not findings:
+            raise IssueCommandError(
+                "invalid",
+                f"findings must be an object with at least one of {severities}",
+            )
+        counts: dict = {}
+        for key, count in findings.items():
+            if key not in COMPLETION_FINDING_SEVERITIES:
+                raise IssueCommandError(
+                    "invalid", f"findings key {key!r} must be one of {severities}"
+                )
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise IssueCommandError(
+                    "invalid", f"findings.{key} must be a non-negative integer"
+                )
+            counts[key] = count
+        report["findings"] = counts
     for name, raw, maximum in (
         ("results", results, MAX_COMPLETION_RESULTS),
         ("unfinished", unfinished, MAX_COMPLETION_TEXT_ITEMS),
@@ -568,7 +604,15 @@ def reported_completion(event: dict) -> dict | None:
         if (
             not isinstance(raw, dict)
             or not raw
-            or set(raw) - {"results", "unfinished", "uncertainty", "evidence"}
+            or set(raw)
+            - {
+                "verdict",
+                "findings",
+                "results",
+                "unfinished",
+                "uncertainty",
+                "evidence",
+            }
         ):
             return None
         report = _normalize_completion_report(**raw)
@@ -748,6 +792,8 @@ def complete_claim(
     unfinished: object = None,
     uncertainty: object = None,
     evidence: object = None,
+    verdict: object = None,
+    findings: object = None,
 ) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
@@ -764,8 +810,12 @@ def complete_claim(
         unfinished=unfinished,
         uncertainty=uncertainty,
         evidence=evidence,
+        verdict=verdict,
+        findings=findings,
     )
     for name, items in (report or {}).items():
+        if name in {"verdict", "findings"}:
+            continue  # closed words and integers: nothing free-form to scan
         for index, item in enumerate(items):
             fields = item.items() if isinstance(item, dict) else [(None, item)]
             for field, text in fields:

@@ -232,6 +232,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         unfinished: list[str] | None = None,
         uncertainty: list[str] | None = None,
         evidence: list[dict] | None = None,
+        verdict: str | None = None,
+        findings: dict[str, int] | None = None,
     ) -> dict:
         """Release a claim with optional reported conditions, residuals, and evidence.
         Clear your own lapsed lease under the same rules. This does
@@ -251,7 +253,12 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         up to 10 text items each. evidence is up to 10 {kind,source,ref,scope}
         objects: kind event/handoff/doc/file/manifest; scope source-only,
         synthetic, actual-run, or unrun. The total encoded report is at most
-        8000 characters. All are advisory reports, never success, approval, or
+        8000 characters. verdict is optional and one of PASS, PASS-WITH-NOTES,
+        HOLD, BLOCKED, exactly as written. findings is optional: an object of
+        P1, P2, P3 to non-negative integers; a key you omit means not stated,
+        not zero, and an empty object is refused. Both are your own assertion,
+        shown as reported; Athena does not verify them or score anything from
+        them. All are advisory reports, never success, approval, or
         authority. not_met and unrun do not block release. Refs are inert data;
         never submit credentials, secret URLs, or tokens. See CLOSEOUT_RECIPE.
         New report text refuses recognized credential shapes without redaction;
@@ -266,6 +273,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             unfinished=unfinished,
             uncertainty=uncertainty,
             evidence=evidence,
+            verdict=verdict,
+            findings=findings,
         )
 
     @mutation_tool

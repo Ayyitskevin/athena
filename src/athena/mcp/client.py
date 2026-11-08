@@ -575,6 +575,8 @@ class AthenaClient:
         unfinished: list[str] | None = None,
         uncertainty: list[str] | None = None,
         evidence: list[dict] | None = None,
+        verdict: str | None = None,
+        findings: dict[str, int] | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
@@ -583,6 +585,8 @@ class AthenaClient:
             f"/issues/{issue_id}/complete",
             json=self._params(
                 generation=generation,
+                verdict=verdict,
+                findings=findings,
                 results=results,
                 unfinished=unfinished,
                 uncertainty=uncertainty,
