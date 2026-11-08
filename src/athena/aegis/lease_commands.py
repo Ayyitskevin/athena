@@ -16,6 +16,7 @@ MCP share one boundary.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 from typing import Literal
@@ -60,7 +61,18 @@ COMPLETION_VERDICTS = ("PASS", "PASS-WITH-NOTES", "HOLD", "BLOCKED")
 # Severity keys for the reporter's finding counts. A key that is absent means "not stated",
 # not zero; an empty object is refused so that ambiguity cannot be written.
 COMPLETION_FINDING_SEVERITIES = ("P1", "P2", "P3")
-COMPLETION_EVIDENCE_KINDS = frozenset({"event", "handoff", "doc", "file", "manifest"})
+# "attachment" and "forge_event" point at a row Athena holds by id (an attachment, or an imported
+# forge commit / pull-request event); their ref is that id. Shape only: see completion_evidence.py.
+COMPLETION_EVIDENCE_KINDS = frozenset(
+    {"event", "handoff", "doc", "file", "manifest", "attachment", "forge_event"}
+)
+COMPLETION_ID_REF_KINDS = frozenset({"attachment", "forge_event"})
+COMPLETION_EVIDENCE_OPTIONAL = ("digest", "bytes", "locator")
+MAX_COMPLETION_SUBJECTS = 10
+MAX_COMPLETION_SUBJECT_CHARS = 200
+MAX_COMPLETION_LOCATOR_CHARS = 500
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_ROW_ID = re.compile(r"[1-9][0-9]{0,17}")
 COMPLETION_EVIDENCE_SCOPES = frozenset(
     {"source-only", "synthetic", "actual-run", "unrun"}
 )
@@ -500,9 +512,18 @@ def _normalize_completion_report(
                 if name == "results"
                 else {"kind", "source", "ref", "scope"}
             )
-            if not isinstance(item, dict) or set(item) != keys:
+            optional = (
+                {"subject"} if name == "results" else set(COMPLETION_EVIDENCE_OPTIONAL)
+            )
+            if not isinstance(item, dict) or not (keys <= set(item) <= keys | optional):
+                suffix = (
+                    f", plus optionally {', '.join(sorted(optional))}"
+                    if optional
+                    else ""
+                )
                 raise IssueCommandError(
-                    "invalid", f"{label} must contain exactly {', '.join(sorted(keys))}"
+                    "invalid",
+                    f"{label} must contain exactly {', '.join(sorted(keys))}{suffix}",
                 )
             if name == "results":
                 if (
@@ -513,22 +534,41 @@ def _normalize_completion_report(
                         "invalid",
                         f"{label}.state must be met, not_met, not_assessed, or inconclusive",
                     )
-                items.append(
-                    {
-                        "condition": _completion_text(
-                            item["condition"],
-                            name=f"{label}.condition",
-                            maximum=MAX_COMPLETION_TEXT_CHARS,
-                        ),
-                        "state": item["state"],
-                        "note": _completion_text(
-                            item["note"],
-                            name=f"{label}.note",
-                            maximum=MAX_COMPLETION_TEXT_CHARS,
-                            blank=True,
-                        ),
-                    }
-                )
+                normalized: dict = {
+                    "condition": _completion_text(
+                        item["condition"],
+                        name=f"{label}.condition",
+                        maximum=MAX_COMPLETION_TEXT_CHARS,
+                    ),
+                    "state": item["state"],
+                    "note": _completion_text(
+                        item["note"],
+                        name=f"{label}.note",
+                        maximum=MAX_COMPLETION_TEXT_CHARS,
+                        blank=True,
+                    ),
+                }
+                if "subject" in item:
+                    subject = item["subject"]
+                    if (
+                        not isinstance(subject, list)
+                        or not subject
+                        or len(subject) > MAX_COMPLETION_SUBJECTS
+                    ):
+                        raise IssueCommandError(
+                            "invalid",
+                            f"{label}.subject must be an array of 1 to "
+                            f"{MAX_COMPLETION_SUBJECTS} items naming what was judged",
+                        )
+                    normalized["subject"] = [
+                        _completion_text(
+                            entry,
+                            name=f"{label}.subject[{n}]",
+                            maximum=MAX_COMPLETION_SUBJECT_CHARS,
+                        )
+                        for n, entry in enumerate(subject)
+                    ]
+                items.append(normalized)
             else:
                 if (
                     not isinstance(item["kind"], str)
@@ -536,7 +576,8 @@ def _normalize_completion_report(
                 ):
                     raise IssueCommandError(
                         "invalid",
-                        f"{label}.kind must be event, handoff, doc, file, or manifest",
+                        f"{label}.kind must be event, handoff, doc, file, manifest, "
+                        "attachment, or forge_event",
                     )
                 if (
                     not isinstance(item["scope"], str)
@@ -546,22 +587,49 @@ def _normalize_completion_report(
                         "invalid",
                         f"{label}.scope must be source-only, synthetic, actual-run, or unrun",
                     )
-                items.append(
-                    {
-                        "kind": item["kind"],
-                        "source": _completion_text(
-                            item["source"],
-                            name=f"{label}.source",
-                            maximum=MAX_COMPLETION_SOURCE_CHARS,
-                        ),
-                        "ref": _completion_text(
-                            item["ref"],
-                            name=f"{label}.ref",
-                            maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
-                        ),
-                        "scope": item["scope"],
-                    }
-                )
+                normalized = {
+                    "kind": item["kind"],
+                    "source": _completion_text(
+                        item["source"],
+                        name=f"{label}.source",
+                        maximum=MAX_COMPLETION_SOURCE_CHARS,
+                    ),
+                    "ref": _completion_text(
+                        item["ref"],
+                        name=f"{label}.ref",
+                        maximum=MAX_HANDOFF_EVIDENCE_ITEM_CHARS,
+                    ),
+                    "scope": item["scope"],
+                }
+                if item["kind"] in COMPLETION_ID_REF_KINDS and not _ROW_ID.fullmatch(
+                    normalized["ref"]
+                ):
+                    raise IssueCommandError(
+                        "invalid",
+                        f"{label}.ref must be the numeric id of the {item['kind']} row",
+                    )
+                if "digest" in item:
+                    digest = item["digest"]
+                    if not isinstance(digest, str) or not _SHA256_HEX.fullmatch(digest):
+                        raise IssueCommandError(
+                            "invalid",
+                            f"{label}.digest must be 64 lowercase hex characters (SHA-256)",
+                        )
+                    normalized["digest"] = digest
+                if "bytes" in item:
+                    size = item["bytes"]
+                    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                        raise IssueCommandError(
+                            "invalid", f"{label}.bytes must be a non-negative integer"
+                        )
+                    normalized["bytes"] = size
+                if "locator" in item:
+                    normalized["locator"] = _completion_text(
+                        item["locator"],
+                        name=f"{label}.locator",
+                        maximum=MAX_COMPLETION_LOCATOR_CHARS,
+                    )
+                items.append(normalized)
         if name == "evidence":
             # The same item-count, text/control and encoded-ref envelope as yield.
             # Validation trims there; retain the original bytes in this report.
@@ -818,16 +886,23 @@ def complete_claim(
             continue  # closed words and integers: nothing free-form to scan
         for index, item in enumerate(items):
             fields = item.items() if isinstance(item, dict) else [(None, item)]
-            for field, text in fields:
-                if field in {"state", "kind", "scope"}:
+            for field, value in fields:
+                if field in {"state", "kind", "scope", "digest", "bytes"}:
                     continue
-                kind = report_credentials.credential_kind(text)
-                if kind is not None:
-                    path = f"{name}[{index}]" + (f".{field}" if field else "")
-                    raise IssueCommandError(
-                        "invalid",
-                        f"{path} contains {kind}; remove the credential and retry",
-                    )
+                # ``subject`` is a list of text; everything else scanned is one string.
+                texts = (
+                    [(f".{field}[{n}]", t) for n, t in enumerate(value)]
+                    if field == "subject"
+                    else [(f".{field}" if field else "", value)]
+                )
+                for suffix, text in texts:
+                    kind = report_credentials.credential_kind(text)
+                    if kind is not None:
+                        raise IssueCommandError(
+                            "invalid",
+                            f"{name}[{index}]{suffix} contains {kind}; "
+                            "remove the credential and retry",
+                        )
     with db.transaction(conn, immediate=True):
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)

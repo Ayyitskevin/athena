@@ -11,7 +11,14 @@ from collections.abc import Callable
 import sqlite3
 from typing import Any
 
-from athena.aegis import claim_handoffs, issue_etags, issues, lease_commands, statuses
+from athena.aegis import (
+    claim_handoffs,
+    completion_evidence,
+    issue_etags,
+    issues,
+    lease_commands,
+    statuses,
+)
 from athena.core import (
     access,
     activity,
@@ -461,6 +468,14 @@ def _related(
     }
 
 
+def _evidence_checks_of(
+    conn: sqlite3.Connection, issue_id: int, report: dict | None
+) -> dict[str, Any]:
+    """The read-time evidence labels, only for a report that asks for a check."""
+    checks = completion_evidence.evidence_checks(conn, issue_id, report)
+    return {} if checks is None else {"evidence_checks": checks}
+
+
 def _recent_activity(
     conn: sqlite3.Connection, issue_id: int, actor: dict | None
 ) -> dict[str, Any]:
@@ -497,6 +512,9 @@ def _recent_activity(
                 "forked_from_event_id": row["forked_from_event_id"],
                 "imported_at": row["imported_at"],
                 "reported_completion": lease_commands.reported_completion(row),
+                **_evidence_checks_of(
+                    conn, issue_id, lease_commands.reported_completion(row)
+                ),
             }
             for row in rows
         ],
