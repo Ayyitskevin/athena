@@ -1291,6 +1291,7 @@ class CompleteClaimIn(LeaseGenerationIn):
     unfinished: object | None = None
     uncertainty: object | None = None
     evidence: object | None = None
+    usage: object | None = None
 
 
 # --- Delegation claim/lease: accept / decline / complete -------------------
@@ -1331,6 +1332,7 @@ def complete_issue_claim(
             unfinished=payload.unfinished if payload is not None else None,
             uncertainty=payload.uncertainty if payload is not None else None,
             evidence=payload.evidence if payload is not None else None,
+            usage=payload.usage if payload is not None else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released

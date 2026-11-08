@@ -19,6 +19,7 @@ from athena.aegis import (
     issue_commands,
     issues,
     office,
+    reported_spend,
     statuses,
 )
 from athena.core import (
@@ -52,6 +53,31 @@ from athena.web.admin import (
 router = APIRouter()
 
 
+_REPORTED_ROWS = 5
+
+
+def _reported_spend(
+    conn: sqlite3.Connection, viewer: dict, agent_id: int, reads: reported_spend.Scan
+) -> dict | None:
+    """What this agent SAID it used, as the viewer may see it; None when it said nothing."""
+    days = reported_spend.by_agent_day(
+        conn, viewer=viewer, agent_id=agent_id, reads=reads
+    )
+    if not days:
+        return None
+    return {
+        "label": reported_spend.LABEL,
+        "clipped": reads.clipped,
+        "days": days[:7],
+        "runs": reported_spend.by_run(
+            conn, viewer=viewer, agent_id=agent_id, reads=reads
+        )[:_REPORTED_ROWS],
+        "issues": reported_spend.by_issue(
+            conn, viewer=viewer, agent_id=agent_id, reads=reads
+        )[:_REPORTED_ROWS],
+    }
+
+
 def _agents_redirect(**query: str) -> RedirectResponse:
     """Send the operator back to the agents page with one encoded value per key.
 
@@ -67,6 +93,7 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     """The agents-cockpit page context, shared by the GET view and the inline
     onboarding POST (which re-renders the page carrying the one-time token)."""
     agent_rows = agents.agent_admin_summaries(conn)
+    reads = reported_spend.scan(conn, viewer)  # one read for every agent on the page
     for agent in agent_rows:
         agent["delegation_inbox"] = delegations.list_delegations(
             conn, agent["user"], viewer=viewer, limit=20
@@ -76,6 +103,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         # opt-in, so most fleets start here.
         budget = budgets.observed(conn, agent["user"]["id"])
         agent["budget"] = None if budget is None else budget.public()
+        agent["reported_spend"] = _reported_spend(
+            conn, viewer, agent["user"]["id"], reads
+        )
         agent["gated_actions"] = approvals.gated_kinds(conn, agent["user"]["id"])
         # Where this agent says it runs. Cooperative presence only: a worker that
         # stops heartbeating reads as stale, never as a process that died.
