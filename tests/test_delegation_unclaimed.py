@@ -84,6 +84,23 @@ def _claim(client, agent, issue_id):
         },
     )
     assert claimed.status_code in (200, 201), claimed.text
+    return claimed.json()
+
+
+def _yield(client, agent, issue_id, generation):
+    yielded = client.post(
+        f"/issues/{issue_id}/yield",
+        json={
+            "generation": generation,
+            "reason": "capacity",
+            "attempted_work": "Looked at it.",
+            "evidence": ["notes"],
+            "blocking_question": "Who should take this?",
+            "resume_instructions": "Pick it up from the notes.",
+        },
+        headers=_bearer(agent),
+    )
+    assert yielded.status_code == 201, yielded.text
 
 
 def _ids(lane):
@@ -174,6 +191,98 @@ def test_either_a_held_lease_or_a_claim_event_alone_counts_as_pickup(tmp_path):
         assert lease_only["id"] not in _ids(lane)
         assert event_only["id"] not in _ids(lane)
         assert _ids(lane) == {silent["id"]}  # positive control
+
+
+def test_a_claim_before_the_current_delegation_is_not_pickup(tmp_path):
+    # Claimed once, yielded (the lease is released), declined, then handed to the
+    # same delegate again. The old claim was pickup of the OLD delegation; the new
+    # one is still waiting.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        again = _delegated(c, db_file, agent, "re-delegated after a yield")
+        lease = _claim(c, agent, again["id"])
+        _yield(c, agent, again["id"], lease["generation"])
+        declined = c.post(f"/issues/{again['id']}/decline", headers=_bearer(agent))
+        assert declined.status_code == 200, declined.text
+        redelegated = c.post(
+            f"/issues/{again['id']}/delegate",
+            json={"user_id": agent["user"]["id"]},
+            headers=H1,
+        )
+        assert redelegated.status_code in (200, 201), redelegated.text
+        # The old claim happened five days ago; the new delegation two days ago.
+        # (Only the claim event is moved: handoff activity is immutable by design,
+        # and the claim's time is the one the rule reads.)
+        _sql(
+            db_file,
+            "UPDATE activity SET created_at = ? WHERE target_kind = 'issue' "
+            "AND target_id = ? AND verb = 'claimed'",
+            (_ago(days=5), again["id"]),
+        )
+        _sql(
+            db_file,
+            "UPDATE issue_contributors SET added_at = ? WHERE issue_id = ?",
+            (_ago(days=2), again["id"]),
+        )
+        # Positive control: the same claim-and-yield made AFTER its delegation is
+        # pickup.
+        kept = _delegated(c, db_file, agent, "claimed after delegation")
+        kept_lease = _claim(c, agent, kept["id"])
+        _yield(c, agent, kept["id"], kept_lease["generation"])
+
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert again["id"] in _ids(lane)
+        assert kept["id"] not in _ids(lane)
+
+
+def test_an_imported_claim_event_is_not_pickup(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        imported = _delegated(c, db_file, agent, "imported claim only")
+        native = _delegated(c, db_file, agent, "native claim row")
+        for issue, imported_at in ((imported, _ago(hours=1)), (native, None)):
+            _sql(
+                db_file,
+                "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail, "
+                "created_at, imported_at) VALUES (?, 'claimed', 'issue', ?, '', ?, ?)",
+                (agent["user"]["id"], issue["id"], _ago(hours=1), imported_at),
+            )
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert imported["id"] in _ids(lane)
+        # Positive control: the same row, native, is pickup.
+        assert native["id"] not in _ids(lane)
+
+
+def test_a_self_added_contributor_row_is_not_a_hand_off(tmp_path):
+    # Someone adding themselves as a contributor is not a delegation anybody is
+    # waiting on; without the rule every such row would read as a missed hand-off.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        self_added = c.post("/issues", json={"title": "self added"}, headers=H1).json()
+        handed = c.post("/issues", json={"title": "handed off"}, headers=H1).json()
+        for issue, added_by in ((self_added, agent["user"]["id"]), (handed, 1)):
+            _sql(
+                db_file,
+                "INSERT INTO issue_contributors (issue_id, user_id, added_by, added_at) "
+                "VALUES (?, ?, ?, ?)",
+                (issue["id"], agent["user"]["id"], added_by, _ago(days=3)),
+            )
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert self_added["id"] not in _ids(lane)
+        # Positive control: the same row added by someone else is a hand-off.
+        assert handed["id"] in _ids(lane)
 
 
 def test_a_done_or_archived_delegation_is_not_waiting(tmp_path):
