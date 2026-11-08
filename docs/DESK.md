@@ -119,6 +119,31 @@ a retry is always safe. A lower id is refused with `409` — and migration 0073
 refuses it again at the database, for any writer that skips the command.
 Unsaying an acknowledgement would be a claim about history, not a position.
 
+### Since you last looked (the operator too)
+
+The desk serves the operator as well: the cursor table takes any user, so a human
+or admin uses the same `desk` cursor with no migration. `GET /desk/since`, and the
+"Since you last looked" card on the dashboard, count what arrived after your
+cursor:
+
+| Kind | Counted from |
+|---|---|
+| new questions from runs | claims yielded with a blocking question |
+| claims completed | each with the counts its report carries, or "no report"; never an overall verdict |
+| new blockers | `blocks` or `blocked_by` links |
+| approvals raised | `approval_requested` events |
+| newly stalled | in-progress issues whose last work (creation when none) crossed the 7-day stale threshold since you last marked seen |
+| other events | everything else in the window |
+
+- **Reading never moves the cursor.** Only the card's **Mark seen** button does
+  (or `POST /desk/cursor` with `last_shown_event_id`).
+- **It moves to the newest event the card examined.** The read takes the oldest
+  500 events after your cursor, so marking seen never skips one you were not
+  shown, and anything that arrived after the page rendered is still new.
+- **Native events only,** behind the trail's own visibility gate. Stalled rows
+  apply project visibility.
+- **When there is nothing,** the card says "Nothing new since <time> UTC".
+
 ## What the desk does not claim
 
 - **Not a lock, a lease, or a queue.** Seeing work here reserves nothing. Two

@@ -1,0 +1,64 @@
+{# Since you last looked: what arrived after this viewer's own desk cursor, by
+   kind, with links. Building this card never moves the cursor; only the "Mark
+   seen" form does, and it posts the newest event this card examined — so
+   anything that arrives after the page rendered is still new next time. #}
+<section class="panel" aria-labelledby="since-heading">
+    <div class="panel-head">
+        <h3 id="since-heading">Since you last looked</h3>
+    </div>
+    <div class="panel-body">
+        {% if since_error %}<p class="blocked" role="alert">{{ since_error }}</p>{% endif %}
+        {% if since.empty %}
+        <p class="muted">
+            {% if since.since %}Nothing new since {{ since.since }} UTC.{% else %}Nothing new yet.{% endif %}
+        </p>
+        {% else %}
+        <p class="muted">
+            {% if since.since %}Since you marked seen at {{ since.since }} UTC.{% else %}You have not marked anything seen yet; this is everything so far.{% endif %}
+            {% if since.capped %}Showing the oldest {{ since.examined_events }} events; mark seen to read on.{% endif %}
+        </p>
+        <ul class="dashboard-list">
+            {% for kind in since.kinds %}
+            {% if kind.count %}
+            <li>
+                {% if kind.href %}<a href="{{ kind.href }}">{{ kind.label }}</a>{% else %}{{ kind.label }}{% endif %}
+                <strong>{{ kind.count }}</strong>
+            </li>
+            {% endif %}
+            {% endfor %}
+        </ul>
+        {% if since.completions %}
+        <h4>Completed</h4>
+        <ul class="dashboard-list">
+            {% for row in since.completions %}
+            <li>
+                <a href="/aegis/issues/{{ row.issue.id }}">{{ row.issue.key or ('#' ~ row.issue.id) }}{% if row.issue.title %} · {{ row.issue.title }}{% endif %}</a>
+                <span class="muted">
+                    by {{ row.holder.name }} at {{ row.completed_at }} UTC ·
+                    {% if row.reported_counts %}{% for state, n in row.reported_counts.items() %}{{ n }} reported {{ state }}{% if not loop.last %} · {% endif %}{% endfor %}{% elif row.reported_counts is not none %}reported, no results{% else %}no report{% endif %}
+                </span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% if since.stalled %}
+        <h4>Newly stalled</h4>
+        <ul class="dashboard-list">
+            {% for row in since.stalled %}
+            <li>
+                <a href="/aegis/issues/{{ row.issue.id }}">{{ row.issue.key or ('#' ~ row.issue.id) }} · {{ row.issue.title }}</a>
+                <span class="muted">idle since {{ row.idle_since }} UTC</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+        {% endif %}
+        {% if since.last_shown_event_id %}
+        <form method="post" action="/aegis/dashboard/since/seen">
+            {% include "partials/csrf.html" %}
+            <input type="hidden" name="after_id" value="{{ since.last_shown_event_id }}">
+            <button type="submit" class="button secondary small">Mark seen</button>
+        </form>
+        {% endif %}
+    </div>
+</section>

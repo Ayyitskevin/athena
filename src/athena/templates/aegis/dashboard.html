@@ -29,6 +29,10 @@
 {% include "aegis/partials/fleet_attention.html" %}
 {% endif %}
 
+{% if since %}
+{% include "aegis/partials/since.html" %}
+{% endif %}
+
 <div class="dashboard-grid">
     {% if request.state.user %}
     <section class="panel">

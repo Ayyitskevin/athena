@@ -126,6 +126,7 @@ def test_the_desk_cursor_takes_a_human_operator_without_a_migration(tmp_path):
     admin = users.get_user(conn, 1)
     assert not admin.get("is_agent")
     desk_cursors.set_cursor(conn, user_id=1, name=desk_cursors.DESK_CURSOR, after_id=1)
+    conn.commit()  # set_cursor leaves the transaction to its caller
     conn.close()
     assert _cursor(db_file)["after_id"] == 1
 
@@ -367,6 +368,7 @@ def test_hidden_projects_stay_hidden(tmp_path):
         desk_cursors.set_cursor(
             conn, user_id=1, name=desk_cursors.DESK_CURSOR, after_id=start
         )
+        conn.commit()  # set_cursor leaves the transaction to its caller
         conn.close()
         hidden = c.post(
             "/issues",
@@ -410,6 +412,35 @@ def test_hidden_projects_stay_hidden(tmp_path):
         assert _counts(mine)["blockers"] == 2
         assert mine["examined_events"] > theirs["examined_events"]
 
+        # Stalled rows apply project visibility too. Both issues stalled 8 days
+        # ago (crossing 1 day ago); both viewers looked 2 days ago.
+        for issue in (hidden, public):
+            _sql(
+                db_file,
+                "UPDATE issues SET status = 'in_progress', created_at = ? WHERE id = ?",
+                (_ago(days=work_progress.STALE_WORK_DAYS + 1), issue["id"]),
+            )
+            _sql(
+                db_file,
+                "UPDATE activity SET created_at = ? WHERE target_kind = 'issue' "
+                "AND target_id = ?",
+                (_ago(days=work_progress.STALE_WORK_DAYS + 1), issue["id"]),
+            )
+        _sql(db_file, "UPDATE agent_cursors SET updated_at = ?", (_ago(days=2),))
+        conn = db.connect(db_file)
+        theirs = operator_since.build_since(
+            conn, actor=users.get_user(conn, member["id"])
+        )
+        mine = operator_since.build_since(conn, actor=ADMIN)
+        conn.close()
+        assert [row["issue"]["id"] for row in theirs["stalled"]] == [public["id"]]
+        assert _counts(theirs)["stalled"] == 1
+        # Positive control: the admin sees both stalled issues.
+        assert {row["issue"]["id"] for row in mine["stalled"]} == {
+            hidden["id"],
+            public["id"],
+        }
+
 
 # ── the empty state ─────────────────────────────────────────────────────────
 
@@ -431,6 +462,14 @@ def test_an_empty_state_says_nothing_new_since_the_time(tmp_path):
         html = " ".join(c.get("/aegis/dashboard").text.split())
         assert f"Nothing new since {at} UTC" in html
         assert _since(db_file)["empty"] is True
+        # Positive control: an event of a kind the card does not name (a comment)
+        # is still something new, not "nothing new".
+        quiet = _since(db_file)
+        c.post("/issues/1/comments", json={"body": "a note"}, headers=H1)
+        later = " ".join(c.get("/aegis/dashboard").text.split())
+        assert "Nothing new since" not in later
+        assert _counts(_since(db_file))["other"] == 1
+        assert quiet["empty"] is True
 
 
 def test_reading_writes_nothing(tmp_path):

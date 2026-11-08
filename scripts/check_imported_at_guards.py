@@ -205,6 +205,20 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "an open question is a native yield; an imported row must not put a "
         "question in front of the operator",
     ),
+    (
+        "aegis/operator_since.py",
+        "_events_after",
+        r"a\.imported_at IS NULL",
+        "'since you last looked' counts native changes; a back-dated import must "
+        "not read as new work arriving",
+    ),
+    (
+        "aegis/operator_since.py",
+        "_stalled",
+        r"a\.imported_at IS NULL",
+        "newly stalled measures native work; imported history must not move an "
+        "issue across the stale threshold",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is
