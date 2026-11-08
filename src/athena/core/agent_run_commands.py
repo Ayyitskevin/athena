@@ -6,7 +6,14 @@ import sqlite3
 from typing import Literal
 
 from athena import config
-from athena.core import agent_run_checkins, db, run_context, tokens
+from athena.core import (
+    activity,
+    agent_run_checkins,
+    db,
+    reported_usage,
+    run_context,
+    tokens,
+)
 
 ErrorKind = Literal["unauthorized", "forbidden", "invalid", "capacity"]
 
@@ -30,6 +37,7 @@ def heartbeat(
     *,
     actor: dict | None,
     run_id: object,
+    usage: object = None,
 ) -> dict:
     """Create or refresh this bearer-authenticated agent's run check-in.
 
@@ -55,6 +63,16 @@ def heartbeat(
         normalized_run_id = run_context.strict_run_id(run_id)
     except ValueError as exc:
         raise AgentRunCommandError("invalid", str(exc)) from exc
+
+    reported: dict | None = None
+    if usage is not None:
+        # Validated before the writer transaction: a refused report must not even
+        # refresh the check-in. Credential refusal is write-path only.
+        try:
+            reported = reported_usage.normalize_usage(usage)
+            reported_usage.refuse_credentials(reported)
+        except ValueError as exc:
+            raise AgentRunCommandError("invalid", str(exc)) from exc
 
     agent_id = actor.get("id")
     if isinstance(agent_id, bool) or not isinstance(agent_id, int) or agent_id < 1:
@@ -103,6 +121,17 @@ def heartbeat(
         agent_run_checkins.upsert_checkin(
             conn, agent_id=agent_id, run_id=normalized_run_id, token_id=token_id
         )
+        if reported is not None:
+            # A reported fact, stored in the event detail: no column, no enforcement.
+            activity.record(
+                conn,
+                actor_id=agent_id,
+                verb=reported_usage.VERB_USAGE_REPORTED,
+                target_kind="user",
+                target_id=agent_id,
+                detail=reported_usage.event_detail(normalized_run_id, reported),
+                commit=False,
+            )
 
     result = agent_run_checkins.get_checkin(
         conn, agent_id=agent_id, run_id=normalized_run_id
