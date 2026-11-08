@@ -441,3 +441,78 @@ def test_the_checklist_of_a_private_project_is_never_shown(tmp_path):
 def test_matching_is_exact_after_case_and_space_folding(item):
     assert definition_of_done.normalize(item) == "tests pass"
     assert definition_of_done.normalize("Tests pass!") != "tests pass"
+
+
+def test_the_history_annotation_is_gated_like_the_checklist(tmp_path):
+    client = _client(tmp_path)
+    try:
+        member = client.post(
+            "/users",
+            json={"email": "m@e.com", "name": "M", "password": "pw", "role": "member"},
+            headers=H1,
+        ).json()
+        pid = _project(client)
+        space = _space(client, "PRV")
+        _checklist_page(client, space=space)
+        issue = _issue(client, pid)
+        _complete(client, issue, results=[_result("u", subject=["Tests pass"])])
+        conn = db.connect(client.db_path)
+        try:
+            conn.execute(
+                "UPDATE spaces SET visibility='private' WHERE id=?", (space["id"],)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        assert "checklist_coverage" in _completed_item(client, issue)  # admin
+        history = client.get(
+            f"/issues/{issue['id']}/history",
+            headers={"X-Athena-Actor": str(member["id"])},
+        ).json()
+        done = next(i for i in history["items"] if i["state"] == "claim_completed")
+        assert "checklist_coverage" not in done
+        assert (
+            "reported_completion" in done
+        )  # the report itself is still theirs to read
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_duplicate_lines_fold_into_one_item(tmp_path):
+    client = _client(tmp_path)
+    try:
+        pid = _project(client)
+        _checklist_page(client, body="- a\n- A\n-   a  \n- b")
+        conn = db.connect(client.db_path)
+        try:
+            assert definition_of_done.checklist(conn, pid, actor=None)["items"] == [
+                "a",
+                "b",
+            ]
+        finally:
+            conn.close()
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_a_labelled_page_without_items_is_no_checklist_and_the_next_is_tried(tmp_path):
+    client = _client(tmp_path)
+    try:
+        pid = _project(client)
+        _checklist_page(client, body="Only prose here, no bullets.", title="Empty")
+        conn = db.connect(client.db_path)
+        try:
+            assert definition_of_done.checklist(conn, pid, actor=None) is None
+        finally:
+            conn.close()
+        second = _checklist_page(
+            client, body="- real item", title="Real", space=_space(client, "TWO")
+        )
+        conn = db.connect(client.db_path)
+        try:
+            found = definition_of_done.checklist(conn, pid, actor=None)
+            assert found["page_id"] == second["id"]
+        finally:
+            conn.close()
+    finally:
+        client.__exit__(None, None, None)
