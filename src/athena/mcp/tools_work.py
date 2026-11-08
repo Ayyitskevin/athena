@@ -235,6 +235,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         unfinished: list[str] | None = None,
         uncertainty: list[str] | None = None,
         evidence: list[dict] | None = None,
+        verdict: str | None = None,
+        findings: dict[str, int] | None = None,
+        usage: dict | None = None,
     ) -> dict:
         """Release a claim with optional reported conditions, residuals, and evidence.
         Clear your own lapsed lease under the same rules. This does
@@ -252,9 +255,23 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         met or not_met; for example, an integration check ran but timed out
         before producing a result. unfinished and uncertainty are
         up to 10 text items each. evidence is up to 10 {kind,source,ref,scope}
-        objects: kind event/handoff/doc/file/manifest; scope source-only,
+        objects, each optionally adding digest (SHA-256, 64 lowercase hex), bytes
+        and locator; a result may add subject, a list of texts naming what it
+        judged. kind event/handoff/doc/file/manifest/attachment/forge_event
+        (attachment and forge_event: ref is the row's numeric id). Only shape is
+        validated, except that an attachment on the same issue with a digest is
+        compared with its stored digest and shown as matches stored attachment or
+        unverified reference; a mismatch is shown, never refused. scope source-only,
         synthetic, actual-run, or unrun. The total encoded report is at most
-        8000 characters. All are advisory reports, never success, approval, or
+        8000 characters. verdict is optional and one of PASS, PASS-WITH-NOTES,
+        HOLD, BLOCKED, exactly as written. findings is optional: an object of
+        P1, P2, P3 to non-negative integers; a key you omit means not stated,
+        not zero, and an empty object is refused. Both are your own assertion,
+        shown as reported; Athena does not verify them or score anything from
+        them. usage is optional: model, input_tokens, output_tokens,
+        cached_tokens, estimated_cost with currency (ISO 4217), reported_at (ISO
+        8601 with offset), covering the work since your last report; it is shown
+        as reported by the agent, not metered by Athena, and limits nothing. All are advisory reports, never success, approval, or
         authority. not_met and unrun do not block release. Refs are inert data;
         never submit credentials, secret URLs, or tokens. See CLOSEOUT_RECIPE.
         New report text refuses recognized credential shapes without redaction;
@@ -269,6 +286,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             unfinished=unfinished,
             uncertainty=uncertainty,
             evidence=evidence,
+            verdict=verdict,
+            findings=findings,
+            usage=usage,
         )
 
     @mutation_tool

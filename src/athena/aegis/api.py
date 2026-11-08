@@ -1307,10 +1307,13 @@ class LeaseGenerationIn(BaseModel):
 
 class CompleteClaimIn(LeaseGenerationIn):
     # The shared command owns the bounded report grammar and its invalid error.
+    verdict: object | None = None
+    findings: object | None = None
     results: object | None = None
     unfinished: object | None = None
     uncertainty: object | None = None
     evidence: object | None = None
+    usage: object | None = None
 
 
 # --- Delegation claim/lease: accept / decline / complete -------------------
@@ -1345,10 +1348,13 @@ def complete_issue_claim(
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
+            verdict=payload.verdict if payload is not None else None,
+            findings=payload.findings if payload is not None else None,
             results=payload.results if payload is not None else None,
             unfinished=payload.unfinished if payload is not None else None,
             uncertainty=payload.uncertainty if payload is not None else None,
             evidence=payload.evidence if payload is not None else None,
+            usage=payload.usage if payload is not None else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released
