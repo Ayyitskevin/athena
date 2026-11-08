@@ -105,6 +105,13 @@ def test_the_retry_and_etag_guidance_is_server_instructions_not_63_appends():
     still_carrying = sorted(n for n, d in descriptions.items() if OLD_APPEND in d)
     assert still_carrying == []
     assert OLD_APPEND not in instructions  # restated in our own words, once
+    # Once means once: the new text is not repeated on any tool either. Two
+    # sentences that only the instructions carry must appear in no description.
+    restated = sorted(
+        n for n, d in descriptions.items() if "two names" in d or "Retries:" in d
+    )
+    assert restated == []
+    assert "two names" in instructions and "Retries:" in instructions
 
 
 def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
