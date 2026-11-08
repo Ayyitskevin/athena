@@ -328,3 +328,23 @@ Use Athena's write commands and `issue_etag` for guarded mutations and claims, i
 cooperative run check-ins for explicitly labeled self-reports, and its run replay
 artifact contract for replay analysis. None of those meanings are inferred by
 Agent Work Context.
+
+## Definition of done
+
+A project may keep a checklist as an ordinary Mentor page carrying the label
+`definition-of-done:<PROJECT KEY>`. That one label is both the purpose and the link to the
+project, so nothing new is stored. Each bullet line (`-`, `*`, `+`, optionally with a `[ ]` or
+`[x]` box) is one item; up to 30 items of 300 characters, duplicates folded. With several labelled
+pages the oldest visible, non-archived one is used.
+
+The work context carries it as `definition_of_done` (page, space, items, `truncated`), so an agent
+reads it before claiming. The key is present only when the project has a checklist the actor may
+see (project and space visibility both apply); otherwise it is null and the packet is otherwise
+unchanged.
+
+A completion report is annotated `checklist_coverage`, shown as "N of M checklist items reported".
+Each result's `subject` entries are matched to the items exactly, after folding case and
+whitespace; an item counts as reported when any result names it, whatever its state. It says what
+the reporter covered, not that it passed, and it is computed against the page as it is now. A
+report with no subjects reads "0 of M". **Nothing is enforced**: refusing an incomplete report
+would need a per-project policy column, which is a decision for the operator.

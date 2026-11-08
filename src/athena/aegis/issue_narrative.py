@@ -37,7 +37,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues, lease_commands
+from athena.aegis import (
+    claim_handoffs,
+    completion_evidence,
+    definition_of_done,
+    issues,
+    lease_commands,
+)
 from athena.core import (
     activity,
     agent_run_checkins,
@@ -94,6 +100,15 @@ _ASK_STATES = {run_controls.STATE_REQUESTED, run_controls.STATE_ACKNOWLEDGED}
 def _reported_completion_summary(actor_name: str, report: dict) -> str:
     """Expose reported counts without turning them into an overall assessment."""
     counts = []
+    if "verdict" in report:
+        counts.append(f"reported verdict {report['verdict']}")
+    if "findings" in report:
+        stated = ", ".join(
+            f"{severity} {report['findings'][severity]}"
+            for severity in lease_commands.COMPLETION_FINDING_SEVERITIES
+            if severity in report["findings"]
+        )
+        counts.append(f"reported findings {stated}")
     for state in ("met", "not_met", "not_assessed", "inconclusive"):
         count = sum(result["state"] == state for result in report.get("results", []))
         if count:
@@ -213,6 +228,26 @@ def _build(
                         else f"{event['actor_name']} completed the claim ({event['detail']})"
                     ),
                     **({"reported_completion": report} if report is not None else {}),
+                    **(
+                        {"evidence_checks": checks}
+                        if (
+                            checks := completion_evidence.evidence_checks(
+                                conn, issue_id, report
+                            )
+                        )
+                        is not None
+                        else {}
+                    ),
+                    **(
+                        {"checklist_coverage": covered}
+                        if (
+                            covered := definition_of_done.coverage(
+                                conn, issue["project_id"], actor=actor, report=report
+                            )
+                        )
+                        is not None
+                        else {}
+                    ),
                 }
             )
         elif verb == _YIELD_VERB and event["id"] not in handoff_by_yield_event:

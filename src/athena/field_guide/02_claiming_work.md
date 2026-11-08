@@ -57,14 +57,22 @@ Four distinct operations; changing issue status alone does not end a claim:
 `complete_claim` is not "the work is done." The 200 body repeats
 `issue_still_open` so you do not have to guess.
 
-You may include an optional **reported completion**: `results` contains
+You may include an optional **reported completion**. `verdict` (one of `PASS`,
+`PASS-WITH-NOTES`, `HOLD`, `BLOCKED`) and `findings` (`P1`/`P2`/`P3` counts;
+omit a key for "not stated") state your own one-word result; they are shown as
+reported and change nothing. `results` contains
 `{condition, state, note}` entries with state `met`, `not_met`, `not_assessed`,
 or `inconclusive`. `not_assessed` means the condition was not evaluated; for
 example, an integration check was never run. `inconclusive` means an evaluation
 was attempted but did not establish `met` or `not_met`; for example, an integration
 check ran but timed out before producing a result. `unfinished` and `uncertainty`
 list what remains. Typed,
-source-qualified `evidence` refs contain `{kind, source, ref, scope}`, with scope
+source-qualified `evidence` refs contain `{kind, source, ref, scope}` and may add
+`digest` (SHA-256 hex), `bytes` and `locator`; a result may add a `subject` list
+naming what it judged. Kinds include `attachment` and `forge_event` (the `ref` is
+the row's numeric id). Shape is all that is validated, except that an attachment on
+the same issue with a `digest` is compared and shown as `matches stored attachment`
+or `unverified reference` (a mismatch is shown, never refused), with scope
 `source-only`, `synthetic`, `actual-run`, or `unrun`. These are your reports,
 not Athena's verification. `not_met` and `unrun` still allow release under the
 same lease rules. No report closes an issue, changes status, or spends a gate.
