@@ -446,3 +446,86 @@ def test_imported_history_does_not_count_as_work(tmp_path):
         assert by_id[imported["id"]]["work_state"] == "unknown"
         # Positive control: the same comment, native, is recent work.
         assert native["id"] not in by_id
+
+
+def test_the_grouped_stale_query_matches_the_per_issue_reading(tmp_path):
+    # The stale lane reads last work for every in-progress issue in one grouped
+    # pass. It must give exactly what the per-issue reading (last_work_at, one MAX
+    # per issue) gives on the same data, across every filter the grouped form
+    # has to keep: work verbs only, native only, issue targets only, doing only,
+    # not archived, and the 7-day boundary.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        made = [
+            c.post("/issues", json={"title": f"i{n}"}, headers=H1).json()["id"]
+            for n in range(9)
+        ]
+    stale_days = work_progress.STALE_WORK_DAYS
+    conn = db.connect(db_file)
+    for issue_id in made[:8]:
+        conn.execute(
+            "UPDATE issues SET status = 'in_progress' WHERE id = ?", (issue_id,)
+        )
+    conn.execute("UPDATE issues SET status = 'open' WHERE id = ?", (made[8],))
+    conn.execute(
+        "UPDATE issues SET archived_at = datetime('now') WHERE id = ?", (made[7],)
+    )
+    rows = [
+        # (issue, verb, target_kind, age_days, imported)
+        (made[0], "commented", "issue", stale_days + 3, False),  # stale by work
+        (made[0], "claimed", "issue", 0, False),  # bookkeeping, recent: ignored
+        (made[1], "issue_edited", "issue", 1, False),  # recent work
+        (made[2], "commented", "issue", 0, True),  # imported recent: ignored
+        (made[2], "changed_status", "issue", stale_days + 10, False),
+        (made[3], "commented", "page", 0, False),  # same id, a page: ignored
+        (made[4], "commented", "issue", stale_days - 1, False),  # just inside
+        (made[4], "commented", "issue", stale_days + 40, False),  # older, ignored
+        (made[5], "lease_renewed", "issue", 0, False),  # only pulse: never worked
+        (made[7], "commented", "issue", stale_days + 5, False),  # archived
+        (made[8], "commented", "issue", stale_days + 5, False),  # to-do, not doing
+    ]
+    for issue_id, verb, kind, days, imported in rows:
+        stamp = _ago(days=days)
+        conn.execute(
+            "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail, "
+            "created_at, imported_at) VALUES (1, ?, ?, ?, '', ?, ?)",
+            (verb, kind, issue_id, stamp, stamp if imported else None),
+        )
+    conn.commit()
+
+    lane = work_progress.build_progress(conn, actor=ADMIN, limit=50)[
+        "stale_in_progress"
+    ]
+    # The reference: the per-issue reading over every in-progress, unarchived issue.
+    doing = [
+        int(r["id"])
+        for r in conn.execute(
+            "SELECT id FROM issues WHERE status = 'in_progress' AND archived_at IS NULL"
+        )
+    ]
+    reference = work_progress.last_work_at(conn, [(i, None) for i in doing])
+    # A clipped page still counts the whole lane: the total is not the page size.
+    clipped = work_progress.build_progress(conn, actor=ADMIN, limit=2)[
+        "stale_in_progress"
+    ]
+    conn.close()
+    assert len(clipped["items"]) == 2
+    assert clipped["visible_total"] == 5 and clipped["clipped"] is True
+    cutoff = _ago(days=stale_days)
+    expected = {
+        i: reference[(i, None)]
+        for i in doing
+        if reference[(i, None)] is None or reference[(i, None)] < cutoff
+    }
+    got = {r["issue"]["id"]: r["last_work_at"] for r in lane["items"]}
+    assert got == expected
+    assert lane["visible_total"] == len(expected)
+    # Never-worked first, then oldest work first.
+    order = [r["issue"]["id"] for r in lane["items"]]
+    assert order == sorted(
+        expected, key=lambda i: (expected[i] is not None, expected[i] or "", i)
+    )
+    # Positive control: the data does exercise both outcomes of every filter.
+    assert set(expected) == {made[0], made[2], made[3], made[5], made[6]}
+    assert made[1] not in expected and made[4] not in expected

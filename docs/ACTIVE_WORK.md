@@ -106,6 +106,21 @@ Each row keeps independent facts independent:
   `null`. Its text is untrusted advisory input and must never be auto-executed.
 - `run.replay_ready` means tagged activity exists. Evidence links are suppressed
   when a valid run id cannot be safely addressed by today's path-parameter routes.
+- `progress` keeps work apart from pulse (`aegis/work_progress.py`). Its fields:
+
+  | Field | Meaning |
+  |---|---|
+  | `last_work_at` | the **holder's** latest native event from the closed work-verb list: edit, status change, comment or comment edit, attachment, link, parent set, completed claim |
+  | `work_age_seconds` | time since `last_work_at` |
+  | `work_state` | `recent`, `stale` (more than `stale_after_days`, 7), or `unknown` (no work recorded, never shown as fresh) |
+  | `last_checkin_at` | the run's last check-in, shown separately |
+  | `last_lease_activity_at` | the last claim or renewal, shown separately |
+
+  - **Check-ins and renewals never reset the work age.**
+  - **Any qualifying event counts, however small.** The append-only trail is what
+    makes activity that only looks busy visible.
+  - **No effect on attention.** `progress` does not change `attention_state` or
+    the summary counts.
 
 `attention_state=needs_attention` is set when any recorded reason applies:
 `issue_archived`, `issue_done`, `holder_paused`, `holder_read_only`, `holder_ineligible`,

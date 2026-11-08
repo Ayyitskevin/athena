@@ -25,6 +25,12 @@ Check-ins and heartbeats never reach the activity trail at all (they live in
 ``agent_run_checkins``), so they cannot be mistaken for work. Imported rows are
 excluded, as elsewhere: a back-dated bundle must not make old work look new.
 
+**The proxy's limit.** Any qualifying event counts, however small: a one-word
+comment, a touch-up edit or a no-op field change refreshes "last work" exactly as a
+real change does. This is a verb list, not a judge of effort. What keeps it honest
+is the append-only trail: every event that refreshed freshness is on the issue's
+history, so a run that only pokes an issue to look busy is visible there.
+
 **It computes, it does not write.** Expired leases are shown as expired with their
 holder and age and are never cleared or swept (K1). Every lane applies the viewer's
 project visibility to its count and its rows alike; requests waiting on the operator
@@ -290,27 +296,33 @@ def _stale_in_progress(
 ) -> dict:
     vis_sql, vis_params = _visibility_clause(conn, actor)
     cutoff = (now - timedelta(days=STALE_WORK_DAYS)).strftime(_TS_FORMAT)
+    # One grouped pass over the native work events, joined to the in-progress
+    # issues — not one MAX per issue. This card is polled, and a per-issue
+    # subquery grew with every in-progress issue (about 78 ms at 2,200 of them
+    # against 50,000 events; see the PR body). Same meaning, pinned equal to the
+    # per-issue reading by test_the_grouped_stale_query_matches_the_per_issue_reading.
     inner = (
         "SELECT i.id AS issue_id, i.title, i.project_id, i.project_seq, "
-        "p.key AS project_key, "
-        f"{last_work_sql('i.id')} AS last_work_at "
+        "p.key AS project_key, w.last_work_at "
         "FROM issues i LEFT JOIN projects p ON p.id = i.project_id "
         "LEFT JOIN project_statuses ps "
         "ON ps.project_id = i.project_id AND ps.name = i.status "
+        "LEFT JOIN (SELECT a.target_id, MAX(a.created_at) AS last_work_at "
+        "FROM activity a WHERE a.target_kind = 'issue' AND a.imported_at IS NULL "
+        f"AND a.verb IN ({_verb_placeholders()}) GROUP BY a.target_id) w "
+        "ON w.target_id = i.id "
         f"WHERE i.archived_at IS NULL AND {_STATUS_CATEGORY_SQL} = ?{vis_sql}"
     )
-    params: list[object] = [_DOING_CATEGORY, *vis_params]
+    params: list[object] = [*SUBSTANTIVE_WORK_VERBS, _DOING_CATEGORY, *vis_params]
     stale_where = "WHERE last_work_at IS NULL OR last_work_at < ?"
-    total = int(
-        conn.execute(
-            f"SELECT COUNT(*) AS n FROM ({inner}) {stale_where}", [*params, cutoff]
-        ).fetchone()["n"]
-    )
+    # The total rides the same pass as a window count, taken before LIMIT, so the
+    # grouped read runs once rather than once for the count and once for the rows.
     rows = conn.execute(
-        f"SELECT * FROM ({inner}) {stale_where} "
+        f"SELECT *, COUNT(*) OVER () AS stale_total FROM ({inner}) {stale_where} "
         "ORDER BY last_work_at IS NOT NULL, last_work_at, issue_id LIMIT ?",
         [*params, cutoff, limit],
     ).fetchall()
+    total = int(rows[0]["stale_total"]) if rows else 0
     items = []
     for row in rows:
         state, age = work_state(row["last_work_at"], now=now)
