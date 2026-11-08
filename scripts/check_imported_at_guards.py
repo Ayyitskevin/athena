@@ -171,10 +171,25 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "aegis/work_progress.py",
+        "last_work_sql",
+        r'"wa\.imported_at IS NULL"',
+        "the shared last-work subquery (idle: atoms, sort:idle-desc, delegation "
+        "pickup) measures native work; foreign history must not hide an idle "
+        "item by resetting its last-work time",
+    ),
+    (
+        "aegis/work_progress.py",
         "_stale_in_progress",
         r"AND a\.imported_at IS NULL",
-        "the stale in-progress lane measures native work; foreign history must "
+        "the stale lane's grouped pass measures native work; foreign history must "
         "not hide an idle item by resetting its last-work time",
+    ),
+    (
+        "aegis/work_progress.py",
+        "unclaimed_delegations",
+        r"AND da\.imported_at IS NULL",
+        "a delegate's claim is a native act; an imported claimed row must not "
+        "make a hand-off look picked up",
     ),
     (
         "aegis/notification_state.py",

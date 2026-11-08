@@ -26,11 +26,26 @@ no second definition of closed-ness to drift.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import sqlite3
 
-from athena.aegis import issues, statuses
+from athena.aegis import issues, statuses, work_progress
 from athena.core import work_query
 from athena.core.work_query import Query
+
+_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# When work last happened on the issue: the latest native work event (the progress
+# view's own verb list), or creation when nothing was ever recorded. Check-ins and
+# lease renewals are not in that list, so a run that keeps reporting while nothing
+# moves stays idle. Never NULL, so comparisons and ordering need no NULL rule.
+_IDLE_ANCHOR = f"COALESCE({work_progress.last_work_sql('i.id')}, i.created_at)"
+
+# A live lease, by the clock: the same "active" verdict the lease readers give.
+_LIVE_LEASE = (
+    "EXISTS (SELECT 1 FROM issue_leases qlz WHERE qlz.issue_id = i.id "
+    "AND qlz.expires_at > ?)"
+)
 
 # Ordering, by sort key. Literals only — the key comes from work_query's closed
 # vocabulary, so an unknown key is impossible by the time it reaches here.
@@ -51,6 +66,8 @@ _ORDER_BY: dict[str, str] = {
     "priority-desc": f"{_PRIORITY_RANK} DESC, i.id DESC",
     "status-asc": "i.status ASC, i.id DESC",
     "status-desc": "i.status DESC, i.id DESC",
+    # Most idle first: the oldest last-work time leads.
+    "idle-desc": f"{_IDLE_ANCHOR} ASC, i.id DESC",
 }
 
 # The status-category expression, over the LEFT JOIN this module adds below.
@@ -143,10 +160,35 @@ def _resolve_sprint(value: str) -> tuple[str, list]:
     return "i.sprint_id = ?", [parsed]
 
 
-def _term_sql(conn: sqlite3.Connection, term, actor: dict | None) -> tuple[str, list]:
+def _duration_sql(field: str, value: str, now: datetime) -> tuple[str, list]:
+    """``idle:>14d`` → the idle anchor is older than 14 days ago; ``<`` → newer.
+    ``age:`` is the same against ``i.created_at``. The cutoff is bound, never
+    formatted in, and comes from the caller's one request clock."""
+    parsed = work_query.parse_days(value)
+    if parsed is None:  # the parser already refused this; kept as a hard stop
+        raise QueryCompileError(
+            f"'{field}:{value}' is not valid", atom=f"{field}:{value}"
+        )
+    sign, days = parsed
+    cutoff = (now - timedelta(days=days)).strftime(_TS_FORMAT)
+    column = _IDLE_ANCHOR if field == "idle" else "i.created_at"
+    # More than N days idle means the anchor is EARLIER than the cutoff.
+    comparison = "<" if sign == ">" else ">"
+    return f"{column} {comparison} ?", [cutoff]
+
+
+def _term_sql(
+    conn: sqlite3.Connection, term, actor: dict | None, now: datetime
+) -> tuple[str, list]:
     """One term as (clause, params). Negation wraps the positive form, so the two
     readings can never disagree about what the term means."""
     field, value = term.field, term.value
+
+    if field in work_query.DURATION_FIELDS:
+        duration_clause, duration_params = _duration_sql(field, value, now)
+        return (
+            f"NOT ({duration_clause})" if term.negated else duration_clause
+        ), duration_params
 
     if field == "label":
         return _label_clause(term.negated), [value]
@@ -163,6 +205,10 @@ def _term_sql(conn: sqlite3.Connection, term, actor: dict | None) -> tuple[str, 
             clause = f"{_CATEGORY} = 'done'"
         elif value == "archived":
             clause = "i.archived_at IS NOT NULL"
+        elif value in ("claimed", "unclaimed"):
+            # One definition, negated for the other: they cannot disagree.
+            clause = _LIVE_LEASE if value == "claimed" else f"NOT {_LIVE_LEASE}"
+            params = [now.strftime(_TS_FORMAT)]
         else:  # unassigned — the vocabulary is closed, so this is exhaustive
             clause = "i.assignee_id IS NULL"
         return (f"NOT ({clause})" if term.negated else clause), params
@@ -186,6 +232,7 @@ def compile_query(
     *,
     actor: dict | None,
     visible_project_ids: set[int] | None,
+    now: datetime | None = None,
 ) -> tuple[str, list, str]:
     """Compile a parsed query to ``(where_sql, params, order_by)``.
 
@@ -195,12 +242,19 @@ def compile_query(
     Archived issues are excluded unless the query asks for them with ``is:archived``
     — the same default every list in Athena applies, kept here so a query and the
     list it replaces agree about what exists.
+
+    ``now`` is the one clock every time-relative atom (``idle:``, ``age:``,
+    ``is:claimed``) is measured against; it defaults to the current UTC time.
     """
+    current = datetime.now(UTC) if now is None else now
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current = current.astimezone(UTC)
     clauses: list[str] = []
     params: list = []
 
     for term in query.terms:
-        clause, term_params = _term_sql(conn, term, actor)
+        clause, term_params = _term_sql(conn, term, actor, current)
         clauses.append(clause)
         params.extend(term_params)
 

@@ -178,6 +178,14 @@ def build_desk(
         lease["progress"] = work_progress.progress_for(
             held_work.get((int(lease["issue_id"]), user_id)), now=lease_now
         )
+    # The other side of a hand-off: what I delegated that nobody picked up.
+    waiting_on = work_progress.unclaimed_delegations(
+        conn,
+        actor=actor,
+        delegator_id=user_id,
+        now=lease_now,
+        limit=DELEGATIONS_LIMIT,
+    )
     # A handoff is attached to an issue, so "mine to acknowledge" is exactly
     # "open on an issue I hold" — composed rather than re-queried. The reader
     # returns a dict keyed by issue id; the desk presents an ordered list.
@@ -252,6 +260,17 @@ def build_desk(
                 # count it would have to query for separately.
                 "has_more": bool(inbox.get("has_more")),
                 "next_offset": inbox.get("next_offset"),
+            },
+            "waiting_on": {
+                "items": waiting_on["items"],
+                "total": waiting_on["visible_total"],
+                "limit": DELEGATIONS_LIMIT,
+                "clipped": waiting_on["clipped"],
+                "older_than_hours": waiting_on["older_than_hours"],
+                "meaning": (
+                    "issues you delegated that are waiting on their delegate: "
+                    + waiting_on["meaning"]
+                ),
             },
             "leases": {
                 "items": held,

@@ -40,6 +40,7 @@ are the operator's and are shown only to an admin.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import re
 import sqlite3
 
 from athena.aegis import statuses
@@ -66,6 +67,12 @@ SUBSTANTIVE_WORK_VERBS: tuple[str, ...] = (
 #: trips it; it is short enough that an idle item surfaces in days, not after the
 #: two to five weeks such items have been seen to sit unnoticed.
 STALE_WORK_DAYS = 7
+
+#: A delegation the delegate has neither claimed nor worked on for longer than
+#: this is "not picked up". A day spans an overnight gap and a full working day,
+#: so a delegate that orients once a session has had at least one chance to see
+#: it; past that, the hand-off has most likely been missed, not queued.
+DELEGATION_UNCLAIMED_HOURS = 24
 
 #: Each lane is a short list with its own total, like the desk's lanes.
 LANE_LIMIT = 20
@@ -118,6 +125,46 @@ def work_state(last_work_at: str | None, *, now: datetime) -> tuple[str, int | N
 
 def _verb_placeholders() -> str:
     return ",".join("?" for _ in SUBSTANTIVE_WORK_VERBS)
+
+
+_IDENT = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
+_VERB = re.compile(r"[a-z_]+")
+# The verbs are inlined as SQL literals in the correlated form below, so a
+# subquery can sit in an ORDER BY or a SELECT list without threading parameters
+# through every caller. They are this module's own constants, never input; the
+# check makes that a fact rather than a promise.
+if not all(_VERB.fullmatch(verb) for verb in SUBSTANTIVE_WORK_VERBS):
+    raise RuntimeError("SUBSTANTIVE_WORK_VERBS must be plain lowercase verb names")
+_VERB_LITERALS = ", ".join(f"'{verb}'" for verb in SUBSTANTIVE_WORK_VERBS)
+
+
+def last_work_sql(
+    issue_ref: str, *, actor_ref: str | None = None, since_ref: str | None = None
+) -> str:
+    """A correlated scalar subquery: the latest native work time on one issue.
+
+    ``issue_ref`` names the outer issue id column (``i.id``); ``actor_ref``
+    narrows to one actor's work and ``since_ref`` to work at or after a time,
+    both as outer column references. Arguments are column names chosen by the
+    caller's own code and are checked as such, never values.
+
+    Cost: one range read of ``idx_activity_target (target_kind, target_id, id)``
+    over that issue's own trail per outer row — never a scan of the whole
+    activity table."""
+    for ref in (issue_ref, actor_ref, since_ref):
+        if ref is not None and not _IDENT.fullmatch(ref):
+            raise ValueError(f"not a column reference: {ref!r}")
+    clauses = [
+        "wa.target_kind = 'issue'",
+        f"wa.target_id = {issue_ref}",
+        "wa.imported_at IS NULL",
+        f"wa.verb IN ({_VERB_LITERALS})",
+    ]
+    if actor_ref is not None:
+        clauses.append(f"wa.actor_id = {actor_ref}")
+    if since_ref is not None:
+        clauses.append(f"wa.created_at >= {since_ref}")
+    return f"(SELECT MAX(wa.created_at) FROM activity wa WHERE {' AND '.join(clauses)})"
 
 
 def last_work_at(
@@ -328,6 +375,106 @@ def _oldest_waiting(
         "age": age_text(age),
         "pending_total": pending_total,
         "link": f"/admin/agents#approval-{oldest.id}",
+    }
+
+
+def unclaimed_delegations(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict | None,
+    all_projects: bool = False,
+    delegator_id: int | None = None,
+    now: datetime | None = None,
+    limit: int = LANE_LIMIT,
+) -> dict:
+    """Delegations nobody picked up: handed to someone more than
+    ``DELEGATION_UNCLAIMED_HOURS`` ago, and since then the delegate has neither
+    claimed the issue nor recorded any work on it.
+
+    "Picked up" is the delegate's own act: a lease they hold (live or lapsed), a
+    native ``claimed`` event since the delegation, or recorded work since it.
+    Someone else commenting is not the delegate picking it up. Done and archived
+    issues are not waiting on anyone. A self-delegation is not a hand-off.
+
+    Visibility is the actor's (counts and rows alike). ``all_projects`` is for the
+    admin-only attention card, whose caller contract is already admin-scoped;
+    ``delegator_id`` narrows to one delegator's hand-offs (their desk). Read-only.
+    """
+    current = _now(now)
+    vis_sql: str
+    vis_params: list[int]
+    if all_projects:
+        vis_sql, vis_params = "", []
+    elif actor is None:
+        # No viewer: the backlog alone, the same narrowing an empty visible set gets.
+        vis_sql, vis_params = " AND i.project_id IS NULL", []
+    else:
+        vis_sql, vis_params = _visibility_clause(conn, actor)
+    cutoff = (current - timedelta(hours=DELEGATION_UNCLAIMED_HOURS)).strftime(
+        _TS_FORMAT
+    )
+    delegator_sql = "" if delegator_id is None else " AND c.added_by = ?"
+    delegator_params: list[object] = [] if delegator_id is None else [delegator_id]
+    base = (
+        "FROM issue_contributors c "
+        "JOIN issues i ON i.id = c.issue_id "
+        "JOIN users du ON du.id = c.user_id "
+        "JOIN users bu ON bu.id = c.added_by "
+        "LEFT JOIN projects p ON p.id = i.project_id "
+        "LEFT JOIN project_statuses ps "
+        "ON ps.project_id = i.project_id AND ps.name = i.status "
+        "WHERE c.user_id != c.added_by AND c.added_at <= ? "
+        f"AND i.archived_at IS NULL AND {_STATUS_CATEGORY_SQL} != 'done' "
+        "AND NOT EXISTS (SELECT 1 FROM issue_leases dl "
+        "WHERE dl.issue_id = c.issue_id AND dl.holder_id = c.user_id) "
+        "AND NOT EXISTS (SELECT 1 FROM activity da WHERE da.target_kind = 'issue' "
+        "AND da.target_id = c.issue_id AND da.actor_id = c.user_id "
+        "AND da.verb = 'claimed' AND da.imported_at IS NULL "
+        "AND da.created_at >= c.added_at) "
+        f"AND {last_work_sql('c.issue_id', actor_ref='c.user_id', since_ref='c.added_at')} "
+        f"IS NULL{delegator_sql}{vis_sql}"
+    )
+    params: list[object] = [cutoff, *delegator_params, *vis_params]
+    total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
+    rows = conn.execute(
+        "SELECT c.issue_id, c.user_id AS delegate_id, du.name AS delegate_name, "
+        "du.is_agent, c.added_by, bu.name AS delegator_name, c.added_at, "
+        "i.title, i.project_id, i.project_seq, p.key AS project_key "
+        f"{base} ORDER BY c.added_at, c.issue_id, c.user_id LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+    items = []
+    for row in rows:
+        waited = _age_seconds(row["added_at"], now=current)
+        items.append(
+            {
+                "issue": _issue_ref(row),
+                "delegate": {
+                    "id": int(row["delegate_id"]),
+                    "name": row["delegate_name"],
+                    "is_agent": bool(row["is_agent"]),
+                },
+                "delegated_by": {
+                    "id": int(row["added_by"]),
+                    "name": row["delegator_name"],
+                },
+                "delegated_at": row["added_at"],
+                "waiting_seconds": waited,
+                "waiting": age_text(waited),
+            }
+        )
+    return {
+        "items": items,
+        "visible_total": total,
+        "limit": limit,
+        "clipped": total > len(items),
+        "older_than_hours": DELEGATION_UNCLAIMED_HOURS,
+        "meaning": (
+            f"delegations older than {DELEGATION_UNCLAIMED_HOURS}h that the delegate "
+            "has neither claimed nor recorded work on since, oldest first; work by "
+            "anyone else does not count as pickup, and done or archived issues are "
+            "not waiting"
+        ),
     }
 
 

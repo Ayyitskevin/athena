@@ -1,0 +1,378 @@
+"""Work handed off into silence: delegations nobody picked up.
+
+Delegating adds the delegate as a contributor (``issue_contributors.added_at``).
+Nothing said when that delegate never claimed the issue and never did any work on
+it. These pin the read that does, on both sides of the hand-off:
+
+- the fleet-attention card counts delegations older than the stated threshold with
+  no claim and no recorded work BY THE DELEGATE since the delegation;
+- the delegator's desk lists them as "waiting on" lines;
+- a claimed or worked delegation is not counted, a fresh one is not counted, and
+  work by someone other than the delegate does not count as pickup;
+- a hidden project's delegations are in neither the count nor the rows for a
+  viewer who cannot see that project.
+"""
+
+from datetime import UTC, datetime, timedelta
+
+from fastapi.testclient import TestClient
+
+from athena.aegis import fleet_attention, work_progress
+from athena.core import db, users
+from athena.main import create_app
+
+H1 = {"X-Athena-Actor": "1"}
+ADMIN = {"id": 1, "role": "admin"}
+_TS = "%Y-%m-%d %H:%M:%S"
+
+
+def _app(tmp_path, name="unclaimed.db"):
+    return create_app(tmp_path / name), tmp_path / name
+
+
+def _bootstrap(client):
+    client.post("/users", json={"email": "a@e.com", "name": "Ann", "password": "pw"})
+
+
+def _agent(client, email="sol@e.com", name="Sol"):
+    return client.post(
+        "/users/onboard_agent",
+        json={"email": email, "name": name, "scopes": ["read", "issue:write"]},
+        headers=H1,
+    ).json()
+
+
+def _bearer(onboarded):
+    return {"Authorization": f"Bearer {onboarded['token']['token']}"}
+
+
+def _ago(**delta):
+    return (datetime.now(UTC) - timedelta(**delta)).strftime(_TS)
+
+
+def _sql(db_file, statement, params=()):
+    conn = db.connect(db_file)
+    conn.execute(statement, params)
+    conn.commit()
+    conn.close()
+
+
+def _delegated(client, db_file, agent, title, *, hours_ago=48, **fields):
+    issue = client.post("/issues", json={"title": title, **fields}, headers=H1).json()
+    sent = client.post(
+        f"/issues/{issue['id']}/delegate",
+        json={"user_id": agent["user"]["id"]},
+        headers=H1,
+    )
+    assert sent.status_code in (200, 201), sent.text
+    _sql(
+        db_file,
+        "UPDATE issue_contributors SET added_at = ? WHERE issue_id = ? AND user_id = ?",
+        (_ago(hours=hours_ago), issue["id"], agent["user"]["id"]),
+    )
+    return issue
+
+
+def _claim(client, agent, issue_id):
+    read = client.get(f"/issues/{issue_id}", headers=_bearer(agent))
+    claimed = client.post(
+        f"/issues/{issue_id}/claim",
+        headers={
+            **_bearer(agent),
+            "If-Match": read.headers["ETag"],
+            "X-Athena-Run": f"run-{issue_id}",
+        },
+    )
+    assert claimed.status_code in (200, 201), claimed.text
+    return claimed.json()
+
+
+def _yield(client, agent, issue_id, generation):
+    yielded = client.post(
+        f"/issues/{issue_id}/yield",
+        json={
+            "generation": generation,
+            "reason": "capacity",
+            "attempted_work": "Looked at it.",
+            "evidence": ["notes"],
+            "blocking_question": "Who should take this?",
+            "resume_instructions": "Pick it up from the notes.",
+        },
+        headers=_bearer(agent),
+    )
+    assert yielded.status_code == 201, yielded.text
+
+
+def _ids(lane):
+    return {row["issue"]["id"] for row in lane["items"]}
+
+
+def _signal(projection):
+    return next(s for s in projection["signals"] if s["key"] == "delegation_unclaimed")
+
+
+def test_a_delegation_nobody_picked_up_is_counted_and_a_claimed_or_worked_one_is_not(
+    tmp_path,
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        silent = _delegated(c, db_file, agent, "handed off, silence")
+        claimed = _delegated(c, db_file, agent, "handed off, claimed")
+        _claim(c, agent, claimed["id"])
+        worked = _delegated(c, db_file, agent, "handed off, commented")
+        posted = c.post(
+            f"/issues/{worked['id']}/comments",
+            json={"body": "on it"},
+            headers=_bearer(agent),
+        )
+        assert posted.status_code == 201, posted.text
+        # Work by someone else is not the delegate picking it up.
+        nudged = _delegated(c, db_file, agent, "handed off, nudged by admin")
+        c.post(f"/issues/{nudged['id']}/comments", json={"body": "ping"}, headers=H1)
+        fresh = _delegated(c, db_file, agent, "handed off just now", hours_ago=1)
+
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        card = fleet_attention.build_attention(conn)
+        conn.close()
+
+        assert _ids(lane) == {silent["id"], nudged["id"]}
+        assert lane["visible_total"] == 2
+        assert lane["older_than_hours"] == work_progress.DELEGATION_UNCLAIMED_HOURS
+        # Positive controls: claimed, worked and fresh delegations are each absent.
+        assert claimed["id"] not in _ids(lane)
+        assert worked["id"] not in _ids(lane)
+        assert fresh["id"] not in _ids(lane)
+        (row,) = [r for r in lane["items"] if r["issue"]["id"] == silent["id"]]
+        assert row["delegate"]["name"] == "Sol"
+        assert row["delegated_by"]["id"] == 1
+        assert row["waiting_seconds"] >= 47 * 3600
+
+        signal = _signal(card)
+        assert signal["count"] == 2
+        assert signal["href"] == "/admin/agents"
+        assert str(work_progress.DELEGATION_UNCLAIMED_HOURS) in signal["scope"]
+
+
+def test_either_a_held_lease_or_a_claim_event_alone_counts_as_pickup(tmp_path):
+    # A real claim writes both, so each piece of evidence is pinned on its own:
+    # a lease row with no claim event, and a claim event whose lease is gone (a
+    # claim that was later released).
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        lease_only = _delegated(c, db_file, agent, "lease row only")
+        _sql(
+            db_file,
+            "INSERT INTO issue_leases "
+            "(issue_id, holder_id, claimed_at, expires_at, generation) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                lease_only["id"],
+                agent["user"]["id"],
+                _ago(hours=40),
+                _ago(hours=39),
+                f"{lease_only['id']:032x}",
+            ),
+        )
+        event_only = _delegated(c, db_file, agent, "claim event only")
+        _claim(c, agent, event_only["id"])
+        _sql(
+            db_file, "DELETE FROM issue_leases WHERE issue_id = ?", (event_only["id"],)
+        )
+        silent = _delegated(c, db_file, agent, "handed off, silence")
+
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert lease_only["id"] not in _ids(lane)
+        assert event_only["id"] not in _ids(lane)
+        assert _ids(lane) == {silent["id"]}  # positive control
+
+
+def test_a_claim_before_the_current_delegation_is_not_pickup(tmp_path):
+    # Claimed once, yielded (the lease is released), declined, then handed to the
+    # same delegate again. The old claim was pickup of the OLD delegation; the new
+    # one is still waiting.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        again = _delegated(c, db_file, agent, "re-delegated after a yield")
+        lease = _claim(c, agent, again["id"])
+        _yield(c, agent, again["id"], lease["generation"])
+        declined = c.post(f"/issues/{again['id']}/decline", headers=_bearer(agent))
+        assert declined.status_code == 200, declined.text
+        redelegated = c.post(
+            f"/issues/{again['id']}/delegate",
+            json={"user_id": agent["user"]["id"]},
+            headers=H1,
+        )
+        assert redelegated.status_code in (200, 201), redelegated.text
+        # The old claim happened five days ago; the new delegation two days ago.
+        # (Only the claim event is moved: handoff activity is immutable by design,
+        # and the claim's time is the one the rule reads.)
+        _sql(
+            db_file,
+            "UPDATE activity SET created_at = ? WHERE target_kind = 'issue' "
+            "AND target_id = ? AND verb = 'claimed'",
+            (_ago(days=5), again["id"]),
+        )
+        _sql(
+            db_file,
+            "UPDATE issue_contributors SET added_at = ? WHERE issue_id = ?",
+            (_ago(days=2), again["id"]),
+        )
+        # Positive control: the same claim-and-yield made AFTER its delegation is
+        # pickup.
+        kept = _delegated(c, db_file, agent, "claimed after delegation")
+        kept_lease = _claim(c, agent, kept["id"])
+        _yield(c, agent, kept["id"], kept_lease["generation"])
+
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert again["id"] in _ids(lane)
+        assert kept["id"] not in _ids(lane)
+
+
+def test_an_imported_claim_event_is_not_pickup(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        imported = _delegated(c, db_file, agent, "imported claim only")
+        native = _delegated(c, db_file, agent, "native claim row")
+        for issue, imported_at in ((imported, _ago(hours=1)), (native, None)):
+            _sql(
+                db_file,
+                "INSERT INTO activity (actor_id, verb, target_kind, target_id, detail, "
+                "created_at, imported_at) VALUES (?, 'claimed', 'issue', ?, '', ?, ?)",
+                (agent["user"]["id"], issue["id"], _ago(hours=1), imported_at),
+            )
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert imported["id"] in _ids(lane)
+        # Positive control: the same row, native, is pickup.
+        assert native["id"] not in _ids(lane)
+
+
+def test_a_self_added_contributor_row_is_not_a_hand_off(tmp_path):
+    # Someone adding themselves as a contributor is not a delegation anybody is
+    # waiting on; without the rule every such row would read as a missed hand-off.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        self_added = c.post("/issues", json={"title": "self added"}, headers=H1).json()
+        handed = c.post("/issues", json={"title": "handed off"}, headers=H1).json()
+        for issue, added_by in ((self_added, agent["user"]["id"]), (handed, 1)):
+            _sql(
+                db_file,
+                "INSERT INTO issue_contributors (issue_id, user_id, added_by, added_at) "
+                "VALUES (?, ?, ?, ?)",
+                (issue["id"], agent["user"]["id"], added_by, _ago(days=3)),
+            )
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert self_added["id"] not in _ids(lane)
+        # Positive control: the same row added by someone else is a hand-off.
+        assert handed["id"] in _ids(lane)
+
+
+def test_a_done_or_archived_delegation_is_not_waiting(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        done = _delegated(c, db_file, agent, "finished elsewhere")
+        _sql(db_file, "UPDATE issues SET status = 'done' WHERE id = ?", (done["id"],))
+        archived = _delegated(c, db_file, agent, "shelved")
+        _sql(
+            db_file,
+            "UPDATE issues SET archived_at = datetime('now') WHERE id = ?",
+            (archived["id"],),
+        )
+        open_one = _delegated(c, db_file, agent, "still open")
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert _ids(lane) == {open_one["id"]}  # positive control: open one counted
+
+
+def test_the_delegators_desk_has_a_waiting_on_line_and_the_delegates_does_not(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        silent = _delegated(c, db_file, agent, "handed off, silence")
+        claimed = _delegated(c, db_file, agent, "handed off, claimed")
+        _claim(c, agent, claimed["id"])
+
+        mine = c.get("/desk", headers=H1).json()["work"]["waiting_on"]
+        assert [row["issue"]["id"] for row in mine["items"]] == [silent["id"]]
+        assert mine["total"] == 1
+        assert mine["items"][0]["delegate"]["name"] == "Sol"
+        assert "waiting" in mine["meaning"]
+        # The delegate is not waiting on itself; its desk shows the delegation in
+        # its own inbox, not as a "waiting on" line.
+        theirs = c.get("/desk", headers=_bearer(agent)).json()["work"]["waiting_on"]
+        assert theirs["items"] == [] and theirs["total"] == 0
+
+
+def test_a_hidden_projects_delegations_are_in_neither_counts_nor_rows(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        outsider = c.post(
+            "/users",
+            json={"email": "out@e.com", "name": "Out", "password": "pw"},
+            headers=H1,
+        ).json()
+        project = c.post(
+            "/projects", json={"name": "Private", "key": "PVT"}, headers=H1
+        ).json()
+        hidden = _delegated(
+            c, db_file, agent, "hidden hand-off", project_id=project["id"]
+        )
+        public = _delegated(c, db_file, agent, "backlog hand-off")
+        c.put(
+            f"/projects/{project['id']}/visibility",
+            json={"visibility": "private"},
+            headers=H1,
+        )
+
+        conn = db.connect(db_file)
+        theirs = work_progress.unclaimed_delegations(
+            conn, actor=users.get_user(conn, outsider["id"])
+        )
+        mine = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        card = fleet_attention.build_attention(conn, actor=ADMIN)
+        conn.close()
+
+        assert _ids(theirs) == {public["id"]}
+        assert theirs["visible_total"] == 1
+        # Positive controls: the admin sees both, and so does the admin-only card.
+        assert _ids(mine) == {hidden["id"], public["id"]}
+        assert mine["visible_total"] == 2
+        assert _signal(card)["count"] == 2
+
+
+def test_reading_writes_nothing(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        _delegated(c, db_file, agent, "handed off, silence")
+        conn = db.connect(db_file)
+        before = conn.total_changes
+        work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        fleet_attention.build_attention(conn, actor=ADMIN)
+        assert conn.total_changes == before
+        conn.close()

@@ -523,6 +523,7 @@ def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
             "pending_approvals",
             "unanswered_kills",
             "open_run_controls",
+            "delegation_unclaimed",
             "failing_automation_rules",
             "failing_webhooks",
             "budget_exhaustions",
