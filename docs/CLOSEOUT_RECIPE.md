@@ -59,8 +59,26 @@ work or uncertainty is non-empty. A report containing only `met` stays collapsed
 its counts remain visible in the summary. The narrative repeats the same counts
 as reported and advisory.
 
-Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`.
-Kinds are `event`, `handoff`, `doc`, `file`, or `manifest`. Source qualifies where
+Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`,
+plus optionally `digest` (64 lowercase hex characters, SHA-256), `bytes` (a
+non-negative integer) and `locator` (text of at most 500 characters, such as a
+line range). Each result may also carry an optional `subject`: 1 to 10 short
+texts naming what that result judged, so a verdict is bound to a subject.
+Kinds are `event`, `handoff`, `doc`, `file`, `manifest`, `attachment`, or
+`forge_event`. The last two point at a row Athena holds, and their `ref` is its
+numeric id: an attachment, or an imported forge commit or pull-request event
+(`docs/FORGE.md`).
+
+Validation of all of these is shape only. The one thing Athena checks is an
+`attachment` on the same issue that carries a `digest`: the history compares it
+with the SHA-256 (and `bytes`, if given) Athena stored when it received those
+bytes and says `matches stored attachment`, or `unverified reference` when it
+differs, is missing, belongs to another issue, or is any other kind. A mismatch
+is shown and never refused, because Athena verifies only what it holds; only the
+issue's own attachments are consulted, so the check cannot confirm that a hidden
+file exists. A report that uses none of these fields is shown exactly as before.
+
+`source` qualifies where
 the original record/bytes belong (for example an Athena instance or a checkout
 and revision), at most 200 characters; `ref` identifies the original event,
 handoff, document, file, or manifest, at most 1000 characters. Scope is explicitly

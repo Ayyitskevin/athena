@@ -201,6 +201,7 @@ class ActivityOut(BaseModel):
     forked_from_event_id: int | None
     imported_at: str | None
     reported_completion: dict | None = None
+    evidence_checks: list[str] | None = None
 
 
 class ActivityGroupOut(BaseModel):

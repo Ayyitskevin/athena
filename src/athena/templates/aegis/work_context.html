@@ -399,7 +399,7 @@
             <span class="muted">imported {{ event.imported_at }}</span>
             {% endif %}
             {{ excerpt(event.detail, "No event detail.") }}
-            {{ show_report(event.get("reported_completion")) }}
+            {{ show_report(event.get("reported_completion"), event.get("evidence_checks")) }}
         </li>
         {% endfor %}
     </ol>

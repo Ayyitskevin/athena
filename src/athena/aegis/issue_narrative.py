@@ -37,7 +37,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues, lease_commands
+from athena.aegis import claim_handoffs, completion_evidence, issues, lease_commands
 from athena.core import (
     activity,
     agent_run_checkins,
@@ -222,6 +222,16 @@ def _build(
                         else f"{event['actor_name']} completed the claim ({event['detail']})"
                     ),
                     **({"reported_completion": report} if report is not None else {}),
+                    **(
+                        {"evidence_checks": checks}
+                        if (
+                            checks := completion_evidence.evidence_checks(
+                                conn, issue_id, report
+                            )
+                        )
+                        is not None
+                        else {}
+                    ),
                 }
             )
         elif verb == _YIELD_VERB and event["id"] not in handoff_by_yield_event:

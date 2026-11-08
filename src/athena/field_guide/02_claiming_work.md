@@ -67,7 +67,12 @@ example, an integration check was never run. `inconclusive` means an evaluation
 was attempted but did not establish `met` or `not_met`; for example, an integration
 check ran but timed out before producing a result. `unfinished` and `uncertainty`
 list what remains. Typed,
-source-qualified `evidence` refs contain `{kind, source, ref, scope}`, with scope
+source-qualified `evidence` refs contain `{kind, source, ref, scope}` and may add
+`digest` (SHA-256 hex), `bytes` and `locator`; a result may add a `subject` list
+naming what it judged. Kinds include `attachment` and `forge_event` (the `ref` is
+the row's numeric id). Shape is all that is validated, except that an attachment on
+the same issue with a `digest` is compared and shown as `matches stored attachment`
+or `unverified reference` (a mismatch is shown, never refused), with scope
 `source-only`, `synthetic`, `actual-run`, or `unrun`. These are your reports,
 not Athena's verification. `not_met` and `unrun` still allow release under the
 same lease rules. No report closes an issue, changes status, or spends a gate.
