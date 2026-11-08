@@ -164,3 +164,50 @@ def test_unknown_project_and_sprint(tmp_path):
             client.post("/aegis/sprints/9999/start", follow_redirects=False).status_code
             == 404
         )
+
+
+def test_sprint_state_error_is_escaped_in_the_start_and_complete_error_boxes(
+    tmp_path, monkeypatch
+):
+    """A refusal message is rendered into HTML, so it is escaped. Today's messages are fixed
+    strings; this pins the property for a future message that carries user text."""
+    from athena.aegis import sprints
+    from athena.web import projects as web_projects
+
+    hostile = '<script>alert("x")</script> & <b>'
+    with TestClient(create_app(tmp_path / "esc.db")) as client:
+        client.post("/users", json={"email": "a@e.com", "name": "A", "password": "pw"})
+        pid = _project(client)
+        _login(client)
+        client.post(
+            f"/aegis/projects/{pid}/sprints",
+            data={"name": "S1"},
+            follow_redirects=False,
+        )
+        sid = _sprints(client, pid)[0]["id"]
+
+        # Positive control: the real fixed message still renders, as readable text.
+        client.post(f"/aegis/sprints/{sid}/start", follow_redirects=False)
+        fixed = client.post(f"/aegis/sprints/{sid}/start", follow_redirects=False)
+        assert fixed.status_code == 409
+        assert (
+            '<div class="error">only a planned sprint can be started</div>'
+            in fixed.text
+        )
+
+        def refuse(*args, **kwargs):
+            raise sprints.SprintStateError(hostile)
+
+        for action, command in (
+            ("start", "start_sprint"),
+            ("complete", "complete_sprint"),
+        ):
+            monkeypatch.setattr(web_projects.sprint_commands, command, refuse)
+            r = client.post(f"/aegis/sprints/{sid}/{action}", follow_redirects=False)
+            assert r.status_code == 409
+            assert "<script>" not in r.text and "<b>" not in r.text
+            assert (
+                '<div class="error">'
+                "&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &lt;b&gt;"
+                "</div>"
+            ) in r.text
