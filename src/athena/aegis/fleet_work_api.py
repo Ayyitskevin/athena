@@ -132,11 +132,26 @@ AttentionReason = Literal[
 ]
 
 
+class ActiveWorkProgressOut(_StrictModel):
+    """Work and pulse side by side. ``last_work_at`` is the holder's latest
+    recorded work on the issue; check-ins and lease renewals are separate fields
+    and never reset it. ``unknown`` means no work is recorded, not fresh work."""
+
+    last_work_at: str | None
+    work_age_seconds: int | None
+    work_state: Literal["recent", "stale", "unknown"]
+    stale_after_days: int
+    last_checkin_at: str | None
+    last_lease_activity_at: str | None
+    meaning: str
+
+
 class ActiveWorkItemOut(_StrictModel):
     issue: ActiveWorkIssueOut
     holder: ActiveWorkHolderOut
     lease: ActiveWorkLeaseOut
     run: ActiveWorkRunOut
+    progress: ActiveWorkProgressOut
     open_blockers: ActiveWorkBlockersOut
     open_claim_handoff: OpenClaimHandoffOut | None
     attention_state: Literal["observed", "needs_attention"]

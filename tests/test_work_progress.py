@@ -326,12 +326,27 @@ def test_a_hidden_projects_items_appear_in_neither_counts_nor_details_for_a_non_
             _set_in_progress(db_file, issue["id"])
             _sql(
                 db_file,
-                "INSERT INTO issue_leases (issue_id, holder_id, claimed_at, expires_at) "
-                "VALUES (?, ?, ?, ?)",
-                (issue["id"], agent["user"]["id"], _ago(days=20), _ago(days=19)),
+                "INSERT INTO issue_leases "
+                "(issue_id, holder_id, claimed_at, expires_at, generation) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    issue["id"],
+                    agent["user"]["id"],
+                    _ago(days=20),
+                    _ago(days=19),
+                    f"{issue['id']:032x}",
+                ),
             )
 
         conn = db.connect(db_file)
+        # One pending request on the hidden issue, so "none for a non-admin" is a
+        # real refusal and not an empty queue.
+        conn.execute(
+            "INSERT INTO approval_requests (action_kind, target_kind, target_id, "
+            "requested_by) VALUES ('issue.close', 'issue', ?, 1)",
+            (hidden["id"],),
+        )
+        conn.commit()
         outsider_actor = users.get_user(conn, outsider["id"])
         theirs = work_progress.build_progress(conn, actor=outsider_actor)
         mine = work_progress.build_progress(conn, actor=ADMIN)
@@ -350,6 +365,8 @@ def test_a_hidden_projects_items_appear_in_neither_counts_nor_details_for_a_non_
             assert mine[lane]["visible_total"] == 2
         # Requests waiting on the operator are the operator's: a non-admin sees none.
         assert theirs["oldest_waiting_on_operator"] is None
+        # Positive control: the admin sees that same request.
+        assert mine["oldest_waiting_on_operator"]["target_id"] == hidden["id"]
 
 
 # ── unknown is unknown ──────────────────────────────────────────────────────
@@ -402,3 +419,30 @@ def test_claimed_work_with_no_recorded_work_is_unknown_not_fresh(tmp_path):
         assert progress["work_age_seconds"] is None
         assert progress["work_state"] == "unknown"
         assert progress["last_checkin_at"] is not None  # alive, but no work on record
+
+
+def test_imported_history_does_not_count_as_work(tmp_path):
+    # A back-dated import bundle is foreign history: it must not make an idle
+    # item look worked.
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        imported = c.post("/issues", json={"title": "imported only"}, headers=H1).json()
+        native = c.post("/issues", json={"title": "native work"}, headers=H1).json()
+        for issue in (imported, native):
+            _set_in_progress(db_file, issue["id"])
+            c.post(f"/issues/{issue['id']}/comments", json={"body": "w"}, headers=H1)
+        _sql(
+            db_file,
+            "UPDATE activity SET imported_at = created_at "
+            "WHERE target_kind = 'issue' AND target_id = ? AND verb = 'commented'",
+            (imported["id"],),
+        )
+
+        conn = db.connect(db_file)
+        stale = work_progress.build_progress(conn, actor=ADMIN)["stale_in_progress"]
+        conn.close()
+        by_id = {r["issue"]["id"]: r for r in stale["items"]}
+        assert by_id[imported["id"]]["work_state"] == "unknown"
+        # Positive control: the same comment, native, is recent work.
+        assert native["id"] not in by_id

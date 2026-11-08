@@ -34,7 +34,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, delegations, leases, office
+from athena.aegis import claim_handoffs, delegations, leases, office, work_progress
 from athena.core import (
     approvals,
     budgets,
@@ -169,6 +169,15 @@ def build_desk(
     lapsed, lapsed_total = leases.lapsed_leases_held_by(
         conn, holder_id=user_id, limit=LEASES_LIMIT, now=lease_now
     )
+    # Holding is not working: beside each held lease, my own last recorded work on
+    # that issue. A check-in or renewal never resets it; none recorded is "unknown".
+    held_work = work_progress.last_work_at(
+        conn, [(int(lease["issue_id"]), user_id) for lease in held]
+    )
+    for lease in held:
+        lease["progress"] = work_progress.progress_for(
+            held_work.get((int(lease["issue_id"]), user_id)), now=lease_now
+        )
     # A handoff is attached to an issue, so "mine to acknowledge" is exactly
     # "open on an issue I hold" — composed rather than re-queried. The reader
     # returns a dict keyed by issue id; the desk presents an ordered list.

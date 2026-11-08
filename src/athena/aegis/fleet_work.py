@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues, statuses
+from athena.aegis import claim_handoffs, issues, statuses, work_progress
 from athena.core import agent_run_checkins, db
 
 
@@ -199,7 +199,8 @@ def build_active_work(
             "AND membership.user_id = l.holder_id)))) "
             "THEN 1 ELSE 0 END "
             "AS holder_eligible, "
-            "claim_event.id AS claim_event_id, claim_event.run_id "
+            "claim_event.id AS claim_event_id, claim_event.run_id, "
+            "claim_event.created_at AS claim_event_at "
             "FROM issue_leases l "
             "JOIN users u ON u.id = l.holder_id "
             "JOIN issues i ON i.id = l.issue_id "
@@ -229,6 +230,11 @@ def build_active_work(
         handoffs = claim_handoffs.open_handoffs_for_issues(conn, issue_ids)
         run_ids = {row["run_id"] for row in rows if row["run_id"] is not None}
         replay_ready = _replay_ready_run_ids(conn, run_ids)
+        # The holder's last recorded work on each claimed issue, read alongside the
+        # check-in so the two are shown side by side and never merged.
+        holder_work = work_progress.last_work_at(
+            conn, [(int(row["issue_id"]), int(row["holder_id"])) for row in rows]
+        )
 
         items = [
             _item(
@@ -244,6 +250,9 @@ def build_active_work(
                     int(row["holder_id"]), 0
                 ),
                 replay_ready=row["run_id"] in replay_ready,
+                last_work_at=holder_work.get(
+                    (int(row["issue_id"]), int(row["holder_id"]))
+                ),
             )
             for row in rows
         ]
@@ -309,6 +318,7 @@ def _item(
     open_claim_handoff: dict | None,
     live_issue_write_token_count: int,
     replay_ready: bool,
+    last_work_at: str | None = None,
 ) -> dict:
     expires_at = _parse_timestamp(row["expires_at"])
     claim_state = "active" if observed_at < expires_at else "expired"
@@ -394,6 +404,14 @@ def _item(
             "replay_ready": replay_ready,
             "evidence_links_available": _run_links_available(run_id, replay_ready),
         },
+        # Work and pulse side by side: a fresh check-in or renewal never resets the
+        # work age, and no recorded work reads "unknown", not fresh.
+        "progress": work_progress.progress_for(
+            last_work_at,
+            now=observed_at,
+            checkin_at=None if checkin is None else checkin["last_seen_at"],
+            lease_activity_at=row["claim_event_at"],
+        ),
         "open_blockers": blocker_info,
         "open_claim_handoff": open_claim_handoff,
         "attention_state": ("needs_attention" if attention_reasons else "observed"),
