@@ -30,6 +30,7 @@ from athena.mcp.server import (
     NotificationPriority,
     ProjectId,
     RunId,
+    WaitSeconds,
     WatchKind,
     WatchPreferencePriority,
     WatchTargetId,
@@ -399,6 +400,48 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         """
         return client.recent_events(
             after=after,
+            kind=kind,
+            target=target,
+            actor_id=actor_id,
+            actor_type=actor_type,
+            run_id=run_id,
+            parent_run_id=parent_run_id,
+            verb=verb,
+            limit=limit,
+        )
+
+    @tool
+    def wait_for_events(
+        after: int | None = None,
+        wait: WaitSeconds = 25,
+        kind: str | None = None,
+        target: int | None = None,
+        actor_id: int | None = None,
+        actor_type: Literal["agent", "human"] | None = None,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
+        verb: str | None = None,
+        limit: EventLimit = 50,
+    ) -> dict:
+        """`recent_events` that parks instead of returning empty: the server holds the
+        request up to `wait` seconds (0 to 25; 0 is exactly `recent_events`) and
+        answers as soon as an event you may read lands after `after`.
+
+        Use it in place of a sleep loop: call with your last processed id, act on
+        what comes back, call again. The result is the `recent_events` shape plus
+        `wait` = {requested_seconds, elapsed_seconds, outcome}. `outcome` is
+        `event` (a visible batch arrived), `timeout` (nothing visible in time; the
+        batch is empty and next_after is your own cursor) or `capacity` (every
+        parking place on the server was taken, so this is the immediate answer:
+        back off a little before waiting again). It never errors for a full server.
+
+        Visibility is the immediate read's: an event you may not read neither
+        appears nor wakes you. The same filter caveat as `recent_events` applies:
+        a filtered read cannot justify advancing the desk cursor.
+        """
+        return client.wait_for_events(
+            after=after,
+            wait=wait,
             kind=kind,
             target=target,
             actor_id=actor_id,

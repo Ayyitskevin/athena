@@ -262,7 +262,7 @@ def test_wait_zero_is_todays_answer(feed):
     zero = client.get(f"/events?after={baseline}&wait=0", headers=ADMIN)
     assert plain.status_code == 200 and zero.status_code == 200
     assert plain.json() == zero.json()
-    assert zero.json()["wait"] is None
+    assert set(zero.json()) == {"events", "next_after", "has_more"}  # no wait key
     assert zero.json()["events"] == [] and zero.json()["next_after"] == baseline
 
 
@@ -286,7 +286,7 @@ def test_a_waiter_wakes_for_a_visible_event_written_by_another_connection(feed):
         verb="noted",
         target_kind="issue",
         target_id=feed["public_issue"],
-    )
+    )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
     response, took = box[0]
@@ -312,7 +312,7 @@ def test_a_waiter_does_not_wake_for_an_event_it_may_not_see(feed):
         verb="noted",
         target_kind="issue",
         target_id=feed["hidden_issue"],
-    )
+    )["id"]
     thread.join(timeout=5)
     assert box, "the waiter never returned"
     response, took = box[0]

@@ -103,6 +103,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `search_workspace` | `GET /search/workspace` | One ask across issues, pages, AND comments — use this when you do not … |
 | `unlinked_mentions` | `GET /{base}/{node_id}/unlinked-mentions` | Documents whose text NAMES this issue/page without linking to it. |
 | `verify_activity_chain` | `GET /activity/chain/verify` | Recompute a bounded window of the audit trail's hash chain (admin only). |
+| `wait_for_events` | `GET /events` | `recent_events` that parks instead of returning empty: the server holds the … |
 | `whoami` | `GET /users/me` | Who am I? Your identity (id, email, role, agent flag), the acting … |
 
 ## Aegis write tools — scope: `issue:write`
@@ -196,4 +197,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*134 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*135 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
