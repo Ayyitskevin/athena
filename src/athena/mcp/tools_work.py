@@ -173,6 +173,23 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
+    # Registered with the plain decorator: it takes no idempotency key and no
+    # if_match (it reads the fresh root ETag itself). Its retry safety is the
+    # already_holding refusal: a retried call never takes a second issue.
+    @tool
+    def claim_next_ready(limit: int = 1, lease_seconds: int | None = None) -> dict:
+        """Claim the next issue in your ready lane (my_desk work.ready) through
+        the ordinary claim, against the issue's current revision. Ready = visible,
+        to-do or doing, no live lease, no blocker that is not done, and yours to
+        claim; delegated-to-you first, then priority, then oldest. `limit` (1-5)
+        is how many candidates to try in order if others win them first. Returns
+        claimed=true with lease (incl. generation), issue_etag and
+        work_context_etag, plus previous_lease/open_handoff labels; or
+        claimed=false with reason already_holding, nothing_ready, or lost_race
+        (per-candidate attempts listed). Read the work context next; an
+        open_handoff means resume_claim_handoff after claiming."""
+        return client.claim_next_ready(limit=limit, lease_seconds=lease_seconds)
+
     @mutation_tool
     def yield_claim(
         issue_id: int,

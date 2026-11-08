@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from athena.aegis import desk_commands
+from athena.aegis import desk_commands, ready_queue
 from athena.core import desk_cursors
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
@@ -64,6 +64,17 @@ def read_desk(
     # create a second place for them to drift. The schema field names the
     # contract version instead.
     return desk_commands.read_desk(conn, actor=actor)
+
+
+@router.get("/desk/ready")
+def read_ready(
+    limit: int = Query(ready_queue.READY_LIMIT, ge=1, le=ready_queue.MAX_READY_LIMIT),
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Your ready lane alone (the desk's ``work.ready``): what you could claim
+    now, in claim order, with its own total. A read, not a reservation."""
+    return ready_queue.build_ready(conn, actor=actor, limit=limit)
 
 
 @router.post("/desk/cursor", response_model=CursorOut)

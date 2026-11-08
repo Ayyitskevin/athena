@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import re
 import secrets
 import sqlite3
 from typing import TypeGuard
@@ -65,6 +66,28 @@ _HELD_SELECT = (
 def _clock_stamp(now: datetime | None) -> str:
     """The comparison stamp in the storage format ``expires_at`` uses."""
     return (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+_COLUMN_REF = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
+
+
+def live_lease_sql(issue_ref: str) -> str:
+    """SQL: someone holds a live lease on the outer issue ``issue_ref`` (a column
+    reference such as ``i.id``, checked as one). Takes ONE bound parameter, the
+    clock stamp in storage format, so it is the same "active" verdict every
+    reader here derives: ``expires_at`` strictly after now. A lapsed row is not
+    live, and reading never touches it."""
+    if not _COLUMN_REF.fullmatch(issue_ref):
+        raise ValueError(f"not a column reference: {issue_ref!r}")
+    return (
+        "EXISTS (SELECT 1 FROM issue_leases qlz "
+        f"WHERE qlz.issue_id = {issue_ref} AND qlz.expires_at > ?)"
+    )
+
+
+def clock_stamp(now: datetime | None) -> str:
+    """The comparison stamp for :func:`live_lease_sql`, in ``expires_at``'s format."""
+    return _clock_stamp(now)
 
 
 def _parse_declared_paths(raw: object) -> list[str] | None:

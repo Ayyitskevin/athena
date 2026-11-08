@@ -33,6 +33,12 @@ from athena.core import (
 
 SCHEMA = "athena.issue_work_context.v1"
 SCOPE = "visible_to_request_actor"
+#: Where readiness IS asserted, since this packet does not assert it.
+READINESS_POINTER = (
+    "this packet does not assert ready or unblocked; the desk's work.ready lane "
+    "(GET /desk/ready) does, for you: visible, to-do or doing, no live lease, no "
+    "blocker that is not done, and claimable by you, bounded with its own total"
+)
 
 GENERAL_LIMIT = 20
 REFERENCE_LIMIT = 10
@@ -586,6 +592,10 @@ def build_work_context(
                     "live",
                     "replay_safe",
                 ],
+                # This packet still asserts none of that. The read that does
+                # assert readiness, by a stated rule and with its own bound, is
+                # the ready lane.
+                "readiness": READINESS_POINTER,
             },
             "issue": {
                 "id": public_issue["id"],

@@ -261,6 +261,7 @@ AssertionNotMade = Literal[
 class WorkContextSemanticsOut(BaseModel):
     snapshot: Literal["current_visible_state"]
     does_not_assert: list[AssertionNotMade]
+    readiness: str
 
 
 class IssueWorkContextOut(BaseModel):

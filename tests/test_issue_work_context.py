@@ -126,6 +126,7 @@ def test_rest_numeric_key_mcp_and_web_share_the_public_contract(tmp_path):
                 "live",
                 "replay_safe",
             ],
+            "readiness": work_context.READINESS_POINTER,
         }
         assert by_id["issue"]["key"] == "CTX-1"
         _assert_strong_etag(by_id["issue_etag"])

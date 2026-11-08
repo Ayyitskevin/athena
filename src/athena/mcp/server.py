@@ -317,6 +317,7 @@ TOOL_SCOPES: dict[str, str] = {
     "assign_issue": tokens.ISSUE_WRITE_SCOPE,
     "delegate_issue": tokens.ISSUE_WRITE_SCOPE,
     "claim_issue": tokens.ISSUE_WRITE_SCOPE,
+    "claim_next_ready": tokens.ISSUE_WRITE_SCOPE,
     "yield_claim": tokens.ISSUE_WRITE_SCOPE,
     "resume_claim_handoff": tokens.ISSUE_WRITE_SCOPE,
     "complete_claim": tokens.ISSUE_WRITE_SCOPE,
