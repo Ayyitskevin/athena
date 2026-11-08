@@ -1,14 +1,15 @@
-{% macro show_report(report) %}
+{% macro show_report(report, checks=none, coverage=none) %}
 {% if report is not none %}
 {% set results = report.get("results", []) %}
 {% set unfinished = report.get("unfinished", [])|length %}
 {% set uncertainty = report.get("uncertainty", [])|length %}
 <details{% if results|rejectattr("state", "equalto", "met")|list or unfinished or uncertainty %} open{% endif %}>
-    <summary>Reported completion (advisory){% for state in ["met", "not_met", "not_assessed", "inconclusive"] %}{% set count = results|selectattr("state", "equalto", state)|list|length %}{% if count %} · {{ count }} reported {{ state }}{% endif %}{% endfor %}{% if unfinished %} · {{ unfinished }} reported unfinished{% endif %}{% if uncertainty %} · {{ uncertainty }} reported uncertainty{% endif %}</summary>
+    <summary>Reported completion (advisory){% if "verdict" in report %} · reported verdict {{ report.verdict }}{% endif %}{% if "findings" in report %}{% set stated = [] %}{% for severity in ["P1", "P2", "P3"] %}{% if severity in report.findings %}{% set _ = stated.append(severity ~ " " ~ report.findings[severity]) %}{% endif %}{% endfor %} · reported findings {{ stated|join(", ") }}{% endif %}{% for state in ["met", "not_met", "not_assessed", "inconclusive"] %}{% set count = results|selectattr("state", "equalto", state)|list|length %}{% if count %} · {{ count }} reported {{ state }}{% endif %}{% endfor %}{% if unfinished %} · {{ unfinished }} reported unfinished{% endif %}{% if uncertainty %} · {{ uncertainty }} reported uncertainty{% endif %}{% if coverage %} · {{ coverage.summary }}{% endif %}</summary>
+    {% if coverage %}<p class="muted"><strong>{{ coverage.summary }}</strong> — matched by exact subject against the project's definition of done; not enforced.{% for row in coverage['items'] %}{% if not row.reported %} Not reported: {{ row.item }}.{% endif %}{% endfor %}</p>{% endif %}
     <p class="muted">Reported by the actor. Athena has not verified these claims; they do not change issue status or grant approval.</p>
     {% if "results" in report %}
     <h4>Reported condition results</h4>
-    <ul>{% for result in report.results %}<li>{{ result.condition }} — reported {{ result.state }}{% if result.note %}: {{ result.note }}{% endif %}</li>{% endfor %}</ul>
+    <ul>{% for result in report.results %}<li>{{ result.condition }} — reported {{ result.state }}{% if result.note %}: {{ result.note }}{% endif %}{% if result.subject %} · reported subject: {{ result.subject|join(", ") }}{% endif %}</li>{% endfor %}</ul>
     {% endif %}
     {% if "unfinished" in report %}
     <h4>Reported unfinished work</h4>
@@ -20,7 +21,7 @@
     {% endif %}
     {% if "evidence" in report %}
     <h4>Reported evidence references (not fetched)</h4>
-    <ul>{% for ref in report.evidence %}<li>{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}</li>{% endfor %}</ul>
+    <ul>{% for ref in report.evidence %}<li>{{ ref.kind }} · {{ ref.source }} · <code>{{ ref.ref }}</code> · reported scope {{ ref.scope }}{% if ref.digest %} · reported SHA-256 <code>{{ ref.digest }}</code>{% endif %}{% if ref.bytes is defined %} · reported {{ ref.bytes }} bytes{% endif %}{% if ref.locator %} · reported locator {{ ref.locator }}{% endif %}{% if checks %} · {{ checks[loop.index0] }}{% endif %}</li>{% endfor %}</ul>
     {% endif %}
 </details>
 {% endif %}

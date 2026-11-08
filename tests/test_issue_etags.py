@@ -38,6 +38,9 @@ def test_issue_etag_is_strong_stable_and_changes_only_with_representation(tmp_pa
 
         first = client.get(f"/issues/{issue['id']}", headers=H1)
         second = client.get(f"/issues/{issue['id']}", headers=H1)
+        # The create response is the representation plus the additive similar_open prompt, which
+        # is no part of the representation (and so of the ETag): compare everything else exactly.
+        assert issue.pop("similar_open") == []
         assert first.json() == second.json() == issue
         assert first.headers["etag"] == second.headers["etag"] == created_tag
         assert first.headers["etag"] == strong_etag("issue-v1", first.json())

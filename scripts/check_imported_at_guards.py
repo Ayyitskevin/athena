@@ -205,6 +205,14 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "an open question is a native yield; an imported row must not put a "
         "question in front of the operator",
     ),
+    (
+        "aegis/notification_state.py",
+        "annotate_inbox",
+        r"AND c\.imported_at IS NULL",
+        "the inbox target-state annotation reads the reader's own completions; "
+        "an imported claim_completed is foreign history and must not mark the "
+        "reader as having completed the target",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is

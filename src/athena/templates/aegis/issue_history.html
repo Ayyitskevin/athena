@@ -60,7 +60,7 @@
                     <span class="muted activity-time">{{ item.at }}</span>
                     <span class="muted narrative-source">{{ item.source_label }}</span>
                 </a>
-                {{ show_report(item.get("reported_completion")) }}
+                {{ show_report(item.get("reported_completion"), item.get("evidence_checks"), item.get("checklist_coverage")) }}
             </li>
             {% endfor %}
         </ul>

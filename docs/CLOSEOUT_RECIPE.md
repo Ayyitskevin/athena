@@ -2,8 +2,8 @@
 
 ## Optional reported completion
 
-`complete_claim` / `POST /issues/{id}/complete` may carry `results`,
-`unfinished`, `uncertainty`, and `evidence` alongside the exact observed
+`complete_claim` / `POST /issues/{id}/complete` may carry `verdict`, `findings`,
+`results`, `unfinished`, `uncertainty`, and `evidence` alongside the exact observed
 `generation`. These fields record what the actor **reported**, not what Athena
 verified. Omit them (or use null) for the existing release behavior and unchanged
 response. Empty lists report an empty list; they do not mean every check passed.
@@ -11,6 +11,8 @@ response. Empty lists report an empty list; they do not mean every check passed.
 ```json
 {
   "generation": "<exact observed generation>",
+  "verdict": "PASS-WITH-NOTES",
+  "findings": {"P1": 0, "P2": 1, "P3": 2},
   "results": [
     {"condition": "review original source", "state": "met", "note": "source read"},
     {"condition": "exercise real integration", "state": "not_assessed", "note": "unrun"}
@@ -30,20 +32,53 @@ boolean or score. Up to 20 results are allowed, with a nonblank condition and
 optional blank note, each at most 500 characters. `unfinished` and `uncertainty`
 each accept up to 10 nonblank strings of at most 500 characters.
 
+`verdict` is optional and is exactly one of `PASS`, `PASS-WITH-NOTES`, `HOLD`,
+`BLOCKED` (upper case, as written; the words the fleet's review reports already
+use, so a reader needs no translation). `findings` is optional: an object whose
+keys are `P1`, `P2`, `P3` and whose values are non-negative integers. A key you
+leave out means not stated, not zero, so report `0` when you mean it; an empty
+object, an unknown key, a negative, fractional, string or boolean count is
+refused, as is any other verdict word. Both are the reporter's own assertion:
+Athena does not check them against the results, compute a score from them, or
+let them change the issue, the lease release, an approval or a gate. A report
+with only a verdict or only findings is valid, and a report with neither is
+unchanged. They carry no free text, so the credential guard has nothing to scan
+in them.
+
 `not_assessed` means the condition was not evaluated; for example, an
 integration check was never run. `inconclusive` means an evaluation was attempted
 but did not establish `met` or `not_met`; for example, an integration check ran
 but timed out before producing a result.
 
-History and work-context summaries show counts of each reported state present,
-plus reported unfinished and uncertainty counts. These are counts, not an overall
-verdict. Reports open by default when a result is other than `met`, or unfinished
+History and work-context summaries lead with the reported verdict and findings
+when present ("reported verdict HOLD · reported findings P1 1, P2 0"), then show
+counts of each reported state present, plus reported unfinished and uncertainty
+counts. Every figure is labelled as reported; Athena itself states no overall
+assessment. Reports open by default when a result is other than `met`, or unfinished
 work or uncertainty is non-empty. A report containing only `met` stays collapsed;
 its counts remain visible in the summary. The narrative repeats the same counts
 as reported and advisory.
 
-Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`.
-Kinds are `event`, `handoff`, `doc`, `file`, or `manifest`. Source qualifies where
+Evidence accepts up to 10 objects with exactly `kind`, `source`, `ref`, `scope`,
+plus optionally `digest` (64 lowercase hex characters, SHA-256), `bytes` (a
+non-negative integer) and `locator` (text of at most 500 characters, such as a
+line range). Each result may also carry an optional `subject`: 1 to 10 short
+texts naming what that result judged, so a verdict is bound to a subject.
+Kinds are `event`, `handoff`, `doc`, `file`, `manifest`, `attachment`, or
+`forge_event`. The last two point at a row Athena holds, and their `ref` is its
+numeric id: an attachment, or an imported forge commit or pull-request event
+(`docs/FORGE.md`).
+
+Validation of all of these is shape only. The one thing Athena checks is an
+`attachment` on the same issue that carries a `digest`: the history compares it
+with the SHA-256 (and `bytes`, if given) Athena stored when it received those
+bytes and says `matches stored attachment`, or `unverified reference` when it
+differs, is missing, belongs to another issue, or is any other kind. A mismatch
+is shown and never refused, because Athena verifies only what it holds; only the
+issue's own attachments are consulted, so the check cannot confirm that a hidden
+file exists. A report that uses none of these fields is shown exactly as before.
+
+`source` qualifies where
 the original record/bytes belong (for example an Athena instance or a checkout
 and revision), at most 200 characters; `ref` identifies the original event,
 handoff, document, file, or manifest, at most 1000 characters. Scope is explicitly

@@ -18,6 +18,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 
 | Doc | One line |
 |---|---|
+| [AGENT_GUIDE.md](AGENT_GUIDE.md) | One page for an agent at session start: orient, find work, claim, show progress, complete or hand off, and what never to do. |
 | [AGENT_BOOT.md](AGENT_BOOT.md) | The canonical seat-boot block for an agent's rules file, the wiring check, and the sqlite escape-hatch policy. |
 | [AGENT_API.md](AGENT_API.md) | **Generated** map of every MCP tool to its required scope and the REST call(s) behind it — regenerate, never edit. |
 | [DESK.md](DESK.md) | `GET /desk` / `my_desk()` — who you are, what is asked of you, what you hold, what changed: one bounded read. |
