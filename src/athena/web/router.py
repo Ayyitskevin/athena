@@ -19,6 +19,7 @@ from athena.aegis import (
     fleet_attention,
     issue_search,
     issues,
+    notification_state,
     projects,
 )
 from athena.core import (
@@ -270,6 +271,7 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             status_code=401,
         )
     items = notifications.list_notifications(conn, user["id"], limit=100, actor=user)
+    items = notification_state.annotate_inbox(conn, user["id"], items)
     for it in items:
         it["href"] = (
             f"/aegis/issues/{it['target_id']}"

@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from athena.core import notifications
@@ -45,16 +45,8 @@ class WatchCreate(BaseModel):
     target_id: int
 
 
-@router.get("/notifications", response_model=list[NotificationOut])
-def inbox(
-    unread: bool = Query(False, description="only unread notifications"),
-    limit: int = Query(50, ge=1, le=200),
-    actor: dict = Depends(current_actor),
-    conn: sqlite3.Connection = Depends(get_conn),
-) -> list[dict]:
-    return notifications.list_notifications(
-        conn, actor["id"], unread_only=unread, limit=limit, actor=actor
-    )
+# GET /notifications (the inbox list) is served by athena.aegis.notification_state_api,
+# which adds each row's target_state.
 
 
 @router.get("/notifications/unread_count", response_model=UnreadCount)
