@@ -168,6 +168,8 @@ cheap; a hidden assumption shipped to `main` is expensive.
 
 ## Quick orientation
 
+Agents working through Athena's API should read [`docs/AGENT_GUIDE.md`](docs/AGENT_GUIDE.md) first.
+
 ```
 src/athena/
   core/      db + migrations + auth/users/tokens/search/cross-link/deployment

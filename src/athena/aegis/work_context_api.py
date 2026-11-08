@@ -201,6 +201,8 @@ class ActivityOut(BaseModel):
     forked_from_event_id: int | None
     imported_at: str | None
     reported_completion: dict | None = None
+    evidence_checks: list[str] | None = None
+    checklist_coverage: dict | None = None
 
 
 class ActivityGroupOut(BaseModel):
@@ -288,6 +290,8 @@ class IssueWorkContextOut(BaseModel):
     related: RelatedGroupOut
     recent_activity: ActivityGroupOut
     claim_handoffs: ClaimHandoffGroupOut
+    # Only present when the project has a checklist page the actor may see.
+    definition_of_done: dict | None = None
 
 
 @router.get("/{ref}/work-context", response_model=IssueWorkContextOut)

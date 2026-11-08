@@ -887,7 +887,9 @@ def start_sprint_web(
     try:
         sprint_commands.start_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
-        return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
+        )
     except sprint_commands.SprintCommandError:
         # Vanished past the authorization gate — land back on the list, which 404s.
         pass
@@ -909,7 +911,9 @@ def complete_sprint_web(
     try:
         sprint_commands.complete_sprint(conn, actor_id=user["id"], sprint_id=sprint_id)
     except sprints.SprintStateError as exc:
-        return HTMLResponse(f'<div class="error">{exc}</div>', status_code=409)
+        return HTMLResponse(
+            f'<div class="error">{html.escape(str(exc))}</div>', status_code=409
+        )
     except sprint_commands.SprintCommandError:
         # Vanished past the authorization gate — land back on the list, which 404s.
         pass

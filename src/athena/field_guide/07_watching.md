@@ -31,6 +31,12 @@ mark_notifications_read()
 Mark them read after you have acted, so the next read surfaces only what is
 genuinely new.
 
+Each inbox row carries a `target_state`. It describes the row, not only the target:
+`completed_by_you` means you completed a claim on that issue at or after the row's
+own event, so the row describes something you had already handled; a row that
+arrived after your completion is not labelled. `archived` and `closed` describe the
+issue as it is now. `null` means none of these applies.
+
 ## What a subscription is not
 
 - **Not a permission.** Watching grants you nothing; your inbox is filtered by

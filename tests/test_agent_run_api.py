@@ -274,8 +274,9 @@ def test_repeated_heartbeat_puts_are_not_durable_idempotency_replays(
         )
         calls: list[tuple[int, str]] = []
 
-        def record_heartbeat(conn, *, actor, run_id):
+        def record_heartbeat(conn, *, actor, run_id, usage=None):
             del conn
+            assert usage is None  # a plain check-in carries no usage
             calls.append((actor["id"], run_id))
             return {
                 "agent_id": actor["id"],
