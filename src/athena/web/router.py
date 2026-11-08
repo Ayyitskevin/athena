@@ -10,18 +10,20 @@ import dataclasses
 import sqlite3
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import (
     dashboard,
     delegations,
+    desk_commands,
     fleet_attention,
     issue_query,
     issue_search,
     issues,
     notification_state,
+    operator_since,
     projects,
 )
 from athena.core import (
@@ -127,10 +129,39 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             if user
             else [],
             "my_delegation_inbox": delegation_inbox,
+            # What changed after this viewer's own desk cursor. Building it never
+            # moves the cursor; only the card's "mark seen" form does.
+            "since": operator_since.build_since(conn, actor=user) if user else None,
+            "since_error": request.query_params.get("since_error"),
             "fleet_attention": attention,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )
+
+
+@router.post("/aegis/dashboard/since/seen", dependencies=[Depends(verify_csrf)])
+def mark_since_seen(
+    request: Request,
+    after_id: int = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """The explicit "mark seen": move this viewer's desk cursor to the last event
+    the card showed (the form carries it), through the cursor's own command —
+    which refuses to move backward. Never called by a page load."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    try:
+        desk_commands.advance_cursor(conn, actor=user, after_id=after_id)
+    except desk_commands.DeskCommandError as exc:
+        return RedirectResponse(
+            "/aegis/dashboard?" + urlencode({"since_error": exc.detail}),
+            status_code=303,
+        )
+    return RedirectResponse("/aegis/dashboard", status_code=303)
 
 
 _SEARCH_PAGE = 20

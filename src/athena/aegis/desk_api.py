@@ -12,7 +12,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from athena.aegis import desk_commands, ready_queue
+from athena.aegis import desk_commands, operator_since, ready_queue
 from athena.core import desk_cursors
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor, personal_write_actor
@@ -75,6 +75,16 @@ def read_ready(
     """Your ready lane alone (the desk's ``work.ready``): what you could claim
     now, in claim order, with its own total. A read, not a reservation."""
     return ready_queue.build_ready(conn, actor=actor, limit=limit)
+
+
+@router.get("/desk/since")
+def read_since(
+    actor: dict = Depends(current_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """What changed after your desk cursor, by kind. A read: it never moves the
+    cursor. Advance it with ``POST /desk/cursor`` to ``last_shown_event_id``."""
+    return operator_since.build_since(conn, actor=actor)
 
 
 @router.post("/desk/cursor", response_model=CursorOut)
