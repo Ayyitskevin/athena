@@ -40,6 +40,7 @@ from athena.aegis import (
     leases,
     office,
     ready_queue,
+    run_state,
     work_progress,
 )
 from athena.core import (
@@ -272,6 +273,11 @@ def build_desk(
             # same rule as the is:ready atom and claim_next_ready.
             "ready": ready_queue.build_ready(
                 conn, actor=actor, now=lease_now, limit=ready_queue.READY_LIMIT
+            ),
+            # My own open asks: blocking questions nobody resumed and pending
+            # approvals. So an agent sees what it already asked, not re-asks.
+            "waiting_on_operator": run_state.waiting_on_operator(
+                conn, actor=actor, now=lease_now
             ),
             "waiting_on": {
                 "items": waiting_on["items"],

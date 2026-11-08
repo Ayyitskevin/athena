@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, issues, statuses, work_progress
+from athena.aegis import claim_handoffs, issues, run_state, statuses, work_progress
 from athena.core import agent_run_checkins, db
 
 
@@ -406,6 +406,16 @@ def _item(
         },
         # Work and pulse side by side: a fresh check-in or renewal never resets the
         # work age, and no recorded work reads "unknown", not fresh.
+        # The run's derived state (awaiting_input / active / pinging / stale; a
+        # held claim is never complete). Read-time, no stored row; it does not
+        # change attention_reasons or the summary counts.
+        "run_state": run_state.state_for_claim(
+            conn,
+            holder_id=int(row["holder_id"]),
+            run_id=row["run_id"],
+            issue_id=int(row["issue_id"]),
+            now=observed_at,
+        ),
         "progress": work_progress.progress_for(
             last_work_at,
             now=observed_at,

@@ -146,11 +146,29 @@ class ActiveWorkProgressOut(_StrictModel):
     meaning: str
 
 
+class ActiveWorkRunStateOut(_StrictModel):
+    """The run's derived state, read-time. Precedence: awaiting_input > complete >
+    active > pinging > stale; a check-in never makes a run active. A held claim
+    is never complete. ``scope`` is ``run`` for a tagged claim, ``claim`` for an
+    untagged one (its own holder/issue facts)."""
+
+    state: Literal["awaiting_input", "complete", "active", "pinging", "stale"]
+    reasons: list[str]
+    scope: Literal["run", "claim"]
+    window_minutes: int
+    last_work_at: str | None
+    last_checkin_at: str | None
+    open_questions: int
+    pending_approvals: int
+    meaning: str
+
+
 class ActiveWorkItemOut(_StrictModel):
     issue: ActiveWorkIssueOut
     holder: ActiveWorkHolderOut
     lease: ActiveWorkLeaseOut
     run: ActiveWorkRunOut
+    run_state: ActiveWorkRunStateOut
     progress: ActiveWorkProgressOut
     open_blockers: ActiveWorkBlockersOut
     open_claim_handoff: OpenClaimHandoffOut | None
