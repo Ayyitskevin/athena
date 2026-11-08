@@ -323,6 +323,7 @@ TOOL_SCOPES: dict[str, str] = {
     "assign_issue": tokens.ISSUE_WRITE_SCOPE,
     "delegate_issue": tokens.ISSUE_WRITE_SCOPE,
     "claim_issue": tokens.ISSUE_WRITE_SCOPE,
+    "claim_next_ready": tokens.ISSUE_WRITE_SCOPE,
     "yield_claim": tokens.ISSUE_WRITE_SCOPE,
     "resume_claim_handoff": tokens.ISSUE_WRITE_SCOPE,
     "complete_claim": tokens.ISSUE_WRITE_SCOPE,
@@ -347,6 +348,7 @@ TOOL_SCOPES: dict[str, str] = {
     "dispatch_to_icarus": tokens.ISSUE_WRITE_SCOPE,
     # Mentor writes
     "create_page": tokens.DOCS_WRITE_SCOPE,
+    "open_my_notebook": tokens.DOCS_WRITE_SCOPE,
     "update_page": tokens.DOCS_WRITE_SCOPE,
     "archive_page": tokens.DOCS_WRITE_SCOPE,
     "unarchive_page": tokens.DOCS_WRITE_SCOPE,

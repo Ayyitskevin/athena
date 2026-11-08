@@ -8,6 +8,7 @@ from __future__ import annotations
 from html import escape
 import json
 import sqlite3
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from athena import config
@@ -18,6 +19,8 @@ from athena.aegis import (
     issue_commands,
     issues,
     office,
+    reported_spend,
+    run_state,
     statuses,
 )
 from athena.core import (
@@ -51,10 +54,47 @@ from athena.web.admin import (
 router = APIRouter()
 
 
+_REPORTED_ROWS = 5
+
+
+def _reported_spend(
+    conn: sqlite3.Connection, viewer: dict, agent_id: int, reads: reported_spend.Scan
+) -> dict | None:
+    """What this agent SAID it used, as the viewer may see it; None when it said nothing."""
+    days = reported_spend.by_agent_day(
+        conn, viewer=viewer, agent_id=agent_id, reads=reads
+    )
+    if not days:
+        return None
+    return {
+        "label": reported_spend.LABEL,
+        "clipped": reads.clipped,
+        "days": days[:7],
+        "runs": reported_spend.by_run(
+            conn, viewer=viewer, agent_id=agent_id, reads=reads
+        )[:_REPORTED_ROWS],
+        "issues": reported_spend.by_issue(
+            conn, viewer=viewer, agent_id=agent_id, reads=reads
+        )[:_REPORTED_ROWS],
+    }
+
+
+def _agents_redirect(**query: str) -> RedirectResponse:
+    """Send the operator back to the agents page with one encoded value per key.
+
+    Error and notice text can contain & # ? = (it may echo input), so it must be
+    encoded rather than pasted into the URL."""
+    query_string = "&".join(
+        f"{key}={quote(value, safe='')}" for key, value in query.items()
+    )
+    return RedirectResponse(f"/admin/agents?{query_string}", status_code=303)
+
+
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     """The agents-cockpit page context, shared by the GET view and the inline
     onboarding POST (which re-renders the page carrying the one-time token)."""
     agent_rows = agents.agent_admin_summaries(conn)
+    reads = reported_spend.scan(conn, viewer)  # one read for every agent on the page
     for agent in agent_rows:
         agent["delegation_inbox"] = delegations.list_delegations(
             conn, agent["user"], viewer=viewer, limit=20
@@ -64,6 +104,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         # opt-in, so most fleets start here.
         budget = budgets.observed(conn, agent["user"]["id"])
         agent["budget"] = None if budget is None else budget.public()
+        agent["reported_spend"] = _reported_spend(
+            conn, viewer, agent["user"]["id"], reads
+        )
         agent["gated_actions"] = approvals.gated_kinds(conn, agent["user"]["id"])
         # Where this agent says it runs. Cooperative presence only: a worker that
         # stops heartbeating reads as stale, never as a process that died.
@@ -98,6 +141,9 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         "pending_approvals": pending,
+        # Beside the approvals: blocking questions from yielded claims nobody has
+        # resumed. The page is admin-only; the reader still applies visibility.
+        "open_questions": run_state.open_questions(conn, actor=viewer),
         "notice": None,
         "error": None,
         **extra,
@@ -370,7 +416,7 @@ def decide_approval(
             note=note.strip() or None,
         )
     except HTTPException as exc:
-        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
+        return _agents_redirect(error=str(exc.detail))
     return RedirectResponse(
         f"/admin/agents?decided={decision.strip()}", status_code=303
     )
@@ -404,13 +450,13 @@ def request_worker_kill(
         else:
             worker_commands.request_kill(conn, actor=user, worker_id=worker_id)
     except worker_commands.WorkerCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc.detail}", status_code=303)
+        return _agents_redirect(error=str(exc.detail))
     notice = (
         "Kill request withdrawn."
         if withdrawing
         else "Worker asked to stop; it will be told on its next heartbeat."
     )
-    return RedirectResponse(f"/admin/agents?notice={notice}", status_code=303)
+    return _agents_redirect(notice=notice)
 
 
 @router.post(
@@ -446,7 +492,7 @@ def set_approval_policy(
                 action_kind=action_kind.strip(),
             )
     except ValueError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?gate_changed=1", status_code=303)
 
 
@@ -483,7 +529,7 @@ def set_agent_budget(
             action_limit=int(raw),
         )
     except ValueError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?budget_set=1", status_code=303)
 
 
@@ -520,7 +566,7 @@ def pause_agent(
             conn, actor=user, target_user_id=user_id, paused=True
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?paused=1", status_code=303)
 
 
@@ -540,7 +586,7 @@ def resume_agent(
             conn, actor=user, target_user_id=user_id, paused=False
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?resumed=1", status_code=303)
 
 
@@ -560,7 +606,7 @@ def revoke_agent_tokens(
             conn, actor=user, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse(
         f"/admin/agents?revoked={result['revoked_token_count']}", status_code=303
     )
@@ -580,7 +626,7 @@ def offboard_agent(
     try:
         agent_commands.offboard_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?offboarded=1", status_code=303)
 
 
@@ -598,7 +644,7 @@ def remove_agent(
     try:
         agent_commands.remove_user(conn, actor=user, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        return RedirectResponse(f"/admin/agents?error={exc}", status_code=303)
+        return _agents_redirect(error=str(exc))
     return RedirectResponse("/admin/agents?removed=1", status_code=303)
 
 
@@ -641,6 +687,13 @@ def agent_runs_admin(
             headers=ACTIVE_WORK_PRIVATE_HEADERS,
         )
     context = agents.agent_run_health(conn, agent_id=agent_id)
+    # Each run row's derived state. The run-health read lives in core, which may
+    # not import aegis, so the state is composed here, one per listed run. A
+    # completed claim has left active work; this row is where "complete" shows.
+    for checkin in context["latest_checkins"]:
+        checkin["run_state"] = run_state.state_for_run(
+            conn, agent_id=int(checkin["agent_id"]), run_id=checkin["run_id"]
+        )["state"]
     context["active_work"] = fleet_work.build_active_work(
         conn, agent_id=agent_id, limit=work_limit, attention_state=attention_state
     )

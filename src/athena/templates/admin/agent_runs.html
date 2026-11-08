@@ -127,6 +127,12 @@
                     <span class="chip" data-tone="{{ checkin.reporting_state | checkin_tone }}">
                         {% if checkin.reporting_state == "reporting_recently" %}reporting recently{% else %}stale{% endif %}
                     </span>
+                    {% if checkin.run_state %}
+                    {% set run_tones = {"awaiting_input": "accent", "complete": "neutral", "active": "success", "pinging": "info", "stale": "warning"} %}
+                    <span class="chip" data-run-state="{{ checkin.run_state }}" data-tone="{{ run_tones[checkin.run_state] }}">
+                        run {{ checkin.run_state | replace("_", " ") }}
+                    </span>
+                    {% endif %}
                 </td>
                 <td>{{ checkin.last_seen_at }} UTC</td>
                 <td>{{ checkin.age_seconds }}s</td>

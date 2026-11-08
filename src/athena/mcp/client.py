@@ -575,6 +575,9 @@ class AthenaClient:
         unfinished: list[str] | None = None,
         uncertainty: list[str] | None = None,
         evidence: list[dict] | None = None,
+        verdict: str | None = None,
+        findings: dict[str, int] | None = None,
+        usage: dict | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
@@ -583,10 +586,13 @@ class AthenaClient:
             f"/issues/{issue_id}/complete",
             json=self._params(
                 generation=generation,
+                verdict=verdict,
+                findings=findings,
                 results=results,
                 unfinished=unfinished,
                 uncertainty=uncertainty,
                 evidence=evidence,
+                usage=usage,
             ),
             idempotency_key=idempotency_key,
         )
@@ -926,6 +932,11 @@ class AthenaClient:
 
     def get_page(self, page_id: int) -> Any:
         return self._result(self._client.get(f"/pages/{page_id}"))
+
+    def open_my_notebook(self) -> Any:
+        """Your notebook page, created on first use (``created`` says which). The
+        page carries ``_etag`` for the next If-Match append."""
+        return self._result(self._client.post("/desk/notebook"))
 
     def find_pages_by_title(self, title: str, *, space_id: int | None = None) -> Any:
         """Look up pages by their TITLE instead of a numeric id — the address an agent
@@ -1293,7 +1304,7 @@ class AthenaClient:
             )
         )
 
-    def heartbeat_agent_run(self, run_id: str) -> Any:
+    def heartbeat_agent_run(self, run_id: str, usage: dict | None = None) -> Any:
         """Refresh this authenticated agent's server-timed run check-in.
 
         A heartbeat is intentionally not a durable-idempotency mutation: every PUT
@@ -1302,7 +1313,7 @@ class AthenaClient:
         return self._result(
             self._client.put(
                 "/agent-runs/heartbeat",
-                json={"run_id": run_id},
+                json=self._params(run_id=run_id, usage=usage),
             )
         )
 
@@ -1501,6 +1512,86 @@ class AthenaClient:
         """Your desk: identity, what is asked of you, what you hold, and what
         changed since your cursor. Includes `office` (the one-chair cubicle)."""
         return self._result(self._client.get("/desk"))
+
+    def ready_work(self, *, limit: int | None = None) -> Any:
+        """Your ready lane: what you could claim now, in claim order, with its
+        own total (the desk's work.ready)."""
+        return self._result(
+            self._client.get("/desk/ready", params=self._params(limit=limit))
+        )
+
+    #: How many ready candidates one claim_next_ready call may try, in order.
+    CLAIM_NEXT_MAX_ATTEMPTS = 5
+    #: The REST statuses that mean "someone else got there first" (a live lease
+    #: by another holder; the issue changed after it was read; it is no longer
+    #: visible). Anything else is a real error and is raised, never swallowed.
+    _LOST_RACE = {409: "lost_race", 412: "stale_revision", 404: "gone"}
+
+    def claim_next_ready(
+        self, *, limit: int = 1, lease_seconds: int | None = None
+    ) -> dict:
+        """Claim the top item of your ready lane through the ordinary claim.
+
+        Reads the lane, then for each candidate in order (at most ``limit``)
+        reads the issue's current root ETag and claims against exactly that
+        revision. The claim command's own interlock decides any race, so two
+        callers never both win. Returns ``{"claimed": True, issue, lease,
+        issue_etag, work_context_etag, previous_lease, open_handoff, attempts}``
+        or ``{"claimed": False, "reason": ..., ...}`` — ``already_holding`` (one
+        claim at a time: finish or yield the one you hold), ``nothing_ready``, or
+        ``lost_race`` (every tried candidate was taken or changed first)."""
+        if isinstance(limit, bool) or not (1 <= limit <= self.CLAIM_NEXT_MAX_ATTEMPTS):
+            raise ValueError(
+                f"limit must be between 1 and {self.CLAIM_NEXT_MAX_ATTEMPTS}"
+            )
+        lane = self.ready_work(limit=limit)
+        if lane["held_by_you"]:
+            # A retried call after a lost response must not take a second issue.
+            return {
+                "claimed": False,
+                "reason": "already_holding",
+                "held_by_you": lane["held_by_you"],
+                "attempts": [],
+            }
+        if not lane["items"]:
+            return {
+                "claimed": False,
+                "reason": "nothing_ready",
+                "ready_total": lane["total"],
+                "attempts": [],
+            }
+        attempts: list[dict] = []
+        for item in lane["items"][:limit]:
+            issue_id = int(item["issue"]["id"])
+            try:
+                fresh = self.get_issue(str(issue_id))
+                lease = self.claim_issue(
+                    issue_id, if_match=fresh["_etag"], lease_seconds=lease_seconds
+                )
+            except AthenaError as exc:
+                outcome = self._LOST_RACE.get(exc.status_code or 0)
+                if outcome is None:
+                    raise
+                attempts.append(
+                    {
+                        "issue_id": issue_id,
+                        "status": exc.status_code,
+                        "outcome": outcome,
+                    }
+                )
+                continue
+            context = self.get_issue_work_context(str(issue_id))
+            return {
+                "claimed": True,
+                "issue": item["issue"],
+                "lease": lease,
+                "issue_etag": context["issue_etag"],
+                "work_context_etag": context.get("_etag"),
+                "previous_lease": item["previous_lease"],
+                "open_handoff": item["open_handoff"],
+                "attempts": attempts,
+            }
+        return {"claimed": False, "reason": "lost_race", "attempts": attempts}
 
     def my_office(self) -> Any:
         """Your cubicle: one chair, fenced paths, checkout hint."""

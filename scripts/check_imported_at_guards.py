@@ -162,6 +162,71 @@ EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
         "the ranked attention queue's budget-exhaustion signal is a "
         "native-only read; foreign history must not look like a live ceiling hit",
     ),
+    (
+        "aegis/work_progress.py",
+        "last_work_at",
+        r'"imported_at IS NULL"',
+        "last recorded work is a native-only read: a back-dated import bundle "
+        "must not make old work look new or stale work look fresh",
+    ),
+    (
+        "aegis/work_progress.py",
+        "last_work_sql",
+        r'"wa\.imported_at IS NULL"',
+        "the shared last-work subquery (idle: atoms, sort:idle-desc, delegation "
+        "pickup) measures native work; foreign history must not hide an idle "
+        "item by resetting its last-work time",
+    ),
+    (
+        "aegis/work_progress.py",
+        "_stale_in_progress",
+        r"AND a\.imported_at IS NULL",
+        "the stale lane's grouped pass measures native work; foreign history must "
+        "not hide an idle item by resetting its last-work time",
+    ),
+    (
+        "aegis/work_progress.py",
+        "unclaimed_delegations",
+        r"AND da\.imported_at IS NULL",
+        "a delegate's claim is a native act; an imported claimed row must not "
+        "make a hand-off look picked up",
+    ),
+    (
+        "aegis/run_state.py",
+        "_facts",
+        r"a\.imported_at IS NULL",
+        "a run's derived state reads only its native work, claim acts and yields; "
+        "imported history must not make a run look active, complete or waiting",
+    ),
+    (
+        "aegis/run_state.py",
+        "open_questions",
+        r"ye\.imported_at IS NULL",
+        "an open question is a native yield; an imported row must not put a "
+        "question in front of the operator",
+    ),
+    (
+        "aegis/operator_since.py",
+        "_events_after",
+        r"a\.imported_at IS NULL",
+        "'since you last looked' counts native changes; a back-dated import must "
+        "not read as new work arriving",
+    ),
+    (
+        "aegis/operator_since.py",
+        "_stalled",
+        r"a\.imported_at IS NULL",
+        "newly stalled measures native work; imported history must not move an "
+        "issue across the stale threshold",
+    ),
+    (
+        "aegis/notification_state.py",
+        "annotate_inbox",
+        r"AND c\.imported_at IS NULL",
+        "the inbox target-state annotation reads the reader's own completions; "
+        "an imported claim_completed is foreign history and must not mark the "
+        "reader as having completed the target",
+    ),
 )
 
 # General readers allowed to see imported rows, each with the reason that is

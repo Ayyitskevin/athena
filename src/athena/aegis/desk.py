@@ -34,8 +34,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, delegations, leases, office
+from athena.aegis import (
+    claim_handoffs,
+    delegations,
+    leases,
+    office,
+    ready_queue,
+    run_state,
+    work_progress,
+)
 from athena.core import (
+    agent_notebook,
     approvals,
     budgets,
     desk_cursors,
@@ -169,6 +178,23 @@ def build_desk(
     lapsed, lapsed_total = leases.lapsed_leases_held_by(
         conn, holder_id=user_id, limit=LEASES_LIMIT, now=lease_now
     )
+    # Holding is not working: beside each held lease, my own last recorded work on
+    # that issue. A check-in or renewal never resets it; none recorded is "unknown".
+    held_work = work_progress.last_work_at(
+        conn, [(int(lease["issue_id"]), user_id) for lease in held]
+    )
+    for lease in held:
+        lease["progress"] = work_progress.progress_for(
+            held_work.get((int(lease["issue_id"]), user_id)), now=lease_now
+        )
+    # The other side of a hand-off: what I delegated that nobody picked up.
+    waiting_on = work_progress.unclaimed_delegations(
+        conn,
+        actor=actor,
+        delegator_id=user_id,
+        now=lease_now,
+        limit=DELEGATIONS_LIMIT,
+    )
     # A handoff is attached to an issue, so "mine to acknowledge" is exactly
     # "open on an issue I hold" — composed rather than re-queried. The reader
     # returns a dict keyed by issue id; the desk presents an ordered list.
@@ -200,6 +226,10 @@ def build_desk(
             # None when this account is not a declared fleet seat. Same slug
             # as Buzz / systemd / drift-check when it is.
             "seat_slug": fleet_roster.seat_slug_for_email(actor.get("email")),
+            # Your notebook page: id, last edit and a bounded excerpt, or null
+            # when you have none yet (POST /desk/notebook creates it; this read
+            # never does).
+            "notebook": agent_notebook.desk_lane(conn, actor),
         },
         "asks": {
             "run_controls": {
@@ -243,6 +273,27 @@ def build_desk(
                 # count it would have to query for separately.
                 "has_more": bool(inbox.get("has_more")),
                 "next_offset": inbox.get("next_offset"),
+            },
+            # What I could claim next, in claim order, with its own total. The
+            # same rule as the is:ready atom and claim_next_ready.
+            "ready": ready_queue.build_ready(
+                conn, actor=actor, now=lease_now, limit=ready_queue.READY_LIMIT
+            ),
+            # My own open asks: blocking questions nobody resumed and pending
+            # approvals. So an agent sees what it already asked, not re-asks.
+            "waiting_on_operator": run_state.waiting_on_operator(
+                conn, actor=actor, now=lease_now
+            ),
+            "waiting_on": {
+                "items": waiting_on["items"],
+                "total": waiting_on["visible_total"],
+                "limit": DELEGATIONS_LIMIT,
+                "clipped": waiting_on["clipped"],
+                "older_than_hours": waiting_on["older_than_hours"],
+                "meaning": (
+                    "issues you delegated that are waiting on their delegate: "
+                    + waiting_on["meaning"]
+                ),
             },
             "leases": {
                 "items": held,

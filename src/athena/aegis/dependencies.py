@@ -20,6 +20,7 @@ first) to keep it a single row no matter which side asked.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from athena.aegis import issues, statuses
@@ -226,6 +227,46 @@ def open_blockers(
         if not statuses.is_done(conn, r["project_id"], r["status"])
     ]
     return _others(conn, open_ids, actor)
+
+
+_ISSUE_REF = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
+
+
+def _default_done_literals() -> str:
+    names = [name for name, category in statuses.DEFAULT_STATUSES if category == "done"]
+    for name in names:
+        if "'" in name:  # interpolated as a literal; keep it a module constant
+            raise ValueError(f"unsafe default status literal: {name!r}")
+    return ", ".join(f"'{name}'" for name in names) or "NULL"
+
+
+def open_blocker_exists_sql(issue_ref: str) -> str:
+    """SQL twin of ``open_blockers_by_issue(...)[id] != []`` (ungated).
+
+    True when some issue blocks ``issue_ref`` through a ``blocks`` edge and that
+    blocker is not done by :func:`statuses.is_done`'s exact rule: a project with
+    status rows decides by its own row for that name (a name it no longer has is
+    NOT done, even ``'done'`` after a rename); the backlog, or a project with no
+    rows, falls back to the default set. Ungated on purpose: a blocker the actor
+    cannot see still blocks, and the clause discloses nothing about it.
+
+    It exists so a bounded list can count exactly in SQL; a test pins it equal to
+    the Python read on every case."""
+    if not _ISSUE_REF.fullmatch(issue_ref):
+        raise ValueError(f"not a column reference: {issue_ref!r}")
+    blocker_done = (
+        "CASE WHEN qb.project_id IS NOT NULL AND EXISTS ("
+        "SELECT 1 FROM project_statuses qbs WHERE qbs.project_id = qb.project_id) "
+        "THEN EXISTS (SELECT 1 FROM project_statuses qbd "
+        "WHERE qbd.project_id = qb.project_id AND qbd.name = qb.status "
+        "AND qbd.category = 'done') "
+        f"ELSE qb.status IN ({_default_done_literals()}) END"
+    )
+    return (
+        "EXISTS (SELECT 1 FROM issue_links qbl JOIN issues qb ON qb.id = qbl.from_id "
+        f"WHERE qbl.to_id = {issue_ref} AND qbl.kind = 'blocks' "
+        f"AND NOT ({blocker_done}))"
+    )
 
 
 def open_blockers_by_issue(

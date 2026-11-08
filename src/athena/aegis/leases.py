@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import json
+import re
 import secrets
 import sqlite3
 from typing import TypeGuard
@@ -67,6 +68,28 @@ def _clock_stamp(now: datetime | None) -> str:
     return (now or datetime.now(UTC)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+_COLUMN_REF = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
+
+
+def live_lease_sql(issue_ref: str) -> str:
+    """SQL: someone holds a live lease on the outer issue ``issue_ref`` (a column
+    reference such as ``i.id``, checked as one). Takes ONE bound parameter, the
+    clock stamp in storage format, so it is the same "active" verdict every
+    reader here derives: ``expires_at`` strictly after now. A lapsed row is not
+    live, and reading never touches it."""
+    if not _COLUMN_REF.fullmatch(issue_ref):
+        raise ValueError(f"not a column reference: {issue_ref!r}")
+    return (
+        "EXISTS (SELECT 1 FROM issue_leases qlz "
+        f"WHERE qlz.issue_id = {issue_ref} AND qlz.expires_at > ?)"
+    )
+
+
+def clock_stamp(now: datetime | None) -> str:
+    """The comparison stamp for :func:`live_lease_sql`, in ``expires_at``'s format."""
+    return _clock_stamp(now)
+
+
 def _parse_declared_paths(raw: object) -> list[str] | None:
     """None is unreadable stored state, never an intentional empty fence."""
     try:
@@ -94,6 +117,19 @@ def _row_to_lease(row: sqlite3.Row) -> dict:
         else "unresolved"
     )
     return lease
+
+
+def live_leases_at(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> list[dict]:
+    """Every lease the clock still says is live at ``now``, decoded exactly as
+    every other reader decodes it (normalised ``declared_paths``, the verified
+    ``coordination_root`` binding, ``path_fence``). Read-only."""
+    rows = conn.execute(
+        _HELD_SELECT + "WHERE l.expires_at > ? ORDER BY l.issue_id",
+        (_clock_stamp(now), _clock_stamp(now)),
+    ).fetchall()
+    return [_row_to_lease(row) for row in rows]
 
 
 def get_lease(conn: sqlite3.Connection, issue_id: int) -> dict | None:

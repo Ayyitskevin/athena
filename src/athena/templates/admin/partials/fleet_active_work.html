@@ -85,6 +85,12 @@
                         <div class="muted">until {{ work.lease.expires_at }} UTC</div>
                     </td>
                     <td>
+                        {# The run's derived state. Accent only for awaiting_input:
+                           an agent stopped and waiting on the human. #}
+                        {% set run_tones = {"awaiting_input": "accent", "complete": "neutral", "active": "success", "pinging": "info", "stale": "warning"} %}
+                        <span class="chip" data-run-state="{{ work.run_state.state }}" data-tone="{{ run_tones[work.run_state.state] }}">
+                            {{ work.run_state.state | replace("_", " ") }}
+                        </span>
                         {% if work.run.run_id %}
                         <code class="checkin-run-id">{{ work.run.run_id }}</code>
                         <div>{{ work.run.reporting_state|replace("_", " ") }}</div>

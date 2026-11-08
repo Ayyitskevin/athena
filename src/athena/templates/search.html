@@ -37,8 +37,18 @@
     </div>
 </form>
 
-{% if q %}
-    {% if filtered_mode %}
+{% if query_error %}
+    {# A refused query is never shown as "no matches": the operator gets the
+       compiler's own words, which name the atom and what would have worked. #}
+    <div class="alert" data-tone="danger" role="alert">
+        <strong>Query not run.</strong>
+        {{ query_error }}
+        See <a href="/issues/query/help">the query vocabulary</a>.
+    </div>
+{% elif q or grammar_mode %}
+    {% if grammar_mode %}
+    <p class="note-small">Showing issues that match the query atoms{% if filtered_mode %} and the filter menus{% endif %}, in the query's order. Pages are not searched by atoms.</p>
+    {% elif filtered_mode %}
     <p class="note-small">Showing issues that match the filters. <a href="/find?q={{ q | urlencode }}">Clear filters</a> to search pages too.</p>
     {% else %}
     <div class="search-scope">
@@ -77,9 +87,9 @@
     </div>
     {% endif %}
     {% else %}
-    <p class="empty-state">No matches for “{{ q }}”{% if kind %} in {{ kind }}s{% endif %}.</p>
+    <p class="empty-state">{% if q %}No matches for “{{ q }}”{% if kind and not grammar_mode %} in {{ kind }}s{% endif %}{% else %}No issues match these filters{% endif %}.</p>
     {% endif %}
 {% else %}
-<p class="note">Type a query above to search every issue and page.</p>
+<p class="note">Type a query above to search every issue and page, use atoms like <code>idle:&gt;14d is:unclaimed</code>, or pick a filter to browse.</p>
 {% endif %}
 {% endblock %}

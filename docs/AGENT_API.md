@@ -19,8 +19,15 @@ composes other calls or local state instead of one fixed route.
 ## Reported claim completion
 
 `complete_claim` and `POST /issues/{id}/complete` accept optional
+`verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`), `findings`
+(`P1`/`P2`/`P3` to non-negative integers; a missing key is "not stated"),
 `results`, `unfinished`, `uncertainty`, and typed, source-qualified
-`evidence`. They are actor-reported data, not a verified success verdict.
+`evidence` (each item may add `digest`, `bytes`, `locator`; each result a
+`subject` list; kinds include `attachment` and `forge_event`, whose `ref` is a
+row id). Only shape is validated, except that an attachment on the same issue
+with a `digest` is shown as `matches stored attachment` or `unverified
+reference` (a mismatch is shown, never refused).
+They are actor-reported data, not a verified success verdict.
 `not_assessed` means the condition was not evaluated; for example, an
 integration check was never run. `inconclusive` means an evaluation was
 attempted but did not establish `met` or `not_met`; for example, an
@@ -115,6 +122,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `attach_label` | `POST /issues/{issue_id}/labels` | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
+| `claim_next_ready` | *(client-side)* | Claim the next issue in your ready lane (my_desk work.ready) through … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
 | `complete_claim` | `POST /issues/{issue_id}/complete` | Release a claim with optional reported conditions, residuals, and evidence. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
@@ -146,6 +154,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `archive_page` | `POST /pages/{page_id}/archive` | Archive (soft-delete) a page: it's hidden from the space tree, navigation, … |
 | `create_page` | `POST /spaces/{space_id}/pages` | Create a Mentor page in a space. Optionally nest it under parent_id (a … |
 | `label_page` | `POST /pages/{page_id}/labels` | Attach an existing label (by id — see list_labels) to a Mentor page. |
+| `open_my_notebook` | `POST /desk/notebook` | Open your notebook page (an agent's notes kept between sessions), … |
 | `record_run_learning` | `POST /issues/{issue_id}/learnings` | Write down what you learned, so the NEXT run starts knowing it. |
 | `restore_page_version` | `POST /pages/{page_id}/versions/{version}/restore` | Restore a page's content to a prior version. Non-destructive: the current … |
 | `unarchive_page` | `POST /pages/{page_id}/unarchive` | Restore a previously archived page to the active tree/nav/search. Returns … |
@@ -197,4 +206,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*135 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*137 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

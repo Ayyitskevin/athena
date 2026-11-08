@@ -44,7 +44,18 @@ from typing import NamedTuple
 OPEN_FIELDS = ("status", "priority", "label", "project", "sprint", "assignee")
 
 #: ``is:`` states. Closed: a typo here is a refusal, not an empty page.
-IS_VALUES = ("open", "closed", "archived", "unassigned")
+#: ``claimed``/``unclaimed`` follow the lease clock: an expired lease is unclaimed.
+#: ``ready`` is "you could claim it now": unclaimed, to-do or doing, no open
+#: blocker, and you may claim it — the ready queue's rule, for the caller.
+IS_VALUES = (
+    "open",
+    "closed",
+    "archived",
+    "unassigned",
+    "claimed",
+    "unclaimed",
+    "ready",
+)
 
 #: ``has:`` structural predicates. Closed, same reason.
 HAS_VALUES = ("blockers", "parent", "children", "labels")
@@ -61,14 +72,28 @@ SORT_VALUES = (
     "priority-desc",
     "status-asc",
     "status-desc",
+    # Longest idle first: "desc" reads as "most idle", like priority-desc reads as
+    # "most urgent". Idle is measured from the last recorded work, not from any
+    # update, so this is not the missing ``updated`` sort under another name.
+    "idle-desc",
 )
+
+#: Duration fields. Closed SHAPE rather than a closed list: ``>Nd`` or ``<Nd``, N
+#: whole days. ``idle`` is time since the last recorded work on the issue (or since
+#: creation when there is none); ``age`` is time since creation. Days only, and no
+#: ``>=``: one unit and two comparisons cannot be misread.
+DURATION_FIELDS = ("idle", "age")
+
+#: The longest duration an atom may name — a century, so a fat-fingered extra
+#: digit refuses instead of quietly matching nothing.
+MAX_DURATION_DAYS = 36500
 
 #: The default order when a query names none: newest first, which is what an
 #: operator scanning a list almost always wants. ``list_issues`` orders by id ASC
 #: for stable paging; a *query* is a different contract and says so.
 DEFAULT_SORT = "id-desc"
 
-FIELDS = (*OPEN_FIELDS, "is", "has", "sort")
+FIELDS = (*OPEN_FIELDS, *DURATION_FIELDS, "is", "has", "sort")
 
 #: Closed value vocabularies, by field.
 _CLOSED: dict[str, tuple[str, ...]] = {
@@ -95,6 +120,22 @@ class QueryError(ValueError):
     def __init__(self, message: str, *, atom: str | None = None) -> None:
         super().__init__(message)
         self.atom = atom
+
+
+def parse_days(value: str) -> tuple[str, int] | None:
+    """``'>14d'`` → ``('>', 14)``; anything else → None.
+
+    Hand-checked rather than a regex so the accepted shape is readable at a
+    glance: one comparison sign, ASCII digits, a trailing ``d``, in range."""
+    if len(value) < 3 or value[0] not in "<>" or not value.endswith("d"):
+        return None
+    digits = value[1:-1]
+    if not digits.isascii() or not digits.isdigit():
+        return None
+    days = int(digits)
+    if days > MAX_DURATION_DAYS:
+        return None
+    return value[0], days
 
 
 @dataclass(frozen=True)
@@ -213,6 +254,14 @@ def parse(raw: str | None) -> Query:
             raise QueryError(f"unknown search field '{field}'", atom=field)
         if not value:
             raise QueryError(f"'{field}:' needs a value", atom=field)
+        if field in DURATION_FIELDS:
+            value = value.lower()
+            if parse_days(value) is None:
+                raise QueryError(
+                    f"'{field}:{value}' is not valid — use {field}:>Nd or "
+                    f"{field}:<Nd, N whole days up to {MAX_DURATION_DAYS}",
+                    atom=f"{field}:{value}",
+                )
         allowed = _CLOSED.get(field)
         if allowed is not None:
             value = value.lower()
@@ -260,6 +309,11 @@ def describe() -> dict[str, object]:
             "project": "project id, project key (e.g. ATH), or 'none' for backlog",
             "sprint": "sprint id, or 'none' for issues in no sprint",
             "assignee": "user id, '@me', or 'none'",
+            "idle": (
+                ">Nd or <Nd: days since the last recorded work on the issue "
+                "(creation when none); check-ins and lease renewals never count"
+            ),
+            "age": ">Nd or <Nd: days since the issue was created",
         },
         "negation": "prefix any field with '-' to exclude, e.g. -label:noise",
         "text": 'bare words and "quoted phrases" match title and body',

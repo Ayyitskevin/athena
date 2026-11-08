@@ -35,6 +35,7 @@ from athena.aegis import (
     issues,
     lease_commands,
     issue_query,
+    similar_issues,
 )
 from athena.core import (
     access,
@@ -200,6 +201,19 @@ class IssueOut(BaseModel):
     labels: list[LabelOut] = []
 
 
+class SimilarOpenOut(BaseModel):
+    id: int
+    key: str | None = None
+    title: str
+    status: str
+
+
+class IssueCreatedOut(IssueOut):
+    # Additive: up to three open issues of the same project, visible to the actor, whose titles
+    # resemble the new one. A prompt to link instead of duplicating; the create already succeeded.
+    similar_open: list[SimilarOpenOut] = []
+
+
 class HeldLeaseNote(BaseModel):
     generation: str
     expires_at: str
@@ -285,7 +299,7 @@ def _with_labels_many(conn: sqlite3.Connection, rows: list[dict]) -> list[dict]:
     return rows
 
 
-@router.post("", response_model=IssueOut, status_code=201)
+@router.post("", response_model=IssueCreatedOut, status_code=201)
 def create(
     payload: IssueCreate,
     response: Response,
@@ -306,7 +320,15 @@ def create(
         )
     except issue_commands.IssueCommandError as exc:
         raise issue_command_http_error(exc) from exc
-    return _tagged_issue(conn, issue, response)
+    public = _tagged_issue(conn, issue, response)
+    similar = similar_issues.similar_open(
+        conn,
+        actor=actor,
+        project_id=issue.get("project_id"),
+        title=issue["title"],
+        exclude_id=issue["id"],
+    )
+    return {**public, "similar_open": similar}
 
 
 def _parse_project_filter(project: str | None) -> tuple[int | None, bool]:
@@ -1285,10 +1307,13 @@ class LeaseGenerationIn(BaseModel):
 
 class CompleteClaimIn(LeaseGenerationIn):
     # The shared command owns the bounded report grammar and its invalid error.
+    verdict: object | None = None
+    findings: object | None = None
     results: object | None = None
     unfinished: object | None = None
     uncertainty: object | None = None
     evidence: object | None = None
+    usage: object | None = None
 
 
 # --- Delegation claim/lease: accept / decline / complete -------------------
@@ -1323,10 +1348,13 @@ def complete_issue_claim(
             actor=actor,
             issue_id=issue_id,
             generation=payload.generation if payload is not None else None,
+            verdict=payload.verdict if payload is not None else None,
+            findings=payload.findings if payload is not None else None,
             results=payload.results if payload is not None else None,
             unfinished=payload.unfinished if payload is not None else None,
             uncertainty=payload.uncertainty if payload is not None else None,
             evidence=payload.evidence if payload is not None else None,
+            usage=payload.usage if payload is not None else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released

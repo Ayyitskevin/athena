@@ -6,19 +6,24 @@ is configured in main.py (per wiring contract) and injected via init_templates.
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from athena.aegis import (
     dashboard,
     delegations,
+    desk_commands,
     fleet_attention,
+    issue_query,
     issue_search,
     issues,
+    notification_state,
+    operator_since,
     projects,
 )
 from athena.core import (
@@ -28,6 +33,7 @@ from athena.core import (
     labels,
     notifications,
     search,
+    work_query,
 )
 from athena.core.deps import get_conn
 from athena.web import live
@@ -123,10 +129,39 @@ def aegis_dashboard(request: Request, conn: sqlite3.Connection = Depends(get_con
             if user
             else [],
             "my_delegation_inbox": delegation_inbox,
+            # What changed after this viewer's own desk cursor. Building it never
+            # moves the cursor; only the card's "mark seen" form does.
+            "since": operator_since.build_since(conn, actor=user) if user else None,
+            "since_error": request.query_params.get("since_error"),
             "fleet_attention": attention,
             "recent_activity": activity.list_activity(conn, limit=10, actor=user),
         },
     )
+
+
+@router.post("/aegis/dashboard/since/seen", dependencies=[Depends(verify_csrf)])
+def mark_since_seen(
+    request: Request,
+    after_id: int = Form(...),
+    conn: sqlite3.Connection = Depends(get_conn),
+):
+    """The explicit "mark seen": move this viewer's desk cursor to the last event
+    the card showed (the form carries it), through the cursor's own command —
+    which refuses to move backward. Never called by a page load."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return HTMLResponse(
+            '<div class="blocked">Please <a href="/login">sign in</a>.</div>',
+            status_code=401,
+        )
+    try:
+        desk_commands.advance_cursor(conn, actor=user, after_id=after_id)
+    except desk_commands.DeskCommandError as exc:
+        return RedirectResponse(
+            "/aegis/dashboard?" + urlencode({"since_error": exc.detail}),
+            status_code=303,
+        )
+    return RedirectResponse("/aegis/dashboard", status_code=303)
 
 
 _SEARCH_PAGE = 20
@@ -160,6 +195,28 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     if project_filter and issues.parse_project_filter(project_filter) is None:
         return HTMLResponse("<h1>Invalid project filter</h1>", status_code=400)
     filtered_mode = bool(status_filter or label_filter or project_filter)
+    # The box speaks the work query grammar, through the same parser and compiler
+    # as GET /issues?q=. A typo is shown as the compiler's error, never as "no
+    # matches". Atoms and the dropdowns are not merged, for the same reason the
+    # REST endpoint refuses ?q= with structured filters.
+    query_error: str | None = None
+    parsed: work_query.Query | None = None
+    try:
+        parsed = work_query.parse(q)
+    except work_query.QueryError as exc:
+        query_error = str(exc)
+    if parsed is not None and parsed.terms and filtered_mode:
+        query_error = (
+            "use either query atoms or the filter menus, not both — "
+            "e.g. put status:… label:… project:… in the box instead"
+        )
+    # Grammar mode: the box holds atoms, or it is empty and a dropdown is set
+    # (a filter-only browse, expressed as the same atoms).
+    grammar_mode = (
+        query_error is None
+        and parsed is not None
+        and (bool(parsed.terms) or (not q and filtered_mode))
+    )
     try:
         page = min(
             _MAX_SEARCH_PAGE,
@@ -177,7 +234,42 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     user = getattr(request.state, "user", None)
     # Search is gated by the viewer: a private project's issues / a private space's
     # pages never appear to someone who can't see them (admins see all).
-    if not q:
+    if query_error is not None:
+        hits = []
+    elif grammar_mode:
+        assert parsed is not None
+        terms = list(parsed.terms)
+        for field, value in (
+            ("status", status_filter),
+            ("label", label_filter),
+            ("project", project_filter),
+        ):
+            if value:
+                terms.append(work_query.Term(field=field, value=value))
+        try:
+            rows = issue_query.run_query(
+                conn,
+                dataclasses.replace(parsed, terms=tuple(terms)),
+                actor=user,
+                visible_project_ids=access.visible_project_filter(conn, user),
+                limit=fetch,
+                offset=skip,
+            )
+        except issue_query.QueryCompileError as exc:
+            query_error = str(exc)
+            rows = []
+        hits = [
+            {
+                "kind": "issue",
+                "source_id": row["id"],
+                "title": row["title"],
+                "key": row.get("key"),
+                "status": row.get("status"),
+                "snippet": None,
+            }
+            for row in rows
+        ]
+    elif not q:
         hits = []
     elif filtered_mode:
         hits = issue_search.search_issues(
@@ -224,6 +316,9 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
     return get_templates().TemplateResponse(
         request=request,
         name="search.html",
+        # A refused query is a 422 like the API's, so the page cannot be read as a
+        # successful search that found nothing.
+        status_code=422 if query_error is not None else 200,
         context={
             "q": q,
             "hits": hits,
@@ -231,6 +326,8 @@ def find(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             "page": page,
             "has_next": has_next,
             "filtered_mode": filtered_mode,
+            "grammar_mode": grammar_mode,
+            "query_error": query_error,
             "status_filter": status_filter,
             "label_filter": label_filter,
             "project_filter": project_filter,
@@ -270,6 +367,7 @@ def inbox(request: Request, conn: sqlite3.Connection = Depends(get_conn)):
             status_code=401,
         )
     items = notifications.list_notifications(conn, user["id"], limit=100, actor=user)
+    items = notification_state.annotate_inbox(conn, user["id"], items)
     for it in items:
         it["href"] = (
             f"/aegis/issues/{it['target_id']}"

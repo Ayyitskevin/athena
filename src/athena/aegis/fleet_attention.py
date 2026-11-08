@@ -26,7 +26,15 @@ import sqlite3
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
-from athena.aegis import automation, dependencies, fleet_work, issues
+from athena.aegis import (
+    automation,
+    dependencies,
+    fence_overlaps,
+    fleet_work,
+    issues,
+    run_state,
+    work_progress,
+)
 from athena.core import (
     access,
     approvals,
@@ -111,6 +119,16 @@ def build_attention(
         ).fetchone()["n"]
     )
 
+    # Hand-offs into silence. With no actor this is the admin nav-badge path, whose
+    # caller contract is admin-scoped like every other input here; with one, the
+    # actor's own visibility applies to the count.
+    unclaimed = work_progress.unclaimed_delegations(
+        conn, actor=actor, all_projects=actor is None, now=current, limit=1
+    )
+    # Live leases whose file fences overlap. A count here; each pair is a ranked
+    # row in the Now queue (not a composed lane, per the card's lane rule).
+    overlaps = fence_overlaps.find_overlaps(conn, actor=actor, now=current, limit=1)
+
     signals = [
         {
             "key": "claims_needing_attention",
@@ -151,6 +169,28 @@ def build_attention(
             "count": open_controls,
             "href": "/admin/run-controls",
             "scope": "asked, not yet answered",
+        },
+        {
+            "key": "delegation_unclaimed",
+            "label": "Delegations not picked up",
+            "count": unclaimed["visible_total"],
+            # The agents page lists each agent's delegation inbox: the owning
+            # surface for who was handed what.
+            "href": "/admin/agents",
+            "scope": (
+                f"standing; delegated over {work_progress.DELEGATION_UNCLAIMED_HOURS}h "
+                "ago, delegate has neither claimed nor recorded work since"
+            ),
+        },
+        {
+            "key": "fence_overlaps",
+            "label": "Overlapping file fences",
+            "count": overlaps["total"],
+            "href": "/admin/agents/runs",
+            "scope": (
+                "pairs of live leases whose declared paths overlap; each pair is "
+                "in the Now queue with both issues. Shown only, never blocked"
+            ),
         },
         {
             "key": "failing_automation_rules",
@@ -195,6 +235,12 @@ def build_attention(
     # of truth. Callers that have an actor get both the count card and its
     # actor-filtered "what next" rows from one request clock.
     if actor is not None:
+        # Alive is not progress: expired leases, in-progress work with no recorded
+        # work, and the oldest request waiting on the operator. Kept out of the
+        # signal total on purpose — each lane carries its own count and meaning.
+        projection["progress"] = work_progress.build_progress(
+            conn, actor=actor, now=current
+        )
         ranking = build_attention_ranking(
             conn,
             signals=ranking_signals,
@@ -218,6 +264,8 @@ def build_attention(
 # Closed signal vocabulary. Each name maps to a collector below. Unknown types
 # fail closed at the boundary so the queue can never be widened by a typo.
 AttentionSignal = Literal[
+    "awaiting_input",
+    "fence_overlap",
     "pending_approval",
     "claim_needs_attention",
     "open_blocker",
@@ -239,6 +287,8 @@ SourceKind = Literal[
 ]
 
 RANKING_SIGNALS: tuple[AttentionSignal, ...] = (
+    "awaiting_input",
+    "fence_overlap",
     "pending_approval",
     "claim_needs_attention",
     "open_blocker",
@@ -317,6 +367,90 @@ def _collect_pending_approvals(
             )
         )
     return items, examined, examined
+
+
+def _collect_awaiting_input(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    """Runs that stopped and asked a human: open blocking questions on issues
+    this actor can see. Ranked ``critical`` — above stale claims (``high``) and
+    the quiet event signals (``medium``) — because a run that asked is waiting on
+    a person, not on the clock. Pending approvals keep their own signal."""
+    lane = run_state.open_questions(conn, actor=actor, now=now, limit=200)
+    operator = _has_admin_visibility(actor)
+    items: list[AttentionRankItem] = []
+    examined = len(lane["items"])
+    for question in lane["items"]:
+        issue = question["issue"]
+        text = question["blocking_question"]
+        short = text if len(text) <= 160 else text[:157] + "..."
+        items.append(
+            AttentionRankItem(
+                signal="awaiting_input",
+                severity="critical",
+                source_kind="issue",
+                source_id=issue["id"],
+                owner_id=question["asked_by"]["id"],
+                reason=f"{question['asked_by']['name']} asks: {short}",
+                freshness=question["asked_at"],
+                examined=examined,
+                total=lane["total"],
+                next_action="operator-link",
+                link="/admin/agents#questions"
+                if operator
+                else f"/aegis/issues/{issue['id']}",
+                source_link=f"/aegis/issues/{issue['id']}",
+            )
+        )
+    return items, examined, lane["total"]
+
+
+def _collect_fence_overlaps(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime | None = None,
+) -> tuple[list[AttentionRankItem], int, int]:
+    """One row per pair of live leases whose file fences overlap, among issues
+    this actor can see. The row links both issues (``source_link`` and ``link``)
+    and names both holders. ``high``: two agents may be editing the same files.
+    Shown only; the claim command's check stays the only gate."""
+    found = fence_overlaps.find_overlaps(conn, actor=actor, now=now)
+    items: list[AttentionRankItem] = []
+    for pair in found["pairs"]:
+        a, b = pair["a"], pair["b"]
+        a_label = a["issue"]["key"] or f"#{a['issue']['id']}"
+        b_label = b["issue"]["key"] or f"#{b['issue']['id']}"
+        items.append(
+            AttentionRankItem(
+                signal="fence_overlap",
+                severity="high",
+                source_kind="issue",
+                source_id=a["issue"]["id"],
+                owner_id=a["holder"]["id"],
+                reason=(
+                    f"fences overlap: {a['holder']['name']} on {a_label} "
+                    f"({a['path']}) and {b['holder']['name']} on {b_label} "
+                    f"({b['path']}); {pair['basis']}"
+                ),
+                freshness=_observed_stamp(now),
+                examined=found["examined_leases"],
+                total=found["total"],
+                next_action="operator-link",
+                link=f"/aegis/issues/{b['issue']['id']}",
+                source_link=f"/aegis/issues/{a['issue']['id']}",
+            )
+        )
+    return items, found["examined_leases"], found["total"]
+
+
+def _observed_stamp(now: datetime | None) -> str:
+    """The read's own clock, as the row's freshness: an overlap is a standing
+    condition observed now, not an event with its own time."""
+    return _normalized_now(now).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _collect_claims_needing_attention(
@@ -748,7 +882,15 @@ def build_attention_ranking(
 
     current = _normalized_now(now)
     for signal in sorted(signals):
-        if signal == "pending_approval":
+        if signal == "awaiting_input":
+            items, examined, total = _collect_awaiting_input(
+                conn, actor=actor, now=current
+            )
+        elif signal == "fence_overlap":
+            items, examined, total = _collect_fence_overlaps(
+                conn, actor=actor, now=current
+            )
+        elif signal == "pending_approval":
             items, examined, total = _collect_pending_approvals(conn, actor=actor)
         elif signal == "claim_needs_attention":
             items, examined, total = _collect_claims_needing_attention(

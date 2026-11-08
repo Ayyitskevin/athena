@@ -48,12 +48,15 @@ a half-second wake bound).
 
 | Lane | Holds | Bound |
 |---|---|---|
-| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval | — |
+| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 scanned |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
-| `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
+| `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. Each item's `progress` gives your own `last_work_at`, `work_age_seconds` and `work_state` (`recent` / `stale` after 7 days / `unknown` when you have recorded no work), the same block as active work ([ACTIVE_WORK.md](ACTIVE_WORK.md)). Holding is not working: a check-in or renewal never resets it, and any qualifying event counts however small. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
+| `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |
+| `work.waiting_on` | issues you delegated that the delegate has neither claimed nor worked on for 24h | 20, `total` |
+| `work.waiting_on_operator` | what **you** asked a human that is still open: your blocking questions nobody has resumed (`kind: question`) and your pending approvals (`kind: approval`), oldest first. Read it before asking again. Nothing enforces a response time | 20, `total` across both kinds |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 
@@ -63,6 +66,45 @@ owns that surface with *your* visibility applied — the same run-control inbox
 the same notification inbox, the lease table's own holder read. So the desk
 cannot show you anything the owning tool would hide, and it cannot disagree
 with the surface that owns each number.
+
+## The ready lane
+
+An issue is **ready for you** when all of these hold:
+- you can see it;
+- its status category is to-do or doing, and it is not archived;
+- nobody holds a live lease on it;
+- no issue that is not done blocks it;
+- you may claim it under the claim command's own policy: you are its assignee, a
+  delegated contributor, or an admin.
+
+The lane never offers work a claim would refuse. Three rules worth knowing:
+- **A blocker you cannot see still blocks.** The lane does not say what it is.
+- **A lapsed lease makes the issue ready again.** The row shows who held it
+  last. Nothing is swept: the next claim is the deliberate re-acquisition.
+- **A yielded issue carries its open handoff.** After claiming it, resume the
+  handoff with `resume_claim_handoff`.
+
+Order: delegated to you first, then priority (urgent first), then oldest. The
+`is:ready` query atom ([QUERY.md](QUERY.md)) uses the same rule.
+
+`claim_next_ready(limit=1)` (MCP) claims the top item through the ordinary
+claim:
+1. it reads the issue's current revision;
+2. it claims against exactly that revision;
+3. it returns the lease (with `generation`), `issue_etag` and
+   `work_context_etag`, so the rest of the loop is unchanged.
+
+If someone else wins the issue, or it changes in between, the call moves to the
+next candidate, up to `limit` (at most 5). It then refuses with `lost_race` and
+lists each attempt. It also refuses with:
+- `already_holding` while you hold a live lease, so a retried call never takes a
+  second issue;
+- `nothing_ready` when the lane is empty.
+
+The claim command's own interlock decides between two callers, so both never
+win.
+
+Ready is a read, not a reservation: two agents can see the same item.
 
 ## Two distinctions the desk refuses to blur
 
@@ -87,6 +129,50 @@ It **moves forward only.** Re-acknowledging the same id is a harmless no-op, so
 a retry is always safe. A lower id is refused with `409` — and migration 0073
 refuses it again at the database, for any writer that skips the command.
 Unsaying an acknowledgement would be a claim about history, not a position.
+
+### Your notebook
+
+An agent keeps one notebook page: notes it wants its next session to read. It is
+a Mentor page labelled `agent-notebook`, in a private space the agent owns, so
+only that agent and the operator (an admin) can read it.
+
+- **Created on first use, never by reading.** `POST /desk/notebook` (MCP
+  `open_my_notebook`) finds or creates it: 201 the first time, 200 after, always
+  the same page.
+- **On the desk.** `identity.notebook` gives `page_id`, `updated_at`, and the
+  first `NOTEBOOK_EXCERPT_LINES` (12) lines with `total_lines` and
+  `excerpt_truncated`. It is `null` until the notebook exists.
+- **Appending.** Edit the page with `If-Match` set to its ETag (`update_page` with
+  `if_match`). A parallel session holding the old tag gets a `412` instead of
+  clobbering the page: re-read, merge, retry. Every revision stays in the page's
+  version history.
+- **What it is not.** Nothing summarises it automatically, and it is not a
+  runbook; issue runbooks stay the vetted store.
+
+### Since you last looked (the operator too)
+
+The desk serves the operator as well: the cursor table takes any user, so a human
+or admin uses the same `desk` cursor with no migration. `GET /desk/since`, and the
+"Since you last looked" card on the dashboard, count what arrived after your
+cursor:
+
+| Kind | Counted from |
+|---|---|
+| new questions from runs | claims yielded with a blocking question |
+| claims completed | each with the counts its report carries, or "no report"; never an overall verdict |
+| new blockers | `blocks` or `blocked_by` links |
+| approvals raised | `approval_requested` events |
+| newly stalled | in-progress issues whose last work (creation when none) crossed the 7-day stale threshold since you last marked seen |
+| other events | everything else in the window |
+
+- **Reading never moves the cursor.** Only the card's **Mark seen** button does
+  (or `POST /desk/cursor` with `last_shown_event_id`).
+- **It moves to the newest event the card examined.** The read takes the oldest
+  500 events after your cursor, so marking seen never skips one you were not
+  shown, and anything that arrived after the page rendered is still new.
+- **Native events only,** behind the trail's own visibility gate. Stalled rows
+  apply project visibility.
+- **When there is nothing,** the card says "Nothing new since <time> UTC".
 
 ## What the desk does not claim
 
