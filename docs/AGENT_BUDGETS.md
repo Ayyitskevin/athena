@@ -19,6 +19,10 @@ agent's own process, which Athena never observes, so Athena deliberately carries
 no cost column it could not honestly populate. If an external meter ever reports
 spend, a cost dimension can be added additively.
 
+That condition is still not met: nothing here meters spend. What exists instead is a
+separate, clearly labelled **reported-usage ledger** (below), kept apart from the action
+budget so a figure an agent merely stated can never be mistaken for one Athena measured.
+
 The metered writes today are:
 
 | Write | Command |
@@ -129,3 +133,33 @@ refused — the same principle as `scopes`.
   ceiling. That is deliberate — the budget bounds the *actor*, not the credential.
 - Nothing here restores a spent budget early except an admin raising the limit or
   clearing the budget.
+
+## Reported usage (not metered, not a budget)
+
+An agent may add an optional `usage` object to its check-in (`PUT /agent-runs/heartbeat`,
+MCP `heartbeat_agent_run`) and to `complete_claim`. Keys use the GenAI span attribute names
+without their `gen_ai.usage.` prefix: `model`, `input_tokens`, `output_tokens`,
+`cached_tokens`, plus `estimated_cost` with an ISO 4217 `currency` (they go together) and
+`reported_at` (ISO 8601 with an offset). At least one key is required; unknown keys, negative
+or non-integer counts, an unlisted currency and a credential-shaped `model` are refused.
+
+Each report means "usage since my previous report", so totals are plain sums. Athena stores it
+as a fact inside the event detail JSON (`usage_reported` for a check-in, the `usage` key of the
+completion report for `complete_claim`); there is no column. A check-in that carries no usage
+writes nothing new. An exact retry of a check-in is a second report.
+
+Three read models (`aegis/reported_spend.py`) sum what the viewer may see: per run, per agent per
+server-clock day, and per issue (completions only; a check-in names no issue). Costs are summed
+per currency, never converted. Check-in reports target the agent and are admin-only; completion
+reports follow the issue's visibility, so a private project's reports are absent for anyone who
+cannot see it. Only the newest 5000 events of each kind are read.
+
+**Admin → Agents** shows them under the label *reported by the agent, not metered by Athena*.
+They enforce nothing, never touch the action budget, and carry no ceiling.
+
+Two operational notes. Every check-in that carries `usage` is one permanent, hash-chained
+activity row (nothing here prunes), so a busy fleet grows the trail by one row per report; send
+usage at a coarse interval or only when it changes. The agents cockpit reads the newest 5000
+events of each kind once per page and says "Recent window only" when that window is full. These
+bookkeeping events are left out of an agent's own "Recent activity" and "last active" so they
+cannot crowd out its real actions; the global activity trail still lists them.

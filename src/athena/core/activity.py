@@ -479,6 +479,7 @@ def list_activity(
     run_id: str | None = None,
     parent_run_id: str | None = None,
     verb: str | None = None,
+    exclude_verb: str | None = None,
     search: str | None = None,
     before_id: int | None = None,
     limit: int = 50,
@@ -523,6 +524,9 @@ def list_activity(
     if verb is not None:
         clauses.append("a.verb = ?")
         params.append(verb)
+    if exclude_verb is not None:
+        clauses.append("a.verb != ?")
+        params.append(exclude_verb)
     if search is not None and search.strip():
         pattern = _like_pattern(search)
         clauses.append(
