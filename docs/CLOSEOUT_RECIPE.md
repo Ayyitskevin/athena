@@ -2,8 +2,8 @@
 
 ## Optional reported completion
 
-`complete_claim` / `POST /issues/{id}/complete` may carry `results`,
-`unfinished`, `uncertainty`, and `evidence` alongside the exact observed
+`complete_claim` / `POST /issues/{id}/complete` may carry `verdict`, `findings`,
+`results`, `unfinished`, `uncertainty`, and `evidence` alongside the exact observed
 `generation`. These fields record what the actor **reported**, not what Athena
 verified. Omit them (or use null) for the existing release behavior and unchanged
 response. Empty lists report an empty list; they do not mean every check passed.
@@ -11,6 +11,8 @@ response. Empty lists report an empty list; they do not mean every check passed.
 ```json
 {
   "generation": "<exact observed generation>",
+  "verdict": "PASS-WITH-NOTES",
+  "findings": {"P1": 0, "P2": 1, "P3": 2},
   "results": [
     {"condition": "review original source", "state": "met", "note": "source read"},
     {"condition": "exercise real integration", "state": "not_assessed", "note": "unrun"}
@@ -30,14 +32,29 @@ boolean or score. Up to 20 results are allowed, with a nonblank condition and
 optional blank note, each at most 500 characters. `unfinished` and `uncertainty`
 each accept up to 10 nonblank strings of at most 500 characters.
 
+`verdict` is optional and is exactly one of `PASS`, `PASS-WITH-NOTES`, `HOLD`,
+`BLOCKED` (upper case, as written; the words the fleet's review reports already
+use, so a reader needs no translation). `findings` is optional: an object whose
+keys are `P1`, `P2`, `P3` and whose values are non-negative integers. A key you
+leave out means not stated, not zero, so report `0` when you mean it; an empty
+object, an unknown key, a negative, fractional, string or boolean count is
+refused, as is any other verdict word. Both are the reporter's own assertion:
+Athena does not check them against the results, compute a score from them, or
+let them change the issue, the lease release, an approval or a gate. A report
+with only a verdict or only findings is valid, and a report with neither is
+unchanged. They carry no free text, so the credential guard has nothing to scan
+in them.
+
 `not_assessed` means the condition was not evaluated; for example, an
 integration check was never run. `inconclusive` means an evaluation was attempted
 but did not establish `met` or `not_met`; for example, an integration check ran
 but timed out before producing a result.
 
-History and work-context summaries show counts of each reported state present,
-plus reported unfinished and uncertainty counts. These are counts, not an overall
-verdict. Reports open by default when a result is other than `met`, or unfinished
+History and work-context summaries lead with the reported verdict and findings
+when present ("reported verdict HOLD · reported findings P1 1, P2 0"), then show
+counts of each reported state present, plus reported unfinished and uncertainty
+counts. Every figure is labelled as reported; Athena itself states no overall
+assessment. Reports open by default when a result is other than `met`, or unfinished
 work or uncertainty is non-empty. A report containing only `met` stays collapsed;
 its counts remain visible in the summary. The narrative repeats the same counts
 as reported and advisory.

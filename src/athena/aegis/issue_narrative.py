@@ -94,6 +94,15 @@ _ASK_STATES = {run_controls.STATE_REQUESTED, run_controls.STATE_ACKNOWLEDGED}
 def _reported_completion_summary(actor_name: str, report: dict) -> str:
     """Expose reported counts without turning them into an overall assessment."""
     counts = []
+    if "verdict" in report:
+        counts.append(f"reported verdict {report['verdict']}")
+    if "findings" in report:
+        stated = ", ".join(
+            f"{severity} {report['findings'][severity]}"
+            for severity in lease_commands.COMPLETION_FINDING_SEVERITIES
+            if severity in report["findings"]
+        )
+        counts.append(f"reported findings {stated}")
     for state in ("met", "not_met", "not_assessed", "inconclusive"):
         count = sum(result["state"] == state for result in report.get("results", []))
         if count:

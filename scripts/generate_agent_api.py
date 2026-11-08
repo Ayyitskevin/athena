@@ -212,6 +212,8 @@ def render() -> str:
         "## Reported claim completion",
         "",
         "`complete_claim` and `POST /issues/{id}/complete` accept optional",
+        "`verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`), `findings`",
+        '(`P1`/`P2`/`P3` to non-negative integers; a missing key is "not stated"),',
         "`results`, `unfinished`, `uncertainty`, and typed, source-qualified",
         "`evidence`. They are actor-reported data, not a verified success verdict.",
         "`not_assessed` means the condition was not evaluated; for example, an",

@@ -4,7 +4,7 @@
 {% set unfinished = report.get("unfinished", [])|length %}
 {% set uncertainty = report.get("uncertainty", [])|length %}
 <details{% if results|rejectattr("state", "equalto", "met")|list or unfinished or uncertainty %} open{% endif %}>
-    <summary>Reported completion (advisory){% for state in ["met", "not_met", "not_assessed", "inconclusive"] %}{% set count = results|selectattr("state", "equalto", state)|list|length %}{% if count %} · {{ count }} reported {{ state }}{% endif %}{% endfor %}{% if unfinished %} · {{ unfinished }} reported unfinished{% endif %}{% if uncertainty %} · {{ uncertainty }} reported uncertainty{% endif %}</summary>
+    <summary>Reported completion (advisory){% if "verdict" in report %} · reported verdict {{ report.verdict }}{% endif %}{% if "findings" in report %}{% set stated = [] %}{% for severity in ["P1", "P2", "P3"] %}{% if severity in report.findings %}{% set _ = stated.append(severity ~ " " ~ report.findings[severity]) %}{% endif %}{% endfor %} · reported findings {{ stated|join(", ") }}{% endif %}{% for state in ["met", "not_met", "not_assessed", "inconclusive"] %}{% set count = results|selectattr("state", "equalto", state)|list|length %}{% if count %} · {{ count }} reported {{ state }}{% endif %}{% endfor %}{% if unfinished %} · {{ unfinished }} reported unfinished{% endif %}{% if uncertainty %} · {{ uncertainty }} reported uncertainty{% endif %}</summary>
     <p class="muted">Reported by the actor. Athena has not verified these claims; they do not change issue status or grant approval.</p>
     {% if "results" in report %}
     <h4>Reported condition results</h4>
