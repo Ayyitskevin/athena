@@ -139,6 +139,43 @@ def test_a_delegation_nobody_picked_up_is_counted_and_a_claimed_or_worked_one_is
         assert str(work_progress.DELEGATION_UNCLAIMED_HOURS) in signal["scope"]
 
 
+def test_either_a_held_lease_or_a_claim_event_alone_counts_as_pickup(tmp_path):
+    # A real claim writes both, so each piece of evidence is pinned on its own:
+    # a lease row with no claim event, and a claim event whose lease is gone (a
+    # claim that was later released).
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        lease_only = _delegated(c, db_file, agent, "lease row only")
+        _sql(
+            db_file,
+            "INSERT INTO issue_leases "
+            "(issue_id, holder_id, claimed_at, expires_at, generation) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                lease_only["id"],
+                agent["user"]["id"],
+                _ago(hours=40),
+                _ago(hours=39),
+                f"{lease_only['id']:032x}",
+            ),
+        )
+        event_only = _delegated(c, db_file, agent, "claim event only")
+        _claim(c, agent, event_only["id"])
+        _sql(
+            db_file, "DELETE FROM issue_leases WHERE issue_id = ?", (event_only["id"],)
+        )
+        silent = _delegated(c, db_file, agent, "handed off, silence")
+
+        conn = db.connect(db_file)
+        lane = work_progress.unclaimed_delegations(conn, actor=ADMIN)
+        conn.close()
+        assert lease_only["id"] not in _ids(lane)
+        assert event_only["id"] not in _ids(lane)
+        assert _ids(lane) == {silent["id"]}  # positive control
+
+
 def test_a_done_or_archived_delegation_is_not_waiting(tmp_path):
     app, db_file = _app(tmp_path)
     with TestClient(app) as c:

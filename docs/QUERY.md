@@ -21,6 +21,10 @@ is none to get wrong.
 | `is:closed` | status category **is** `done` |
 | `is:archived` | archived issues (see below) |
 | `is:unassigned` | no assignee (same as `assignee:none`) |
+| `is:claimed` | someone holds a live lease on it (the lease clock says active) |
+| `is:unclaimed` | nobody holds a live lease: no lease, or one that has expired |
+| `idle:>Nd` / `idle:<Nd` | more / less than N days since the last recorded **work** (see below) |
+| `age:>Nd` / `age:<Nd` | created more / less than N days ago |
 | `has:blockers` | at least one issue blocks this one |
 | `has:parent` | has a parent issue |
 | `has:children` | has at least one child |
@@ -45,12 +49,50 @@ done state is called `shipped` behaves correctly, because the query resolves
 through the same status-category expression the fleet views use — there is one
 definition of "closed" in Athena, and this is not a second one.
 
+## Idle, age and claims
+
+`idle:` answers "what has gone untouched?" It is measured from the last
+recorded **work** on the issue, using the same closed verb list as the progress
+view: an edit, a status change, a comment or comment edit, an attachment, a
+link, a parent set, or a completed claim. When no work was ever recorded it
+falls back to the issue's creation time, so a never-touched issue is as idle as
+it is old.
+
+- **Not counted as work:** check-ins, heartbeats, lease claims and renewals, and
+  triage such as labels, assignment, sprint or priority changes. A run that keeps
+  reporting while nothing moves stays idle.
+- **Imported history** (rows a registered source back-dated) does not count.
+
+`age:` is plain time since creation. Both take `>Nd` or `<Nd`: one comparison
+sign, whole days, at most 36500. Anything else refuses and names the atom.
+`idle:14d`, `idle:>14`, `idle:>2w` and `age:>=3d` are all errors, not guesses.
+
+`is:claimed` and `is:unclaimed` follow the lease clock. An expired lease is
+unclaimed, and reading never clears it. `is:unclaimed is:open sort:idle-desc` is
+the claimable work, longest-waiting first.
+
+Every time-relative atom in one query is measured against one clock, taken when
+the query is compiled.
+
+**Cost.** `idle:` and `sort:idle-desc` add one correlated subquery per issue the
+rest of the query keeps. It reads that issue's own trail through
+`idx_activity_target (target_kind, target_id, id)`, never the whole activity
+table; a test pins the query plan.
+- Rows: work is bounded by the page `limit`.
+- Count: the count endpoint pays it for every issue that passes the other atoms,
+  so put cheap atoms (`is:open`, `project:`) beside `idle:` on a large board.
+
+`is:claimed` is one primary-key lookup in `issue_leases`. `age:` is a column
+comparison.
+
 ## Sorting
 
 `sort:` takes `created`, `id`, `priority`, or `status`, each with `-asc` or
-`-desc`. The default is `id-desc` — newest first, which is what an operator
-scanning a list wants. `sort:priority-desc` puts *urgent* first: priority is
-ranked, not sorted alphabetically, which would read urgent, medium, low, high.
+`-desc`, plus `idle-desc`. The default is `id-desc` — newest first, which is
+what an operator scanning a list wants. `sort:priority-desc` puts *urgent*
+first: priority is ranked, not sorted alphabetically, which would read urgent,
+medium, low, high. `sort:idle-desc` puts the longest-idle issue first, by the
+same measure as `idle:`.
 
 **There is no `sort:updated`.** The issues table has no `updated_at` column. A
 sort key that silently fell back to another ordering would be a lie about the
@@ -88,8 +130,9 @@ be fixed rather than guessed at.
 Unknown **values** for open-vocabulary fields are different and legitimately
 match nothing: `label:deleted-label` and `status:whatever` have always behaved
 that way, and tightening them would break every saved filter naming a label
-since removed. Only the closed vocabularies (`is:`, `has:`, `sort:`) refuse a
-bad value, and their errors list what would have worked.
+since removed. Only the closed vocabularies (`is:`, `has:`, `sort:`) and the
+closed duration shape (`idle:`, `age:`) refuse a bad value, and their errors list
+what would have worked.
 
 ## Surfaces
 
@@ -106,6 +149,17 @@ silently preferring one would ignore what the caller asked for.
 
 Over MCP: `search_work(q)`, `count_work(q)`, `query_help()` — all through REST,
 so there is no second implementation to drift.
+
+In the browser, `/find` takes the same atoms in its search box, through the same
+parser and compiler, so the page and the API agree on what matches.
+- **Atoms in the box:** the page lists matching issues in the query's order.
+  Pages and comments are not searched by atoms.
+- **Empty box, a filter menu set:** a filter-only browse.
+- **A typo:** the page answers 422 with the compiler's own error, never "no
+  matches".
+- **Atoms and filter menus together:** refused, like `?q=` with structured filters.
+- **Plain words** (with or without the menus): the ranked full-text search it
+  always was.
 
 ### One ask across the workspace
 

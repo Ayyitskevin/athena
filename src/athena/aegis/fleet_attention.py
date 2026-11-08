@@ -111,6 +111,13 @@ def build_attention(
         ).fetchone()["n"]
     )
 
+    # Hand-offs into silence. With no actor this is the admin nav-badge path, whose
+    # caller contract is admin-scoped like every other input here; with one, the
+    # actor's own visibility applies to the count.
+    unclaimed = work_progress.unclaimed_delegations(
+        conn, actor=actor, all_projects=actor is None, now=current, limit=1
+    )
+
     signals = [
         {
             "key": "claims_needing_attention",
@@ -151,6 +158,18 @@ def build_attention(
             "count": open_controls,
             "href": "/admin/run-controls",
             "scope": "asked, not yet answered",
+        },
+        {
+            "key": "delegation_unclaimed",
+            "label": "Delegations not picked up",
+            "count": unclaimed["visible_total"],
+            # The agents page lists each agent's delegation inbox: the owning
+            # surface for who was handed what.
+            "href": "/admin/agents",
+            "scope": (
+                f"standing; delegated over {work_progress.DELEGATION_UNCLAIMED_HOURS}h "
+                "ago, delegate has neither claimed nor recorded work since"
+            ),
         },
         {
             "key": "failing_automation_rules",
