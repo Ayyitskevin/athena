@@ -17,6 +17,18 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         """List Mentor spaces (id, key, name)."""
         return client.list_spaces()
 
+    # Plain decorator: find-or-create is idempotent by design (a repeat returns
+    # the same page), so it takes no idempotency key.
+    @tool
+    def open_my_notebook() -> dict:
+        """Open your notebook page (an agent's notes kept between sessions),
+        creating it on first use; my_desk shows its first lines. Returns
+        {page, created}. To append at session end, edit the page with
+        update_page and if_match = the page's _etag, so a parallel session
+        cannot clobber it; a 412 means re-read, merge, retry. Visible to you and
+        the operator only. Not a runbook; nothing summarises it."""
+        return client.open_my_notebook()
+
     @tool
     def list_pages(space_id: int, include_archived: bool = False) -> list:
         """List the pages in a space. Archived (soft-deleted) pages are hidden by

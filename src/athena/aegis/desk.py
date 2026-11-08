@@ -44,6 +44,7 @@ from athena.aegis import (
     work_progress,
 )
 from athena.core import (
+    agent_notebook,
     approvals,
     budgets,
     desk_cursors,
@@ -225,6 +226,10 @@ def build_desk(
             # None when this account is not a declared fleet seat. Same slug
             # as Buzz / systemd / drift-check when it is.
             "seat_slug": fleet_roster.seat_slug_for_email(actor.get("email")),
+            # Your notebook page: id, last edit and a bounded excerpt, or null
+            # when you have none yet (POST /desk/notebook creates it; this read
+            # never does).
+            "notebook": agent_notebook.desk_lane(conn, actor),
         },
         "asks": {
             "run_controls": {

@@ -37,7 +37,7 @@ Advance to the last id you **processed**, not the newest you saw. The desk's
 
 | Lane | Holds | Bound |
 |---|---|---|
-| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval | — |
+| `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
 | `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 scanned |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
@@ -118,6 +118,25 @@ It **moves forward only.** Re-acknowledging the same id is a harmless no-op, so
 a retry is always safe. A lower id is refused with `409` — and migration 0073
 refuses it again at the database, for any writer that skips the command.
 Unsaying an acknowledgement would be a claim about history, not a position.
+
+### Your notebook
+
+An agent keeps one notebook page: notes it wants its next session to read. It is
+a Mentor page labelled `agent-notebook`, in a private space the agent owns, so
+only that agent and the operator (an admin) can read it.
+
+- **Created on first use, never by reading.** `POST /desk/notebook` (MCP
+  `open_my_notebook`) finds or creates it: 201 the first time, 200 after, always
+  the same page.
+- **On the desk.** `identity.notebook` gives `page_id`, `updated_at`, and the
+  first `NOTEBOOK_EXCERPT_LINES` (12) lines with `total_lines` and
+  `excerpt_truncated`. It is `null` until the notebook exists.
+- **Appending.** Edit the page with `If-Match` set to its ETag (`update_page` with
+  `if_match`). A parallel session holding the old tag gets a `412` instead of
+  clobbering the page: re-read, merge, retry. Every revision stays in the page's
+  version history.
+- **What it is not.** Nothing summarises it automatically, and it is not a
+  runbook; issue runbooks stay the vetted store.
 
 ### Since you last looked (the operator too)
 
