@@ -12,7 +12,14 @@ import re
 import shlex
 import sqlite3
 
-from athena.core import activity, agent_run_checkins, db, tokens, users
+from athena.core import (
+    activity,
+    agent_run_checkins,
+    db,
+    reported_usage,
+    tokens,
+    users,
+)
 
 _RECENT_ACTIVITY_LIMIT = 6
 _RUN_HEALTH_EVENT_LIMIT = 200
@@ -134,8 +141,13 @@ def _agent_summary(conn: sqlite3.Connection, agent: dict) -> dict:
     token_rows = tokens.list_tokens(conn, agent["id"])
     live_tokens = [token for token in token_rows if token["revoked_at"] is None]
     revoked_tokens = [token for token in token_rows if token["revoked_at"] is not None]
+    # Reported-usage check-ins are bookkeeping, not work: left in, a few of them push the
+    # agent's real actions out of this panel and move "last active".
     recent_activity = activity.list_activity(
-        conn, actor_id=agent["id"], limit=_RECENT_ACTIVITY_LIMIT
+        conn,
+        actor_id=agent["id"],
+        exclude_verb=reported_usage.VERB_USAGE_REPORTED,
+        limit=_RECENT_ACTIVITY_LIMIT,
     )
     return {
         "user": agent,
