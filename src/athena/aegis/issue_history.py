@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 
 from athena.aegis import issues
-from athena.core import access, activity, db
+from athena.core import access, activity, db, trace_context
 
 # The separator issue_activity.record_status_change / record_priority_change write
 # between the old and new value: detail = f"{before} → {after}". Splitting on it inverts
@@ -48,8 +48,9 @@ class IssueHistoryTooLarge(RuntimeError):
 
 def _before_after(detail: str) -> tuple[str, str] | None:
     """Split a "before → after" detail back into its two sides, or None if it doesn't
-    carry the arrow (a malformed/foreign detail contributes no transition)."""
-    before, sep, after = detail.partition(_ARROW)
+    carry the arrow (a malformed/foreign detail contributes no transition). A trace
+    suffix (trace_context) is not part of either side."""
+    before, sep, after = trace_context.split_detail(detail)[0].partition(_ARROW)
     return (before, after) if sep else None
 
 

@@ -41,6 +41,9 @@ _SAFE_FIELDS = [
 _OBSERVATIONAL_FIELDS = [
     "actor_name",
     "created_at",
+    # The W3C trace pair lifted out of `detail` when the event recorded one: a
+    # pointer into another system, never a replay input (docs/RUNS.md).
+    "trace",
 ]
 
 
@@ -176,7 +179,7 @@ def _all_run_events(
         # and flags partial. This bounds the in-memory list to cap + one page.
         if len(rows) > _MAX_REPLAY_EVENTS:
             break
-    return rows
+    return activity.lift_trace(rows)
 
 
 def _run_lineage(

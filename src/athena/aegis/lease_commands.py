@@ -35,7 +35,7 @@ from athena.aegis.issue_commands import (
     _require_issue_writer,
     _visible_issue,
 )
-from athena.core import coordination_roots, db, identity
+from athena.core import coordination_roots, db, identity, trace_context
 
 ClaimYieldReason = Literal["needs_input", "blocked", "capacity"]
 CLAIM_YIELD_REASONS = frozenset({"needs_input", "blocked", "capacity"})
@@ -552,7 +552,9 @@ def reported_completion(event: dict) -> dict | None:
     """Read bounded native report data; imported text never becomes a native report."""
     if event["verb"] != "claim_completed" or event.get("imported_at") is not None:
         return None
-    header, separator, payload = event["detail"].partition(
+    # The trace suffix, when the write carried one, sits after the report.
+    detail = trace_context.split_detail(event["detail"])[0]
+    header, separator, payload = detail.partition(
         issue_activity.COMPLETION_REPORT_MARKER
     )
     if (

@@ -77,7 +77,7 @@ def test_traceparent_shape_is_validated(raw, expected):
         ("novalue", None),
         ("Key=upper", None),
         ("k=has=equals", None),
-        ("k=has,comma=x", None),  # the comma splits it into a member with no value
+        ("k=has,comma", None),  # the comma splits off a member with no value
         ("dup=1,dup=2", None),
         (",".join(f"k{i}=v" for i in range(33)), None),
         ("k=" + "v" * 257, None),
@@ -298,27 +298,39 @@ def test_trace_context_never_changes_who_may_do_what(board):
     bait = {
         "traceparent": TRACEPARENT,
         "tracestate": "athena=admin,role=admin,scope=issue:write",
-        "X-Athena-Run": "t4",
     }
+    # Each actor under its own run id: a refused write still records a security
+    # event, and that event binds the run to the actor who was refused, so sharing
+    # one id would make the admin's control fail on run binding, not on trace.
+    reader_bait = {**bait, "X-Athena-Run": "t4-reader"}
+    admin_bait = {**bait, "X-Athena-Run": "t4-admin"}
     # A read-only token cannot create an issue, with or without trace context.
     refused_plain = reader.post("/issues", json={"title": "no"})
-    refused_traced = reader.post("/issues", json={"title": "no"}, headers=bait)
+    refused_traced = reader.post("/issues", json={"title": "no"}, headers=reader_bait)
     assert refused_plain.status_code == refused_traced.status_code == 403, (
         refused_plain.text,
         refused_traced.text,
     )
     # Nor read an admin surface.
-    assert reader.get("/activity/chain", headers=bait).status_code == 403
-    # Positive control: the same writes are possible for an authorized actor, with
-    # trace context and without, and only then is anything recorded.
+    assert reader.get("/activity/chain", headers=reader_bait).status_code == 403
+    # Positive control: the same write is possible for an authorized actor, with
+    # trace context and without.
     assert admin.post("/issues", json={"title": "yes"}).status_code == 201
-    assert admin.post("/issues", json={"title": "yes"}, headers=bait).status_code == 201
-    assert not [
-        e
-        for e in _events(board["database"], verb="created")
-        if e["detail"] and "role=admin" in e["detail"] and e["actor_id"] != 1
-    ]
-    assert not _events(board["database"], run_id="t4", actor_id=2)
+    assert (
+        admin.post("/issues", json={"title": "yes"}, headers=admin_bait).status_code
+        == 201
+    )
+    created = _events(board["database"], verb="created")
+    assert {e["actor_id"] for e in created} == {1}  # only the admin ever created
+    # The reader's refusal was itself recorded, and the record carries the hint:
+    # that is all a hint can do. It annotated the refusal; it did not change it.
+    refusals = _events(board["database"], run_id="t4-reader")
+    assert refusals
+    assert all(e["actor_id"] == 2 and e["verb"] != "created" for e in refusals)
+    assert all(
+        trace_context.split_detail(e["detail"])[1]["tracestate"] == bait["tracestate"]
+        for e in refusals
+    )
 
 
 # --- 5. old events render unchanged -----------------------------------------------

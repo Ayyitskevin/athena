@@ -36,6 +36,40 @@ suppress it via the engine's activity-derived idempotency guard. Naming a reserv
 run as a `X-Athena-Parent-Run` or fork point is unaffected — forking a child run
 from an automation run stays legitimate.
 
+## Trace context
+
+A client that also writes spans to a tracing stack may send the W3C trace-context
+pair on a write, next to the run headers:
+
+- `traceparent`: `version-traceid-parentid-flags` in lowercase hex; version `00`
+  has exactly four fields (a higher version is kept to its first four); version
+  `ff` and an all-zero trace or parent id are invalid.
+- `tracestate`: up to 32 `key=value` members, 512 characters in all; kept only
+  beside a valid `traceparent`.
+
+Both have **exactly the standing of the lineage headers above: correlation
+hints, never authorization, never used to grant anything**, and never a reason
+to refuse a write. A malformed value is dropped and the reason is logged
+(`trace context dropped: <header> <rule>`; the value itself is never logged);
+the write proceeds as if the header were absent. A valid pair is appended to the
+event's `detail` after the marker `; trace_context_v1 ` as compact JSON
+(`{"traceparent":"...","tracestate":"..."}`), so there is no schema change, the
+hash chain covers it, and rows written before it exist are untouched. Foreign
+(imported) history never carries one: the hint belongs to the request that
+delivered it, not to the actor who performed the far-side action.
+
+The replay artifact (`GET /activity/runs/{run_id}/replay`) and the lineage view
+(`GET /activity/runs/{run_id}/lineage`, and its page under `/aegis/activity/runs/`)
+lift the pair into a `trace` field on each event that recorded one; `detail`
+stays the record exactly as stored. An event without a trace renders exactly as
+before, with no `trace` key. The web activity lists show the detail without the
+suffix and the trace as a muted hint beside the time. `trace` is an observational
+field of the determinism contract below: a pointer into another system, not a
+replay input.
+
+MCP clients put the same two keys in a tool call's `_meta`; the server forwards
+them as the two headers for that one call and nothing else.
+
 ## Cooperative Check-ins
 
 An agent may report that it is still working under a client-chosen run identifier
@@ -165,6 +199,8 @@ These fields are observational, useful for humans but not enough to re-drive wor
 
 - `actor_name`: resolved from the current user row.
 - `created_at`: wall-clock timestamp for display; order by `id`, not time text.
+- `trace`: the W3C trace pair the write carried, when it did (Trace context above);
+  a pointer into another system, never an input to replay.
 - Rendered HTML, current issue/page state, search snippets, and notification state.
 
 Handlers that want replayable work must record the result of any nondeterministic
