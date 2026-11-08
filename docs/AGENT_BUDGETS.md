@@ -156,3 +156,10 @@ cannot see it. Only the newest 5000 events of each kind are read.
 
 **Admin → Agents** shows them under the label *reported by the agent, not metered by Athena*.
 They enforce nothing, never touch the action budget, and carry no ceiling.
+
+Two operational notes. Every check-in that carries `usage` is one permanent, hash-chained
+activity row (nothing here prunes), so a busy fleet grows the trail by one row per report; send
+usage at a coarse interval or only when it changes. The agents cockpit reads the newest 5000
+events of each kind once per page and says "Recent window only" when that window is full. These
+bookkeeping events are left out of an agent's own "Recent activity" and "last active" so they
+cannot crowd out its real actions; the global activity trail still lists them.

@@ -257,7 +257,7 @@
                 {{ t.reports }} report{{ "s" if t.reports != 1 }} &middot; {{ t.input_tokens }} in / {{ t.output_tokens }} out / {{ t.cached_tokens }} cached tokens{% for currency, amount in t.cost.items() %} &middot; {{ amount }} {{ currency }}{% endfor %}
             {%- endmacro %}
             <div class="agent-reported-spend">
-                <p class="muted"><strong>Reported usage</strong> &mdash; {{ agent.reported_spend.label }}. Limits nothing.</p>
+                <p class="muted"><strong>Reported usage</strong> &mdash; {{ agent.reported_spend.label }}. Limits nothing.{% if agent.reported_spend.clipped %} Recent window only: older reports are not counted.{% endif %}</p>
                 <ul class="muted">
                     {% for day in agent.reported_spend.days %}<li>{{ day.day }}: {{ reported_totals(day.totals) }}</li>{% endfor %}
                     {% for run in agent.reported_spend.runs %}<li>run {{ run.run_id }}: {{ reported_totals(run.totals) }}</li>{% endfor %}
