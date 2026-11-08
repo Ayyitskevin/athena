@@ -2302,7 +2302,7 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
 
         heartbeat_schema = tools["heartbeat_agent_run"].inputSchema
         assert heartbeat_schema["required"] == ["run_id"]
-        assert set(heartbeat_schema["properties"]) == {"run_id"}
+        assert set(heartbeat_schema["properties"]) == {"run_id", "usage"}
         run_id_schema = heartbeat_schema["properties"]["run_id"]
         assert run_id_schema["minLength"] == 1
         assert run_id_schema["maxLength"] == 200

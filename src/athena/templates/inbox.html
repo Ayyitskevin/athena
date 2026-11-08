@@ -20,6 +20,9 @@
         <a href="{{ it.href }}">
             {{ it.actor_name }} {{ it.verb }} {{ it.target_kind }} #{{ it.target_id }}{% if it.detail %} — {{ it.detail }}{% endif %}
         </a>
+        {% if it.target_state %}
+        <span class="chip" data-tone="neutral">{{ {"archived": "target archived", "completed_by_you": "you completed this", "closed": "target closed"}[it.target_state] }}</span>
+        {% endif %}
         <span class="muted">{{ it.event_at }}</span>
         {% if not it.read_at %}
         <form method="post" action="/inbox/{{ it.id }}/read" class="inline">
