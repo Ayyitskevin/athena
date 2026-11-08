@@ -84,10 +84,16 @@ Every successful packet states:
       "running",
       "live",
       "replay_safe"
-    ]
+    ],
+    "readiness": "this packet does not assert ready or unblocked; the desk's work.ready lane (GET /desk/ready) does, for you: ..."
   }
 }
 ```
+
+The packet does not assert readiness. `semantics.readiness` points at the read
+that does: the desk's `work.ready` lane (`GET /desk/ready`, and `is:ready` in
+the work query), which states its rule and carries its own total
+([DESK.md](DESK.md)).
 
 The projection is assembled inside one SQLite read transaction. Its fields and
 counts therefore describe one internally consistent snapshot, but only at the
@@ -310,7 +316,8 @@ Reading this packet:
 - does not reserve work or prevent another actor from changing it;
 - does not prove acceptance criteria or other readiness conditions are met;
 - does not prove the issue is unblocked, even when `open_blockers.items` is
-  empty;
+  empty (the ready lane, which counts blockers you cannot see, is the read that
+  does);
 - does not prove an agent or process is running or live;
 - does not turn recent activity or run ids into a heartbeat;
 - does not certify that events, context, or a future operation are replay-safe; and

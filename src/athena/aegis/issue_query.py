@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 import sqlite3
 
-from athena.aegis import issues, statuses, work_progress
+from athena.aegis import issues, leases, ready_queue, statuses, work_progress
 from athena.core import work_query
 from athena.core.work_query import Query
 
@@ -41,11 +41,8 @@ _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 # moves stays idle. Never NULL, so comparisons and ordering need no NULL rule.
 _IDLE_ANCHOR = f"COALESCE({work_progress.last_work_sql('i.id')}, i.created_at)"
 
-# A live lease, by the clock: the same "active" verdict the lease readers give.
-_LIVE_LEASE = (
-    "EXISTS (SELECT 1 FROM issue_leases qlz WHERE qlz.issue_id = i.id "
-    "AND qlz.expires_at > ?)"
-)
+# A live lease, by the clock: the lease module's own "active" verdict.
+_LIVE_LEASE = leases.live_lease_sql("i.id")
 
 # Ordering, by sort key. Literals only — the key comes from work_query's closed
 # vocabulary, so an unknown key is impossible by the time it reaches here.
@@ -208,7 +205,16 @@ def _term_sql(
         elif value in ("claimed", "unclaimed"):
             # One definition, negated for the other: they cannot disagree.
             clause = _LIVE_LEASE if value == "claimed" else f"NOT {_LIVE_LEASE}"
-            params = [now.strftime(_TS_FORMAT)]
+            params = [leases.clock_stamp(now)]
+        elif value == "ready":
+            # The ready queue's own rule, so the atom, the desk lane and
+            # claim_next_ready cannot disagree about what is ready.
+            try:
+                clause, params = ready_queue.ready_clause(
+                    conn, actor, now=now, category_expr=_CATEGORY
+                )
+            except ready_queue.ReadyQueueError as exc:
+                raise QueryCompileError(str(exc), atom="is:ready") from exc
         else:  # unassigned — the vocabulary is closed, so this is exhaustive
             clause = "i.assignee_id IS NULL"
         return (f"NOT ({clause})" if term.negated else clause), params

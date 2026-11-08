@@ -45,7 +45,17 @@ OPEN_FIELDS = ("status", "priority", "label", "project", "sprint", "assignee")
 
 #: ``is:`` states. Closed: a typo here is a refusal, not an empty page.
 #: ``claimed``/``unclaimed`` follow the lease clock: an expired lease is unclaimed.
-IS_VALUES = ("open", "closed", "archived", "unassigned", "claimed", "unclaimed")
+#: ``ready`` is "you could claim it now": unclaimed, to-do or doing, no open
+#: blocker, and you may claim it — the ready queue's rule, for the caller.
+IS_VALUES = (
+    "open",
+    "closed",
+    "archived",
+    "unassigned",
+    "claimed",
+    "unclaimed",
+    "ready",
+)
 
 #: ``has:`` structural predicates. Closed, same reason.
 HAS_VALUES = ("blockers", "parent", "children", "labels")

@@ -34,7 +34,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import sqlite3
 
-from athena.aegis import claim_handoffs, delegations, leases, office, work_progress
+from athena.aegis import (
+    claim_handoffs,
+    delegations,
+    leases,
+    office,
+    ready_queue,
+    work_progress,
+)
 from athena.core import (
     approvals,
     budgets,
@@ -261,6 +268,11 @@ def build_desk(
                 "has_more": bool(inbox.get("has_more")),
                 "next_offset": inbox.get("next_offset"),
             },
+            # What I could claim next, in claim order, with its own total. The
+            # same rule as the is:ready atom and claim_next_ready.
+            "ready": ready_queue.build_ready(
+                conn, actor=actor, now=lease_now, limit=ready_queue.READY_LIMIT
+            ),
             "waiting_on": {
                 "items": waiting_on["items"],
                 "total": waiting_on["visible_total"],

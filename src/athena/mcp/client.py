@@ -1467,6 +1467,86 @@ class AthenaClient:
         changed since your cursor. Includes `office` (the one-chair cubicle)."""
         return self._result(self._client.get("/desk"))
 
+    def ready_work(self, *, limit: int | None = None) -> Any:
+        """Your ready lane: what you could claim now, in claim order, with its
+        own total (the desk's work.ready)."""
+        return self._result(
+            self._client.get("/desk/ready", params=self._params(limit=limit))
+        )
+
+    #: How many ready candidates one claim_next_ready call may try, in order.
+    CLAIM_NEXT_MAX_ATTEMPTS = 5
+    #: The REST statuses that mean "someone else got there first" (a live lease
+    #: by another holder; the issue changed after it was read; it is no longer
+    #: visible). Anything else is a real error and is raised, never swallowed.
+    _LOST_RACE = {409: "lost_race", 412: "stale_revision", 404: "gone"}
+
+    def claim_next_ready(
+        self, *, limit: int = 1, lease_seconds: int | None = None
+    ) -> dict:
+        """Claim the top item of your ready lane through the ordinary claim.
+
+        Reads the lane, then for each candidate in order (at most ``limit``)
+        reads the issue's current root ETag and claims against exactly that
+        revision. The claim command's own interlock decides any race, so two
+        callers never both win. Returns ``{"claimed": True, issue, lease,
+        issue_etag, work_context_etag, previous_lease, open_handoff, attempts}``
+        or ``{"claimed": False, "reason": ..., ...}`` — ``already_holding`` (one
+        claim at a time: finish or yield the one you hold), ``nothing_ready``, or
+        ``lost_race`` (every tried candidate was taken or changed first)."""
+        if isinstance(limit, bool) or not (1 <= limit <= self.CLAIM_NEXT_MAX_ATTEMPTS):
+            raise ValueError(
+                f"limit must be between 1 and {self.CLAIM_NEXT_MAX_ATTEMPTS}"
+            )
+        lane = self.ready_work(limit=limit)
+        if lane["held_by_you"]:
+            # A retried call after a lost response must not take a second issue.
+            return {
+                "claimed": False,
+                "reason": "already_holding",
+                "held_by_you": lane["held_by_you"],
+                "attempts": [],
+            }
+        if not lane["items"]:
+            return {
+                "claimed": False,
+                "reason": "nothing_ready",
+                "ready_total": lane["total"],
+                "attempts": [],
+            }
+        attempts: list[dict] = []
+        for item in lane["items"][:limit]:
+            issue_id = int(item["issue"]["id"])
+            try:
+                fresh = self.get_issue(str(issue_id))
+                lease = self.claim_issue(
+                    issue_id, if_match=fresh["_etag"], lease_seconds=lease_seconds
+                )
+            except AthenaError as exc:
+                outcome = self._LOST_RACE.get(exc.status_code or 0)
+                if outcome is None:
+                    raise
+                attempts.append(
+                    {
+                        "issue_id": issue_id,
+                        "status": exc.status_code,
+                        "outcome": outcome,
+                    }
+                )
+                continue
+            context = self.get_issue_work_context(str(issue_id))
+            return {
+                "claimed": True,
+                "issue": item["issue"],
+                "lease": lease,
+                "issue_etag": context["issue_etag"],
+                "work_context_etag": context.get("_etag"),
+                "previous_lease": item["previous_lease"],
+                "open_handoff": item["open_handoff"],
+                "attempts": attempts,
+            }
+        return {"claimed": False, "reason": "lost_race", "attempts": attempts}
+
     def my_office(self) -> Any:
         """Your cubicle: one chair, fenced paths, checkout hint."""
         return self._result(self._client.get("/office"))

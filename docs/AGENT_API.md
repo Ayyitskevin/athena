@@ -114,6 +114,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `attach_label` | `POST /issues/{issue_id}/labels` | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue only against the exact root issue revision reviewed. |
+| `claim_next_ready` | *(client-side)* | Claim the next issue in your ready lane (my_desk work.ready) through … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
 | `complete_claim` | `POST /issues/{issue_id}/complete` | Release a claim with optional reported conditions, residuals, and evidence. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |
@@ -196,4 +197,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*134 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*135 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

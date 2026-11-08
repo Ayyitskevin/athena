@@ -23,6 +23,7 @@ is none to get wrong.
 | `is:unassigned` | no assignee (same as `assignee:none`) |
 | `is:claimed` | someone holds a live lease on it (the lease clock says active) |
 | `is:unclaimed` | nobody holds a live lease: no lease, or one that has expired |
+| `is:ready` | you could claim it now: to-do or doing, unclaimed, no blocker that is not done (one you cannot see still blocks), and you are its assignee, a delegated contributor, or an admin. Needs a signed-in caller. The same rule as the desk's `work.ready` lane ([DESK.md](DESK.md)) |
 | `idle:>Nd` / `idle:<Nd` | more / less than N days since the last recorded **work** (see below) |
 | `age:>Nd` / `age:<Nd` | created more / less than N days ago |
 | `has:blockers` | at least one issue blocks this one |

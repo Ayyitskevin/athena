@@ -43,6 +43,8 @@ Advance to the last id you **processed**, not the newest you saw. The desk's
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |
 | `work.leases` | `items`: issues you hold NOW, with `active` and the 0057 generation. `lapsed`: your expired rows on open or done issues, labelled `issue_done`; holders settle their own rows deliberately with `complete_claim` and the observed generation. Reading never settles a row; admins cannot settle another actor's expired row | 20 each, `total` / `lapsed_total`; `lapsed_clipped` says whether rows are omitted; `lapsed_oldest_expires_at` is null when empty or clipped (unknown when clipped); total/clipped distinguish these cases, and claim order is not expiry order |
+| `work.ready` | issues you could claim now, in claim order (see below); each says why it is yours, the previous holder of a lapsed lease, and any open handoff. Also `GET /desk/ready?limit=` alone | 20 (REST 1-50), `total` and `clipped`; `held_by_you` counts your live leases |
+| `work.waiting_on` | issues you delegated that the delegate has neither claimed nor worked on for 24h | 20, `total` |
 | `signals` | unread notifications, `events_since_cursor`, `latest_visible_event_id` | 10 notifications, count capped at 500 |
 | `cursor` | your stored position, or `null` | — |
 
@@ -52,6 +54,45 @@ owns that surface with *your* visibility applied — the same run-control inbox
 the same notification inbox, the lease table's own holder read. So the desk
 cannot show you anything the owning tool would hide, and it cannot disagree
 with the surface that owns each number.
+
+## The ready lane
+
+An issue is **ready for you** when all of these hold:
+- you can see it;
+- its status category is to-do or doing, and it is not archived;
+- nobody holds a live lease on it;
+- no issue that is not done blocks it;
+- you may claim it under the claim command's own policy: you are its assignee, a
+  delegated contributor, or an admin.
+
+The lane never offers work a claim would refuse. Three rules worth knowing:
+- **A blocker you cannot see still blocks.** The lane does not say what it is.
+- **A lapsed lease makes the issue ready again.** The row shows who held it
+  last. Nothing is swept: the next claim is the deliberate re-acquisition.
+- **A yielded issue carries its open handoff.** After claiming it, resume the
+  handoff with `resume_claim_handoff`.
+
+Order: delegated to you first, then priority (urgent first), then oldest. The
+`is:ready` query atom ([QUERY.md](QUERY.md)) uses the same rule.
+
+`claim_next_ready(limit=1)` (MCP) claims the top item through the ordinary
+claim:
+1. it reads the issue's current revision;
+2. it claims against exactly that revision;
+3. it returns the lease (with `generation`), `issue_etag` and
+   `work_context_etag`, so the rest of the loop is unchanged.
+
+If someone else wins the issue, or it changes in between, the call moves to the
+next candidate, up to `limit` (at most 5). It then refuses with `lost_race` and
+lists each attempt. It also refuses with:
+- `already_holding` while you hold a live lease, so a retried call never takes a
+  second issue;
+- `nothing_ready` when the lane is empty.
+
+The claim command's own interlock decides between two callers, so both never
+win.
+
+Ready is a read, not a reservation: two agents can see the same item.
 
 ## Two distinctions the desk refuses to blur
 

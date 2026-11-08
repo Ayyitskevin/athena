@@ -484,7 +484,7 @@ def test_claim_next_ready_claims_the_top_item_and_returns_the_tags(tmp_path):
             assert len(result["lease"]["generation"]) == 32
             context = tc.get(f"/issues/{top['id']}/work-context")
             assert result["issue_etag"] == context.json()["issue_etag"]
-            assert result["work_context_etag"] == context.json()["_etag"]
+            assert result["work_context_etag"] == context.headers["etag"]
             # One claim per call: a second call refuses while the first is held.
             again = client.claim_next_ready()
             assert again["claimed"] is False and again["reason"] == "already_holding"
