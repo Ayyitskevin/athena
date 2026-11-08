@@ -264,6 +264,7 @@ then manage users at `/admin/users` and scoped API tokens at `/settings/tokens`.
 ## Project guides
 
 - [docs/QUICKSTART.md](docs/QUICKSTART.md) — five minutes: the disposable demo, or the instance you keep
+- [docs/AGENT_GUIDE.md](docs/AGENT_GUIDE.md) — one page for an agent at session start: desk, find work, claim, progress, complete, hand off
 - [REVIEW_GUIDE.md](REVIEW_GUIDE.md) — bounded peer-review path and questions
 - [CONTRIBUTING.md](CONTRIBUTING.md) — setup, workflow, and architecture guardrails
 - [SECURITY.md](SECURITY.md) — trust boundary and private reporting

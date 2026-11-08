@@ -23,6 +23,7 @@ the source row wins and a reindex repairs the index.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import TypedDict, cast
 
@@ -115,6 +116,17 @@ def _to_match(query: str) -> str:
     maps to "" and the caller short-circuits before MATCHing it."""
     terms = query.split()
     return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"*' for t in terms)
+
+
+def _to_title_any_match(query: str) -> str:
+    """A SAFE FTS5 expression matching any word, as a prefix, in the title column only.
+
+    Words are reduced to letters and digits, so nothing user-typed can reach the FTS5
+    parser as syntax; an input with no word left matches nothing."""
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", query)]
+    if not words:
+        return ""
+    return "title : (" + " OR ".join(f'"{w}"*' for w in words) + ")"
 
 
 def _enrich(conn: sqlite3.Connection, hits: list[dict]) -> list[dict]:
@@ -285,8 +297,13 @@ def search(
     ids: list[int] | None = None,
     include_archived: bool = False,
     actor: dict | None | object = _UNGATED,
+    title_any: bool = False,
 ) -> list[dict]:
     """Best-first hits for `query` across issues and pages.
+
+    `title_any` (default False) loosens the match for a "is there something like this"
+    lookup: ANY of the words may match, as prefixes, and only in the title column, instead
+    of every word anywhere. Ranking, visibility and archive handling are unchanged.
 
     Each hit is {kind, source_id, title, snippet} plus the per-kind context _enrich
     adds (an issue's key/status, a page's space_key). The snippet is a short body
@@ -320,7 +337,9 @@ def search(
         return []
     if ids is not None and not ids:
         return []
-    match = _to_match(query)
+    match = _to_title_any_match(query) if title_any else _to_match(query)
+    if not match:
+        return []
     sql = (
         "SELECT kind, source_id, title, "
         "snippet(search_index, 3, '[', ']', '…', 10) AS snippet "

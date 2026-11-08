@@ -422,7 +422,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     @tool
     def list_notifications(unread: bool = False, limit: int = 50) -> list:
         """Read YOUR notification inbox — mentions, watched-issue changes, and
-        work delegated to you land here. Pass unread=true for just the unseen."""
+        work delegated to you land here. Pass unread=true for just the unseen.
+        Each row's target_state describes that row: "completed_by_you" means you
+        completed a claim on the target at or after this row's event; "archived" and
+        "closed" describe the target; null means none of these applies."""
         return client.list_notifications(unread=unread, limit=limit)
 
     @tool
@@ -535,11 +538,14 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def heartbeat_agent_run(run_id: RunId) -> dict:
+    def heartbeat_agent_run(run_id: RunId, usage: dict | None = None) -> dict:
         """Report that this authenticated agent is still working on `run_id`.
         Athena binds the heartbeat to the token's actor and its own server clock;
-        call repeatedly because every PUT intentionally refreshes last-seen state."""
-        return client.heartbeat_agent_run(run_id)
+        call repeatedly because every PUT intentionally refreshes last-seen state.
+        usage is optional: model, input_tokens, output_tokens, cached_tokens,
+        estimated_cost with currency, reported_at, for the work since your last
+        report. It is shown as reported by the agent, not metered by Athena."""
+        return client.heartbeat_agent_run(run_id, usage)
 
     @tool
     def begin_run(

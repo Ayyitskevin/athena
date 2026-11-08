@@ -40,6 +40,11 @@ class AgentRunHeartbeatIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     run_id: RunId
+    # The command owns the usage grammar (reported_usage); keep the field opaque here.
+    usage: Annotated[
+        Any,
+        WithJsonSchema({"type": ["object", "null"]}),
+    ] = None
 
 
 class AgentRunHeartbeatOut(BaseModel):
@@ -62,6 +67,9 @@ def heartbeat_agent_run(
 ) -> dict:
     """Refresh the authenticated agent's run check-in using the server clock.
 
+    ``usage`` optionally reports model usage since the previous report. It is stored as
+    an agent-reported fact; Athena does not meter, verify, or enforce anything from it.
+
     This PUT intentionally does not use Athena's durable idempotency receipts:
     every repeated call is a fresh liveness observation and must reach the command.
     """
@@ -70,6 +78,7 @@ def heartbeat_agent_run(
             conn,
             actor=actor,
             run_id=payload.run_id,
+            usage=payload.usage,
         )
     except agent_run_commands.AgentRunCommandError as exc:
         status_code = {
