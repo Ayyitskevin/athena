@@ -379,16 +379,43 @@ class SlowRequestLogMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            if elapsed_ms >= self.threshold_ms:
+            # Time a route declares it spent PARKED on purpose (the events feed's
+            # bounded wait writes `request.state.parked_ms`) is waiting, not work:
+            # a request asked to wait 25 s is not a slow read, and logging every
+            # one would bury the signal this timer exists to give. Only the work
+            # is measured against the threshold; when it does log, the parked
+            # share is named so the number stays explainable.
+            parked_ms = _declared_parked_ms(scope)
+            if elapsed_ms - parked_ms >= self.threshold_ms:
                 route = getattr(scope.get("route"), "path", None)
+                parked_note = (
+                    f", parked {parked_ms:.0f}ms excluded" if parked_ms else ""
+                )
                 _logger.warning(
-                    "slow request: %s %s -> %s in %.0fms (threshold %dms)",
+                    "slow request: %s %s -> %s in %.0fms (threshold %dms%s)",
                     scope.get("method", "?"),
                     route or "<unmatched>",
                     status_code or "no response",
                     elapsed_ms,
                     self.threshold_ms,
+                    parked_note,
                 )
+
+
+def _declared_parked_ms(scope) -> float:
+    """How long the route says this request parked on purpose, or 0.
+
+    Read from `scope["state"]`, which is where Starlette's `request.state` writes.
+    Anything that is not a finite non-negative number counts as nothing declared:
+    a route cannot make a slow read disappear by declaring nonsense.
+    """
+    state = scope.get("state")
+    value = state.get("parked_ms") if isinstance(state, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if value != value or value < 0 or value == float("inf"):
+        return 0.0
+    return float(value)
 
 
 class RunContextMiddleware:

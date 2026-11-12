@@ -38,6 +38,7 @@ from athena.aegis import (
 )
 from athena.core import (
     dispatch,
+    event_wait,
     notifications,
     run_context,
     run_control_commands,
@@ -191,6 +192,10 @@ WatchTargetId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INT
 NotificationPriority = Literal["low", "normal", "medium", "high", "urgent"]
 NotificationLimit = Annotated[int, Field(strict=True, ge=1, le=200)]
 EventLimit = Annotated[int, Field(strict=True, ge=1, le=200)]
+# The same bound the REST route validates: a request above it is refused, not clamped.
+WaitSeconds = Annotated[
+    int, Field(strict=True, ge=0, le=event_wait.EVENT_WAIT_MAX_SECONDS)
+]
 WatchPreferencePriority = Literal["low", "medium", "high", "urgent"]
 DigestWindowMinutes = Annotated[
     int,
@@ -251,6 +256,7 @@ TOOL_SCOPES: dict[str, str] = {
     "list_issue_comments": READ_ONLY,
     "get_issue_state": READ_ONLY,
     "recent_events": READ_ONLY,
+    "wait_for_events": READ_ONLY,
     "whoami": READ_ONLY,
     "list_notifications": READ_ONLY,
     "list_priority_notifications": READ_ONLY,

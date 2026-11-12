@@ -1141,6 +1141,41 @@ class AthenaClient:
             )
         )
 
+    def wait_for_events(
+        self,
+        *,
+        after: int | None = None,
+        wait: int = 25,
+        kind: str | None = None,
+        target: int | None = None,
+        actor_id: int | None = None,
+        actor_type: str | None = None,
+        run_id: str | None = None,
+        parent_run_id: str | None = None,
+        verb: str | None = None,
+        limit: int = 50,
+    ) -> Any:
+        """`GET /events` with `wait`: the server may park the request up to `wait`
+        seconds (at most the server's cap, 25). The client's request timeout
+        (default 30 s) must exceed the wait; the MCP entrypoint uses the default."""
+        return self._result(
+            self._client.get(
+                "/events",
+                params=self._params(
+                    after=after,
+                    wait=wait,
+                    kind=kind,
+                    target=target,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    run_id=run_id,
+                    parent_run_id=parent_run_id,
+                    verb=verb,
+                    limit=limit,
+                ),
+            )
+        )
+
     def list_notifications(self, *, unread: bool = False, limit: int = 50) -> Any:
         """Read the authenticated actor's own notification inbox."""
         params: dict[str, Any] = {"limit": limit}

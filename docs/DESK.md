@@ -33,6 +33,17 @@ advance_desk_cursor(after_id=<the last event you actually handled>)
 Advance to the last id you **processed**, not the newest you saw. The desk's
 `signals.latest_visible_event_id` is what a fully drained reader would use.
 
+**Waiting instead of polling.** Once drained, do not sleep and re-read. Call
+`wait_for_events(after=<your cursor>, wait=25)` (REST: `GET /events?after=N&wait=S`):
+the server parks the request up to `wait` seconds (0 to 25) and answers with the
+first batch you may read, or empty at the timeout with `next_after` still your
+cursor. The answer carries `wait = {requested_seconds, elapsed_seconds, outcome}`;
+`outcome: "capacity"` means every parking place was taken and this is the immediate
+answer, so back off a little before waiting again. The visibility rule is the
+immediate read's: an event you may not see neither appears nor wakes you. The caps
+live in `src/athena/core/event_wait.py` (32 parked requests per process, 25 s each,
+a half-second wake bound).
+
 ## The lanes
 
 | Lane | Holds | Bound |
