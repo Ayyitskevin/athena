@@ -580,9 +580,13 @@ def test_an_issue_read_needs_exactly_one_of_ref_and_issue_id(board):
 
 def test_the_issue_read_schemas_offer_both_names_and_require_neither():
     tools = _tools(None)
-    for name in ("get_issue", "get_issue_work_context"):
+    expected = {
+        "get_issue": {"ref", "issue_id"},
+        "get_issue_work_context": {"ref", "issue_id", "brief"},
+    }
+    for name, properties in expected.items():
         schema = tools[name].inputSchema
-        assert set(schema["properties"]) == {"ref", "issue_id"}, name
+        assert set(schema["properties"]) == properties, name
         assert "ref" not in schema.get("required", []), name
         assert "issue_id" in (tools[name].description or ""), name
 

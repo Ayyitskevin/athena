@@ -94,6 +94,38 @@ token still needs eyes), but they see raw rows with no visibility rules
 applied — treat what they show as unconfirmed, and say in your output that the
 desk was bypassed and why.
 
+## Carry fewer tools: `ATHENA_MCP_PROFILE`
+
+An MCP session registers only the tools its token can use, but for a normal
+seat that is still about a hundred tools of descriptions and schemas read
+before the first call. `ATHENA_MCP_PROFILE` in the MCP server's environment
+names a smaller set:
+
+| Value | Tools | For |
+|---|---|---|
+| `full` (the default; unset or empty means the same) | everything the token can use | operators, embedding callers, anything that is not a seat |
+| `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control` | a seat working issues |
+| `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues` | a seat that also reads and writes pages |
+
+A profile intersects the scope filter: it can hide a tool the token could use,
+never show one it could not, and the REST layer stays the boundary either way.
+No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
+a seat's move. An unknown value stops the server with a message naming the
+three; it never falls back to `full` by accident. A seat that needs a hidden
+tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
+profile also names `claim_next_ready` and `wait_for_events`, which bind as soon
+as those tools are registered.
+
+## Read less per issue: `brief=true`
+
+The full work-context packet carries the protocol, how-to-claim and runbook
+blocks on every call. Once you have read them, re-read an issue with
+`get_issue_work_context(issue_id=..., brief=true)` (REST:
+`GET /issues/{ref}/work-context?brief=true`). The answer keeps `issue`,
+`issue_etag`, `dependencies` and `warnings`, the same values as the full packet
+from the same snapshot, and nothing else; `issue_etag` is still the `if_match`
+for `claim_issue`. The default packet is unchanged.
+
 ## Keeping it from drifting
 
 - If a rename or removal touches a named operation

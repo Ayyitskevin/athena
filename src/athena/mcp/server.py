@@ -17,6 +17,7 @@ HTTP work lives in client.py (SDK-free, unit-tested).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import wraps
 import json
 import os
@@ -423,6 +424,99 @@ def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
     return required in scopes
 
 
+# --- tool profiles -----------------------------------------------------------
+#
+# ATHENA_MCP_PROFILE names the set of tools a session carries. A profile is an
+# INTERSECTION with the scope filter above: it can hide a tool the token could
+# use, never show one it could not, and the REST layer stays the boundary
+# either way. `full` (the default) is the scope filter alone: today's surface.
+#
+# `seat` is the core loop a seat's real run needs: orient, find work, read one
+# issue, claim, heartbeat, comment, complete or yield, acknowledge what you
+# handled, answer run controls. `seat+knowledge` adds pages, learnings, labels
+# and links. Neither carries `mark_notifications_read`: K2 forbids bulk
+# acknowledgement, so a seat under a profile cannot see the bulk tool at all
+# (the targeted `mark_notification_read` stays).
+#
+# Two names are listed ahead of their branches merging (claim_next_ready,
+# wait_for_events); until a name is registered the intersection ignores it.
+PROFILE_ENV = "ATHENA_MCP_PROFILE"
+SEAT_PROFILE: frozenset[str] = frozenset(
+    {
+        "my_desk",
+        "advance_desk_cursor",
+        "list_my_delegated_work",
+        "search_work",
+        "get_issue",
+        "get_issue_work_context",
+        "list_issue_comments",
+        "get_issue_lease",
+        "claim_issue",
+        "yield_claim",
+        "resume_claim_handoff",
+        "complete_claim",
+        "decline_delegation",
+        "update_issue",
+        "comment_on_issue",
+        "create_issue",
+        "heartbeat_agent_run",
+        "current_run",
+        "list_notifications",
+        "mark_notification_read",
+        "list_run_controls",
+        "acknowledge_run_control",
+        "complete_run_control",
+        "decline_run_control",
+        # pending: registered by other branches, bind here when they merge
+        "claim_next_ready",
+        "wait_for_events",
+    }
+)
+KNOWLEDGE_PROFILE: frozenset[str] = frozenset(
+    {
+        "search",
+        "get_page",
+        "list_pages",
+        "create_page",
+        "update_page",
+        "record_run_learning",
+        "get_issue_runbook",
+        "list_projects",
+        "attach_label",
+        "list_labels",
+        "link_issues",
+    }
+)
+PROFILES: dict[str, frozenset[str] | None] = {
+    "full": None,
+    "seat": SEAT_PROFILE,
+    "seat+knowledge": SEAT_PROFILE | KNOWLEDGE_PROFILE,
+}
+
+
+def profile_from_env(
+    environ: Mapping[str, str] = os.environ,
+) -> frozenset[str] | None:
+    """The profile the environment names, or None (``full``) when unset or empty.
+
+    An unknown name is refused, never widened: a typo must not hand a seat the
+    full surface by accident."""
+    name = environ.get(PROFILE_ENV, "").strip()
+    if not name:
+        return None
+    try:
+        return PROFILES[name]
+    except KeyError:
+        raise ValueError(
+            f"{PROFILE_ENV}={name!r} is not a profile; choose one of: "
+            + ", ".join(PROFILES)
+        ) from None
+
+
+def _in_profile(name: str, profile: frozenset[str] | None) -> bool:
+    return profile is None or name in profile
+
+
 def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
     """Ask Athena what the session's token may do, failing OPEN to the full
     surface. Filtering is ergonomics; the REST layer is the boundary — so an
@@ -448,7 +542,10 @@ def probe_scopes(client: AthenaClient) -> frozenset[str] | None:
 
 
 def build_server(
-    client: AthenaClient, *, scopes: frozenset[str] | None = None
+    client: AthenaClient,
+    *,
+    scopes: frozenset[str] | None = None,
+    profile: frozenset[str] | None = None,
 ) -> FastMCP:
     """Build the MCP server, binding every tool to a pre-built Athena client.
     Separated from main() so tests can inject a TestClient-backed AthenaClient.
@@ -457,7 +554,11 @@ def build_server(
     (``TOOL_SCOPES``): a read-scoped agent gets the read surface, not ~70
     mutation tools that could only answer 403. None — the default — registers
     everything, so embedding callers and tests get the full deterministic
-    surface unless they opt in; ``main()`` opts in by wiring ``probe_scopes``."""
+    surface unless they opt in; ``main()`` opts in by wiring ``probe_scopes``.
+
+    ``profile`` narrows further to a named tool set (``PROFILES``); None is
+    ``full``. It intersects ``scopes``, so it can only hide. ``main()`` wires
+    ``profile_from_env``."""
     token_scopes = scopes
     mcp = FastMCP("athena", instructions=SERVER_INSTRUCTIONS)
 
@@ -489,16 +590,22 @@ def build_server(
                 "every tool must declare what its token needs"
             ) from None
 
+    def _registered(function) -> bool:
+        """Scope first (fail-closed on an unmapped tool), then the profile."""
+        return _tool_visible(_required_scope(function), token_scopes) and _in_profile(
+            function.__name__, profile
+        )
+
     def tool(function):
         """Register a tool with the shared structured-error contract."""
-        if not _tool_visible(_required_scope(function), token_scopes):
+        if not _registered(function):
             return function
         return mcp.tool()(preserve_athena_errors(function))
 
     def mutation_tool(function):
         """Register a write tool with a pointer to the shared retry-key contract,
         which the server instructions state once (``SERVER_INSTRUCTIONS``)."""
-        if not _tool_visible(_required_scope(function), token_scopes):
+        if not _registered(function):
             return function
         guarded = preserve_athena_errors(function)
         guarded.__doc__ = f"{function.__doc__.rstrip()}\n\n{RETRY_POINTER}"
@@ -526,6 +633,13 @@ def main() -> None:
     the activity trail BY DEFAULT, visible in Mission Control and replayable,
     rather than falling into the untagged time-gap heuristic. The agent can
     switch runs mid-session with the begin_run tool."""
+    # The profile is read first: a bad name stops the process before any client
+    # exists or any probe is made, and never widens to the full surface.
+    try:
+        profile = profile_from_env()
+    except ValueError as exc:
+        print(f"athena-mcp: {exc}", file=sys.stderr)
+        raise SystemExit(2) from None
     base_url = os.environ.get("ATHENA_BASE_URL", "http://127.0.0.1:8000")
     token = os.environ.get("ATHENA_TOKEN")
     run_id = os.environ.get("ATHENA_RUN_ID") or f"mcp-{secrets.token_hex(6)}"
@@ -535,4 +649,4 @@ def main() -> None:
     )
     # The session-defining call: one whoami decides which tools this token's
     # session carries. Fails open; ATHENA_MCP_ALL_TOOLS=1 skips entirely.
-    build_server(client, scopes=probe_scopes(client)).run()
+    build_server(client, scopes=probe_scopes(client), profile=profile).run()
