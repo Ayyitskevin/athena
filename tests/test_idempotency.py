@@ -446,7 +446,7 @@ def test_concurrent_wait_timeout_never_runs_a_second_handler(tmp_path):
     def probe():
         calls["count"] += 1
         entered.set()
-        assert release.wait(timeout=5)
+        assert release.wait(timeout=30)
         return {"result": "done"}
 
     with TestClient(app) as client:
@@ -454,14 +454,18 @@ def test_concurrent_wait_timeout_never_runs_a_second_handler(tmp_path):
         headers = {"Idempotency-Key": "slow", **H1}
         with ThreadPoolExecutor(max_workers=2) as pool:
             owner = pool.submit(client.post, "/automation/slow-probe", headers=headers)
-            assert entered.wait(timeout=2)
-            waiting = client.post("/automation/slow-probe", headers=headers)
-            assert waiting.status_code == 409
-            assert waiting.json()["code"] == "idempotency_in_progress"
-            assert waiting.headers["retry-after"] == "1"
-            assert calls["count"] == 1
-            release.set()
-            first = owner.result(timeout=5)
+            try:
+                # Allow slow CI setup; the duplicate's runtime wait stays 50 ms.
+                assert entered.wait(timeout=15)
+                waiting = client.post("/automation/slow-probe", headers=headers)
+                assert waiting.status_code == 409
+                assert waiting.json()["code"] == "idempotency_in_progress"
+                assert waiting.headers["retry-after"] == "1"
+                assert calls["count"] == 1
+            finally:
+                # Unblock the owner before executor shutdown even on assertion failure.
+                release.set()
+            first = owner.result(timeout=15)
 
         replay = client.post("/automation/slow-probe", headers=headers)
 

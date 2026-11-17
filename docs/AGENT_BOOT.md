@@ -108,15 +108,17 @@ names a smaller set:
 | `full` (the default; unset or empty means the same) | everything the token can use | operators, embedding callers, anything that is not a seat |
 | `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control` | a seat working issues |
 | `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues` | a seat that also reads and writes pages |
+| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_issue_history`, `assign_issue`, `delegate_issue`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating supplied role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
 
 A profile intersects the scope filter: it can hide a tool the token could use,
 never show one it could not, and the REST layer stays the boundary either way.
 No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
 a seat's move. An unknown value stops the server with a message naming the
-three; it never falls back to `full` by accident. A seat that needs a hidden
+four profiles; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
 profile also includes `claim_next_ready` and `wait_for_events`: 26 tools for a
-normal seat, or 37 with knowledge, before any narrower token scope removes more.
+normal seat, 37 with knowledge, or 34 for a conductor, before any narrower token
+scope removes more. The conductor profile adds no admin tools or permission.
 
 ## Read less per issue: `brief=true`
 
@@ -127,6 +129,8 @@ blocks on every call. Once you have read them, re-read an issue with
 `issue_etag`, `dependencies` and `warnings`, the same values as the full packet
 from the same snapshot, and nothing else; `issue_etag` is still the `if_match`
 for `claim_issue`. The default packet is unchanged.
+Use the full packet for restart recovery: brief mode omits comments, activity and
+claim handoffs, including the handoff that a new claimant must read and resume.
 
 ## Keeping it from drifting
 

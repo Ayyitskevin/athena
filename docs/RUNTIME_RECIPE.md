@@ -112,6 +112,12 @@ for the exact sets. Both issue reads accept `issue_id=...` or `ref="ATH-12"`;
 supply exactly one. After reading the full work context, `brief=true` keeps the
 issue, issue ETag, dependencies, and warnings for a compact re-read.
 
+For a conductor coordinating architect, builder and reviewer accounts, use the
+34-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
+It adds assignment, delegation, dependencies and visible project observation to
+`seat`; it does not add admin authority or launch workers. Keep this recipe's
+`seat+knowledge` profile when the task needs pages or `record_run_learning`.
+
 ## 4. Run the loop
 
 Paste [`examples/desk_loop.md`](../examples/desk_loop.md) into Claude Code as the
