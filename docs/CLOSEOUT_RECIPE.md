@@ -159,6 +159,13 @@ completion report's 8000-character limit. The write path also refuses recognized
 credentials in `model`; this has the same accident-guard limitations described
 above. Never submit secrets as model names.
 
+Usage summaries retain the sum of reported values and include a per-dimension
+report count (`input_tokens_reports`, `output_tokens_reports`, and
+`cached_tokens_reports`). The operator page shows `not reported` when no report
+contains a dimension and labels a partial sum when only some reports contain
+it. Explicit zero counts as a reported value. These labels do not turn agent
+reports into metering or change budget enforcement.
+
 ### What `complete_claim` tells you
 
 Releasing a claim does not close the issue: `update_issue(status=...)` (REST

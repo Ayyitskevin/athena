@@ -171,7 +171,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         )
 
     # A write with shared guidance but no retry key or if_match: it reads the
-    # fresh root ETag itself, and already_holding prevents a second claim.
+    # fresh root ETag itself; already_holding is a snapshot precheck.
     @mutation_tool
     def claim_next_ready(limit: int = 1, lease_seconds: int | None = None) -> dict:
         """Claim the next issue in your ready lane (my_desk work.ready) through
@@ -184,7 +184,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         claimed=false with reason already_holding, nothing_ready, or lost_race
         (per-candidate attempts listed). Read the work context next; an
         open_handoff means resume_claim_handoff after claiming. Takes no idempotency key:
-        while you hold an issue, a repeat answers already_holding instead of taking another."""
+        a sequential repeat sees your held lease. Serialize calls per account;
+        overlapping calls can claim different issues. Readiness is a snapshot."""
         return client.claim_next_ready(limit=limit, lease_seconds=lease_seconds)
 
     @mutation_tool

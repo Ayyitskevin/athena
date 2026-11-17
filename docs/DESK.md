@@ -97,14 +97,28 @@ claim:
 If someone else wins the issue, or it changes in between, the call moves to the
 next candidate, up to `limit` (at most 5). It then refuses with `lost_race` and
 lists each attempt. It also refuses with:
-- `already_holding` while you hold a live lease, so a retried call never takes a
-  second issue;
+- `already_holding` when its initial ready read sees a live lease held by you;
 - `nothing_ready` when the lane is empty.
 
-The claim command's own interlock decides between two callers, so both never
-win.
+The claim command's interlock prevents two callers from winning the same issue.
+The helper's held-lease precheck is best effort: overlapping calls for one
+account can acquire different issues. Direct claims have no global one-lease
+quota. Run one claim loop per account and wait for each call to finish.
+
+Readiness and candidate labels are snapshots from the initial queue read. The
+fresh issue ETag guards changes after that revision was read; it does not
+atomically recheck the entire ready rule. Read the returned work context before
+starting work. A server-owned conditional ready-claim command is a separate
+follow-up, not a guarantee of this helper.
 
 Ready is a read, not a reservation: two agents can see the same item.
+
+Each desk, ready and office response uses one database snapshot and one lease
+clock. Live counts include all held leases even when the displayed list is
+bounded; handoff clipping is evaluated across all visible live claims before
+the handoff limit. An office chair retains your own lease metadata after
+project access is revoked, but its hidden issue title, key, project and blocker
+details are withheld. Backlog issues remain visible.
 
 ## Two distinctions the desk refuses to blur
 

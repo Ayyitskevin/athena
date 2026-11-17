@@ -121,6 +121,9 @@ Each row keeps independent facts independent:
     no heartbeat makes a run `active` or clears a question.
   - **A held claim is never `complete`.** Completing a claim releases the lease
     and the row leaves this list; Mission Control's run rows show `complete`.
+    Holding is attributed through the newest native claim/renew event for the
+    exact current lease generation. A different run's renewal or same-second
+    reacquisition does not make an older completed run hold that possession.
   - **Scope.** `scope` is `run` for a tagged claim. For an untagged claim it is
     `claim`: the holder's own facts on that issue, with no check-ins.
   - **No effect on attention.** `run_state` changes no attention reason or count.

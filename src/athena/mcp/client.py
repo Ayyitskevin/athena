@@ -1541,19 +1541,23 @@ class AthenaClient:
 
         Reads the lane, then for each candidate in order (at most ``limit``)
         reads the issue's current root ETag and claims against exactly that
-        revision. The claim command's own interlock decides any race, so two
-        callers never both win. Returns ``{"claimed": True, issue, lease,
+        revision. The claim command's interlock prevents two callers from
+        winning the same issue. Returns ``{"claimed": True, issue, lease,
         issue_etag, work_context_etag, previous_lease, open_handoff, attempts}``
         or ``{"claimed": False, "reason": ..., ...}`` — ``already_holding`` (one
-        claim at a time: finish or yield the one you hold), ``nothing_ready``, or
-        ``lost_race`` (every tried candidate was taken or changed first)."""
+        claim loop per account: finish or yield the one you hold), ``nothing_ready``,
+        or ``lost_race`` (every tried candidate was taken or changed first).
+        The held precheck and readiness are snapshots, not an atomic account
+        quota: overlapping calls can claim different issues. Candidate labels
+        can change before the fresh issue read; read work context before work."""
         if isinstance(limit, bool) or not (1 <= limit <= self.CLAIM_NEXT_MAX_ATTEMPTS):
             raise ValueError(
                 f"limit must be between 1 and {self.CLAIM_NEXT_MAX_ATTEMPTS}"
             )
         lane = self.ready_work(limit=limit)
         if lane["held_by_you"]:
-            # A retried call after a lost response must not take a second issue.
+            # A sequential retry sees the lease; overlapping calls can both
+            # pass this snapshot check, so callers must serialize their loop.
             return {
                 "claimed": False,
                 "reason": "already_holding",
