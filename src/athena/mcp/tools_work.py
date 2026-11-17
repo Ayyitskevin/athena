@@ -170,10 +170,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    # Registered with the plain decorator: it takes no idempotency key and no
-    # if_match (it reads the fresh root ETag itself). Its retry safety is the
-    # already_holding refusal: a retried call never takes a second issue.
-    @tool
+    # A write with shared guidance but no retry key or if_match: it reads the
+    # fresh root ETag itself, and already_holding prevents a second claim.
+    @mutation_tool
     def claim_next_ready(limit: int = 1, lease_seconds: int | None = None) -> dict:
         """Claim the next issue in your ready lane (my_desk work.ready) through
         the ordinary claim, against the issue's current revision. Ready = visible,
@@ -184,7 +183,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         work_context_etag, plus previous_lease/open_handoff labels; or
         claimed=false with reason already_holding, nothing_ready, or lost_race
         (per-candidate attempts listed). Read the work context next; an
-        open_handoff means resume_claim_handoff after claiming."""
+        open_handoff means resume_claim_handoff after claiming. Takes no idempotency key:
+        while you hold an issue, a repeat answers already_holding instead of taking another."""
         return client.claim_next_ready(limit=limit, lease_seconds=lease_seconds)
 
     @mutation_tool

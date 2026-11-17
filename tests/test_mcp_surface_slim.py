@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 from mcp.server.fastmcp.exceptions import ToolError
 import pytest
 
-from athena.core import tokens
+from athena.core import reported_usage, tokens
 from athena.main import create_app
 from athena.mcp import server as mcp_server
 from athena.mcp.client import AthenaClient
@@ -123,7 +123,8 @@ def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
         if {"idempotency_key", "if_match"}
         & set((t.inputSchema or {}).get("properties", {}))
     }
-    assert takes_key_or_tag <= pointing, sorted(takes_key_or_tag - pointing)
+    writes = takes_key_or_tag | {"claim_next_ready", "open_my_notebook"}
+    assert writes <= pointing, sorted(writes - pointing)
     for name in pointing:
         description = tools[name].description or ""
         assert description.count(POINTER) == 1, name
@@ -135,6 +136,18 @@ def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
         n for n, req in mcp_server.TOOL_SCOPES.items() if req == mcp_server.READ_ONLY
     }
     assert not pointing & reads, sorted(pointing & reads)
+
+
+@pytest.mark.parametrize(
+    ("name", "retry_behavior"),
+    [("claim_next_ready", "already_holding"), ("open_my_notebook", "same page")],
+)
+def test_keyless_writes_explain_their_retry_behavior(name, retry_behavior):
+    tool = _tools(None)[name]
+    description = tool.description or ""
+    assert "no idempotency key" in description
+    assert retry_behavior in description
+    assert not {"idempotency_key", "if_match"} & set(tool.inputSchema["properties"])
 
 
 # --- 2. the seven admin reads ----------------------------------------------------
@@ -684,6 +697,23 @@ def test_complete_claim_leads_with_what_it_does_not_do():
     # What the registered tool must still define where the agent reads it
     # (tests/test_completion_reports.py pins the same two sentences).
     assert "not_assessed means the condition was not evaluated" in description
+
+
+def test_the_closeout_recipe_retains_the_reported_usage_contract():
+    # Slimming a description must move its contract to the named recipe, not
+    # discard the field names the agent needs to construct a valid report.
+    text = (DOCS / "CLOSEOUT_RECIPE.md").read_text()
+    assert "### Optional reported usage\n" in text
+    section = text.split("### Optional reported usage\n", 1)[1].split("\n### ", 1)[0]
+    assert "since your previous report" in section
+    assert "not metered by Athena" in section
+    for name in reported_usage.USAGE_KEYS:
+        assert f"`{name}`" in section
+    example = re.search(r"```json\n(.*?)\n```", section, re.S)
+    assert example is not None
+    usage = json.loads(example.group(1))["usage"]
+    assert set(usage) == set(reported_usage.USAGE_KEYS)
+    assert reported_usage.normalize_usage(usage) == usage
 
 
 def test_claim_issue_explains_renewal_and_points_at_the_roots_doc():

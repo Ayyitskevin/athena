@@ -216,7 +216,7 @@ MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 SERVER_INSTRUCTIONS = (
     "Every tool is a call to Athena's REST API with your token: the same scopes "
     "and the same audit trail as any other client. Start with my_desk.\n\n"
-    "Retries: a write you might have to repeat takes idempotency_key. Pick a "
+    "Retries: for a tool that takes idempotency_key, pick a "
     "stable, non-secret key of 1-255 visible ASCII characters before the first "
     "attempt and reuse it only for the exact same call; a different call needs "
     "a different key.\n\n"
