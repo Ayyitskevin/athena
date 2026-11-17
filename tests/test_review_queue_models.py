@@ -52,6 +52,7 @@ def test_predecessor_must_be_explicit():
         {"source": " "},
         {"source": "a" * 201},
         {"source": "bad\x00source"},
+        {"source": "bad\ud800source"},
         {"source": 123},
         {"extra": "no"},
     ],

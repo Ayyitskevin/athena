@@ -25,6 +25,10 @@ class CandidateIdentity(StrictReviewModel):
     @field_validator("source")
     @classmethod
     def normalize_source(cls, value: str) -> str:
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError("source must be valid UTF-8 text") from exc
         if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
             raise ValueError("source contains an unsupported control character")
         value = value.strip()
