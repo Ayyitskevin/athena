@@ -69,6 +69,28 @@ def visible_candidate(
     return dict(row) if row is not None else None
 
 
+def latest_visible_request(
+    conn: sqlite3.Connection, *, review_issue_id: int, actor: dict
+) -> dict | None:
+    """An unseen binding is a refusal; it can never turn into a free review issue."""
+    prior = conn.execute(
+        "SELECT * FROM issue_review_requests WHERE review_issue_id = ? ORDER BY id DESC LIMIT 1",
+        (review_issue_id,),
+    ).fetchone()
+    if prior is None:
+        return None
+    gate, params = access.event_visibility_clause(conn, actor, alias="a")
+    event = conn.execute(
+        "SELECT 1 FROM activity a WHERE a.id = ? AND a.imported_at IS NULL "
+        "AND a.visibility_restricted = 0 " + (f"AND ({gate})" if gate else ""),
+        [prior["request_event_id"], *params],
+    ).fetchone()
+    target = visible_candidate(conn, prior["candidate_id"], actor)
+    if event is None or target is None:
+        raise IssueCommandError("conflict", "review request is unavailable or changed")
+    return {**dict(prior), "source_issue_id": target["issue_id"]}
+
+
 def prepare_submission(
     conn: sqlite3.Connection,
     *,
@@ -92,6 +114,11 @@ def prepare_submission(
 def prepare_review(
     conn: sqlite3.Connection, *, issue: dict, actor: dict, candidate_id: int
 ) -> None:
+    request = latest_visible_request(conn, review_issue_id=issue["id"], actor=actor)
+    if request is not None and (
+        request["candidate_id"] != candidate_id or request["reviewer_id"] != actor["id"]
+    ):
+        raise IssueCommandError("conflict", "review request is unavailable or changed")
     candidate = visible_candidate(conn, candidate_id, actor)
     if candidate is None:
         raise IssueCommandError("not_found", "no such review candidate")

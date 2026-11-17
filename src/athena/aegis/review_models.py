@@ -59,3 +59,13 @@ class CandidateReviewReceipt(StrictReviewModel):
     review_id: ReviewCandidateId
     candidate_id: ReviewCandidateId
     completion_event_id: ReviewCandidateId
+
+
+class CandidateReviewRequest(StrictReviewModel):
+    candidate_id: ReviewCandidateId
+    reviewer_id: ReviewCandidateId
+
+
+class CandidateReviewRequestReceipt(CandidateReviewRequest):
+    request_id: ReviewCandidateId
+    review_issue_id: ReviewCandidateId
