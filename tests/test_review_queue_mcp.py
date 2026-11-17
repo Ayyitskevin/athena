@@ -321,3 +321,22 @@ def test_mcp_uses_shared_source_normalization_and_accepts_full_git_sha256():
         "identity": {"kind": "git", "source": "owner/repository", "revision": "d" * 64},
         "expected_previous_candidate_id": 1,
     }
+
+
+def test_rejected_mcp_candidate_source_stays_out_of_tool_error():
+    # A short, synthetic credential-shaped source would fit entirely in a
+    # Pydantic validation message. It must never be copied to the tool transcript.
+    source = "https://demo:marker@invalid"
+    submission = {**SUBMISSION, "identity": {**IDENTITY, "source": source}}
+    with pytest.raises(ToolError, match="validation error") as caught:
+        _call(
+            object(),
+            "complete_claim",
+            {
+                "issue_id": 7,
+                "generation": GENERATION,
+                "candidate_submission": submission,
+            },
+            mcp=True,
+        )
+    assert source not in str(caught.value)

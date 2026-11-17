@@ -4,6 +4,8 @@ Registered by mcp.server.build_server."""
 
 from __future__ import annotations
 
+from pydantic import SkipValidation, ValidationError
+
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.mcp.server import (
@@ -263,7 +265,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         verdict: str | None = None,
         findings: dict[str, int] | None = None,
         usage: dict | None = None,
-        candidate_submission: CandidateSubmission | None = None,
+        candidate_submission: SkipValidation[CandidateSubmission | None] = None,
         review_candidate_id: ReviewCandidateId | None = None,
     ) -> dict:
         """Release your lease. This does NOT close the issue; update_issue does.
@@ -297,6 +299,16 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         Receipts may be historical on retry; declared identity and reported PASS
         grant no acceptance or merge authority. See docs/CLOSEOUT_RECIPE.md.
         """
+        # FastMCP includes Pydantic's raw rejected input in tool errors. Keep
+        # the public schema and validate here so a rejected source stays private.
+        submission = None
+        if candidate_submission is not None:
+            try:
+                submission = CandidateSubmission.model_validate(
+                    candidate_submission
+                ).model_dump()
+            except ValidationError:
+                raise ValueError("candidate submission validation error") from None
         return client.complete_claim(
             issue_id,
             generation=generation,
@@ -308,11 +320,7 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             verdict=verdict,
             findings=findings,
             usage=usage,
-            candidate_submission=(
-                None
-                if candidate_submission is None
-                else candidate_submission.model_dump()
-            ),
+            candidate_submission=submission,
             review_candidate_id=review_candidate_id,
         )
 
