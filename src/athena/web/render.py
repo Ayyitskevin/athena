@@ -555,6 +555,7 @@ def render_body(
         if source is not None and saved_titles is None:
             saved_titles = links.source_title_targets(conn, *source)
         key = links.title_key(inner)
+        ref: dict | None
         if saved_titles is None or (preview and key not in saved_titles):
             # A standalone preview or newly typed token has no saved identity.
             ref = links.resolve_title_ref(conn, inner, space_id=space_id)

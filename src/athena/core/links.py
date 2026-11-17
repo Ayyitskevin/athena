@@ -240,9 +240,9 @@ def legacy_title_bindings(
         candidates = keys.intersection(title_key(name) for name in names)
         if len(candidates) == 1:
             claims.setdefault(candidates.pop(), []).append(target)
-    for key, candidates in claims.items():
-        if len(candidates) == 1:
-            result[key] = candidates[0]
+    for key, claimed_ids in claims.items():
+        if len(claimed_ids) == 1:
+            result[key] = claimed_ids[0]
     return result
 
 

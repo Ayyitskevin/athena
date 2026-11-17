@@ -403,19 +403,19 @@ def _issue_edit_context(
         # Identical to the saved issue: not unsaved work, so offering to restore
         # it would just make an author wonder what they had forgotten.
         draft = None
-    restored = restored and draft is not None
+    restored_draft = draft if restored else None
     return {
         "issue": issue,
         "body_html": render_issue_body(
             conn,
-            draft["body"] if restored else issue["body"],
+            restored_draft["body"] if restored_draft is not None else issue["body"],
             actor=user,
             issue_id=issue["id"],
-            preview=restored,
+            preview=restored_draft is not None,
         ),
         "issue_etag": issue_etags.current_etag(conn, issue),
         "draft": draft,
-        "restored": restored,
+        "restored": restored_draft is not None,
         "draft_is_stale": draft is not None
         and issue_drafts.is_stale(draft, issue_etags.current_etag(conn, issue)),
         "notice": notice,

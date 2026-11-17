@@ -240,7 +240,7 @@ def _edit_form_context(
         # Identical to the saved page: not unsaved work, so offering to restore
         # it would just make an author wonder what they had forgotten.
         draft = None
-    restored = restored and draft is not None
+    restored_draft = draft if restored else None
     return {
         "page": page,
         "space": spaces.get_space(conn, page["space_id"]),
@@ -248,10 +248,10 @@ def _edit_form_context(
         # an existing page sees it as readers do before touching a key.
         "body_html": render_page_body(
             conn,
-            draft["body"] if restored else page["body"],
+            restored_draft["body"] if restored_draft is not None else page["body"],
             actor=user,
             page=page,
-            preview=restored,
+            preview=restored_draft is not None,
         ),
         # An unsaved draft is OFFERED, never applied: the form still shows
         # the saved page, and restoring is a decision the author makes. A
@@ -259,7 +259,7 @@ def _edit_form_context(
         "draft": draft,
         # Restoring is a read: the form renders the draft's text instead of
         # the page's. Nothing is written until the author presses Save.
-        "restored": restored,
+        "restored": restored_draft is not None,
         "draft_is_stale": draft is not None
         and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
         # The baseline this editing session starts FROM. The form carries it
