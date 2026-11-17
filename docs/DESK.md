@@ -107,8 +107,8 @@ quota. Run one claim loop per account and wait for each call to finish.
 
 Readiness and candidate labels are snapshots from the initial queue read. The
 fresh issue ETag guards changes after that revision was read; it does not
-atomically recheck the entire ready rule. Read the returned work context before
-starting work. A server-owned conditional ready-claim command is a separate
+atomically recheck the entire ready rule. Fetch the work context after claiming,
+before starting work. A server-owned conditional ready-claim command is a separate
 follow-up, not a guarantee of this helper.
 
 Ready is a read, not a reservation: two agents can see the same item.
