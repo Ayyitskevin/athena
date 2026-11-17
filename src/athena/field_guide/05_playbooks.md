@@ -18,12 +18,11 @@ issue tree you would build by hand.
 - [x] Tell the operator it is starting
 ```
 
-That page makes three issues, not four — "Announce the freeze window" a child
-of "Freeze the release branch", both under the parent. A ticked box is the
-author saying the step is already done, and creating an issue for it would be
-the tool arguing with its author — so ticked steps are counted and reported
-back to you as `checked_skipped`, never silently dropped and never silently
-created. A ticked step's unchecked sub-steps are still real work: they attach
+The fenced checklist above is an example. To run it, copy the four checklist
+lines into a labeled playbook outside the fence. Starting that page creates
+a parent issue and three steps. “Announce the freeze window” nests under
+“Freeze the release branch”. The ticked step contributes one to
+`checked_skipped`. A ticked step's unchecked sub-steps are still real work: they attach
 to the nearest ancestor that became work, top level if none did.
 
 ## A template is not a live mirror

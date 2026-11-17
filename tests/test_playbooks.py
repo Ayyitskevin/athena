@@ -251,6 +251,49 @@ def test_indentation_maps_to_hierarchy_and_promotes_through_non_work():
     ]
 
 
+@pytest.mark.parametrize(
+    "example",
+    [
+        pytest.param(
+            "````markdown\n- [ ] sample\n```\n~~~\n```` more\n- [X] sample done\n`````\n",
+            id="only-a-matching-clean-closer",
+        ),
+        pytest.param(
+            "- ~~~text\n  - [ ] sample\n  - [x] sample done\n  ~~~\n",
+            id="fence-opened-on-list-marker",
+        ),
+        pytest.param(
+            "> ```md\n> - [ ] quoted sample\n> - [x] quoted done\n",
+            id="unclosed-quote-fence-ends-with-quote",
+        ),
+    ],
+)
+def test_fenced_examples_leave_task_hierarchy_and_checked_count_intact(example):
+    body = (
+        "- [x] previous step\n"
+        "- [ ] Prepare ```build```\n\n" + example + "\n\t- [ ] Verify\n"
+    )
+    steps, checked = playbook_commands.parse_checklist(body)
+    assert steps == [
+        {"title": "Prepare ```build```", "parent": None},
+        {"title": "Verify", "parent": 0},
+    ]
+    assert checked == 1
+
+
+def test_fence_ranges_use_markdown_lines_and_preserve_other_checklist_separators():
+    # U+2028 splits existing task lines, but occupies one physical line in
+    # CommonMark. Counting it as a fence-map offset can expose sample steps.
+    body = (
+        "- [ ] First\u2028- [ ] Second\r"
+        "```md\r\n- [ ] Sample\u2028- [x] Sample done\r```\n"
+        "- [ ] Third"
+    )
+    steps, checked = playbook_commands.parse_checklist(body)
+    assert [step["title"] for step in steps] == ["First", "Second", "Third"]
+    assert checked == 0
+
+
 def test_a_long_step_title_is_bounded():
     steps, _ = playbook_commands.parse_checklist("- [ ] " + "x" * 500)
     assert len(steps[0]["title"]) == playbook_commands.MAX_TITLE_LENGTH
@@ -288,15 +331,41 @@ def test_a_page_without_the_label_is_not_a_playbook(tmp_path):
         assert "not a playbook" in refused.json()["detail"]
 
 
-def test_a_playbook_with_no_unchecked_steps_refuses(tmp_path):
+@pytest.mark.parametrize(
+    "body",
+    ["- [x] all done\nprose only\n", "```markdown\n- [ ] Sample\n- [x] Done sample"],
+    ids=["no-unchecked-steps", "unclosed-example-only"],
+)
+def test_a_playbook_with_no_unchecked_steps_refuses(tmp_path, body):
     app, _ = _app(tmp_path)
     with TestClient(app) as client:
         _bootstrap(client)
         space = _space(client)
-        page = _page(client, space["id"], body="- [x] all done\nprose only\n")
+        page = _page(client, space["id"], body=body)
         refused = _start(client, page["id"])
         assert refused.status_code == 422
         assert "no unchecked" in refused.json()["detail"]
+        assert client.get("/issues", headers=H1).json() == []
+        assert client.get(f"/pages/{page['id']}/backlinks", headers=H1).json() == []
+
+
+def test_fenced_samples_do_not_consume_capacity_or_create_issues(tmp_path):
+    samples = "- [ ] Sample step\n" * (playbook_commands.MAX_ITEMS + 1)
+    body = "- [ ] Real step\n\n~~~markdown\n" + samples + "- [x] Sample done\n~~~"
+    app, _ = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        page = _page(client, _space(client)["id"], body=body)
+        started = _start(client, page["id"])
+        assert started.status_code == 201, started.text
+        result = started.json()
+        assert result["checked_skipped"] == 0
+        assert [child["title"] for child in result["children"]] == ["Real step"]
+        assert result["children"][0]["parent_id"] == result["parent"]["id"]
+        assert {issue["id"] for issue in client.get("/issues", headers=H1).json()} == {
+            result["parent"]["id"],
+            result["children"][0]["id"],
+        }
 
 
 def test_too_many_steps_is_a_capacity_refusal(tmp_path):

@@ -46,6 +46,39 @@ silently dropped or silently created — but a ticked step's unchecked sub-steps
 are still real work, and they attach to the nearest ancestor that became work
 (top level when none did) rather than vanishing with their parent.
 
+### Fenced examples
+
+A fenced code block is an example. Starting the page ignores every checkbox in
+that block. Only steps outside it can create issues, count toward the 50-step
+limit, or contribute to `checked_skipped`. A page containing only fenced
+examples gets the usual HTTP 422 for a playbook with no unchecked steps.
+It creates zero issues.
+
+Use a backtick or tilde fence, optionally with a language such as `markdown`.
+Athena follows its CommonMark page renderer’s block boundaries, including fences
+nested in lists or quotes. A closing fence uses the same marker and at least
+the opening length. An unclosed fence runs to the end of its containing block
+or document. An inline code span inside a real task title stays part of the title.
+
+For example, this playbook creates a parent issue and two steps. “Verify the
+release” is a child of “Prepare the release”. The sample between them has no
+effect on ordering, nesting, or counts.
+
+~~~~markdown
+- [ ] Prepare the release
+
+  ```markdown
+  - [ ] Sample step
+  - [x] Sample completed step
+  ```
+
+  - [ ] Verify the release
+~~~~
+
+The REST start command and the MCP `start_playbook` tool use this same rule.
+It applies on the next start, including to existing pages. Previously created
+issues retain their recorded hierarchy.
+
 ## A template is not a live mirror
 
 Starting a playbook **snapshots** the page. Editing it afterwards changes
