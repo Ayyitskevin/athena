@@ -4,6 +4,17 @@ Athena has stored a link graph since migration 0012. Every `[[page:7]]`,
 `[[ATH-12]]`, and `[[Page Title]]` an author writes becomes a row in `links`,
 and backlinks have always answered "what points at this?".
 
+When an author saves `[[Runbook]]` in an issue or page, Athena remembers the
+page it resolved to. Rename that runbook and the browser shows its new title.
+Agents opening the issue's work context see the same page ID. Another page can
+take the old title without taking the link.
+
+To point at a different runbook, edit the source to use its explicit
+`[[page:123]]` reference. You can also remove every occurrence of the old token,
+save, then add the title in a new edit. Older databases kept only a deduplicated
+list of targets. Where that list cannot identify which token supplied an edge,
+the token renders as unlinked. Use the explicit page ID to repair it.
+
 This document covers what Stage O added on top: finding the edges that *should*
 exist, seeing the neighbourhood an item sits in, and the two page-creation
 habits — templates and a daily note — that make the graph grow without ceremony.

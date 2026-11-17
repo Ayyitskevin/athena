@@ -101,7 +101,7 @@
             <div class="editor-split">
                 <textarea id="body" name="body" rows="8"
                           placeholder="Details, steps to reproduce, acceptance criteria..."
-                          hx-post="/aegis/issues/preview"
+                          hx-post="/aegis/issues/preview?source_id={{ issue.id }}"
                           hx-trigger="keyup changed delay:300ms"
                           hx-target="#body-preview"
                           hx-include="closest form"

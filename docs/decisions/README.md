@@ -7,6 +7,7 @@ This index creates no runtime authority or automatic consumer.
 
 | Date | Decision | Status |
 |---|---|---|
+| 2026-11-17 | [Saved title links retain page identity](2026-11-17-saved-title-links.md) | Accepted after independent spec review |
 | 2026-11-17 | [Requesting an exact review](2026-11-17-review-requests.md) | Accepted after independent spec review |
 | 2026-11-17 | [Reviews bind to exact candidate submissions](2026-11-17-exact-version-reviews.md) | Accepted after independent spec review |
 | 2026-10-20 | [Coordination and history rulings](2026-10-20-coordination-history.md) | Accepted operator ruling |

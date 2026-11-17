@@ -59,7 +59,12 @@ def create_page(
     # title + body for full-text search — inside the same transaction (commit=False)
     # so the derived indexes never reflect a rolled-back create.
     links.sync_links(
-        conn, source_kind="page", source_id=page_id, body=body, commit=False
+        conn,
+        source_kind="page",
+        source_id=page_id,
+        body=body,
+        new_source=True,
+        commit=False,
     )
     search.index_document(conn, kind="page", source_id=page_id, commit=False)
     if commit:

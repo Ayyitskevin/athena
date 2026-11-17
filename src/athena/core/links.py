@@ -25,6 +25,8 @@ its backlinks for free.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+import json
 import re
 import sqlite3
 
@@ -192,6 +194,120 @@ def resolve_title_ref(
     return {"kind": "page", "id": None, "title": None, "exists": False}
 
 
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def title_key(inner: str) -> str:
+    """The existing title resolver trims whitespace and uses SQLite ASCII NOCASE."""
+    return inner.strip().translate(_ASCII_LOWER)
+
+
+def title_keys(body: str | None) -> set[str]:
+    """Distinct authored bare titles, excluding tokens handled by another resolver."""
+    return {
+        title_key(inner)
+        for inner in TITLE_REF_RE.findall(body or "")
+        if not _is_reserved_ref(inner) and inner.strip()
+    }
+
+
+def legacy_title_bindings(
+    body: str | None,
+    page_ids: Iterable[int],
+    *,
+    titles_by_id: Mapping[int, Iterable[str]] | None = None,
+) -> dict[str, int | None]:
+    """Recover only associations forced by the old graph and authored tokens.
+
+    A page edge already explained by a numeric token proves nothing about bare
+    titles. Every remaining edge, however, needed a bare title to create it.
+    If exactly one authored spelling could have produced an edge, that spelling
+    identifies its target. Missing name history only permits a singleton proof.
+    """
+    keys = title_keys(body)
+    result: dict[str, int | None] = dict.fromkeys(keys)
+    explicit = {target for kind, target in extract_refs(body) if kind == "page"}
+    unexplained = set(page_ids) - explicit
+    if not keys or not unexplained:
+        return result
+    if len(keys) == len(unexplained) == 1:
+        return dict.fromkeys(keys, next(iter(unexplained)))
+    if len(unexplained) > len(keys):
+        return result
+    claims: dict[str, list[int]] = {}
+    for target in unexplained:
+        names = (titles_by_id or {}).get(target, ())
+        candidates = keys.intersection(title_key(name) for name in names)
+        if len(candidates) == 1:
+            claims.setdefault(candidates.pop(), []).append(target)
+    for key, candidates in claims.items():
+        if len(candidates) == 1:
+            result[key] = candidates[0]
+    return result
+
+
+def stored_title_bindings(
+    conn: sqlite3.Connection, source_kind: str, source_id: int
+) -> dict[str, int | None]:
+    """Read assigned or deliberately withheld identities without writing."""
+    source = (source_kind, source_id)
+    snapshot = conn.execute(
+        "SELECT body, page_edges FROM legacy_title_link_sources "
+        "WHERE source_kind = ? AND source_id = ?",
+        source,
+    ).fetchone()
+    if snapshot is not None:
+        history = {
+            edge["id"]: edge["titles"] for edge in json.loads(snapshot["page_edges"])
+        }
+        return legacy_title_bindings(snapshot["body"], history, titles_by_id=history)
+    return dict(
+        conn.execute(
+            "SELECT title_key, target_id FROM title_link_bindings "
+            "WHERE source_kind = ? AND source_id = ?",
+            source,
+        )
+    )
+
+
+def source_title_targets(
+    conn: sqlite3.Connection, source_kind: str, source_id: int
+) -> dict[str, int | None]:
+    """Every saved token, including repeatably unresolved or withheld titles."""
+    source = conn.execute(
+        f"SELECT body FROM {_TABLE[source_kind]} WHERE id = ?",
+        (source_id,),
+    ).fetchone()
+    keys = title_keys(source["body"]) if source else set()
+    if not keys:
+        return {}
+    bindings = stored_title_bindings(conn, source_kind, source_id)
+    return {key: bindings.get(key) for key in keys}
+
+
+def restore_title_bindings(
+    conn: sqlite3.Connection,
+    source_kind: str,
+    source_id: int,
+    bindings: Mapping[str, int | None],
+) -> None:
+    """Replace one source's proven and withheld bindings in the caller's transaction."""
+    source = (source_kind, source_id)
+    conn.execute(
+        "DELETE FROM legacy_title_link_sources WHERE source_kind = ? AND source_id = ?",
+        source,
+    )
+    conn.execute(
+        "DELETE FROM title_link_bindings WHERE source_kind = ? AND source_id = ?",
+        source,
+    )
+    conn.executemany(
+        "INSERT INTO title_link_bindings (source_kind, source_id, title_key, target_id) "
+        "VALUES (?, ?, ?, ?)",
+        [(source_kind, source_id, key, target) for key, target in bindings.items()],
+    )
+
+
 def sync_links(
     conn: sqlite3.Connection,
     *,
@@ -199,13 +315,14 @@ def sync_links(
     source_id: int,
     body: str | None,
     commit: bool = True,
+    new_source: bool = False,
 ) -> None:
     """Make the `links` rows for one source match its current body exactly.
 
     Called from the data-access layer after an issue/page is created or edited.
-    We replace (delete-then-insert) rather than diff: a source owns its outgoing
-    links, so the body is the single source of truth and re-deriving is simplest
-    and always correct. A self-reference (a thing linking to itself) is dropped as
+    The body supplies the tokens and each retained title binding supplies its
+    original page ID. Both the bindings and outgoing index are reconciled
+    together. A self-reference (a thing linking to itself) is dropped as
     noise. ``commit=False`` lets an application command include this projection in
     the same transaction as its source row and audit event."""
     targets = extract_refs(body)  # typed [[issue:N]]/[[page:N]] refs
@@ -217,25 +334,28 @@ def sync_links(
         resolved = resolve_key_ref(conn, key, int(num))
         if resolved["exists"] and ("issue", resolved["id"]) not in targets:
             targets.append(("issue", resolved["id"]))
-    # [[Page Title]] wiki-links resolve to a concrete page id NOW (like key refs) and
-    # are stored as ordinary ('page', id) links, so a title reference lights up its
-    # target's backlinks exactly as [[page:N]] does. A page source disambiguates within
-    # its OWN space first; an issue source has no space, so it resolves globally.
-    # Reserved tokens ([[issue:N]]/[[page:N]]/[[user:N]]/[[KEY-N]]) are skipped — they
-    # are owned by the resolvers above. An unresolvable or ambiguous title is simply not
-    # stored (it renders broken and leaves no backlink — the key-ref asymmetry).
-    source_space_id = None
-    if source_kind == "page":
-        row = conn.execute(
-            "SELECT space_id FROM pages WHERE id = ?", (source_id,)
-        ).fetchone()
-        source_space_id = row["space_id"] if row else None
-    for inner in TITLE_REF_RE.findall(body or ""):
-        if _is_reserved_ref(inner):
-            continue
-        resolved = resolve_title_ref(conn, inner, space_id=source_space_id)
-        if resolved["exists"] and ("page", resolved["id"]) not in targets:
-            targets.append(("page", resolved["id"]))
+    keys = title_keys(body)
+    if keys or not new_source:
+        existing = (
+            {} if new_source else stored_title_bindings(conn, source_kind, source_id)
+        )
+        retained = {key: existing[key] for key in keys.intersection(existing)}
+        fresh = keys.difference(existing)
+        space_id = None
+        if fresh and source_kind == "page":
+            row = conn.execute(
+                "SELECT space_id FROM pages WHERE id = ?", (source_id,)
+            ).fetchone()
+            if row is not None:
+                space_id = row["space_id"]
+        for key in fresh:
+            resolved = resolve_title_ref(conn, key, space_id=space_id)
+            if resolved["exists"]:
+                retained[key] = resolved["id"]
+        restore_title_bindings(conn, source_kind, source_id, retained)
+        targets.extend(
+            ("page", page_id) for page_id in retained.values() if page_id is not None
+        )
     conn.execute(
         "DELETE FROM links WHERE source_kind = ? AND source_id = ?",
         (source_kind, source_id),

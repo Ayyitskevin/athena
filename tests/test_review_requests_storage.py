@@ -151,8 +151,10 @@ def test_selective_portability_carries_only_generic_imported_activity(board, tmp
         )
 
 
-def test_populated_0082_upgrade_and_restored_snapshot(tmp_path, monkeypatch):
-    current = db.MIGRATIONS_DIR
+def test_populated_0082_upgrade_and_restored_snapshot(
+    tmp_path, monkeypatch, migration_inventory_through
+):
+    current = migration_inventory_through("0083_issue_review_requests.sql")
     baseline = tmp_path / "0082"
     baseline.mkdir()
     for migration in current.glob("*.sql"):

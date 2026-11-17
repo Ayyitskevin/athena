@@ -221,6 +221,7 @@ def build_space_html(
                 conn,
                 page["body"],
                 actor=actor,
+                source=("page", page["id"]),
                 # No embed results, and the refusal carries the source: an
                 # exported embed is visibly dead AND still shows what it said.
                 show_refused_directives=True,
