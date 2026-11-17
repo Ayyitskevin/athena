@@ -33,12 +33,15 @@ class _Totals:
     def __init__(self) -> None:
         self.reports = 0
         self.counts = dict.fromkeys(_COUNTS, 0)
+        self.coverage = dict.fromkeys(_COUNTS, 0)
         self.cost: dict[str, Decimal] = {}
 
     def add(self, usage: dict) -> None:
         self.reports += 1
         for name in _COUNTS:
-            self.counts[name] += usage.get(name, 0)
+            if name in usage:
+                self.counts[name] += usage[name]
+                self.coverage[name] += 1
         if "estimated_cost" in usage:
             currency = usage["currency"]
             self.cost[currency] = self.cost.get(currency, Decimal(0)) + Decimal(
@@ -49,6 +52,7 @@ class _Totals:
         return {
             "reports": self.reports,
             **self.counts,
+            **{f"{name}_reports": count for name, count in self.coverage.items()},
             "cost": {
                 currency: format(amount.normalize(), "f")
                 for currency, amount in sorted(self.cost.items())

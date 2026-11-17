@@ -19,6 +19,7 @@ question outranks everything. Nothing enforces a response time.
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
+import pytest
 
 from athena.aegis import fleet_attention, run_state
 from athena.core import db, users
@@ -310,6 +311,144 @@ def test_a_run_still_holding_another_claim_is_not_complete(tmp_path):
         )
         assert done.status_code == 200, done.text
         assert _state(db_file, agent, "run-two") == "complete"
+
+
+def _same_claim_tick(db_file):
+    # SQLite timestamps have one-second resolution. Pin the synthetic fixture's
+    # native writes to one tick without making the test depend on machine speed.
+    stamp = _ago(seconds=0)
+    _sql(
+        db_file,
+        "UPDATE activity SET created_at = ? "
+        "WHERE verb IN ('claimed', 'lease_renewed', 'claim_completed')",
+        (stamp,),
+    )
+    _sql(db_file, "UPDATE issue_leases SET claimed_at = ?", (stamp,))
+
+
+def test_completed_run_does_not_adopt_same_second_replacement(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        issue, original = _claimed(c, agent, "old-run", "finish and reacquire")
+        done = c.post(
+            f"/issues/{issue['id']}/complete",
+            json={"generation": original["generation"]},
+            headers=_as(agent, "old-run"),
+        )
+        assert done.status_code == 200, done.text
+        assert _state(db_file, agent, "old-run") == "complete"
+        tag = c.get(f"/issues/{issue['id']}", headers=H1).headers["etag"]
+        replacement = c.post(
+            f"/issues/{issue['id']}/claim",
+            headers={**_as(agent, "new-run"), "If-Match": tag},
+        )
+        assert replacement.status_code == 201, replacement.text
+        assert replacement.json()["generation"] != original["generation"]
+        _same_claim_tick(db_file)
+
+        assert _state(db_file, agent, "old-run") == "complete"
+        active = c.get("/fleet/active-work", headers=H1).json()["items"]
+        assert active[0]["run"]["run_id"] == "new-run"
+        assert active[0]["lease"]["generation"] == replacement.json()["generation"]
+
+
+def test_latest_generation_event_decides_run_after_cross_run_renewal(tmp_path):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        held, lease = _claimed(c, agent, "old-run", "still held")
+        finished, finished_lease = _claimed(c, agent, "old-run", "completed part")
+        done = c.post(
+            f"/issues/{finished['id']}/complete",
+            json={"generation": finished_lease["generation"]},
+            headers=_as(agent, "old-run"),
+        )
+        assert done.status_code == 200, done.text
+        assert _state(db_file, agent, "old-run") != "complete"
+        tag = c.get(f"/issues/{held['id']}", headers=H1).headers["etag"]
+        renewed = c.post(
+            f"/issues/{held['id']}/claim",
+            json={"generation": lease["generation"]},
+            headers={**_as(agent, "new-run"), "If-Match": tag},
+        )
+        assert renewed.status_code == 201, renewed.text
+        assert renewed.json()["generation"] == lease["generation"]
+        _same_claim_tick(db_file)
+
+        assert _state(db_file, agent, "old-run") == "complete"
+        active = c.get("/fleet/active-work", headers=H1).json()["items"]
+        assert active[0]["run"]["run_id"] == "new-run"
+        # A latest renewal in the queried run really does retain a possession,
+        # even if completing a different issue becomes that run's latest act.
+        another, another_lease = _claimed(c, agent, "new-run", "another part")
+        done = c.post(
+            f"/issues/{another['id']}/complete",
+            json={"generation": another_lease["generation"]},
+            headers=_as(agent, "new-run"),
+        )
+        assert done.status_code == 200, done.text
+        assert _state(db_file, agent, "new-run") != "complete"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "missing",
+        "wrong_generation",
+        "token_prefix",
+        "no_delimiter",
+        "wrong_case",
+        "imported",
+        "foreign_run",
+        "wrong_actor",
+        "wrong_issue",
+    ],
+)
+def test_invalid_claim_evidence_does_not_attribute_live_possession(tmp_path, evidence):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as c:
+        _bootstrap(c)
+        agent = _agent(c)
+        held, lease = _claimed(c, agent, "run-owner", "held part")
+        finished, finished_lease = _claimed(c, agent, "run-owner", "finished part")
+        done = c.post(
+            f"/issues/{finished['id']}/complete",
+            json={"generation": finished_lease["generation"]},
+            headers=_as(agent, "run-owner"),
+        )
+        assert done.status_code == 200, done.text
+        _same_claim_tick(db_file)
+        assert _state(db_file, agent, "run-owner") != "complete"
+        generation = lease["generation"]
+        # Synthetic corrupt/imported evidence must never establish possession.
+        # The positive control above exercises the genuine command-written row.
+        changes = {
+            "missing": ("detail = ?", ("",)),
+            "wrong_generation": (
+                "detail = ?",
+                (f"generation {'f' * 32}; until later",),
+            ),
+            "token_prefix": ("detail = ?", (f"generation {generation}0; until later",)),
+            "no_delimiter": ("detail = ?", (f"generation {generation}",)),
+            "wrong_case": ("detail = ?", (f"GENERATION {generation}; until later",)),
+            "imported": ("imported_at = ?", (_ago(seconds=0),)),
+            "foreign_run": ("run_id = ?", ("other-run",)),
+            "wrong_actor": ("actor_id = ?", (1,)),
+            "wrong_issue": ("target_id = ?", (finished["id"],)),
+        }
+        statement, params = changes[evidence]
+        _sql(
+            db_file,
+            f"UPDATE activity SET {statement} WHERE target_kind = 'issue' "
+            "AND target_id = ? AND verb = 'claimed'",
+            (*params, held["id"]),
+        )
+        assert _state(db_file, agent, "run-owner") == "complete"
+        current = c.get(f"/issues/{held['id']}/lease", headers=H1).json()
+        assert current["generation"] == generation and current["active"]
 
 
 # ── a heartbeat never makes a run active ────────────────────────────────────

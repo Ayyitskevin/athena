@@ -292,8 +292,11 @@
                 {% endfor %}
             </div>
             {% if agent.reported_spend %}
+            {% macro reported_tokens(value, coverage, total) -%}
+                {% if coverage == 0 %}not reported{% else %}{{ value }} tokens{% if coverage < total %} (partial: {{ coverage }}/{{ total }} reports){% endif %}{% endif %}
+            {%- endmacro %}
             {% macro reported_totals(t) -%}
-                {{ t.reports }} report{{ "s" if t.reports != 1 }} &middot; {{ t.input_tokens }} in / {{ t.output_tokens }} out / {{ t.cached_tokens }} cached tokens{% for currency, amount in t.cost.items() %} &middot; {{ amount }} {{ currency }}{% endfor %}
+                {{ t.reports }} report{{ "s" if t.reports != 1 }} &middot; input: {{ reported_tokens(t.input_tokens, t.input_tokens_reports, t.reports) }} / output: {{ reported_tokens(t.output_tokens, t.output_tokens_reports, t.reports) }} / cached: {{ reported_tokens(t.cached_tokens, t.cached_tokens_reports, t.reports) }}{% for currency, amount in t.cost.items() %} &middot; {{ amount }} {{ currency }}{% endfor %}
             {%- endmacro %}
             <div class="agent-reported-spend">
                 <p class="muted"><strong>Reported usage</strong> &mdash; {{ agent.reported_spend.label }}. Limits nothing.{% if agent.reported_spend.clipped %} Recent window only: older reports are not counted.{% endif %}</p>

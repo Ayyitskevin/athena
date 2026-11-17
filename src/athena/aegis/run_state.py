@@ -179,14 +179,21 @@ def _facts(
     holding = False
     if last_act is not None and last_act["verb"] == "claim_completed":
         hscope, hparams = _scope_sql("ca", run_id=run_id, issue_id=issue_id)
+        # Timestamps can coincide across possessions. Resolve the current
+        # generation's newest native event before testing its run, so a renewal
+        # under another run also supersedes this run's earlier association.
         holding = (
             conn.execute(
-                "SELECT 1 FROM issue_leases l WHERE l.holder_id = ? "
-                "AND l.expires_at > ? AND EXISTS (SELECT 1 FROM activity ca "
-                "WHERE ca.target_kind = 'issue' AND ca.target_id = l.issue_id "
-                "AND ca.actor_id = l.holder_id AND ca.imported_at IS NULL "
-                f"AND ca.verb IN ('claimed', 'lease_renewed') AND {hscope} "
-                "AND ca.created_at >= l.claimed_at) LIMIT 1",
+                "SELECT 1 FROM issue_leases l JOIN activity ca ON ca.id = ("
+                "SELECT candidate.id FROM activity candidate "
+                "WHERE candidate.target_kind = 'issue' "
+                "AND candidate.target_id = l.issue_id "
+                "AND candidate.actor_id = l.holder_id "
+                "AND candidate.imported_at IS NULL "
+                "AND candidate.verb IN ('claimed', 'lease_renewed') "
+                "AND candidate.detail GLOB ('generation ' || l.generation || '; *') "
+                "ORDER BY candidate.id DESC LIMIT 1) "
+                f"WHERE l.holder_id = ? AND l.expires_at > ? AND {hscope} LIMIT 1",
                 [agent_id, _stamp(now), *hparams],
             ).fetchone()
             is not None

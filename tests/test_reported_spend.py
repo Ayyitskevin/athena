@@ -8,6 +8,7 @@ per day, and per issue. Nothing here meters, refuses, or budgets.
 
 import asyncio
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -465,6 +466,9 @@ def test_totals_per_run_per_agent_day_and_per_issue(tmp_path):
                 "input_tokens": 1150,
                 "output_tokens": 110,
                 "cached_tokens": 5,
+                "input_tokens_reports": 3,
+                "output_tokens_reports": 2,
+                "cached_tokens_reports": 1,
                 "cost": {"USD": "0.75"},
             }
             assert runs[(agent_id, "run-b")]["cost"] == {"EUR": "1"}
@@ -563,6 +567,10 @@ def test_a_private_project_is_excluded_for_a_viewer_who_cannot_see_it(tmp_path):
             assert seen == {shown["id"]}
             days = reported_spend.by_agent_day(conn, viewer=viewer, agent_id=agent_id)
             assert [d["totals"]["input_tokens"] for d in days] == [10]
+            assert days[0]["totals"]["reports"] == 1
+            assert days[0]["totals"]["input_tokens_reports"] == 1
+            assert days[0]["totals"]["output_tokens_reports"] == 0
+            assert days[0]["totals"]["cached_tokens_reports"] == 0
             # The agent's own check-in reports have no project and are not the viewer's to see.
             assert reported_spend.by_run(conn, viewer=viewer, agent_id=agent_id) == [
                 r
@@ -576,6 +584,159 @@ def test_a_private_project_is_excluded_for_a_viewer_who_cannot_see_it(tmp_path):
 
 
 # --- the cockpit -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "usage,counts,coverage",
+    [
+        ({"model": "example-model"}, (0, 0, 0), (0, 0, 0)),
+        ({"estimated_cost": 1, "currency": "USD"}, (0, 0, 0), (0, 0, 0)),
+        (
+            {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0},
+            (0, 0, 0),
+            (1, 1, 1),
+        ),
+        ({"input_tokens": 7}, (7, 0, 0), (1, 0, 0)),
+        (
+            {"input_tokens": 7, "output_tokens": 3, "cached_tokens": 2},
+            (7, 3, 2),
+            (1, 1, 1),
+        ),
+    ],
+)
+def test_usage_dimension_coverage_preserves_missing_and_zero_across_views(
+    tmp_path, usage, counts, coverage
+):
+    client = _app(tmp_path)
+    try:
+        agent_id, bearer = _agent(client)
+        issue = _issue(client, assignee_id=agent_id)
+        assert _beat(client, bearer, "checkin", usage).status_code == 200
+        done = _claim_and_complete(client, issue, bearer, usage, run="completed")
+        assert done.status_code == 200, done.text
+        conn = db.connect(client.db_path)
+        try:
+            runs = reported_spend.by_run(conn, viewer=None)
+            assert {r["run_id"] for r in runs} == {"checkin", "completed"}
+            (day,) = reported_spend.by_agent_day(conn, viewer=None)
+            (by_issue,) = reported_spend.by_issue(conn, viewer=None)
+            for totals, multiplier in [
+                *((r["totals"], 1) for r in runs),
+                (day["totals"], 2),
+                (by_issue["totals"], 1),
+            ]:
+                assert totals["reports"] == multiplier
+                for dimension, value, reported in zip(
+                    ("input_tokens", "output_tokens", "cached_tokens"),
+                    counts,
+                    coverage,
+                    strict=True,
+                ):
+                    assert totals[dimension] == value * multiplier
+                    assert totals[f"{dimension}_reports"] == reported * multiplier
+        finally:
+            conn.close()
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_usage_mixed_dimension_coverage_is_a_partial_known_sum(tmp_path):
+    client = _app(tmp_path)
+    try:
+        agent_id, bearer = _agent(client)
+        issue = _issue(client, assignee_id=agent_id)
+        for usage in (
+            {"model": "example-model"},
+            {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0},
+            {"input_tokens": 5},
+        ):
+            assert _beat(client, bearer, "mixed", usage).status_code == 200
+            done = _claim_and_complete(client, issue, bearer, usage, run="mixed")
+            assert done.status_code == 200, done.text
+        conn = db.connect(client.db_path)
+        try:
+            (run,) = reported_spend.by_run(conn, viewer=None)
+            (day,) = reported_spend.by_agent_day(conn, viewer=None)
+            (by_issue,) = reported_spend.by_issue(conn, viewer=None)
+            assert run["totals"] == day["totals"]
+            assert by_issue["totals"] == {
+                "reports": 3,
+                "input_tokens": 5,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "input_tokens_reports": 2,
+                "output_tokens_reports": 1,
+                "cached_tokens_reports": 1,
+                "cost": {},
+            }
+            for field in (
+                "reports",
+                "input_tokens",
+                "output_tokens",
+                "cached_tokens",
+                "input_tokens_reports",
+                "output_tokens_reports",
+                "cached_tokens_reports",
+            ):
+                assert run["totals"][field] == by_issue["totals"][field] * 2
+        finally:
+            conn.close()
+    finally:
+        client.__exit__(None, None, None)
+
+
+def test_cockpit_distinguishes_unreported_zero_and_partial_token_counts(tmp_path):
+    client = _app(tmp_path)
+    try:
+        _, bearer = _agent(client)
+        cases = {
+            "model-only": [{"model": "example-model"}],
+            "cost-only": [{"estimated_cost": 1, "currency": "USD"}],
+            "explicit-zero": [
+                {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+            ],
+            "input-only": [{"input_tokens": 5}],
+            "mixed": [
+                {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0},
+                {"model": "example-model"},
+                {"input_tokens": 5},
+            ],
+        }
+        for run, reports in cases.items():
+            for usage in reports:
+                assert _beat(client, bearer, run, usage).status_code == 200
+        login = client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        page = client.get("/admin/agents")
+        assert page.status_code == 200
+        rows = {
+            run: " ".join(row.split())
+            for run, row in re.findall(
+                r"<li>run ([^:]+): (.*?)</li>", page.text, flags=re.DOTALL
+            )
+        }
+        assert set(rows) == set(cases)
+        for run in ("model-only", "cost-only"):
+            for dimension in ("input", "output", "cached"):
+                assert f"{dimension}: not reported" in rows[run]
+        for dimension in ("input", "output", "cached"):
+            assert f"{dimension}: 0 tokens" in rows["explicit-zero"]
+        assert "not reported" not in rows["explicit-zero"]
+        assert "partial" not in rows["explicit-zero"]
+        assert "input: 5 tokens" in rows["input-only"]
+        assert "output: not reported" in rows["input-only"]
+        assert "cached: not reported" in rows["input-only"]
+        assert "input: 5 tokens (partial: 2/3 reports)" in rows["mixed"]
+        assert "output: 0 tokens (partial: 1/3 reports)" in rows["mixed"]
+        assert "cached: 0 tokens (partial: 1/3 reports)" in rows["mixed"]
+        assert "1 USD" in rows["cost-only"]
+        assert LABEL in page.text
+    finally:
+        client.__exit__(None, None, None)
 
 
 def test_the_cockpit_shows_reported_usage_under_its_honest_label(tmp_path):
