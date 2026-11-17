@@ -585,6 +585,8 @@ class AthenaClient:
         verdict: str | None = None,
         findings: dict[str, int] | None = None,
         usage: dict | None = None,
+        candidate_submission: dict | None = None,
+        review_candidate_id: int | None = None,
     ) -> Any:
         """Release the lease you hold by completing the claimed work (complete) —
         or clear your own lapsed lease."""
@@ -600,6 +602,8 @@ class AthenaClient:
                 uncertainty=uncertainty,
                 evidence=evidence,
                 usage=usage,
+                candidate_submission=candidate_submission,
+                review_candidate_id=review_candidate_id,
             ),
             idempotency_key=idempotency_key,
         )
@@ -1574,6 +1578,14 @@ class AthenaClient:
     def get_project_floor(self, project_id: int) -> Any:
         """One project as a floor of chairs."""
         return self._result(self._client.get(f"/projects/{project_id}/floor"))
+
+    def get_project_review_queue(self, project_id: int, *, limit: int = 5) -> Any:
+        """Read current visible candidates and their exact-version review reports."""
+        return self._result(
+            self._client.get(
+                f"/projects/{project_id}/review-queue", params={"limit": limit}
+            )
+        )
 
     def get_project_brief(self, project_id: int, *, limit: int = 5) -> Any:
         """One visible project snapshot, bounded separately for each section."""

@@ -229,6 +229,14 @@ Optional `verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`) and `findings`
 (P1/P2/P3 counts) are actor reports. Athena does not verify them or turn them into
 approval, acceptance or an issue close. See [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md).
 
+For exact-version tracking, the same `complete_claim` call optionally submits a
+candidate or reviews a current candidate from a separate review issue. Both need
+your own active generation; ordinary lapsed cleanup remains unchanged. Read full
+source-issue work context for `review_tracking`, then follow the
+[exact-version closeout recipe](CLOSEOUT_RECIPE.md#exact-version-submission-and-review).
+The conductor/full profiles add `get_project_review_queue(project_id, limit=5)`;
+seat tools remain unchanged. Declared identity and reported PASS grant no authority.
+
 ## 8. Hand off or yield
 
 Yield when you cannot continue. Tell the next claimant what you tried and what you need.

@@ -231,3 +231,83 @@ Proof: `tests/test_documentary_reader.py` uses the frozen three-state fixture
 `scripts/documentary_review/fixtures/closeout.json`; input remains byte-equivalent
 as data, pending control and cursor untouched. Operator pickup/time savings remain
 unmeasured. This presentation does not diagnose why old rows remain.
+
+## Exact-version submission and review
+
+`complete_claim` can atomically associate one immutable candidate submission or
+one exact-candidate review with the native completion event and lease release.
+Both are optional; omit them or pass null for ordinary completion. They are
+mutually exclusive when non-null. Neither changes issue status or approval policy.
+
+A builder passes this additional argument on its **source build issue**:
+
+```json
+{
+  "candidate_submission": {
+    "identity": {
+      "kind": "git",
+      "source": "owner/repository",
+      "revision": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "expected_previous_candidate_id": null
+  }
+}
+```
+
+Include the ordinary issue ID and exact held generation too. Both nested keys
+are required: null means the first submission; for replacement supply the current
+candidate ID read from full work context. Each submission gets a fresh ID, even
+for A→A or A→B→A; an older PASS never follows equal bytes to the new submission.
+A predecessor mismatch or inaccessible predecessor returns generic409 with the
+lease intact. Refresh context; do not guess hidden IDs or reset history.
+
+Identity has exactly `kind`, `source`, and `revision`. `kind` is `git` or
+`artifact`; source is inert, trimmed/nonblank UTF-8 text of 1–200 characters, with the
+existing control/credential checks. Git revisions are full lowercase 40- or
+64-hex hashes; artifact revisions are exactly 64 lowercase hex characters
+(SHA-256). Mutable tags, abbreviated hashes, extra fields and coercion are refused.
+Athena does not fetch sources or verify external bytes.
+
+A reviewer holds a **different review issue** in the same current non-null
+project, reads the source issue's full work context, actually reviews that exact
+subject, then calls `complete_claim` on the review issue with
+`review_candidate_id=<that candidate ID>` and its honest ordinary report. The
+reviewer account must differ from the recorded submitting account. This is an
+attribution guard, not proof of independent people or models. Both roots and the
+original candidate event must be visible. A replaced candidate returns409 and
+retains the review lease; it is never silently retargeted. Review the replacement,
+or finish with an ordinary unassociated completion describing the unfinished or
+historical work. HOLD, BLOCKED and missing verdicts remain valid reports.
+
+Both modes require your **own active lease** and exact generation, current
+eligibility, and any required handoff resume. Neither lapsed cleanup nor an admin
+releasing someone else's lease can create an association. Source and review issues
+must be non-archived and in the required project; done status itself is allowed.
+Ordinary completion keeps its existing admin/lapsed behavior.
+
+Success adds only `candidate_submission: {candidate_id, completion_event_id}` or
+`candidate_review: {review_id, candidate_id, completion_event_id}` to the release
+receipt. Retry an uncertain identical request with its original explicit
+`idempotency_key` and run; changed work requires a fresh key. A replay can return
+an older candidate receipt after a replacement exists: it does not make that
+candidate current. Receipt retention is finite and uncertain postcommit outcomes
+retain the existing fail-closed reconciliation contract.
+
+Full source-issue context conditionally includes `review_tracking`, with the
+current candidate and the newest five visible submissions with their guarded
+latest reviews. The exact ID is
+`review_tracking.current_candidate.candidate.candidate_id`; its declared subject
+is `review_tracking.current_candidate.candidate.identity`. Bounds and clipping are explicit; brief context omits this
+section. The conductor's `get_project_review_queue(project_id, limit=5)` shows
+current visible candidates, including done issues, and their latest visible
+reported state. `reported_pass` is advisory; `reported_hold` is HOLD/BLOCKED;
+`unknown` has no usable reported verdict. `awaiting_review` also covers an
+inaccessible latest review and exposes no hidden association. No older visible
+PASS is substituted. The queue does not replace the compact project brief or
+provide a claim ETag. See [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md) for exact
+visibility, history and transaction boundaries.
+
+Selective portability exports omit these operational candidate/review rows;
+imported completion history cannot recreate associations. Whole-database recovery
+retains them. Review, acceptance, status changes and permission to merge/deploy
+remain separate decisions.

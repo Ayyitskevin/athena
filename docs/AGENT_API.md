@@ -20,6 +20,15 @@ composes other calls or local state instead of one fixed route.
 
 ## Reported claim completion
 
+`complete_claim` also accepts mutually exclusive `candidate_submission` and
+`review_candidate_id` for exact-version tracking under your own active lease.
+Submission requires an immutable declared identity and an explicit nullable
+`expected_previous_candidate_id`; review targets the current candidate from
+a distinct issue and account. Both compose with release in one request.
+See [exact-version closeout](CLOSEOUT_RECIPE.md#exact-version-submission-and-review)
+for the grammar, visibility, stale-version and historical-retry boundaries.
+These associations grant no acceptance or external-action authority.
+
 `complete_claim` and `POST /issues/{id}/complete` accept optional
 `verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`), `findings`
 (`P1`/`P2`/`P3` to non-negative integers; a missing key is "not stated"),
@@ -70,6 +79,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_page_version` | `GET /pages/{page_id}/versions/{version}` | Fetch one historical page revision by its version number (title + body as of … |
 | `get_project_brief` | `GET /projects/{project_id}/brief` | A compact visible project snapshot: summary, active claims, blocker edges, … |
 | `get_project_floor` | `GET /projects/{project_id}/floor` | A project's floor: every open issue is a chair. Occupied chairs … |
+| `get_project_review_queue` | `GET /projects/{project_id}/review-queue` | Read current visible project candidates with their exact-version reports. |
 | `get_run_control` | `GET /run-controls/{control_id}` | One run control, for an admin or the agent it is addressed to. |
 | `get_run_fork_contract` | `GET /activity/runs/{run_id}/fork` | Validate a fork point inside a parent run and return the child-run … |
 | `get_run_lineage` | `GET /activity/runs/{run_id}/lineage` | Read a tagged run's causal tree: ancestors, the focal run's replayable … |
@@ -213,4 +223,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*138 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*139 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
