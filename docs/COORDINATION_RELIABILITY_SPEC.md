@@ -138,14 +138,13 @@ Idempotency intentionally leaves an ambiguous committed/crashed operation
 indeterminate rather than replaying the mutation. This spec preserves that
 fail-closed behavior and the authentication-revision replay fence.
 
-`claim_next_ready` remains a client read-then-claim helper. The review
-reproduced stale candidate metadata/status and two overlapping same-account
-calls acquiring different issues. Direct claims intentionally permit several
-leases, so silently introducing a global one-lease quota would change policy.
-A separate follow-up should define a server-owned conditional ready-claim
-command with an explicit concurrency contract. The present changes do not
-claim to make that helper atomic. Record this limitation in the helper's
-documentation; avoid promising an atomic one-at-a-time guarantee.
+**Historical exclusion, superseded by [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md):**
+This coordination-reliability increment left `claim_next_ready` as a client
+read-then-claim helper. Its review reproduced stale candidate metadata/status and
+two overlapping same-account calls acquiring different issues. Direct claims
+intentionally permitted several leases, so this increment deferred server-owned
+pickup and its concurrency policy. The accepted atomic-pickup follow-up now owns
+that separate change; it preserves ordinary direct-claim multiple possessions.
 
 ## Verification and delivery
 

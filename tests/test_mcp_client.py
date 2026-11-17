@@ -87,6 +87,12 @@ class _RecordingClient:
 
 MUTATION_CASES = [
     (
+        "claim_next_ready",
+        "POST",
+        "/issues/claim-next",
+        lambda c, k: c.claim_next_ready(idempotency_key=k),
+    ),
+    (
         "mark_notification_read",
         "POST",
         "/notifications/7/read",
@@ -456,6 +462,7 @@ OPTIONAL_IF_MATCH_TOOL_NAMES = {
 }
 IF_MATCH_TOOL_NAMES = REQUIRED_IF_MATCH_TOOL_NAMES | OPTIONAL_IF_MATCH_TOOL_NAMES
 MCP_MUTATION_CASES = [
+    ("claim_next_ready", {}),
     ("start_playbook", {"page_id": 5}),
     ("create_issue", {"title": "x"}),
     ("update_issue", {"issue_id": 7}),

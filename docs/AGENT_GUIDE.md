@@ -78,7 +78,19 @@ Take `issue_etag` from this packet. It is the same value as the `ETag` header on
 
 ## 4. Claim safely
 
-Two values guard a claim. In plain words:
+To let the server select work, use
+`claim_next_ready(limit=1, project_id=..., idempotency_key=...)` ·
+REST `POST /issues/claim-next`. Omit project for all eligible projects and backlog.
+It atomically checks readiness and acquires one issue, refusing queue pickup while
+your account holds any active lease. The bound 1–5 controls candidate attempts.
+No caller `If-Match` is accepted on that route: the server selects the revision.
+Read the returned issue's full context before work and resume an open handoff.
+Keyed responses, including no-work outcomes, are historical receipts; replay never
+renews or reacquires. A new poll needs a new key, after reconciling uncertain work.
+See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) for receipt expiry and the
+`already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes.
+
+For a direct claim of an issue you chose and read, two values guard it:
 
 - **ETag (`issue_etag`)** names the version of the issue you read. Send it in the
   `If-Match` header. If someone changed the issue since you read it, the claim is

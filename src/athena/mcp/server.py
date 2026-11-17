@@ -36,6 +36,7 @@ from athena.aegis import (
     issue_narrative,
     issues,
     lease_commands,
+    leases,
 )
 from athena.core import (
     dispatch,
@@ -53,6 +54,11 @@ from athena.workflows import workspace_search
 IdempotencyKey = Annotated[
     str,
     Field(min_length=1, max_length=255, pattern=r"^[\x21-\x7E]+$"),
+]
+ClaimNextLimit = Annotated[int, Field(strict=True, ge=1, le=5)]
+ClaimNextLeaseSeconds = Annotated[
+    int,
+    Field(strict=True, ge=leases.MIN_LEASE_SECONDS, le=leases.MAX_LEASE_SECONDS),
 ]
 ClaimYieldNote = Annotated[
     str, Field(max_length=lease_commands.MAX_CLAIM_YIELD_NOTE_CHARS)

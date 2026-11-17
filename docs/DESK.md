@@ -87,31 +87,49 @@ The lane never offers work a claim would refuse. Three rules worth knowing:
 Order: delegated to you first, then priority (urgent first), then oldest. The
 `is:ready` query atom ([QUERY.md](QUERY.md)) uses the same rule.
 
-`claim_next_ready(limit=1)` (MCP) claims the top item through the ordinary
-claim:
-1. it reads the issue's current revision;
-2. it claims against exactly that revision;
-3. it returns the lease (with `generation`), `issue_etag` and
-   `work_context_etag`, so the rest of the loop is unchanged.
+`claim_next_ready(limit=1, lease_seconds=None, project_id=None,
+idempotency_key=None)` (MCP) uses one `POST /issues/claim-next`. The server reserves
+the writer, checks the account's current possessions, selects eligible ready work,
+and invokes the ordinary claim command in that transaction. Readiness and the
+returned metadata come from that acquisition. Later changes can still block work.
 
-If someone else wins the issue, or it changes in between, the call moves to the
-next candidate, up to `limit` (at most 5). It then refuses with `lost_race` and
-lists each attempt. It also refuses with:
-- `already_holding` when its initial ready read sees a live lease held by you;
-- `nothing_ready` when the lane is empty.
+Omit `project_id` to include all eligible projects and backlog, or supply one
+visible project ID. An explicit missing or hidden project returns the same 404.
+`limit` (1–5, default 1) bounds ordered candidates attempted, never leases acquired.
+An ordinary claim conflict can advance to the next candidate within that bound;
+its attempt records only the visible issue ID and generic `conflict` outcome.
 
-The claim command's interlock prevents two callers from winning the same issue.
-The helper's held-lease precheck is best effort: overlapping calls for one
-account can acquire different issues. Direct claims have no global one-lease
-quota. Run one claim loop per account and wait for each call to finish.
+The response has `schema: athena.ready_claim.v1`, `observed_at`, `claimed` and
+`attempts`. A successful acquisition includes the lease (with `generation`),
+`issue_etag`, `work_context_etag`, `previous_lease` and `open_handoff`. It has no
+top-level ETag. No caller `If-Match` is accepted on this selection route; a direct
+`claim_issue` against a revision you chose still requires that revision's tag.
+No-acquisition outcomes are:
 
-Readiness and candidate labels are snapshots from the initial queue read. The
-fresh issue ETag guards changes after that revision was read; it does not
-atomically recheck the entire ready rule. Fetch the work context after claiming,
-before starting work. A server-owned conditional ready-claim command is a separate
-follow-up, not a guarantee of this helper.
+- `already_holding`: the account has any active lease, across all projects,
+  including hidden, done and archived issues. Only its count is returned.
+- `nothing_ready`: no eligible candidate exists in the requested scope.
+- `candidates_conflicted`: all attempted candidates conflicted. This replaces the
+  old client-only `lost_race` result; selection and acquisition are now serialized.
 
-Ready is a read, not a reservation: two agents can see the same item.
+Overlapping pickup calls for one account cannot acquire different issues while
+its first possession remains active, including calls using different tokens or
+runs. Ordinary direct claims still permit several possessions; this is a queue
+pickup rule, not a global lease quota or evidence of a running worker.
+
+Choose an `idempotency_key` before a retryable call and keep the exact request,
+credential and run lineage. Success and no-acquisition outcomes both replay as
+historical receipts, including the original expiry and `lease.active` value.
+Replay never renews or reacquires. A new polling intent needs a new key; reconcile
+an uncertain outcome before changing its key. Completed receipts have finite
+retention (default 24 hours), after which reuse is a new request. An indeterminate
+request fails closed instead of automatically executing again.
+
+Fetch current full work context after claiming or recovering a receipt, before
+starting work; explicitly resume an open handoff. Context tags do not prove you
+read that context. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) for the
+concurrency and retry boundaries. `GET /desk/ready` remains a read: two agents
+can see the same available item before either acquires it.
 
 Each desk, ready and office response uses one database snapshot and one lease
 clock. Live counts include all held leases even when the displayed list is
