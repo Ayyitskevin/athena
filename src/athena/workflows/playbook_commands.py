@@ -35,8 +35,11 @@ and their authorization, exactly as they do for any other caller.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 import re
 import sqlite3
+
+from markdown_it import MarkdownIt
 
 from athena.aegis import issue_commands
 from athena.core import access, db, labels
@@ -54,6 +57,12 @@ PLAYBOOK_LABEL = "playbook"
 #: pattern cannot backtrack polynomially over a long line of spaces — the
 #: discipline core/links.py documents, applied to body-derived text.
 _TASK_RE = re.compile(r"^([ \t]*)[-*+] \[( |x|X)\] ?(.*)$")
+
+# Only block tokens carry fence boundaries. Starting a playbook never needs
+# inline parsing or HTML rendering.
+_MARKDOWN_BLOCKS = MarkdownIt("commonmark", {"html": False}).disable(
+    ["inline", "text_join"]
+)
 
 #: One tab of indentation reads as four spaces when measuring nesting. A fixed
 #: published equivalence, because "how wide is a tab" must not depend on the
@@ -84,6 +93,25 @@ class PlaybookCommandError(Exception):
         self.detail = detail
 
 
+def _checklist_lines(body: str) -> Iterator[str]:
+    """Read the original task lines, omitting CommonMark fenced blocks."""
+    if "```" not in body and "~~~" not in body:
+        yield from body.splitlines()
+        return
+
+    # Token maps count CR, LF and CRLF as line endings. The checklist has
+    # always accepted additional separators via str.splitlines(); apply that
+    # grammar only after the physical Markdown lines have been filtered.
+    lines = body.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for token in _MARKDOWN_BLOCKS.parse(body):
+        if token.type == "fence" and token.map is not None:
+            start, end = token.map
+            for index in range(start, end):
+                lines[index] = ""
+    for line in lines:
+        yield from line.splitlines()
+
+
 def parse_checklist(body: str | None) -> tuple[list[dict], int]:
     """Split a page body into (unchecked work items, checked item count).
 
@@ -112,7 +140,7 @@ def parse_checklist(body: str | None) -> tuple[list[dict], int]:
     # line's own index when it became work, or its inherited parent when it did
     # not (checked, or an empty box).
     stack: list[tuple[int, int | None]] = []
-    for line in (body or "").splitlines():
+    for line in _checklist_lines(body or ""):
         match = _TASK_RE.match(line)
         if match is None:
             continue
