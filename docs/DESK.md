@@ -223,3 +223,11 @@ cursor:
 - **Not a snapshot you can hold.** It is true at read time. A lease shown as
   `active` may lapse a second later; `active` is the clock's verdict at that
   read, never a stored state.
+
+
+For exact-version build/review work, fetch **full** source-issue work context to
+read `review_tracking`; brief mode omits it. Submission and review use optional
+fields on the existing `complete_claim` tool under your own active generation.
+They do not acknowledge events, change issue status or grant acceptance. A
+conductor can inspect current visible candidates with `get_project_review_queue`.
+See [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md#exact-version-submission-and-review).

@@ -12,6 +12,7 @@ from athena.mcp.server import (
     IdempotencyKey,
     ProjectBriefLimit,
     ProjectId,
+    ProjectReviewQueueLimit,
     RunControlId,
     RunControlKind,
     RunControlListLimit,
@@ -263,6 +264,20 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         and supplies no claim ETag; fetch full issue work context before claiming or
         recovery. See docs/CONDUCTOR_RECIPE.md for interpretation."""
         return client.get_project_brief(project_id, limit=limit)
+
+    @tool
+    def get_project_review_queue(
+        project_id: ProjectId, limit: ProjectReviewQueueLimit = 5
+    ) -> dict:
+        """Read current visible project candidates with their exact-version reports.
+        limit is 1..20; visible_total and clipped disclose the bounded queue.
+        A replacement, including identical bytes, never inherits an older PASS.
+        awaiting_review can also mean the latest review is not visible; unknown
+        means the visible latest report has no usable verdict. Reports are advisory,
+        not acceptance, independent verification or merge authority. This read changes
+        no state and supplies no claim ETag. Workers read full get_issue_work_context
+        for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""
+        return client.get_project_review_queue(project_id, limit=limit)
 
     @mutation_tool
     def advance_desk_cursor(after_id: int) -> dict:

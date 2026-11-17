@@ -79,3 +79,19 @@ def test_generated_completion_guidance_keeps_usage_discoverable():
     assert "`usage`" in completion
     assert "CLOSEOUT_RECIPE.md#optional-reported-usage" in completion
     assert "not metered by Athena" in completion
+
+
+def test_generated_exact_version_guidance_preserves_the_completion_boundary():
+    content = _load_generator().render()
+    assert "`candidate_submission`" in content
+    assert "`review_candidate_id`" in content
+    assert "`expected_previous_candidate_id`" in content
+    assert "CLOSEOUT_RECIPE.md#exact-version-submission-and-review" in content
+    assert (
+        "| `get_project_review_queue` | `GET /projects/{project_id}/review-queue` |"
+        in content
+    )
+    assert (
+        "These associations grant no acceptance or external-action authority."
+        in content
+    )

@@ -239,6 +239,14 @@ ETag. Before upgrading a material database across 0060, take the normal matched
 database and attachment snapshot. Athena migrations are forward-only; application
 rollback requires restoring the pre-upgrade database with the older build.
 
+The same forward-only rule applies to migration0082's immutable review candidates
+and associations. Retain the old build and a matched pre-upgrade database/attachment
+snapshot. An old build refuses the newer migration ledger; restore a separate
+pre-upgrade snapshot to use it again. Candidate history written after that snapshot
+will be absent: this is not a lossless downgrade. Rehearse upgrades and restoration
+on synthetic copies; repository delivery does not authorize a live migration or
+restart. See [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md).
+
 ## Single Sign-On (OIDC)
 
 SSO is off only when all four connection settings are unset; in that state the
@@ -868,7 +876,10 @@ The V1 bundle includes the selected container, its child issues or pages, page
 versions where applicable, labels, links, membership rows, comments, activity
 rows, and an attachment manifest. It does not include raw attachment blobs,
 password hashes, API tokens, sessions, OIDC transient state, idempotency records,
-cooperative agent-run check-ins, operational claim handoffs, or webhook secrets.
+cooperative agent-run check-ins, operational claim handoffs, exact-version review
+candidates/review associations, or webhook secrets. Native candidate associations
+are not reconstructed from imported completion reports. Whole-database recovery
+retains the operational rows and their source events.
 Imported activity rows never synthesize actionable handoffs. Use a full SQLite
 backup/restore when lease-era operational state must be preserved. Existing export
 files are not replaced unless `--overwrite` is passed.

@@ -20,7 +20,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, SkipValidation
 
 from athena import config
 from athena.aegis import (
@@ -48,6 +48,12 @@ from athena.core import (
     work_query,
 )
 from athena.core.ids import RowIdPath
+from athena.aegis.review_models import (
+    CandidateSubmission,
+    CandidateSubmissionReceipt,
+    CandidateReviewReceipt,
+    ReviewCandidateId,
+)
 from athena.core.attachments_api import AttachmentOut
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
@@ -1288,6 +1294,8 @@ class CompleteClaimOut(BaseModel):
     # you had already lost".
     lapsed: bool
     next: str
+    candidate_submission: CandidateSubmissionReceipt | None = None
+    candidate_review: CandidateReviewReceipt | None = None
 
 
 HandoffEvidenceItem = Annotated[
@@ -1314,6 +1322,11 @@ class CompleteClaimIn(LeaseGenerationIn):
     uncertainty: object | None = None
     evidence: object | None = None
     usage: object | None = None
+    # Keep the shared OpenAPI shapes, but let the command validate raw input.
+    # FastAPI's default validation errors echo rejected input (including secrets
+    # or lone surrogates which cannot be encoded in the error response).
+    candidate_submission: SkipValidation[CandidateSubmission | None] = None
+    review_candidate_id: SkipValidation[ReviewCandidateId | None] = None
 
 
 # --- Delegation claim/lease: accept / decline / complete -------------------
@@ -1327,6 +1340,7 @@ class CompleteClaimIn(LeaseGenerationIn):
 @router.post(
     "/{issue_id}/complete",
     response_model=CompleteClaimOut,
+    response_model_exclude_unset=True,
 )
 def complete_issue_claim(
     issue_id: RowIdPath,
@@ -1355,6 +1369,12 @@ def complete_issue_claim(
             uncertainty=payload.uncertainty if payload is not None else None,
             evidence=payload.evidence if payload is not None else None,
             usage=payload.usage if payload is not None else None,
+            candidate_submission=payload.candidate_submission
+            if payload is not None
+            else None,
+            review_candidate_id=payload.review_candidate_id
+            if payload is not None
+            else None,
         )
         response.headers.update(PRIVATE_LEASE_HEADERS)
         return released

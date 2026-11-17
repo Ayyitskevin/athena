@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from athena.aegis import work_context
+from athena.aegis.review_queue_models import IssueReviewTracking
 from athena.core.deps import get_conn
 from athena.core.identity import optional_actor
 
@@ -292,6 +293,10 @@ class IssueWorkContextOut(BaseModel):
     claim_handoffs: ClaimHandoffGroupOut
     # Only present when the project has a checklist page the actor may see.
     definition_of_done: dict | None = None
+    # Preserve ordinary response bytes, including existing optional defaults.
+    review_tracking: IssueReviewTracking | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class IssueWorkContextBriefOut(BaseModel):

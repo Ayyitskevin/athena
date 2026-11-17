@@ -4,7 +4,10 @@ Registered by mcp.server.build_server."""
 
 from __future__ import annotations
 
+from pydantic import SkipValidation, ValidationError
+
 from athena.aegis import lease_commands
+from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.mcp.server import (
     ClaimNextLeaseSeconds,
     ClaimNextLimit,
@@ -262,6 +265,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         verdict: str | None = None,
         findings: dict[str, int] | None = None,
         usage: dict | None = None,
+        candidate_submission: SkipValidation[CandidateSubmission | None] = None,
+        review_candidate_id: ReviewCandidateId | None = None,
     ) -> dict:
         """Release your lease. This does NOT close the issue; update_issue does.
         Call `update_issue(status=...)` separately when the work is finished.
@@ -283,7 +288,27 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         findings (P1/P2/P3 counts), and usage are reported by the agent, not
         verified by Athena. Usage is not metered. Shapes, limits and the credential guard:
         docs/CLOSEOUT_RECIPE.md.
+
+        Optionally submit an immutable candidate with candidate_submission or
+        review one exact current candidate with review_candidate_id, never both.
+        Either requires your own active generation. A submission requires identity
+        {kind,source,revision} and expected_previous_candidate_id (explicit null
+        for the first submission). Review from a distinct issue in the same project
+        as an account distinct from the submitter. Read the complete subject in full
+        get_issue_work_context first; stale reviews refuse, never retarget.
+        Receipts may be historical on retry; declared identity and reported PASS
+        grant no acceptance or merge authority. See docs/CLOSEOUT_RECIPE.md.
         """
+        # FastMCP includes Pydantic's raw rejected input in tool errors. Keep
+        # the public schema and validate here so a rejected source stays private.
+        submission = None
+        if candidate_submission is not None:
+            try:
+                submission = CandidateSubmission.model_validate(
+                    candidate_submission
+                ).model_dump()
+            except ValidationError:
+                raise ValueError("candidate submission validation error") from None
         return client.complete_claim(
             issue_id,
             generation=generation,
@@ -295,6 +320,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             verdict=verdict,
             findings=findings,
             usage=usage,
+            candidate_submission=submission,
+            review_candidate_id=review_candidate_id,
         )
 
     @mutation_tool

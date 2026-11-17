@@ -491,6 +491,7 @@ def _read_arguments(board) -> dict[str, dict]:
         "get_page_version": {"page_id": page_id, "version": 1},
         "get_project_floor": {"project_id": project_id},
         "get_project_brief": {"project_id": project_id},
+        "get_project_review_queue": {"project_id": project_id},
         "get_run_control": {"control_id": 1},
         "get_run_fork_contract": {
             "run_id": "slim-run",

@@ -123,6 +123,7 @@ every native-only mechanism *already* excludes imported rows:
 | Undo | refuses with `undo_imported_event` |
 | Lifecycle facts (0055) | `imported_at IS NULL` |
 | Claim handoffs (0058) | `imported_at IS NULL` |
+| Exact-version candidates and reviews (0082) | `imported_at IS NULL` |
 | Assignee facts (0068) | `imported_at IS NULL` |
 | Fleet metrics | `imported_at IS NULL` |
 | Attention rollup, security refusal counters | `imported_at IS NULL` — **added after the adversarial review** (Wave H-0); this table claimed the guard before it existed. A back-dated import could otherwise plant fake refusals on `/admin/security` and inflate the attention card |

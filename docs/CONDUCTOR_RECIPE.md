@@ -23,9 +23,9 @@ Distinct account names alone do not prove independent review.
 
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment. This selects the 26
-`seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_issue_history`,
+`seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
 `assign_issue`, `delegate_issue`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 35 tools before scope filtering. `docs:write` is optional for this
+`link_issues`: 36 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -98,11 +98,36 @@ record its repository/revision or exact path, SHA-256 digest and relevant test
 evidence. The independent reviewer reads and tests **those bytes**, and reports the
 same subject. A PASS for an earlier candidate does not cover changed bytes.
 
-Use `comment_on_issue` for inspectable evidence, then `complete_claim` with the exact
-generation, results, unfinished work, uncertainty, evidence, and an honest reported
-verdict/findings. Include the artifact digest in evidence and name the subject in
-results; shapes are in [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md). A reported PASS is
-advisory: Athena does not verify correctness, independence or acceptance.
+The builder reads full source-issue context, then uses `complete_claim` with its
+own active generation and `candidate_submission={"identity": {"kind": "git",
+"source": "owner/repository", "revision": full_commit_hash},
+"expected_previous_candidate_id": previous_candidate_id}`. Use explicit null for
+the first submission; otherwise use the current candidate ID. Add the ordinary
+results, evidence, uncertainty and honest reported verdict. One request submits
+the immutable candidate and releases the lease; there is no separate publication
+call. Keep the returned candidate ID and source completion-event ID.
+
+The reviewer reads the source issue's **full** context and reviews that exact
+identity while holding its separate review issue. It completes that review issue
+with `review_candidate_id=candidate_id`, its own active generation, and the
+ordinary report. Both issues must currently belong to the same non-null project,
+be non-archived, and remain visible along with the original candidate event; the
+reviewer account must differ from the submitting account. A stale candidate
+returns409 with the lease intact. Do not attach an old review to a replacement.
+Use ordinary completion without association if finishing only historical or
+unfinished work. [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md#exact-version-submission-and-review)
+has the strict identity/CAS grammar and retry boundaries.
+
+`get_project_review_queue(project_id=..., limit=5)` gives the conductor current
+visible candidates and their latest exact-candidate reported review. A fresh
+submission, even of the same bytes, starts without an inherited PASS. Full source
+context preserves the newest five visible candidate summaries and their guarded
+latest reviews, with explicit clipping; it is not exhaustive history. A hidden
+latest review looks the same as awaiting review; an absent/malformed verdict is
+unknown, never a fallback to an older PASS. A reported PASS remains advisory:
+Athena does not verify correctness, independence or acceptance. Neither the queue
+nor brief context is a claim precondition. Selective project portability omits
+candidate/review associations; whole-database recovery retains them.
 
 On **HOLD**, the conductor records the concrete finding and reopens/routes the build
 slice for rework. The builder claims again, produces a new frozen candidate and
