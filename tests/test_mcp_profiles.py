@@ -77,6 +77,7 @@ CONDUCTOR_ADDITIONS = frozenset(
         "get_project_review_queue",
         "get_issue_history",
         "assign_issue",
+        "request_candidate_review",
         "delegate_issue",
         "set_issue_parent",
         "list_subtasks",
@@ -120,7 +121,7 @@ def test_the_knowledge_profile_adds_exactly_the_audits_eleven():
     )
 
 
-def test_the_conductor_adds_exactly_the_ten_coordination_tools():
+def test_the_conductor_adds_exactly_the_coordination_tools():
     assert SEAT.isdisjoint(CONDUCTOR_ADDITIONS)
     assert mcp_server.PROFILES["conductor"] == SEAT | CONDUCTOR_ADDITIONS
     assert _names(SEAT_SCOPES, mcp_server.PROFILES["conductor"]) == (
@@ -143,9 +144,9 @@ def test_the_four_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 34),
-        ("conductor", SEAT_SCOPES, 36),
-        ("conductor", ISSUE_ONLY, 36),
-        ("conductor", ADMIN, 36),
+        ("conductor", SEAT_SCOPES, 37),
+        ("conductor", ISSUE_ONLY, 37),
+        ("conductor", ADMIN, 37),
         ("conductor", READ_TOKEN, 17),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
@@ -197,7 +198,13 @@ def test_bulk_acknowledgement_is_in_no_seat_profile():
 
 def test_conductor_assignment_and_delegation_still_require_issue_write():
     profile = mcp_server.PROFILES["conductor"]
-    writes = {"assign_issue", "delegate_issue", "set_issue_parent", "link_issues"}
+    writes = {
+        "assign_issue",
+        "delegate_issue",
+        "set_issue_parent",
+        "link_issues",
+        "request_candidate_review",
+    }
     for scopes in (READ_TOKEN, DOCS_ONLY):
         assert writes.isdisjoint(_names(scopes, profile))
     assert writes <= _names(ISSUE_ONLY, profile)

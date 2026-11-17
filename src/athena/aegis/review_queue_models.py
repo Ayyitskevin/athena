@@ -52,6 +52,33 @@ class ReviewQueueItem(StrictReviewModel):
     latest_review: LatestCandidateReview | None
 
 
+class ReviewRequest(StrictReviewModel):
+    request_id: int
+    candidate_id: int
+    review_issue_id: int
+    reviewer_id: int
+    status: Literal["requested", "picked_up", "superseded", "fulfilled"]
+    reviewer_holds_active_lease: bool
+    identity: CandidateIdentity
+    source_issue_id: int
+    completion_event_id: int
+    source_work_context_url: str
+
+
+class CandidateRequests(StrictReviewModel):
+    items: list[ReviewRequest]
+    visible_total: int
+    returned: int
+    limit: Literal[5]
+    clipped: bool
+
+
+class ProjectQueueItem(ReviewQueueItem):
+    review_requests: CandidateRequests | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
 class HistoricalCandidate(ReviewQueueItem):
     is_current: bool
 
@@ -80,7 +107,7 @@ class ProjectReviewQueue(StrictReviewModel):
     scope: Literal["visible_to_request_actor"]
     observed_at: str
     project: ReviewProject
-    items: list[ReviewQueueItem]
+    items: list[ProjectQueueItem]
     visible_total: int
     returned: int
     limit: int

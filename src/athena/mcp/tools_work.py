@@ -11,6 +11,8 @@ from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
 from athena.mcp.server import (
     ClaimNextLeaseSeconds,
     ClaimNextLimit,
+    DispatchIssueId,
+    FleetAgentId,
     ClaimYieldNote,
     HandoffAttemptedWork,
     HandoffBlockingQuestion,
@@ -134,6 +136,21 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         Use list_users to resolve agent user ids."""
         return client.delegate_issue(
             issue_id, agent_user_id, idempotency_key=idempotency_key
+        )
+
+    @mutation_tool
+    def request_candidate_review(
+        review_issue_id: DispatchIssueId,
+        candidate_id: ReviewCandidateId,
+        reviewer_id: FleetAgentId,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Ask a named reviewer to review an exact candidate on an existing review issue.
+        The reviewer must already be assigned or delegated and able to see the submission.
+        The request appears on their desk. The reviewer claims the issue separately.
+        Each replacement candidate needs an explicit new request."""
+        return client.request_candidate_review(
+            review_issue_id, candidate_id, reviewer_id, idempotency_key=idempotency_key
         )
 
     @tool

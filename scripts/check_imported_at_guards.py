@@ -137,6 +137,18 @@ MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
 EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
     (
         "aegis/review_commands.py",
+        "latest_visible_request",
+        r"a\.imported_at IS NULL",
+        "request binding requires the canonical native request event",
+    ),
+    (
+        "aegis/review_request_projection.py",
+        "visible_requests",
+        r"a\.imported_at IS NULL",
+        "requests, submissions, successors and canonical fulfillment require visible native evidence",
+    ),
+    (
+        "aegis/review_commands.py",
         "visible_candidate",
         r"a\.imported_at IS NULL",
         "candidate submission and review authority requires native source evidence",

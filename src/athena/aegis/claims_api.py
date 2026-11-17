@@ -21,9 +21,14 @@ from athena.aegis import (
     lease_commands,
     leases,
     ready_claim_commands,
+    review_request_commands,
 )
 from athena.core import (
     access,
+)
+from athena.aegis.review_models import (
+    CandidateReviewRequest,
+    CandidateReviewRequestReceipt,
 )
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.core.deps import get_conn
@@ -42,6 +47,29 @@ from athena.aegis.rest_support import (
     issue_command_http_error,
     issue_for_read,
 )
+
+
+@router.post(
+    "/{review_issue_id}/review-requests", response_model=CandidateReviewRequestReceipt
+)
+def request_candidate_review(
+    review_issue_id: RowIdPath,
+    payload: CandidateReviewRequest,
+    response: Response,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """Request an exact submission review on an existing issue."""
+    try:
+        receipt = review_request_commands.request_candidate_review(
+            conn, actor=actor, review_issue_id=review_issue_id, **payload.model_dump()
+        )
+    except issue_commands.IssueCommandError as exc:
+        error = issue_command_http_error(exc)
+        error.headers = PRIVATE_LEASE_HEADERS
+        raise error from exc
+    response.headers.update(PRIVATE_LEASE_HEADERS)
+    return receipt
 
 
 class ContributorOut(BaseModel):

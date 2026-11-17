@@ -42,6 +42,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [FLEET_METRICS.md](FLEET_METRICS.md) | Fleet throughput metrics — the first accepted vertical slice. |
 | [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) | Wiring a real agent runtime (MCP config, token) to close the operator loop — Athena ships no runtime on purpose. |
 | [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) | A member conductor coordinates architect, builder and independent reviewer accounts through existing scoped tools, with explicit ownership and evidence. |
+| [REVIEW_REQUEST_SPEC.md](REVIEW_REQUEST_SPEC.md) | Named review requests, pickup, fulfillment and recovery after candidate replacement. |
 | [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md) | Exact-version submissions and linked reviews, bounded queue/history, visibility and authority boundaries. |
 | [../examples/desk_loop.md](../examples/desk_loop.md) | A prompt you can hand an agent verbatim: desk → claim one thing → work → learn → put it down. |
 

@@ -108,7 +108,7 @@ names a smaller set:
 | `full` (the default; unset or empty means the same) | everything the token can use | operators, embedding callers, anything that is not a seat |
 | `seat` | the core loop: `my_desk`, `advance_desk_cursor`, `list_my_delegated_work`, `search_work`, `get_issue`, `get_issue_work_context`, `list_issue_comments`, `get_issue_lease`, `claim_issue`, `yield_claim`, `resume_claim_handoff`, `complete_claim`, `decline_delegation`, `update_issue`, `comment_on_issue`, `create_issue`, `heartbeat_agent_run`, `current_run`, `list_notifications`, `mark_notification_read`, `list_run_controls`, `acknowledge_run_control`, `complete_run_control`, `decline_run_control` | a seat working issues |
 | `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues` | a seat that also reads and writes pages |
-| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `assign_issue`, `delegate_issue`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating supplied role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
+| `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating supplied role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
 
 A profile intersects the scope filter: it can hide a tool the token could use,
 never show one it could not, and the REST layer stays the boundary either way.
@@ -117,7 +117,7 @@ a seat's move. An unknown value stops the server with a message naming the
 four profiles; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
 profile also includes `claim_next_ready` and `wait_for_events`: 26 tools for a
-normal seat, 37 with knowledge, or 36 for a conductor, before any narrower token
+normal seat, 37 with knowledge, or 37 for a conductor, before any narrower token
 scope removes more. The conductor profile adds no admin tools or permission.
 `get_project_brief(project_id=..., limit=5)` provides a bounded project snapshot;
 it does not replace desk boot or full issue work context for claims and recovery.

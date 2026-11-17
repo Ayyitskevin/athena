@@ -40,6 +40,7 @@ from athena.aegis import (
     leases,
     office,
     ready_queue,
+    review_request_projection,
     run_state,
     work_progress,
 )
@@ -210,6 +211,10 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
         conn, actor=actor, now=lease_now, limit=HANDOFFS_LIMIT
     )
 
+    review_requests = review_request_projection.visible_requests(
+        conn, actor=actor, lane="desk", scope_id=user_id, now=lease_now
+    )
+
     # --- signals: what changed while I was away ------------------------------
     cursor = desk_cursors.get_cursor(conn, user_id=user_id, name=DESK_CURSOR)
     after_id = None if cursor is None else int(cursor["after_id"])
@@ -239,6 +244,11 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
             "notebook": agent_notebook.desk_lane(conn, actor),
         },
         "asks": {
+            **(
+                {"review_requests": review_requests}
+                if review_requests is not None
+                else {}
+            ),
             "run_controls": {
                 "items": open_controls,
                 "limit": CONTROLS_LIMIT,

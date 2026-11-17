@@ -238,8 +238,9 @@ def test_additive_migration_preserves_populated_baseline_without_backfill(
         old_ledger = [
             tuple(row) for row in conn.execute("SELECT * FROM schema_migrations")
         ]
-        monkeypatch.setattr(db, "MIGRATIONS_DIR", current_dir)
-        assert db.migrate(conn) == ["0082_issue_review_candidates.sql"]
+        migration = current_dir / "0082_issue_review_candidates.sql"
+        shutil.copy2(migration, baseline / migration.name)
+        assert db.migrate(conn) == [migration.name]
         assert db.migration_status(conn).current
         assert [tuple(row) for row in conn.execute("SELECT * FROM schema_migrations")][
             :-1

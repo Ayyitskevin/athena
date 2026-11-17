@@ -245,7 +245,7 @@ snapshot. An old build refuses the newer migration ledger; restore a separate
 pre-upgrade snapshot to use it again. Candidate history written after that snapshot
 will be absent: this is not a lossless downgrade. Rehearse upgrades and restoration
 on synthetic copies; repository delivery does not authorize a live migration or
-restart. See [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md).
+restart. Migration 0083 adds exact-version review requests. Selective project exports omit these operational associations. Full database backups retain them. See [REVIEW_QUEUE_SPEC.md](REVIEW_QUEUE_SPEC.md) and [REVIEW_REQUEST_SPEC.md](REVIEW_REQUEST_SPEC.md).
 
 ## Single Sign-On (OIDC)
 

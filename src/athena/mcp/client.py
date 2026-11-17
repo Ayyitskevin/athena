@@ -461,6 +461,22 @@ class AthenaClient:
             idempotency_key=idempotency_key,
         )
 
+    def request_candidate_review(
+        self,
+        review_issue_id: int,
+        candidate_id: int,
+        reviewer_id: int,
+        *,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Ask an eligible reviewer to examine this exact submission."""
+        return self._mutate(
+            self._client.post,
+            f"/issues/{review_issue_id}/review-requests",
+            json={"candidate_id": candidate_id, "reviewer_id": reviewer_id},
+            idempotency_key=idempotency_key,
+        )
+
     def get_issue_lease(self, issue_id: int) -> Any:
         """Who holds the exclusive claim on this issue right now (or null if unclaimed).
         Check it before claiming to see whether another agent is already working it."""
