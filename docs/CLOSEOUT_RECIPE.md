@@ -3,7 +3,7 @@
 ## Optional reported completion
 
 `complete_claim` / `POST /issues/{id}/complete` may carry `verdict`, `findings`,
-`results`, `unfinished`, `uncertainty`, and `evidence` alongside the exact observed
+`usage`, `results`, `unfinished`, `uncertainty`, and `evidence` alongside the exact observed
 `generation`. These fields record what the actor **reported**, not what Athena
 verified. Omit them (or use null) for the existing release behavior and unchanged
 response. Empty lists report an empty list; they do not mean every check passed.
@@ -121,6 +121,55 @@ only its 30 newest actor-visible activity rows and reports clipping. Issue
 history labels these fields **reported** and escapes their text. Replay and
 exports preserve the original detail; imported history cannot become a native
 reported completion or actionable handoff merely by copying that text.
+
+### Optional reported usage
+
+`usage` records model work since your previous report, not cumulative totals.
+Report each interval once: Athena sums the reports. This is **reported by the
+agent, not metered by Athena**; it does not change the action budget, enforce a
+spending limit, or verify a completion. Omit it or use null when not reporting.
+The same shape is accepted by `heartbeat_agent_run`.
+
+When present, it must be a non-empty object containing only these optional fields:
+
+- `model`: 1–100 printable characters.
+- `input_tokens`, `output_tokens`, `cached_tokens`: integers from 0 to 10^12;
+  booleans are refused.
+- `estimated_cost` and `currency`: supply both or neither. Cost is a finite number
+  from 0 to 10^9, not a boolean; currency is an accepted uppercase ISO 4217 code
+  such as `USD`.
+- `reported_at`: an ISO 8601 timestamp with a UTC offset or `Z`, at most 40 characters.
+
+```json
+{
+  "usage": {
+    "model": "example-model",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "cached_tokens": 800,
+    "estimated_cost": 0.0123,
+    "currency": "USD",
+    "reported_at": "2026-11-17T12:00:00Z"
+  }
+}
+```
+
+Missing fields mean not reported, not zero. The usage object is included in the
+completion report's 8000-character limit. The write path also refuses recognized
+credentials in `model`; this has the same accident-guard limitations described
+above. Never submit secrets as model names.
+
+### What `complete_claim` tells you
+
+Releasing a claim does not close the issue: `update_issue(status=...)` (REST
+`PATCH /issues/{id}`) is the separate, deliberate second write. The 200 body
+repeats `issue_status` and `issue_still_open`, and `lapsed` says whether the row
+you cleared had already expired. A lapsed row of your own is cleared under the
+same rules; `my_desk()` lists its generation under `work.leases.lapsed`. While
+you hold the issue actively, an open claim handoff answers 409 until this exact
+leaseholder resumes it (`resume_claim_handoff`). Refs are inert data; never
+submit credentials, secret URLs, or tokens. A `not_met` result or an `unrun`
+reference does not block release.
 
 ## Deliberate closeout actions
 

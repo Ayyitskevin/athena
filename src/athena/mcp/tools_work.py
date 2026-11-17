@@ -61,7 +61,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     ) -> dict:
         """Update an issue. Send only the fields to change. status must be a name
         configured for its project (the backlog defaults to open/in_progress/done);
-        priority is low/medium/high/urgent.
+        priority is low/medium/high/urgent. if_match is optional: pass the issue's
+        current `_etag` when the update must not overwrite a revision you have not
+        seen; omitted, the update applies to the current revision.
 
         A successful transition into a done category may return held_lease for
         your own row. It describes the row at that transition, not current
@@ -147,22 +149,17 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         coordination_root: dict | None = None,
         idempotency_key: IdempotencyKey | None = None,
     ) -> dict:
-        """Claim or renew an issue only against the exact root issue revision reviewed.
-        Copy `issue_etag` from get_issue_work_context — never the
-        work-context packet's top-level `_etag`. Optional `paths` declares relative
-        POSIX files. coordination_root selects a current qualified operator catalog
-        digest/root_key/relative_prefix, not authority or caller-location proof.
-        No selector leaves nonempty paths unresolved; this does not diagnose
-        whether the operator has configured a qualified catalog. A stale explicit
-        selector refuses, never falls back. See docs/ACTIVE_WORK.md, Qualified
-        declared work roots, for the operator qualification workflow; never infer
-        a root from host/repo/branch strings or use [] as a conflict bypass.
-        Unknown nonempty origins conflict conservatively. Renewal omission/null
-        retains root/paths; explicit [] means issue-only under generation/ETag/audit.
-        Actual root changes need new possession. Explicit root echo must confirm;
-        an unconfirmed success may already exist: read state, never weaken/retry.
-        Omit generation to acquire only a free/expired lease. lease_seconds defaults
-        to 30 minutes."""
+        """Claim or renew an issue against the exact root issue revision you
+        reviewed. if_match is the issue ETag: `_etag` from get_issue or
+        `issue_etag` from get_issue_work_context (the same value; not the
+        work-context packet's own top-level `_etag`). Omit generation to acquire
+        a free or expired lease; if you already hold the issue the call is a
+        renewal and needs your current generation (the 428 names it).
+        lease_seconds defaults to 30 minutes. Optional `paths` declares relative
+        POSIX files and `coordination_root` selects an operator-qualified root;
+        see docs/ACTIVE_WORK.md, Qualified declared work roots, for the rules and
+        for what a renewal keeps or replaces. No selector leaves nonempty paths
+        unresolved; a stale explicit selector refuses, never falls back."""
         return client.claim_issue(
             issue_id,
             if_match=if_match,
@@ -173,10 +170,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    # Registered with the plain decorator: it takes no idempotency key and no
-    # if_match (it reads the fresh root ETag itself). Its retry safety is the
-    # already_holding refusal: a retried call never takes a second issue.
-    @tool
+    # A write with shared guidance but no retry key or if_match: it reads the
+    # fresh root ETag itself, and already_holding prevents a second claim.
+    @mutation_tool
     def claim_next_ready(limit: int = 1, lease_seconds: int | None = None) -> dict:
         """Claim the next issue in your ready lane (my_desk work.ready) through
         the ordinary claim, against the issue's current revision. Ready = visible,
@@ -187,7 +183,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         work_context_etag, plus previous_lease/open_handoff labels; or
         claimed=false with reason already_holding, nothing_ready, or lost_race
         (per-candidate attempts listed). Read the work context next; an
-        open_handoff means resume_claim_handoff after claiming."""
+        open_handoff means resume_claim_handoff after claiming. Takes no idempotency key:
+        while you hold an issue, a repeat answers already_holding instead of taking another."""
         return client.claim_next_ready(limit=limit, lease_seconds=lease_seconds)
 
     @mutation_tool
@@ -256,44 +253,26 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         findings: dict[str, int] | None = None,
         usage: dict | None = None,
     ) -> dict:
-        """Release a claim with optional reported conditions, residuals, and evidence.
-        Clear your own lapsed lease under the same rules. This does
-        NOT mark the issue done. The 200 body repeats issue_status and
-        issue_still_open, and `lapsed` says whether the row you cleared had
-        already expired; PATCH the issue to `done` separately if the work is
-        finished. While you hold it ACTIVELY, an open claim handoff returns 409
-        until this exact leaseholder explicitly resumes it. Pass the lapsed
-        row's generation — my_desk lists it under work.leases.lapsed.
+        """Release your lease. This does NOT close the issue; update_issue does.
+        Call `update_issue(status=...)` separately when the work is finished.
 
-        results is up to 20 {condition,state,note} objects; state is met,
-        not_met, not_assessed, or inconclusive. not_assessed means the condition
-        was not evaluated; for example, an integration check was never run.
-        inconclusive means an evaluation was attempted but did not establish
-        met or not_met; for example, an integration check ran but timed out
-        before producing a result. unfinished and uncertainty are
-        up to 10 text items each. evidence is up to 10 {kind,source,ref,scope}
-        objects, each optionally adding digest (SHA-256, 64 lowercase hex), bytes
-        and locator; a result may add subject, a list of texts naming what it
-        judged. kind event/handoff/doc/file/manifest/attachment/forge_event
-        (attachment and forge_event: ref is the row's numeric id). Only shape is
-        validated, except that an attachment on the same issue with a digest is
-        compared with its stored digest and shown as matches stored attachment or
-        unverified reference; a mismatch is shown, never refused. scope source-only,
-        synthetic, actual-run, or unrun. The total encoded report is at most
-        8000 characters. verdict is optional and one of PASS, PASS-WITH-NOTES,
-        HOLD, BLOCKED, exactly as written. findings is optional: an object of
-        P1, P2, P3 to non-negative integers; a key you omit means not stated,
-        not zero, and an empty object is refused. Both are your own assertion,
-        shown as reported; Athena does not verify them or score anything from
-        them. usage is optional: model, input_tokens, output_tokens,
-        cached_tokens, estimated_cost with currency (ISO 4217), reported_at (ISO
-        8601 with offset), covering the work since your last report; it is shown
-        as reported by the agent, not metered by Athena, and limits nothing. All are advisory reports, never success, approval, or
-        authority. not_met and unrun do not block release. Refs are inert data;
-        never submit credentials, secret URLs, or tokens. See CLOSEOUT_RECIPE.
-        New report text refuses recognized credential shapes without redaction;
-        correct the named field and retry. Existing history is untouched. This
-        accident guard misses unknown/encoded formats and arbitrary passwords.
+        Pass the exact generation you hold, or for a lapsed row of your own the
+        generation `my_desk()` lists under work.leases.lapsed. The 200 body
+        repeats issue_status and issue_still_open, and `lapsed` says whether the
+        row you cleared had already expired. While you hold the issue actively,
+        an open claim handoff answers 409 until you resume it.
+
+        results, unfinished, uncertainty and evidence are optional advisory
+        reports, never success, approval or authority. results is up to 20
+        {condition,state,note} objects; state is met, not_met, not_assessed or
+        inconclusive. not_assessed means the condition was not evaluated; for
+        example, an integration check was never run. inconclusive means an
+        evaluation was attempted but did not establish met or not_met; for
+        example, an integration check ran but timed out before producing a
+        result. Optional verdict (PASS, PASS-WITH-NOTES, HOLD, BLOCKED),
+        findings (P1/P2/P3 counts), and usage are reported by the agent, not
+        verified by Athena. Usage is not metered. Shapes, limits and the credential guard:
+        docs/CLOSEOUT_RECIPE.md.
         """
         return client.complete_claim(
             issue_id,
@@ -318,7 +297,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         contributor set so the work is visibly refused, not silently dropped, and an
         operator can re-route it. If you hold an active lease, pass its exact
         generation so decline releases only that possession. Returns the remaining
-        contributors."""
+        contributors; an empty list is success (nobody else is attached), not a
+        failure."""
         return client.decline_delegation(
             issue_id,
             generation=generation,
