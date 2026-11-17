@@ -142,6 +142,8 @@ def test_missing_and_hidden_project_have_same_reader_shape(board):
     "relative,function",
     [
         ("aegis/review_commands.py", "visible_candidate"),
+        ("aegis/review_commands.py", "latest_visible_request"),
+        ("aegis/review_request_projection.py", "visible_requests"),
         ("aegis/review_queue.py", "_candidate_base"),
         ("aegis/review_queue.py", "_latest_review"),
     ],

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import sqlite3
 from typing import Any
 
-from athena.aegis import lease_commands, projects
+from athena.aegis import lease_commands, projects, review_request_projection
 from athena.aegis.project_brief import _category_sql, _excerpt, _person, _rows, _group
 from athena.aegis.review_commands import latest_candidate_id
 from athena.core import access, db
@@ -159,6 +159,19 @@ def build_project_review_queue(
             order="c.id DESC, i.id",
             limit=limit,
         )
+        items = []
+        for row in rows:
+            item = _item(conn, row, actor)
+            requests = review_request_projection.visible_requests(
+                conn,
+                actor=actor,
+                lane="candidate",
+                scope_id=row["candidate_id"],
+                now=now,
+            )
+            if requests is not None:
+                item["review_requests"] = requests
+            items.append(item)
         return {
             "schema": "athena.project_review_queue.v1",
             "scope": "visible_to_request_actor",
@@ -168,7 +181,7 @@ def build_project_review_queue(
                 "key": project["key"],
                 "name": _excerpt(project["name"]),
             },
-            **_group(total, [_item(conn, row, actor) for row in rows], limit),
+            **_group(total, items, limit),
             "semantics": {
                 "snapshot": "current_visible_snapshot",
                 "review_states": "advisory actor reports, not verification or acceptance",

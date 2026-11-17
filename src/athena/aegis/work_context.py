@@ -19,6 +19,7 @@ from athena.aegis import (
     issues,
     lease_commands,
     review_queue,
+    review_request_projection,
     statuses,
 )
 from athena.core import (
@@ -726,6 +727,11 @@ def build_work_context(
         # New bounded review history cannot introduce context_clipped there.
         if brief:
             return brief_work_context(payload)
+        requests = review_request_projection.visible_requests(
+            conn, actor=actor, lane="review_issue", scope_id=issue["id"]
+        )
+        if requests is not None:
+            payload["review_request"] = requests["items"][0]
         tracking = review_queue.issue_review_tracking(
             conn, issue_id=issue["id"], actor=actor
         )
