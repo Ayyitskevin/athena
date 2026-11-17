@@ -1,7 +1,8 @@
 # Coordination reliability: review and implementation specification
 
 Date: 2026-11-17. Review baseline: `857fced670f8a8336b3c0de866221e3269126801`.
-Status: proposed; independent specification review precedes implementation.
+Status: accepted for implementation after independent review on 2026-11-17.
+Review corrections preserve backlog visibility and latest-renewal run attribution.
 
 ## Purpose
 
