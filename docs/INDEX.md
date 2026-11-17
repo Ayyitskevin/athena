@@ -39,6 +39,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [DISPATCH.md](DISPATCH.md) | Handing work to an external executor (Icarus): control plane here, execution fleet there, no shared store. |
 | [FLEET_METRICS.md](FLEET_METRICS.md) | Fleet throughput metrics — the first accepted vertical slice. |
 | [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) | Wiring a real agent runtime (MCP config, token) to close the operator loop — Athena ships no runtime on purpose. |
+| [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) | A member conductor coordinates architect, builder and independent reviewer accounts through existing scoped tools, with explicit ownership and evidence. |
 | [../examples/desk_loop.md](../examples/desk_loop.md) | A prompt you can hand an agent verbatim: desk → claim one thing → work → learn → put it down. |
 
 ## The knowledge module (Mentor)

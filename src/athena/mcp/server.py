@@ -443,7 +443,9 @@ def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
 # `seat` is the core loop a seat's real run needs: orient, find work, read one
 # issue, claim, heartbeat, comment, complete or yield, acknowledge what you
 # handled, answer run controls. `seat+knowledge` adds pages, learnings, labels
-# and links. Neither carries `mark_notifications_read`: K2 forbids bulk
+# and links. `conductor` adds assignment, delegation, dependencies and visible
+# project observation to the core loop, without administrative tools.
+# None carries `mark_notifications_read`: K2 forbids bulk
 # acknowledgement, so a seat under a profile cannot see the bulk tool at all
 # (the targeted `mark_notification_read` stays).
 #
@@ -495,10 +497,23 @@ KNOWLEDGE_PROFILE: frozenset[str] = frozenset(
         "link_issues",
     }
 )
+CONDUCTOR_PROFILE: frozenset[str] = SEAT_PROFILE | frozenset(
+    {
+        "get_attention_ranking",
+        "get_project_floor",
+        "get_issue_history",
+        "assign_issue",
+        "delegate_issue",
+        "set_issue_parent",
+        "list_subtasks",
+        "link_issues",
+    }
+)
 PROFILES: dict[str, frozenset[str] | None] = {
     "full": None,
     "seat": SEAT_PROFILE,
     "seat+knowledge": SEAT_PROFILE | KNOWLEDGE_PROFILE,
+    "conductor": CONDUCTOR_PROFILE,
 }
 
 

@@ -146,7 +146,8 @@ this time. It does not show that any work happened, does not renew your lease, a
 not prove that a process is running. Progress is a change to the work itself: an
 audited comment, a status change, an edit. Make those under the same run id.
 
-Progress views that count those changes are **pending in PR** (`claude/progress-freshness`).
+Progress views expose recorded work separately from check-ins and lease renewal.
+See [ACTIVE_WORK.md](ACTIVE_WORK.md) for the counted events and freshness limits.
 
 ## 6. Comment
 
@@ -170,7 +171,7 @@ HTTP 201.
 
 ## 7. Complete with a structured report
 
-MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?)` ·
+MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?, verdict?, findings?, usage?)` ·
 REST `POST /issues/{issue_id}/complete`
 
 Completing releases your lease. It does not close the issue.
@@ -196,8 +197,8 @@ Content-Type: application/json
 HTTP 200.
 
 Each result has `state` of `met`, `not_met`, `not_assessed` or `inconclusive`. The
-report records what you say; it is not a verdict. Do not put credentials or tokens in
-it. The write is refused, and the refusal names only the field.
+report records what you say; it is not an independent assessment. Do not put
+credentials or tokens in it. The write is refused, and the refusal names only the field.
 
 Closing the issue is a separate call. MCP `update_issue(issue_id, status="done")` ·
 REST `PATCH /issues/{issue_id}` `{"status":"done"}`. If the operator gates closing this
@@ -212,7 +213,9 @@ action, you get this refusal and must ask:
 HTTP 202. Wait for the decision, then retry the same write. An approval is single-use.
 See [APPROVALS.md](APPROVALS.md).
 
-A completion verdict and per-finding counts are **pending in PR** (`claude/completion-verdict`).
+Optional `verdict` (`PASS`, `PASS-WITH-NOTES`, `HOLD`, `BLOCKED`) and `findings`
+(P1/P2/P3 counts) are actor reports. Athena does not verify them or turn them into
+approval, acceptance or an issue close. See [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md).
 
 ## 8. Hand off or yield
 
@@ -277,11 +280,9 @@ These are not on main yet. Do not rely on them until they merge.
 
 | Feature | Branch |
 |---|---|
-| Progress view: whether claimed work is moving, shown beside check-ins | `claude/progress-freshness` |
 | Age and idle query atoms, and unclaimed-delegation signal (stacked on the progress branch) | `claude/age-and-delegation` |
-| Completion verdict and per-finding counts in the report | `claude/completion-verdict` |
 | Inbox rows show whether their target is archived, closed, or completed by you | `claude/inbox-target-state` |
 
 ## Read next
 
-[DESK.md](DESK.md) · [QUERY.md](QUERY.md) · [RUNS.md](RUNS.md) · [ACTIVE_WORK.md](ACTIVE_WORK.md) · [APPROVALS.md](APPROVALS.md) · [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md) · [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)
+[DESK.md](DESK.md) · [QUERY.md](QUERY.md) · [RUNS.md](RUNS.md) · [ACTIVE_WORK.md](ACTIVE_WORK.md) · [APPROVALS.md](APPROVALS.md) · [CLOSEOUT_RECIPE.md](CLOSEOUT_RECIPE.md) · [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) · [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md)

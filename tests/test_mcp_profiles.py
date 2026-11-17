@@ -69,6 +69,18 @@ KNOWLEDGE = frozenset(
         "link_issues",
     }
 )
+CONDUCTOR_ADDITIONS = frozenset(
+    {
+        "get_attention_ranking",
+        "get_project_floor",
+        "get_issue_history",
+        "assign_issue",
+        "delegate_issue",
+        "set_issue_parent",
+        "list_subtasks",
+        "link_issues",
+    }
+)
 
 READ_TOKEN = frozenset({"read"})
 ISSUE_ONLY = frozenset({"read", "issue:write"})
@@ -106,8 +118,16 @@ def test_the_knowledge_profile_adds_exactly_the_audits_eleven():
     )
 
 
-def test_the_three_profiles_are_the_whole_vocabulary():
-    assert set(mcp_server.PROFILES) == {"seat", "seat+knowledge", "full"}
+def test_the_conductor_adds_exactly_the_eight_coordination_tools():
+    assert SEAT.isdisjoint(CONDUCTOR_ADDITIONS)
+    assert mcp_server.PROFILES["conductor"] == SEAT | CONDUCTOR_ADDITIONS
+    assert _names(SEAT_SCOPES, mcp_server.PROFILES["conductor"]) == (
+        SEAT | CONDUCTOR_ADDITIONS
+    )
+
+
+def test_the_four_profiles_are_the_whole_vocabulary():
+    assert set(mcp_server.PROFILES) == {"seat", "seat+knowledge", "conductor", "full"}
     assert mcp_server.PROFILES["full"] is None
 
 
@@ -121,6 +141,13 @@ def test_the_three_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 34),
+        ("conductor", SEAT_SCOPES, 34),
+        ("conductor", ISSUE_ONLY, 34),
+        ("conductor", ADMIN, 34),
+        ("conductor", READ_TOKEN, 15),
+        # docs:write permits six inherited any-write tools (cursor, heartbeat,
+        # targeted notification ack and own controls), but no issue writes.
+        ("conductor", DOCS_ONLY, 21),
         # the eleven reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_lease, current_run, list_notifications, list_run_controls,
@@ -158,7 +185,7 @@ def test_a_profile_never_exposes_a_tool_the_scope_filter_hides():
 def test_bulk_acknowledgement_is_in_no_seat_profile():
     # WHY: K2. A seat under a profile cannot see the bulk tool at all; the
     # targeted one stays. Under `full` nothing changes, which is the control.
-    for profile_name in ("seat", "seat+knowledge"):
+    for profile_name in ("seat", "seat+knowledge", "conductor"):
         profile = mcp_server.PROFILES[profile_name]
         for scopes in (SEAT_SCOPES, ADMIN, None):
             assert "mark_notifications_read" not in _names(scopes, profile)
@@ -166,10 +193,49 @@ def test_bulk_acknowledgement_is_in_no_seat_profile():
     assert "mark_notifications_read" in _names(SEAT_SCOPES, mcp_server.PROFILES["full"])
 
 
+def test_conductor_assignment_and_delegation_still_require_issue_write():
+    profile = mcp_server.PROFILES["conductor"]
+    writes = {"assign_issue", "delegate_issue", "set_issue_parent", "link_issues"}
+    for scopes in (READ_TOKEN, DOCS_ONLY):
+        assert writes.isdisjoint(_names(scopes, profile))
+    assert writes <= _names(ISSUE_ONLY, profile)
+    assert _names(READ_TOKEN, profile) == {
+        "my_desk",
+        "list_my_delegated_work",
+        "search_work",
+        "get_issue",
+        "get_issue_work_context",
+        "list_issue_comments",
+        "get_issue_lease",
+        "current_run",
+        "list_notifications",
+        "list_run_controls",
+        "wait_for_events",
+        "get_attention_ranking",
+        "get_project_floor",
+        "get_issue_history",
+        "list_subtasks",
+    }
+    server = mcp_server.build_server(_NoServer(), scopes=READ_TOKEN, profile=profile)
+    for tool in asyncio.run(server.list_tools()):
+        assert tool.annotations is None or tool.annotations.readOnlyHint is not False
+
+
+def test_conductor_never_carries_admin_tools_even_with_admin_credentials():
+    admin_tools = {
+        name
+        for name, scope in mcp_server.TOOL_SCOPES.items()
+        if scope == tokens.ADMIN_SCOPE
+    }
+    assert admin_tools  # This control must exercise a nonempty exclusion set.
+    for scopes in (SEAT_SCOPES, ADMIN, None):
+        assert admin_tools.isdisjoint(_names(scopes, mcp_server.PROFILES["conductor"]))
+
+
 # --- the environment knob -----------------------------------------------------------
 
 
-def test_profile_from_env_names_the_three_and_defaults_to_full():
+def test_profile_from_env_names_the_four_and_defaults_to_full():
     assert mcp_server.profile_from_env({}) is None
     assert mcp_server.profile_from_env({"ATHENA_MCP_PROFILE": ""}) is None
     assert mcp_server.profile_from_env({"ATHENA_MCP_PROFILE": "full"}) is None
@@ -181,6 +247,10 @@ def test_profile_from_env_names_the_three_and_defaults_to_full():
         mcp_server.profile_from_env({"ATHENA_MCP_PROFILE": "seat+knowledge"})
         == mcp_server.PROFILES["seat+knowledge"]
     )
+    assert (
+        mcp_server.profile_from_env({"ATHENA_MCP_PROFILE": " conductor "})
+        == mcp_server.PROFILES["conductor"]
+    )
 
 
 def test_an_unknown_profile_is_refused_not_silently_widened():
@@ -189,7 +259,7 @@ def test_an_unknown_profile_is_refused_not_silently_widened():
         mcp_server.profile_from_env({"ATHENA_MCP_PROFILE": "lite"})
     message = str(refused.value)
     assert "ATHENA_MCP_PROFILE" in message
-    for name in ("full", "seat", "seat+knowledge"):
+    for name in ("full", "seat", "seat+knowledge", "conductor"):
         assert name in message
 
 
