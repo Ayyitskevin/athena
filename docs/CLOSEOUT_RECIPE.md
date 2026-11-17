@@ -258,8 +258,12 @@ Include the ordinary issue ID and exact held generation too. Both nested keys
 are required: null means the first submission; for replacement supply the current
 candidate ID read from full work context. Each submission gets a fresh ID, even
 for A→A or A→B→A; an older PASS never follows equal bytes to the new submission.
-A predecessor mismatch or inaccessible predecessor returns generic409 with the
-lease intact. Refresh context; do not guess hidden IDs or reset history.
+A predecessor mismatch or inaccessible predecessor returns HTTP 409 and leaves
+the lease intact. Refresh the source issue's full work context. If the previous
+submission is still hidden, stop retrying and tell the conductor. The operator
+can restore the builder's access to the original project. Alternatively, yield
+the claim so a builder with access to both projects can claim the issue, resume
+the handoff, and submit using the visible predecessor ID.
 
 Identity has exactly `kind`, `source`, and `revision`. `kind` is `git` or
 `artifact`; source is inert, trimmed/nonblank UTF-8 text of 1–200 characters, with the
