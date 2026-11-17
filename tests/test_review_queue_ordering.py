@@ -190,25 +190,26 @@ def test_queue_counts_rows_and_reviews_share_one_wal_snapshot(board, monkeypatch
     from athena.aegis import review_queue
 
     conn, path, project = board
-    build = issue(conn, project)
+    build, check = issue(conn, project), issue(conn, project, assignee=3)
     first = submit(conn, build)
-    held = claim(conn, build)
+    held = claim(conn, check, 3)
     original = review_queue._rows
-    wrote = False
+    written_review = None
 
     def concurrent_write_after_count_and_rows(*args, **kwargs):
-        nonlocal wrote
+        nonlocal written_review
         result = original(*args, **kwargs)
-        if not wrote:
-            wrote = True
+        if written_review is None:
             writer = db.connect(path)
             try:
-                complete(
+                written_review = complete(
                     writer,
-                    build,
+                    check,
                     held,
-                    candidate_submission=submission(first["candidate_id"], "b" * 40),
-                )
+                    3,
+                    review_candidate_id=first["candidate_id"],
+                    verdict="PASS",
+                )["candidate_review"]
             finally:
                 writer.close()
         return result
@@ -217,7 +218,16 @@ def test_queue_counts_rows_and_reviews_share_one_wal_snapshot(board, monkeypatch
     packet = queue(conn, project)
     assert packet["visible_total"] == packet["returned"] == 1
     assert packet["items"][0]["candidate"]["candidate_id"] == first["candidate_id"]
+    # The enrichment happens after the concurrent write, so a reader that lost
+    # its snapshot would now leak the freshly appended PASS into this packet.
+    assert packet["items"][0]["review_state"] == "awaiting_review"
+    assert packet["items"][0]["latest_review"] is None
+    assert written_review is not None
+    after = queue(conn, project)["items"][0]
+    assert after["candidate"]["candidate_id"] == first["candidate_id"]
+    assert after["review_state"] == "reported_pass"
     assert (
-        queue(conn, project)["items"][0]["candidate"]["candidate_id"]
-        != first["candidate_id"]
+        after["latest_review"]["completion_event_id"]
+        == written_review["completion_event_id"]
     )
+    assert after["latest_review"]["review_id"] == written_review["review_id"]
