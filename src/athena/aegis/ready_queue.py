@@ -29,6 +29,7 @@ import sqlite3
 
 from athena.aegis import claim_handoffs, dependencies, issues, leases, statuses
 from athena.core import access, db, identity
+from athena.core.ids import MAX_SQLITE_INTEGER
 
 SCHEMA = "athena.ready_queue.v1"
 
@@ -107,6 +108,7 @@ def build_ready(
     actor: dict,
     now: datetime | None = None,
     limit: int = READY_LIMIT,
+    project_id: int | None = None,
 ) -> dict:
     """The actor's ready lane: up to ``limit`` items in claim order, with the total
     behind them, so a clipped list never reads as the whole queue. Read-only."""
@@ -114,12 +116,25 @@ def build_ready(
         raise ValueError("limit must be an integer")
     if not 1 <= limit <= MAX_READY_LIMIT:
         raise ValueError(f"limit must be between 1 and {MAX_READY_LIMIT}")
+    if project_id is not None and (
+        isinstance(project_id, bool)
+        or not isinstance(project_id, int)
+        or not 1 <= project_id <= MAX_SQLITE_INTEGER
+    ):
+        raise ValueError("project_id must be a positive signed 64-bit integer")
     with db.transaction(conn):
-        return _build_ready(conn, actor=actor, now=_now(now), limit=limit)
+        return _build_ready(
+            conn, actor=actor, now=_now(now), limit=limit, project_id=project_id
+        )
 
 
 def _build_ready(
-    conn: sqlite3.Connection, *, actor: dict, now: datetime, limit: int
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime,
+    limit: int,
+    project_id: int | None,
 ) -> dict:
     current = now
     category = statuses.category_sql(
@@ -134,6 +149,9 @@ def _build_ready(
         f"WHERE i.archived_at IS NULL AND {rule}{vis_sql}"
     )
     params = [*rule_params, *vis_params]
+    if project_id is not None:
+        base += " AND i.project_id = ?"
+        params.append(project_id)
     total = int(conn.execute(f"SELECT COUNT(*) AS n {base}", params).fetchone()["n"])
     me = int(actor["id"])
     rows = conn.execute(

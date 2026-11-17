@@ -20,11 +20,12 @@ from athena.aegis import (
     issues,
     lease_commands,
     leases,
+    ready_claim_commands,
 )
 from athena.core import (
     access,
 )
-from athena.core.ids import RowIdPath
+from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor, optional_actor
 
@@ -110,6 +111,124 @@ class ClaimIn(BaseModel):
     paths: list[str] | None = None
     # The shared command validates selectors against operator-declared qualification.
     coordination_root: object = None
+
+
+class ReadyClaimIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    limit: int = Field(default=1, ge=1, le=ready_claim_commands.MAX_ATTEMPTS)
+    lease_seconds: int | None = Field(
+        default=None, ge=leases.MIN_LEASE_SECONDS, le=leases.MAX_LEASE_SECONDS
+    )
+    project_id: int | None = Field(default=None, ge=1, le=MAX_SQLITE_INTEGER)
+
+
+class ReadyClaimAttempt(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    issue_id: int
+    outcome: Literal["conflict"]
+
+
+class ReadyClaimBase(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_: Literal["athena.ready_claim.v1"] = Field(alias="schema")
+    observed_at: str
+    attempts: list[ReadyClaimAttempt]
+
+
+class ReadyClaimIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: int
+    key: str | None
+    title: str
+    status: str
+    priority: str
+    created_at: str
+
+
+class ReadyClaimPreviousLease(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    holder_id: int
+    holder_name: str
+    expired_at: str
+
+
+class ReadyClaimHandoff(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    handoff_token: str
+    reason: lease_commands.ClaimYieldReason
+    yielded_by: str
+    yielded_at: str
+    next: str
+
+
+class ReadyClaimAcquired(ReadyClaimBase):
+    claimed: Literal[True]
+    issue: ReadyClaimIssue
+    lease: LeaseOut
+    issue_etag: str
+    work_context_etag: str
+    previous_lease: ReadyClaimPreviousLease | None
+    open_handoff: ReadyClaimHandoff | None
+
+
+class ReadyClaimHolding(ReadyClaimBase):
+    claimed: Literal[False]
+    reason: Literal["already_holding"]
+    held_by_you: int = Field(ge=1)
+
+
+class ReadyClaimEmpty(ReadyClaimBase):
+    claimed: Literal[False]
+    reason: Literal["nothing_ready"]
+    ready_total: Literal[0]
+
+
+class ReadyClaimConflicted(ReadyClaimBase):
+    claimed: Literal[False]
+    reason: Literal["candidates_conflicted"]
+
+
+@router.post(
+    "/claim-next",
+    response_model=ReadyClaimAcquired
+    | ReadyClaimHolding
+    | ReadyClaimEmpty
+    | ReadyClaimConflicted,
+)
+def claim_next_ready(
+    request: Request,
+    response: Response,
+    payload: ReadyClaimIn | None = None,
+    actor: dict = Depends(issue_write_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict | JSONResponse:
+    """Select and acquire current ready work atomically for this account."""
+    if "if-match" in request.headers:
+        raise HTTPException(
+            status_code=422,
+            detail="If-Match is not supported for ready pickup; use an explicit issue claim",
+            headers=PRIVATE_LEASE_HEADERS,
+        )
+    response.headers.update(PRIVATE_LEASE_HEADERS)
+    payload = payload or ReadyClaimIn()
+    try:
+        return ready_claim_commands.claim_next_ready(
+            conn, actor=actor, **payload.model_dump()
+        )
+    except issue_commands.IssueCommandError as exc:
+        try:
+            error_response = issue_command_error_response(exc)
+        except HTTPException as http_error:
+            http_error.headers = {**PRIVATE_LEASE_HEADERS, **(http_error.headers or {})}
+            raise
+        error_response.headers.update(PRIVATE_LEASE_HEADERS)
+        return error_response
 
 
 class YieldClaimIn(BaseModel):
