@@ -24,10 +24,11 @@ events; this table only says where things stand right now.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import sqlite3
 
 from athena import config
+from athena.core import db
 
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
 MAX_LIST_LIMIT = 500
@@ -78,37 +79,50 @@ def _utc_now(now: datetime | None) -> datetime:
     return current.astimezone(UTC)
 
 
-def _kill_state(row: dict, *, reporting_state: str) -> str:
-    if row["kill_requested_at"] is None:
-        return KILL_NONE
-    if row["stopped_at"] is not None:
-        return KILL_STOPPED
-    if row["kill_acknowledged_at"] is None:
-        return KILL_REQUESTED
-    # It heard, and it is still talking. Surfacing this plainly is the point: an
-    # operator who asked a worker to stop needs to know when it did not.
-    if reporting_state == REPORTING_RECENTLY:
-        return KILL_DEFIED
-    return KILL_ACKNOWLEDGED
+def _recent_since(now: datetime, stale_seconds: int | None = None) -> str:
+    seconds = _stale_after_seconds(stale_seconds)
+    # Storage is UTC text at whole seconds. Including a fractional cutoff in
+    # this comparison keeps exactly 90 seconds recent, and 90.000001 stale.
+    try:
+        cutoff = now - timedelta(seconds=seconds)
+    except OverflowError:
+        return ""  # The threshold predates every stored timestamp.
+    return cutoff.replace(tzinfo=None).isoformat(sep=" ")
 
 
-def _projection(
-    row: dict, *, stale_seconds: int | None = None, now: datetime | None = None
-) -> dict:
+# One classification for individual workers, filtered pages, and ledger counts.
+# SQLite can flatten this subquery and apply an agent/worker filter at the table.
+_CLASSIFIED = f"""
+    FROM (SELECT agent_workers.*,
+          CASE WHEN kill_requested_at IS NULL THEN '{KILL_NONE}'
+               WHEN stopped_at IS NOT NULL THEN '{KILL_STOPPED}'
+               WHEN kill_acknowledged_at IS NULL THEN '{KILL_REQUESTED}'
+               WHEN last_seen_at >= :recent_since THEN '{KILL_DEFIED}'
+               ELSE '{KILL_ACKNOWLEDGED}' END AS kill_state
+          FROM agent_workers) w
+"""
+_UNANSWERED = f"w.kill_state IN ('{KILL_REQUESTED}', '{KILL_DEFIED}')"
+_WORKER_SELECT = (
+    f"SELECT {_SAFE_COLUMNS}, w.kill_state, u.name AS agent_name, u.email AS agent_email "
+    f"{_CLASSIFIED} JOIN users u ON u.id = w.agent_id "
+)
+_PAGE_ORDER = " ORDER BY w.last_seen_at DESC, w.id LIMIT :limit"
+
+
+def _projection(row: dict, *, now: datetime, recent_since: str) -> dict:
     """One worker as an operator sees it: what it reported, plus what the server
     clock makes of it. Never `last_token_id` — credential metadata stays internal,
     exactly as it does for check-ins."""
     last_seen = datetime.strptime(row["last_seen_at"], _TS_FORMAT).replace(tzinfo=UTC)
-    elapsed = max(0.0, (_utc_now(now) - last_seen).total_seconds())
+    elapsed = max(0.0, (now - last_seen).total_seconds())
     reporting_state = (
-        REPORTING_RECENTLY if elapsed <= _stale_after_seconds(stale_seconds) else STALE
+        REPORTING_RECENTLY if row["last_seen_at"] >= recent_since else STALE
     )
     return {
         **row,
         "capabilities": split_capabilities(row["capabilities"]),
         "age_seconds": int(elapsed),
         "reporting_state": reporting_state,
-        "kill_state": _kill_state(row, reporting_state=reporting_state),
         # The one flag the worker itself acts on. True from the moment the operator
         # asks until the worker reports stopped, so a worker that acknowledged and
         # kept running keeps being told.
@@ -199,14 +213,17 @@ def get_worker(
     stale_seconds: int | None = None,
     now: datetime | None = None,
 ) -> dict | None:
+    observed = _utc_now(now)
+    cutoff = _recent_since(observed, stale_seconds)
     row = conn.execute(
-        f"SELECT {_SAFE_COLUMNS}, u.name AS agent_name, u.email AS agent_email "
-        "FROM agent_workers w JOIN users u ON u.id = w.agent_id WHERE w.id = ?",
-        (worker_id,),
+        _WORKER_SELECT + "WHERE w.id = :worker_id",
+        {"recent_since": cutoff, "worker_id": worker_id},
     ).fetchone()
-    if row is None:
-        return None
-    return _projection(dict(row), stale_seconds=stale_seconds, now=now)
+    return (
+        None
+        if row is None
+        else _projection(dict(row), now=observed, recent_since=cutoff)
+    )
 
 
 def list_workers(
@@ -216,25 +233,68 @@ def list_workers(
     limit: int = 100,
     stale_seconds: int | None = None,
     now: datetime | None = None,
+    unanswered_only: bool = False,
 ) -> list[dict]:
-    """The fleet, most recently reporting first — optionally for one agent."""
-    bounded = _bounded_limit(limit)
-    clauses: list[str] = []
-    params: list[int] = []
+    """Most recently reporting first; optional state/owner filters precede the limit."""
+    observed = _utc_now(now)
+    cutoff = _recent_since(observed, stale_seconds)
+    params: dict[str, int | str] = {
+        "recent_since": cutoff,
+        "limit": _bounded_limit(limit),
+    }
+    clauses = []
     if agent_id is not None:
-        clauses.append("w.agent_id = ?")
-        params.append(int(agent_id))
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    params.append(bounded)
+        clauses.append("w.agent_id = :agent_id")
+        params["agent_id"] = int(agent_id)
+    if unanswered_only:
+        clauses.append(_UNANSWERED)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    rows = conn.execute(_WORKER_SELECT + where + _PAGE_ORDER, params)
+    return [_projection(dict(row), now=observed, recent_since=cutoff) for row in rows]
+
+
+def count_unanswered(
+    conn: sqlite3.Connection, *, now: datetime, agent_id: int | None = None
+) -> int:
+    where = f"WHERE {_UNANSWERED}"
+    if agent_id is not None:
+        where += " AND w.agent_id = :agent_id"
+    return conn.execute(
+        f"SELECT COUNT(*) {_CLASSIFIED} {where}",
+        {"recent_since": _recent_since(_utc_now(now)), "agent_id": agent_id},
+    ).fetchone()[0]
+
+
+def unanswered_page(
+    conn: sqlite3.Connection, *, limit: int, now: datetime, agent_id: int | None = None
+) -> tuple[list[dict], int]:
+    """The visible page and complete population share a database snapshot and clock."""
+    with db.transaction(conn):
+        total = count_unanswered(conn, now=now, agent_id=agent_id)
+        items = list_workers(
+            conn, agent_id=agent_id, now=now, limit=limit, unanswered_only=True
+        )
+    return items, total
+
+
+def kill_counts_by_agent(
+    conn: sqlite3.Connection, *, now: datetime, agent_id: int | None = None
+) -> dict[int, dict[str, int]]:
+    where = "WHERE w.kill_requested_at IS NOT NULL"
+    if agent_id is not None:
+        where += " AND w.agent_id = :agent_id"
     rows = conn.execute(
-        f"SELECT {_SAFE_COLUMNS}, u.name AS agent_name, u.email AS agent_email "
-        f"FROM agent_workers w JOIN users u ON u.id = w.agent_id{where} "
-        "ORDER BY w.last_seen_at DESC, w.id LIMIT ?",
-        params,
-    ).fetchall()
-    return [
-        _projection(dict(row), stale_seconds=stale_seconds, now=now) for row in rows
-    ]
+        f"SELECT w.agent_id, COUNT(*) AS asked, COUNT(*) FILTER (WHERE {_UNANSWERED}) AS pending "
+        f"{_CLASSIFIED} {where} GROUP BY w.agent_id",
+        {"recent_since": _recent_since(_utc_now(now)), "agent_id": agent_id},
+    )
+    return {
+        row["agent_id"]: {
+            "told_to_stop": row["pending"],
+            "confirmed": row["asked"] - row["pending"],
+        }
+        for row in rows
+    }
 
 
 def set_kill_requested(

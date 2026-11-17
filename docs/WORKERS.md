@@ -122,7 +122,10 @@ DELETE /workers/{id}/kill        # admin: withdraw it, if unacknowledged
 
 MCP: `worker_heartbeat`, `list_workers`, `request_worker_kill`,
 `cancel_worker_kill`. The cockpit shows each agent's workers on **Admin →
-Agents**, with a **Told to stop** panel for requests still unanswered.
+Agents**. The **Told to stop** panel counts every unconfirmed request and lists
+up to 200 matching workers in heartbeat-recency order. The dashboard counts the
+same population. An agent’s desk counts its own unconfirmed requests and lists
+up to 50. Both lists disclose clipping when more matching workers exist.
 
 ## Configuration
 

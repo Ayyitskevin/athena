@@ -542,8 +542,8 @@ def test_pending_input_bounds_are_visible_on_both_surfaces(tmp_path, count):
             assert "Nothing is asking for you right now" not in html
 
 
-@pytest.mark.parametrize("count, expected", [(0, 0), (1, 1), (500, 1), (501, 0)])
-def test_worker_input_bound_precedes_stop_filter_on_both_surfaces(
+@pytest.mark.parametrize("count, expected", [(0, 0), (1, 1), (500, 1), (501, 1)])
+def test_worker_stop_count_includes_the_full_registry_on_both_surfaces(
     tmp_path, count, expected
 ):
     app, db_file = _app(tmp_path)
@@ -590,9 +590,7 @@ def test_worker_input_bound_precedes_stop_filter_on_both_surfaces(
         assert stop["count"] == expected
         assert projection["total"] == expected
         for html in _attention_surfaces(c):
-            assert "up to 500 most-recently-reporting workers" in html
-            assert "before stop-state filtering" in html
-            assert "input completeness unknown" in html
+            assert "all registered workers with an unconfirmed stop request" in html
             assert "Nothing is asking for you right now" not in html
             if expected == 0:
                 assert (
@@ -616,7 +614,10 @@ def test_new_bound_descriptions_stay_inside_admin_browser_visibility(tmp_path):
             for path in ("/aegis/dashboard", "/find"):
                 html = c.get(path, headers=headers).text
                 assert "up to 200 newest pending requests" not in html
-                assert "before stop-state filtering" not in html
+                assert (
+                    "all registered workers with an unconfirmed stop request"
+                    not in html
+                )
         c.post(
             "/login",
             data={"email": "m@e.com", "password": "pw"},
@@ -624,10 +625,49 @@ def test_new_bound_descriptions_stay_inside_admin_browser_visibility(tmp_path):
         )
         for html in _attention_surfaces(c):
             assert "up to 200 newest pending requests" not in html
-            assert "before stop-state filtering" not in html
+            assert "all registered workers with an unconfirmed stop request" not in html
         ranking = c.get(
             "/attention/ranking?signals=pending_approval",
             headers=_bearer(reader),
         ).json()
         assert ranking["items"] == []
         assert ranking["examined"] == ranking["total"] == 0
+
+
+@pytest.mark.parametrize("count", [200, 201])
+def test_operator_stop_panel_shows_exact_total_and_only_discloses_real_clipping(
+    tmp_path, count
+):
+    app, db_file = _app(tmp_path)
+    with TestClient(app) as client:
+        _bootstrap(client)
+        agent = _agent(client)
+        first = client.put(
+            "/workers/heartbeat", json={"worker_key": "stop-0"}, headers=_bearer(agent)
+        ).json()["id"]
+        conn = db.connect(db_file)
+        conn.execute(
+            "UPDATE agent_workers SET kill_requested_at=first_seen_at, kill_requested_by=1 WHERE id=?",
+            (first,),
+        )
+        conn.executemany(
+            "INSERT INTO agent_workers (agent_id,worker_key,first_seen_at,last_seen_at,last_token_id,kill_requested_at,kill_requested_by) "
+            "SELECT agent_id, ?, first_seen_at, last_seen_at,last_token_id,kill_requested_at,kill_requested_by FROM agent_workers WHERE id=?",
+            [(f"stop-{i}", first) for i in range(1, count)],
+        )
+        conn.commit()
+        conn.close()
+        client.post(
+            "/login",
+            data={"email": "a@e.com", "password": "pw"},
+            follow_redirects=False,
+        )
+        page = client.get("/admin/agents")
+        assert page.status_code == 200
+        panel = page.text.split('aria-labelledby="unanswered-kills-heading"', 1)[
+            1
+        ].split("</section>", 1)[0]
+        assert f'data-tone="danger">{count}</span>' in panel
+        assert panel.count("awaiting acknowledgement") == 200
+        assert ("Showing 200 of 201 workers" in panel) == (count == 201)
+        assert "Showing 200 of 200" not in panel

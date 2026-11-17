@@ -18,7 +18,7 @@ operator judges. `docs/ANSWERABILITY.md` carries the full non-claims list.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import sqlite3
 
 from athena.core import activity, approvals, run_controls, workers
@@ -27,14 +27,6 @@ SCHEMA = "athena.agent_answerability.v1"
 
 _ZERO_CONTROLS = {"open": 0, "expired_unanswered": 0, "completed": 0, "declined": 0}
 _ZERO_APPROVALS = {"pending": 0, "approved": 0, "rejected": 0}
-
-#: Worker kill_state buckets: asked-and-unconfirmed vs confirmed-by-the-worker.
-#: KILL_DEFIED ("acknowledged_but_reporting") counts as still-unconfirmed on
-#: purpose — a worker that says "heard you" while continuing to report running
-#: has not answered the ask, and folding it into "confirmed" would let an agent
-#: acknowledge its way out of the number an operator is watching.
-_UNCONFIRMED_KILL_STATES = (workers.KILL_REQUESTED, workers.KILL_DEFIED)
-_CONFIRMED_KILL_STATES = (workers.KILL_ACKNOWLEDGED, workers.KILL_STOPPED)
 
 
 def build_answerability(
@@ -63,22 +55,13 @@ def build_answerability(
         f"SELECT id, name, paused_at FROM users {clause} ORDER BY id", params
     ).fetchall()
 
-    now_stamp = run_controls.stamp(now)
+    observed = datetime.now(UTC) if now is None else now
+    now_stamp = run_controls.stamp(observed)
     control_counts = run_controls.state_counts_by_agent(conn, now_stamp=now_stamp)
     approval_counts = approvals.request_counts_by_requester(conn)
     reversed_counts = activity.reversed_counts_by_actor(conn)
 
-    # Kill facts come from the same reader the workers page renders (derived
-    # kill_state included), so this ledger cannot disagree with that page.
-    kill_counts: dict[int, dict[str, int]] = {}
-    for worker in workers.list_workers(conn, limit=workers.MAX_LIST_LIMIT, now=now):
-        bucket = kill_counts.setdefault(
-            int(worker["agent_id"]), {"told_to_stop": 0, "confirmed": 0}
-        )
-        if worker["kill_state"] in _UNCONFIRMED_KILL_STATES:
-            bucket["told_to_stop"] += 1
-        elif worker["kill_state"] in _CONFIRMED_KILL_STATES:
-            bucket["confirmed"] += 1
+    kill_counts = workers.kill_counts_by_agent(conn, now=observed, agent_id=agent_id)
 
     agents = [
         {

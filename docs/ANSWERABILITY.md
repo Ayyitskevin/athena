@@ -40,6 +40,9 @@ Two deliberate edges:
   control — no stored state, no event, exactly as `RUN_CONTROLS.md` defines
   expiry.
 
+The worker counts include every registered worker belonging to the selected agents,
+including workers whose last heartbeat has fallen outside the recent-worker list.
+
 Agents with nothing recorded appear **zero-filled**: "no asks yet" is an
 explicit statement, not a missing row. Paused agents stay listed and flagged —
 a paused agent with open asks is precisely what an operator wants to notice.

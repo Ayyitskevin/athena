@@ -99,11 +99,7 @@ def build_attention(
         hook for hook in webhooks.list_webhooks(conn) if hook["failure_count"]
     ]
     pending_approvals = approvals.list_requests(conn, state="pending", limit=200)
-    unanswered_kills = [
-        worker
-        for worker in workers.list_workers(conn, limit=workers.MAX_LIST_LIMIT)
-        if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
-    ]
+    unanswered_kills = workers.count_unanswered(conn, now=current)
     # Live run controls: asked, not yet answered, clock still running. Standing
     # like the kill count — a week-old unanswered steer is still unanswered —
     # and derived with the same predicate the controls page lists by.
@@ -156,12 +152,9 @@ def build_attention(
         {
             "key": "unanswered_kills",
             "label": "Workers told to stop",
-            "count": len(unanswered_kills),
+            "count": unanswered_kills,
             "href": "/admin/agents",
-            "scope": (
-                "standing state; up to 500 most-recently-reporting workers read "
-                "before stop-state filtering; input completeness unknown"
-            ),
+            "scope": "all registered workers with an unconfirmed stop request",
         },
         {
             "key": "open_run_controls",
