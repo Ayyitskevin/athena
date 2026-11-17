@@ -11,7 +11,7 @@ import sqlite3
 
 from athena import config
 from athena.aegis import issue_commands, issues
-from athena.core import activity, buzz_radio, fleet_roster, users
+from athena.core import activity, buzz_radio, db, fleet_roster, users
 
 
 class AssignError(Exception):
@@ -37,27 +37,32 @@ def assign_issue_to_seat(
     email = spec.get("email")
     if not email:
         raise AssignError(f"{spec['name']} has no Athena handle yet")
-    target = users.get_user_by_email(conn, str(email))
-    if target is None or not target.get("is_agent"):
-        raise AssignError(f"{spec['name']} has no Athena agent account")
+    if conn.in_transaction:
+        # The radio can only announce a durable transfer. A caller-owned
+        # transaction could still roll back after our savepoint returns.
+        raise AssignError(
+            "fleet assignment requires a connection without an open transaction"
+        )
 
-    issue = issues.get_issue(conn, issue_id)
-    if issue is None:
-        raise AssignError("issue not found")
+    with db.transaction(conn, immediate=True):
+        target = users.get_user_by_email(conn, str(email))
+        if target is None or not target.get("is_agent"):
+            raise AssignError(f"{spec['name']} has no Athena agent account")
+        if issues.get_issue(conn, issue_id) is None:
+            raise AssignError("issue not found")
 
-    updated = issue_commands.update_issue(
-        conn,
-        actor=actor,
-        issue_id=issue_id,
-        assignee_id=int(target["id"]),
-    )
-    issue_commands.add_contributor(
-        conn,
-        actor=actor,
-        issue_id=issue_id,
-        user_id=int(target["id"]),
-        require_agent=True,
-    )
+        # The current assignee may hand off work even if this transfer ends
+        # their authority. Delegate while both commands can check that authority.
+        issue_commands.add_contributor(
+            conn,
+            actor=actor,
+            issue_id=issue_id,
+            user_id=int(target["id"]),
+            require_agent=True,
+        )
+        updated = issue_commands.update_issue(
+            conn, actor=actor, issue_id=issue_id, assignee_id=int(target["id"])
+        )
     key = updated.get("key") or f"#{updated['id']}"
     base = config.public_base_url()
     url = (
