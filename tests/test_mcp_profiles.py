@@ -73,6 +73,7 @@ CONDUCTOR_ADDITIONS = frozenset(
     {
         "get_attention_ranking",
         "get_project_floor",
+        "get_project_brief",
         "get_issue_history",
         "assign_issue",
         "delegate_issue",
@@ -118,7 +119,7 @@ def test_the_knowledge_profile_adds_exactly_the_audits_eleven():
     )
 
 
-def test_the_conductor_adds_exactly_the_eight_coordination_tools():
+def test_the_conductor_adds_exactly_the_nine_coordination_tools():
     assert SEAT.isdisjoint(CONDUCTOR_ADDITIONS)
     assert mcp_server.PROFILES["conductor"] == SEAT | CONDUCTOR_ADDITIONS
     assert _names(SEAT_SCOPES, mcp_server.PROFILES["conductor"]) == (
@@ -141,13 +142,13 @@ def test_the_four_profiles_are_the_whole_vocabulary():
         ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
         ("seat+knowledge", ISSUE_ONLY, 34),
-        ("conductor", SEAT_SCOPES, 34),
-        ("conductor", ISSUE_ONLY, 34),
-        ("conductor", ADMIN, 34),
-        ("conductor", READ_TOKEN, 15),
+        ("conductor", SEAT_SCOPES, 35),
+        ("conductor", ISSUE_ONLY, 35),
+        ("conductor", ADMIN, 35),
+        ("conductor", READ_TOKEN, 16),
         # docs:write permits six inherited any-write tools (cursor, heartbeat,
         # targeted notification ack and own controls), but no issue writes.
-        ("conductor", DOCS_ONLY, 21),
+        ("conductor", DOCS_ONLY, 22),
         # the eleven reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
         # get_issue_lease, current_run, list_notifications, list_run_controls,
@@ -213,6 +214,7 @@ def test_conductor_assignment_and_delegation_still_require_issue_write():
         "wait_for_events",
         "get_attention_ranking",
         "get_project_floor",
+        "get_project_brief",
         "get_issue_history",
         "list_subtasks",
     }

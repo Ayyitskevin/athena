@@ -23,9 +23,9 @@ Distinct account names alone do not prove independent review.
 
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment. This selects the 26
-`seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_issue_history`,
+`seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_issue_history`,
 `assign_issue`, `delegate_issue`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 34 tools before scope filtering. `docs:write` is optional for this
+`link_issues`: 35 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -126,6 +126,37 @@ inspect the desk's lapsed row and settle only that observed possession; do not s
 other actors' leases. Re-read after conflicts instead of overwriting changed state.
 
 ## Observe and acknowledge only processed work
+
+Start project observation with `get_project_brief(project_id=..., limit=5)`
+(`GET /projects/{project_id}/brief?limit=5`). It returns one current visible
+snapshot, with open/unassigned issue counts and four independently bounded groups:
+
+| Group | What its visible total counts |
+|---|---|
+| `active_claims` | Unexpired possessions on non-archived project issues, including done issues |
+| `blockers` | Visible incoming blocking edges on open project issues; hidden blockers contribute no row or count |
+| `open_handoffs` | Visible, awaiting-resume handoffs, including those on done issues |
+| `latest_completions` | Issues with a visible native completion event; only the latest such event per issue |
+
+`limit` is per group, defaults to 5 and accepts 1 through 20. Each group has
+`items`, `visible_total`, `returned`, `limit` and `clipped`; totals are not
+additive. Display names, titles and status labels are excerpts capped at 160
+characters, questions at 400, each with `text`, `total_chars` and `clipped`.
+Use an item's `work_context_url` for detail. No issue body, raw report, evidence,
+handoff token or recovery instructions are included.
+
+A lease does not prove a process is running. A handoff awaits resume, which does
+not mean its question has no answer. Zero visible blockers does not establish
+readiness. Completion verdicts and findings are historical actor reports, not
+independent review, acceptance or artifact freshness. A newer completion without
+a valid report does not revive an older PASS. Read `observed_at` and source event
+IDs, then inspect the actual evidence before acting.
+
+The briefing changes no domain state and provides no claim ETag. Keep starting
+your session at the desk, and fetch full issue work context before claiming or
+recovering; use that context's `issue_etag`, never this briefing, as a claim
+precondition. See [PROJECT_BRIEF_SPEC.md](PROJECT_BRIEF_SPEC.md) for the exact
+visibility, ordering and packet contract.
 
 Use `get_project_floor(project_id=...)` for visible open issues, occupants and
 blockers, `get_attention_ranking()` for actor-filtered questions/signals, and

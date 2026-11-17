@@ -113,10 +113,14 @@ supply exactly one. After reading the full work context, `brief=true` keeps the
 issue, issue ETag, dependencies, and warnings for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
-34-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
+35-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).
 It adds assignment, delegation, dependencies and visible project observation to
 `seat`; it does not add admin authority or launch workers. Keep this recipe's
 `seat+knowledge` profile when the task needs pages or `record_run_learning`.
+Use `get_project_brief(project_id=..., limit=5)` for a compact visible snapshot of
+claims, blockers, awaiting-resume handoffs and historical completion reports.
+Its per-section limit is 1..20; clipping and advisory reports remain explicit.
+It neither advances a cursor nor supplies a claim precondition.
 
 ## 4. Run the loop
 

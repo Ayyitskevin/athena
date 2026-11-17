@@ -1612,6 +1612,12 @@ class AthenaClient:
         """One project as a floor of chairs."""
         return self._result(self._client.get(f"/projects/{project_id}/floor"))
 
+    def get_project_brief(self, project_id: int, *, limit: int = 5) -> Any:
+        """One visible project snapshot, bounded separately for each section."""
+        return self._result(
+            self._client.get(f"/projects/{project_id}/brief", params={"limit": limit})
+        )
+
     def advance_desk_cursor(self, *, after_id: int) -> Any:
         """Move YOUR desk cursor forward to this activity id."""
         return self._result(

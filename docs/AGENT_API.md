@@ -68,6 +68,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `get_issue_work_context` | `GET /issues/{ref}/work-context` | Get a bounded, current packet containing one visible issue and its … |
 | `get_page` | `GET /pages/{page_id}` | Get one Mentor page (title + Markdown body). The response includes the … |
 | `get_page_version` | `GET /pages/{page_id}/versions/{version}` | Fetch one historical page revision by its version number (title + body as of … |
+| `get_project_brief` | `GET /projects/{project_id}/brief` | A compact visible project snapshot: summary, active claims, blocker edges, … |
 | `get_project_floor` | `GET /projects/{project_id}/floor` | A project's floor: every open issue is a chair. Occupied chairs … |
 | `get_run_control` | `GET /run-controls/{control_id}` | One run control, for an admin or the agent it is addressed to. |
 | `get_run_fork_contract` | `GET /activity/runs/{run_id}/fork` | Validate a fork point inside a parent run and return the child-run … |
@@ -212,4 +213,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*137 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*138 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
