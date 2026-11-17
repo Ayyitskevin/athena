@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 
 from fastapi.testclient import TestClient
+import httpx
 from mcp.server.fastmcp.exceptions import ToolError
 import pytest
 
@@ -123,7 +124,11 @@ def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
         if {"idempotency_key", "if_match"}
         & set((t.inputSchema or {}).get("properties", {}))
     }
-    writes = takes_key_or_tag | {"claim_next_ready", "open_my_notebook"}
+    writes = takes_key_or_tag | {
+        "claim_next_ready",
+        "open_my_notebook",
+        "heartbeat_agent_run",
+    }
     assert writes <= pointing, sorted(writes - pointing)
     for name in pointing:
         description = tools[name].description or ""
@@ -140,7 +145,11 @@ def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
 
 @pytest.mark.parametrize(
     ("name", "retry_behavior"),
-    [("claim_next_ready", "already_holding"), ("open_my_notebook", "same page")],
+    [
+        ("claim_next_ready", "already_holding"),
+        ("open_my_notebook", "same page"),
+        ("heartbeat_agent_run", "only once"),
+    ],
 )
 def test_keyless_writes_explain_their_retry_behavior(name, retry_behavior):
     tool = _tools(None)[name]
@@ -148,6 +157,33 @@ def test_keyless_writes_explain_their_retry_behavior(name, retry_behavior):
     assert "no idempotency key" in description
     assert retry_behavior in description
     assert not {"idempotency_key", "if_match"} & set(tool.inputSchema["properties"])
+
+
+def test_run_identity_tools_are_local_and_the_instructions_say_so():
+    calls = []
+
+    def respond(request):
+        calls.append(
+            (request.method, request.url.path, request.headers["X-Athena-Run"])
+        )
+        return httpx.Response(200, json={"id": 1})
+
+    with httpx.Client(
+        base_url="http://athena.test", transport=httpx.MockTransport(respond)
+    ) as http:
+        server = mcp_server.build_server(AthenaClient(client=http))
+        selected = _call(server, "begin_run", run_id="synthetic-run")
+        assert selected["run_id"] == "synthetic-run"
+        assert _call(server, "current_run") == selected
+        assert calls == []
+        # Positive control: a remote read reaches this same transport with the
+        # locally selected identity, so the zero-request observation is real.
+        assert _call(server, "get_issue", issue_id=1) == {"id": 1}
+        assert calls == [("GET", "/issues/1", "synthetic-run")]
+        instructions = server.instructions or ""
+        assert "begin_run and current_run" in instructions
+        assert "without an HTTP request" in instructions
+        assert "Every tool is a call" not in instructions
 
 
 # --- 2. the seven admin reads ----------------------------------------------------

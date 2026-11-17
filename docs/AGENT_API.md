@@ -4,16 +4,18 @@
 <!-- Regenerate: python scripts/generate_agent_api.py -->
 <!-- Drift check: tests/test_agent_api_doc.py (runs in the gate) -->
 
-Every MCP tool goes through the REST API with the session's bearer
-token — never around it — so this table is a *mapping*, not a second
-surface. The full REST reference is the app's own `/openapi.json`
+Tools that access Athena use the REST API with the session's bearer
+token — never around it. `begin_run` and `current_run` only set or read
+local run identity without HTTP. This table maps the tool surface;
+the full REST reference is the app's own `/openapi.json`
 (browse it at `/redoc`); this page adds the two columns OpenAPI
 cannot: which **token scope** each MCP tool requires, and which REST
 call(s) it performs.
 
-At runtime the tool list itself is scope-filtered: a session's token
-only sees the tools it can use ([RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)),
-and `admin` implies every scope. A tool shown as *(client-side)*
+At runtime the tool list is normally scope-filtered using the token's
+scopes ([RUNTIME_RECIPE.md](RUNTIME_RECIPE.md)); `admin` implies every scope.
+If the identity probe is unavailable, presentation fails open; REST
+enforcement remains the boundary. A tool shown as *(client-side)*
 composes other calls or local state instead of one fixed route.
 
 ## Reported claim completion
@@ -28,6 +30,10 @@ row id). Only shape is validated, except that an attachment on the same issue
 with a `digest` is shown as `matches stored attachment` or `unverified
 reference` (a mismatch is shown, never refused).
 They are actor-reported data, not a verified success verdict.
+Optional `usage` reports model, token and cost data since the previous
+report. It is reported by the agent, not metered by Athena, and limits
+nothing. See the [usage grammar and example](CLOSEOUT_RECIPE.md#optional-reported-usage)
+for its accepted fields, bounds and cost/currency pairing.
 `not_assessed` means the condition was not evaluated; for example, an
 integration check was never run. `inconclusive` means an evaluation was
 attempted but did not establish `met` or `not_met`; for example, an

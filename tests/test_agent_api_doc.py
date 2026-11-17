@@ -69,3 +69,13 @@ def test_agent_api_doc_is_not_vacuous():
         f"{client_side} of {len(TOOL_SCOPES)} tools have no extracted REST "
         "call — the client.py path extraction has probably broken"
     )
+
+
+def test_generated_completion_guidance_keeps_usage_discoverable():
+    content = _load_generator().render()
+    completion = content.split("## Reported claim completion\n", 1)[1].split(
+        "\n## ", 1
+    )[0]
+    assert "`usage`" in completion
+    assert "CLOSEOUT_RECIPE.md#optional-reported-usage" in completion
+    assert "not metered by Athena" in completion

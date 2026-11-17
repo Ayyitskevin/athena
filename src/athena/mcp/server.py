@@ -214,8 +214,9 @@ MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 # knows the rule exists. Stated once it costs about 250 tokens; appended to
 # 63 tools it cost about 8,300 in every session.
 SERVER_INSTRUCTIONS = (
-    "Every tool is a call to Athena's REST API with your token: the same scopes "
-    "and the same audit trail as any other client. Start with my_desk.\n\n"
+    "Tools that read or write Athena use its REST API with your token: the same "
+    "scopes and audit trail as any other client. begin_run and current_run only "
+    "set or read local run identity, without an HTTP request. Start with my_desk.\n\n"
     "Retries: for a tool that takes idempotency_key, pick a "
     "stable, non-secret key of 1-255 visible ASCII characters before the first "
     "attempt and reuse it only for the exact same call; a different call needs "
