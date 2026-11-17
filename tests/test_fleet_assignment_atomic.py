@@ -192,3 +192,104 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
             (issue["id"], start),
         )
     ] == ["assigned", "delegated"]
+
+
+@pytest.mark.parametrize(
+    "key,stdout,stderr,returncode,expected_status,expected_detail",
+    [
+        (
+            b"SECKEY=fixture-private\xff",
+            b"",
+            b"",
+            0,
+            "failed",
+            "key file is not valid UTF-8",
+        ),
+        (
+            b"SECKEY=fixture",
+            b"fixture-output\xff",
+            b"",
+            0,
+            "sent",
+            "posted to command-deck",
+        ),
+        (
+            b"SECKEY=fixture",
+            b"",
+            b"fixture-diagnostic\xff",
+            1,
+            "failed",
+            "buzz cli failed",
+        ),
+        (
+            b"SECKEY=fixture",
+            b'{"accepted":false,"message":"declined"}',
+            b"fixture-diagnostic\xff",
+            0,
+            "failed",
+            "declined",
+        ),
+    ],
+    ids=[
+        "invalid-config",
+        "unreadable-receipt",
+        "unreadable-diagnostic",
+        "explicit-refusal",
+    ],
+)
+def test_unreadable_radio_input_preserves_durable_assignment(
+    transfer,
+    tmp_path,
+    monkeypatch,
+    key,
+    stdout,
+    stderr,
+    returncode,
+    expected_status,
+    expected_detail,
+):
+    conn, _, member, recipient, issue = transfer
+    key_file = tmp_path / "radio-config"
+    key_file.write_bytes(key)
+    cli = tmp_path / "local-radio"
+    observed = tmp_path / "fixture-attempt"
+    cli.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\nfrom pathlib import Path\n"
+        f"Path({str(observed)!r}).touch()\n"
+        f"sys.stdout.buffer.write({stdout!r})\n"
+        f"sys.stderr.buffer.write({stderr!r})\n"
+        f"sys.exit({returncode})\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o700)
+    monkeypatch.setenv("ATHENA_BUZZ_CLI", str(cli))
+    monkeypatch.setenv("ATHENA_BUZZ_KEY_FILE", str(key_file))
+    monkeypatch.setenv("ATHENA_BUZZ_RELAY_URL", "ws://example.invalid")
+    result = fleet_assign_commands.assign_issue_to_seat(
+        conn, actor=member, issue_id=issue["id"], seat_slug="grok"
+    )
+    assert (result["radio"]["status"], result["radio"]["detail"]) == (
+        expected_status,
+        expected_detail,
+    )
+    assert (
+        result["radio"].get("permalink") is None
+        and result["receipt"]["status"] == "skipped"
+    )
+    assert observed.exists() == (b"\xff" not in key)
+    with closing(db.connect(tmp_path / "transfer.db")) as reader:
+        assert issues.get_issue(reader, issue["id"])["assignee_id"] == recipient["id"]
+        assert (
+            reader.execute(
+                "SELECT user_id FROM issue_contributors WHERE issue_id=?",
+                (issue["id"],),
+            ).fetchone()[0]
+            == recipient["id"]
+        )
+        assert (
+            reader.execute(
+                "SELECT COUNT(*) FROM activity WHERE verb=?", (buzz_radio.VERB_RADIOED,)
+            ).fetchone()[0]
+            == 0
+        )

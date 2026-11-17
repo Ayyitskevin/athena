@@ -145,6 +145,16 @@ def message_permalink(channel: str, event_id: str) -> str | None:
     return f"buzz://message?id={event_id}&channel={channel}"
 
 
+def _cli_text(output: str | bytes | None) -> str:
+    """An undecodable response carries no usable receipt or diagnostic."""
+    if isinstance(output, bytes):
+        try:
+            return output.decode("utf-8")
+        except UnicodeDecodeError:
+            return ""
+    return output or ""
+
+
 def _receipt_from_stdout(stdout: str) -> tuple[str | None, str | None]:
     """Read the CLI's send receipt. Returns (event_id, refusal_detail).
 
@@ -201,6 +211,8 @@ def send_channel_message(
     relay = config.buzz_relay_url()
     try:
         secret = _load_private_key(config.buzz_key_file())
+    except UnicodeDecodeError:
+        return {"status": "failed", "detail": "key file is not valid UTF-8"}
     except OSError as exc:
         return {"status": "failed", "detail": f"cannot read key file: {exc}"}
     except RadioError as exc:
@@ -219,7 +231,9 @@ def send_channel_message(
             argv,
             check=False,
             capture_output=True,
-            text=True,
+            # Capture bytes so a diagnostic cannot erase a readable receipt
+            # or the process exit status during subprocess decoding.
+            text=False,
             timeout=15,
             env=env,
             # Assignment text can contain issue-controlled content. Keep every
@@ -229,9 +243,11 @@ def send_channel_message(
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return {"status": "failed", "detail": type(exc).__name__}
     if getattr(completed, "returncode", 1) != 0:
-        err = (getattr(completed, "stderr", "") or "").strip()
+        err = _cli_text(getattr(completed, "stderr", None)).strip()
         return {"status": "failed", "detail": err or "buzz cli failed"}
-    event_id, refusal = _receipt_from_stdout(getattr(completed, "stdout", "") or "")
+    event_id, refusal = _receipt_from_stdout(
+        _cli_text(getattr(completed, "stdout", None))
+    )
     if refusal is not None:
         # Exit 0 but the relay said no. Trust the payload over the exit code:
         # reporting "sent" here would put a ping in the trail that no seat saw.
