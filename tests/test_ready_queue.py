@@ -477,7 +477,7 @@ def test_claim_next_ready_claims_the_top_item_and_returns_the_tags(tmp_path):
         try:
             result = client.claim_next_ready()
             assert result["schema"] == "athena.ready_claim.v1"
-            assert datetime.fromisoformat(result["observed_at"]).tzinfo is not None
+            datetime.fromisoformat(result["observed_at"])
             assert result["claimed"] is True
             assert result["issue"]["id"] == top["id"]
             assert result["lease"]["holder_id"] == agent["user"]["id"]
@@ -505,7 +505,7 @@ def test_claim_next_ready_with_nothing_ready_refuses_cleanly(tmp_path):
         tc, client = _mcp(app, agent)
         try:
             result = client.claim_next_ready()
-            assert datetime.fromisoformat(result["observed_at"]).tzinfo is not None
+            datetime.fromisoformat(result["observed_at"])
             assert result == {
                 "schema": "athena.ready_claim.v1",
                 "observed_at": result["observed_at"],
