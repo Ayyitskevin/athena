@@ -16,6 +16,7 @@ MCP share one boundary.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 import re
 import secrets
 import sqlite3
@@ -28,6 +29,7 @@ from athena.aegis import (
     issue_activity,
     leases,
     report_credentials,
+    review_commands,
     statuses,
 )
 from athena.aegis.issue_commands import (
@@ -895,6 +897,8 @@ def complete_claim(
     verdict: object = None,
     findings: object = None,
     usage: object = None,
+    candidate_submission: object = None,
+    review_candidate_id: object = None,
 ) -> dict:
     """Release the lease by completing the claimed work (complete) — the issue is freed for
     the next claimant. The actor must hold the lease: an ACTIVE one, or its OWN row the
@@ -906,6 +910,15 @@ def complete_claim(
     coordination lease only — it does not change the issue's status; the agent transitions
     status through the ordinary (audited) status command."""
     actor = _require_issue_writer(actor)
+    submission, review_id = review_commands.normalize_extensions(
+        candidate_submission, review_candidate_id
+    )
+    extended = submission is not None or review_id is not None
+    if extended and conn.in_transaction:
+        raise IssueCommandError(
+            "invalid",
+            "candidate completion requires a connection without an open transaction",
+        )
     report = _normalize_completion_report(
         results=results,
         unfinished=unfinished,
@@ -943,10 +956,19 @@ def complete_claim(
                             "remove the credential and retry",
                         )
     with db.transaction(conn, immediate=True):
+        # Only extensions strengthen possession authority. The clock is sampled
+        # after the writer reservation, never before a competing writer's wait.
+        extension_stamp = leases.clock_stamp(datetime.now(UTC)) if extended else None
         issue = _visible_issue(conn, actor, issue_id)
         _claimant_or_reject(conn, issue, actor)
         existing = leases.get_lease(conn, issue_id)
+        if existing is not None and extension_stamp is not None:
+            existing["active"] = existing["expires_at"] > extension_stamp
         mine = existing is not None and existing["holder_id"] == actor["id"]
+        if extended and (not mine or existing is None or not existing["active"]):
+            raise IssueCommandError(
+                "conflict", "candidate completion requires your own active claim"
+            )
         # An expired row that is not yours is not a possession anyone may
         # complete — including an admin, whose release lever stays ACTIVE-only.
         # It is left for the next acquisition to replace, exactly as before.
@@ -978,12 +1000,20 @@ def complete_claim(
                 "conflict",
                 "resume the open claim handoff before completing this possession",
             )
+        if submission is not None:
+            review_commands.prepare_submission(
+                conn, issue=issue, actor=actor, submission=submission
+            )
+        elif review_id is not None:
+            review_commands.prepare_review(
+                conn, issue=issue, actor=actor, candidate_id=review_id
+            )
         if not leases.delete_lease(conn, issue_id, current_generation, commit=False):
             raise IssueCommandError(
                 "lease_generation_mismatch",
                 "lease generation changed before release",
             )
-        issue_activity.record_claim_completed(
+        event = issue_activity.record_claim_completed(
             conn,
             actor_id=actor["id"],
             issue_id=issue_id,
@@ -995,7 +1025,7 @@ def complete_claim(
             statuses.category_of(conn, issue.get("project_id"), issue["status"])
             != "done"
         )
-        return {
+        result = {
             "released": True,
             "issue_id": issue_id,
             "issue_status": issue["status"],
@@ -1007,6 +1037,15 @@ def complete_claim(
                 "complete_claim released the lease only; issue status is unchanged"
             ),
         }
+        if submission is not None:
+            result["candidate_submission"] = review_commands.insert_submission(
+                conn, issue_id=issue_id, event_id=event["id"], submission=submission
+            )
+        elif review_id is not None:
+            result["candidate_review"] = review_commands.insert_review(
+                conn, issue_id=issue_id, event_id=event["id"], candidate_id=review_id
+            )
+        return result
 
 
 def decline_delegation(

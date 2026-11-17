@@ -18,6 +18,7 @@ from athena.aegis import (
     issue_etags,
     issues,
     lease_commands,
+    review_queue,
     statuses,
 )
 from athena.core import (
@@ -721,4 +722,15 @@ def build_work_context(
         if _has_clipping(payload):
             warnings.append("context_clipped")
         payload["warnings"] = warnings
-        return brief_work_context(payload) if brief else payload
+        # Brief warnings are computed from the unchanged brief-era payload.
+        # New bounded review history cannot introduce context_clipped there.
+        if brief:
+            return brief_work_context(payload)
+        tracking = review_queue.issue_review_tracking(
+            conn, issue_id=issue["id"], actor=actor
+        )
+        if tracking is not None:
+            payload["review_tracking"] = tracking
+            if _has_clipping(tracking) and "context_clipped" not in warnings:
+                warnings.append("context_clipped")
+        return payload

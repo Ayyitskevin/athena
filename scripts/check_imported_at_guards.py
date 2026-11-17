@@ -72,6 +72,17 @@ MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
         ),
     ),
     (
+        "Exact-version candidates and reviews (0082)",
+        "imported_at IS NULL",
+        (
+            (
+                "core/migrations/0082_issue_review_candidates.sql",
+                None,
+                r"imported_at IS NULL",
+            ),
+        ),
+    ),
+    (
         "Assignee facts (0068)",
         "imported_at IS NULL",
         (
@@ -124,6 +135,24 @@ MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
 # Guarded readers that are not named in FORGE.md's table: native-only
 # projections that already carry the filter. (path, function, pattern, why).
 EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "aegis/review_commands.py",
+        "visible_candidate",
+        r"a\.imported_at IS NULL",
+        "candidate submission and review authority requires native source evidence",
+    ),
+    (
+        "aegis/review_queue.py",
+        "_candidate_base",
+        r"a\.imported_at IS NULL",
+        "candidate queue and history project only native completion evidence",
+    ),
+    (
+        "aegis/review_queue.py",
+        "_latest_review",
+        r"a\.imported_at IS NULL",
+        "linked review verdicts come from the exact native completion, never imported prose",
+    ),
     (
         "aegis/project_brief.py",
         "_build",

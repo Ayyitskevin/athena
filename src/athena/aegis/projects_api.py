@@ -19,6 +19,7 @@ from athena.aegis import (
     project_etags,
     project_brief,
     projects,
+    review_queue,
     sprints,
     status_commands,
     statuses,
@@ -30,6 +31,7 @@ from athena.core import (
 )
 from athena.core.ids import RowIdPath
 from athena.aegis.project_brief_models import ProjectBrief
+from athena.aegis.review_queue_models import ProjectReviewQueue
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
@@ -224,6 +226,27 @@ def show_project_brief(
         "Vary": "Authorization, X-Athena-Actor",
     }
     packet = project_brief.build_project_brief(
+        conn, project_id=project_id, actor=actor, limit=limit
+    )
+    if packet is None:
+        raise HTTPException(status_code=404, detail="no such project", headers=headers)
+    response.headers.update(headers)
+    return packet
+
+
+@projects_router.get("/{project_id}/review-queue", response_model=ProjectReviewQueue)
+def show_project_review_queue(
+    project_id: RowIdPath,
+    response: Response,
+    limit: int = Query(review_queue.DEFAULT_LIMIT, ge=1, le=review_queue.MAX_LIMIT),
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    headers = {
+        "Cache-Control": "private, no-store",
+        "Vary": "Authorization, X-Athena-Actor",
+    }
+    packet = review_queue.build_project_review_queue(
         conn, project_id=project_id, actor=actor, limit=limit
     )
     if packet is None:

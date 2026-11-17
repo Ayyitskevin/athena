@@ -789,11 +789,11 @@ def record_claim_completed(
     generation: str,
     reported: dict | None = None,
     commit: bool = True,
-) -> None:
+) -> dict:
     """Record that the leaseholder released the issue by completing its claimed work —
     the lease is gone and the issue is free for the next claimant. ``commit=False`` folds
     it into the complete command's transaction."""
-    activity.record(
+    return activity.record(
         conn,
         actor_id=actor_id,
         verb="claim_completed",
