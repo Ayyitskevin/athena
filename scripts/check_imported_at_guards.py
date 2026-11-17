@@ -125,6 +125,14 @@ MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
 # projections that already carry the filter. (path, function, pattern, why).
 EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
     (
+        "aegis/project_brief.py",
+        "_build",
+        r"a\.imported_at IS NULL",
+        "latest completion summaries must come from native events; handoff "
+        "yield provenance joins typed rows whose 0058 insertion trigger "
+        "already excludes imported events",
+    ),
+    (
         "core/notifications.py",
         "notify_watchers",
         r'if event is not None and event\["imported_at"\] is not None:\s+return\b',

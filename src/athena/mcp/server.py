@@ -137,6 +137,7 @@ IssueHistoryLimit = Annotated[
 ]
 AttentionWindowHours = Annotated[int, Field(strict=True, ge=1, le=168)]
 AttentionLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+ProjectBriefLimit = Annotated[int, Field(strict=True, ge=1, le=20)]
 FleetAgentId = Annotated[int, Field(strict=True, ge=1, le=issues.MAX_SQLITE_INTEGER)]
 DispatchIssueId = Annotated[
     int, Field(strict=True, ge=1, le=dispatch.MAX_SQLITE_INTEGER)
@@ -302,6 +303,7 @@ TOOL_SCOPES: dict[str, str] = {
     "my_desk": READ_ONLY,
     "my_office": READ_ONLY,
     "get_project_floor": READ_ONLY,
+    "get_project_brief": READ_ONLY,
     "list_workers": READ_ONLY,
     "list_run_controls": READ_ONLY,
     "get_run_control": READ_ONLY,
@@ -501,6 +503,7 @@ CONDUCTOR_PROFILE: frozenset[str] = SEAT_PROFILE | frozenset(
     {
         "get_attention_ranking",
         "get_project_floor",
+        "get_project_brief",
         "get_issue_history",
         "assign_issue",
         "delegate_issue",

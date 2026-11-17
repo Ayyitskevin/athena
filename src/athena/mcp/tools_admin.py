@@ -10,6 +10,8 @@ from athena.mcp.server import (
     DispatchIssueId,
     DispatchLimit,
     IdempotencyKey,
+    ProjectBriefLimit,
+    ProjectId,
     RunControlId,
     RunControlKind,
     RunControlListLimit,
@@ -250,6 +252,17 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         need a body. `blocked_by` lists open blockers; there is no 'ready'
         flag. RESERVES NOTHING."""
         return client.get_project_floor(project_id)
+
+    @tool
+    def get_project_brief(project_id: ProjectId, limit: ProjectBriefLimit = 5) -> dict:
+        """A compact visible project snapshot: summary, active claims, blocker edges,
+        awaiting-resume handoffs and latest native completion reports. limit is per
+        section (1..20); counts and excerpts disclose clipping. Claims are not process
+        liveness; reports are historical actor statements, not acceptance or artifact
+        freshness. Zero visible blockers does not establish readiness. Changes no work state
+        and supplies no claim ETag; fetch full issue work context before claiming or
+        recovery. See docs/CONDUCTOR_RECIPE.md for interpretation."""
+        return client.get_project_brief(project_id, limit=limit)
 
     @mutation_tool
     def advance_desk_cursor(after_id: int) -> dict:

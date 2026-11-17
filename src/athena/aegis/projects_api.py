@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import (
     Depends,
     HTTPException,
+    Query,
     Request,
     Response,
 )
@@ -16,6 +17,7 @@ from athena.aegis import (
     issues,
     project_commands,
     project_etags,
+    project_brief,
     projects,
     sprints,
     status_commands,
@@ -27,6 +29,7 @@ from athena.core import (
     users,
 )
 from athena.core.ids import RowIdPath
+from athena.aegis.project_brief_models import ProjectBrief
 from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
@@ -202,6 +205,31 @@ def show_project(
     if project is None or not access.can_see_project(conn, actor, project_id):
         raise HTTPException(status_code=404, detail="no such project")
     return _tagged_project(project, response)
+
+
+@projects_router.get(
+    "/{project_id}/brief",
+    response_model=ProjectBrief,
+    response_model_exclude_unset=True,
+)
+def show_project_brief(
+    project_id: RowIdPath,
+    response: Response,
+    limit: int = Query(project_brief.DEFAULT_LIMIT, ge=1, le=project_brief.MAX_LIMIT),
+    actor: dict | None = Depends(optional_actor),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    headers = {
+        "Cache-Control": "private, no-store",
+        "Vary": "Authorization, X-Athena-Actor",
+    }
+    packet = project_brief.build_project_brief(
+        conn, project_id=project_id, actor=actor, limit=limit
+    )
+    if packet is None:
+        raise HTTPException(status_code=404, detail="no such project", headers=headers)
+    response.headers.update(headers)
+    return packet
 
 
 @projects_router.get("/{project_id}/floor")
