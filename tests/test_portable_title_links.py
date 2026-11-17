@@ -136,6 +136,47 @@ def test_project_import_does_not_acquire_destination_runbook_on_next_edit(
     target.close()
 
 
+def test_import_distinguishes_missing_binding_from_retryable_forward_reference(
+    tmp_path,
+):
+    origin = _database(tmp_path / "origin.db")
+    docs = _space(origin, "DOC")
+    _page(origin, _space(origin, "EXT"), "Existing outside")
+    source = _page(origin, docs, "Guide", "[[Existing outside]] [[Future]]")
+    bundle = portability.export_bundle(origin, "space", docs)
+    held, retry = bundle["title_bindings"]
+    assert held == {
+        "source_id": source,
+        "token": "existing outside",
+        "target_page_id": None,
+    }
+    assert retry == {
+        "source_id": source,
+        "token": "future",
+        "target_page_id": None,
+        "retry_on_save": True,
+    }
+    target = _database(tmp_path / "target.db")
+    dst = _space(target, "DST")
+    _page(target, dst, "Existing outside")
+    future = _page(target, dst, "Future")
+    for incomplete in ([], [retry], [held]):
+        with pytest.raises(ValueError, match="every authored bare title"):
+            _import(target, bundle | {"title_bindings": incomplete})
+    with pytest.raises(ValueError, match="contradicts a bundled page edge"):
+        _import(
+            target, bundle | {"title_bindings": [held | {"retry_on_save": True}, retry]}
+        )
+    _import(target, bundle)
+    guide = target.execute(
+        "SELECT id, body FROM pages WHERE title = 'Guide'"
+    ).fetchone()
+    pages.update_page(target, guide["id"], editor_id=1, body=guide["body"] + " edited")
+    _assert_edges(target, "page", guide["id"], {future})
+    origin.close()
+    target.close()
+
+
 def test_import_refuses_inconsistent_title_binding_metadata(tmp_path):
     origin = _database(tmp_path / "source.db")
     docs = _space(origin, "DOC")
@@ -147,6 +188,9 @@ def test_import_refuses_inconsistent_title_binding_metadata(tmp_path):
     good = {"source_id": source, "token": "runbook", "target_page_id": runbook}
     for invalid in (
         {},
+        [],
+        [good | {"retry_on_save": True}],
+        [good | {"target_page_id": None, "retry_on_save": "yes"}],
         [{"source_id": 2000, "token": "runbook", "target_page_id": None}],
         [good | {"token": "absent"}],
         [good | {"target_page_id": 2000}],

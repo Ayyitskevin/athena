@@ -30,17 +30,20 @@ def export(conn: sqlite3.Connection, bundle: dict) -> None:
     page_ids = {row["id"] for row in bundle.get("pages", [])}
     rows = []
     for source in sources:
-        if not links.title_keys(source.get("body")):
+        tokens = links.title_keys(source.get("body"))
+        if not tokens:
             continue
         saved = links.stored_title_bindings(conn, kind, source["id"])
-        for token, target in sorted(saved.items()):
-            rows.append(
-                {
-                    "source_id": source["id"],
-                    "token": token,
-                    "target_page_id": target if target in page_ids else None,
-                }
-            )
+        for token in sorted(tokens):
+            target = saved.get(token)
+            row = {
+                "source_id": source["id"],
+                "token": token,
+                "target_page_id": target if target in page_ids else None,
+            }
+            if token not in saved:
+                row["retry_on_save"] = True
+            rows.append(row)
     bundle["title_bindings"] = rows
 
 
@@ -59,13 +62,12 @@ def validate(bundle: dict) -> None:
     rows = bundle["title_bindings"]
     if not isinstance(rows, list):
         raise ValueError("bundle.title_bindings must be a list")
-    if not rows:
-        return
     kind, sources = _sources(bundle)
     authored = {row["id"]: links.title_keys(row.get("body")) for row in sources}
     internal_pages = set(authored) if kind == "page" else set()
     edges = _page_edges(bundle, kind)
     seen = set()
+    source_rows: dict[int, list[dict]] = defaultdict(list)
     for row in rows:
         if not isinstance(row, dict) or "target_page_id" not in row:
             raise ValueError("title_bindings row must include target_page_id")
@@ -81,12 +83,41 @@ def validate(bundle: dict) -> None:
         if (source, token) in seen:
             raise ValueError("duplicate title_bindings token for source")
         seen.add((source, token))
+        source_rows[source].append(row)
+        if "retry_on_save" in row and (
+            row["retry_on_save"] is not True or target is not None
+        ):
+            raise ValueError("title_bindings retry_on_save requires an unbound token")
         if target is None:
             continue
         if type(target) is not int or target not in internal_pages:
             raise ValueError("title_bindings target must be a bundled page ID")
         if target != source and target not in edges.get(source, ()):
             raise ValueError("title_bindings target must match a bundled page edge")
+    if len(seen) != sum(map(len, authored.values())):
+        raise ValueError("title_bindings must account for every authored bare title")
+    for source in sources:
+        records = source_rows.get(source["id"], [])
+        if not any(row.get("retry_on_save") for row in records):
+            continue
+        # Every non-numeric page edge needed a bound title. If marking a token
+        # retryable leaves too few bindings to explain the graph, the two parts
+        # of the bundle disagree. Never let that token acquire a destination namesake.
+        explicit = {
+            target
+            for kind, target in links.extract_refs(source.get("body"))
+            if kind == "page"
+        }
+        bound = {row["target_page_id"] for row in records}
+        unexplained = edges.get(source["id"], set()) - explicit - bound
+        withheld = sum(
+            row["target_page_id"] is None and not row.get("retry_on_save")
+            for row in records
+        )
+        if len(unexplained) > withheld:
+            raise ValueError(
+                "title_bindings retry_on_save contradicts a bundled page edge"
+            )
 
 
 def restore(conn: sqlite3.Connection, bundle: dict, source_map: dict[int, int]) -> None:
@@ -96,7 +127,8 @@ def restore(conn: sqlite3.Connection, bundle: dict, source_map: dict[int, int]) 
     saved: dict[int, dict[str, int | None]] = defaultdict(dict)
     if "title_bindings" in bundle:
         for row in bundle["title_bindings"]:
-            saved[row["source_id"]][row["token"]] = row["target_page_id"]
+            if not row.get("retry_on_save"):
+                saved[row["source_id"]][row["token"]] = row["target_page_id"]
     else:
         # Reconcile old-format bundles BEFORE dropping external edges or changing IDs.
         edges = _page_edges(bundle, kind)
