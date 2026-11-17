@@ -204,3 +204,159 @@ def test_the_editor_still_works_without_javascript(tmp_path):
         )
         assert saved.status_code == 303
         assert "after" in client.get(f"/mentor/pages/{page['id']}").text
+
+
+def _space_id(client, key):
+    created = client.post("/spaces", json={"key": key, "name": key}, headers=H1)
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+def _create_page(client, space_id, title, body=""):
+    created = client.post(
+        f"/spaces/{space_id}/pages", json={"title": title, "body": body}, headers=H1
+    )
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+def _rename_page(client, page_id, title):
+    path = f"/pages/{page_id}"
+    etag = client.get(path, headers=H1).headers["etag"]
+    renamed = client.patch(
+        path, json={"title": title}, headers={**H1, "If-Match": etag}
+    )
+    assert renamed.status_code == 200
+
+
+def _xref(page_id, escaped_title):
+    return f'<a href="/mentor/pages/{page_id}" class="xref">{escaped_title}</a>'
+
+
+def test_saved_views_and_restored_previews_keep_their_original_runbook(tmp_path):
+    with TestClient(create_app(tmp_path / "identity.db")) as client:
+        _login(client)
+        docs = _space_id(client, "DOC")
+        ops = _space_id(client, "OPS")
+        original = _create_page(client, ops, "Q&A")
+        body = "Open [[Q&A]]"
+        page = _create_page(client, docs, "Guide", body)
+        issue = client.post(
+            "/issues", json={"title": "Review", "body": body}, headers=H1
+        ).json()["id"]
+        _rename_page(client, original, "Runbook & notes")
+        replacement = _create_page(client, docs, "Q&A")
+        local = _create_page(client, docs, "Checklist")
+        _create_page(client, ops, "Checklist")
+
+        original_link = _xref(original, "Runbook &amp; notes")
+        replacement_link = _xref(replacement, "Q&amp;A")
+        draft = {"title": "Draft", "body": body + " and [[Checklist]]"}
+        for prefix, source in (("/mentor/pages", page), ("/aegis/issues", issue)):
+            endpoint = f"{prefix}/preview?source_id={source}"
+            detail = f"{prefix}/{source}"
+            assert original_link in client.get(detail).text
+            form = client.get(f"{detail}/edit").text
+            assert original_link in form
+            assert f'hx-post="{endpoint}"' in form
+
+            # A new token can be disambiguated by a page's own space. An issue
+            # has no space, even when its numeric ID coincides with a page's.
+            expected_new = (
+                _xref(local, "Checklist")
+                if prefix == "/mentor/pages"
+                else '<span class="xref broken">[[Checklist]]</span>'
+            )
+            typed = client.post(endpoint, data=draft)
+            assert typed.status_code == 200
+            assert original_link in typed.text and expected_new in typed.text
+            assert replacement_link not in typed.text
+
+            assert client.post(f"{detail}/draft", data=draft).status_code == 200
+            restored = client.get(f"{detail}/edit?restore=1").text
+            assert typed.text.strip() in restored
+            standalone = client.post(f"{prefix}/preview", data={"body": body})
+            assert replacement_link in standalone.text
+
+        exported = client.get(f"/mentor/spaces/{docs}/export.html").text
+        assert original_link in exported and replacement_link not in exported
+        context = client.get(f"/issues/{issue}/work-context", headers=H1).json()
+        assert [
+            (r["id"], r["title"]) for r in context["references"]["outgoing"]["items"]
+        ] == [(original, "Runbook & notes")]
+
+
+def test_private_bound_targets_and_preview_sources_remain_hidden(tmp_path):
+    app = create_app(tmp_path / "private.db")
+    with TestClient(app) as owner, TestClient(app) as reader:
+        _login(owner)
+        public = _space_id(owner, "DOC")
+        private = _space_id(owner, "OPS")
+        target = _create_page(owner, private, "Runbook")
+        body = "[[Runbook]]"
+        referring_page = _create_page(owner, public, "Guide", body)
+        _rename_page(owner, target, "Restricted procedure")
+        replacement = _create_page(owner, public, "Runbook")
+        assert (
+            owner.put(
+                f"/spaces/{private}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+        project = owner.post(
+            "/projects", json={"key": "OPS", "name": "Ops"}, headers=H1
+        ).json()["id"]
+        hidden_issue = owner.post(
+            "/issues",
+            json={"title": "Private", "body": body, "project_id": project},
+            headers=H1,
+        ).json()["id"]
+        assert (
+            owner.put(
+                f"/projects/{project}/visibility",
+                json={"visibility": "private"},
+                headers=H1,
+            ).status_code
+            == 200
+        )
+
+        owner.post(
+            "/users",
+            json={"email": "r@e.com", "name": "Reader", "password": PASSWORD},
+            headers=H1,
+        )
+        reader.post("/login", data={"email": "r@e.com", "password": PASSWORD})
+        reader.headers["X-CSRF-Token"] = reader.cookies["athena_csrf"]
+        assert (
+            _xref(target, "Restricted procedure")
+            in owner.get(f"/mentor/pages/{referring_page}").text
+        )
+        for rendered in (
+            reader.get(f"/mentor/pages/{referring_page}"),
+            reader.post(
+                f"/mentor/pages/preview?source_id={referring_page}", data={"body": body}
+            ),
+            reader.get(f"/mentor/spaces/{public}/export.html"),
+        ):
+            assert rendered.status_code == 200
+            assert '<span class="xref broken">[[Runbook]]</span>' in rendered.text
+            assert "Restricted procedure" not in rendered.text
+            assert _xref(replacement, "Runbook") not in rendered.text
+        for prefix, source in (
+            ("/mentor/pages", target),
+            ("/aegis/issues", hidden_issue),
+        ):
+            hidden = reader.post(
+                f"{prefix}/preview?source_id={source}", data={"body": body}
+            )
+            missing = reader.post(
+                f"{prefix}/preview?source_id=999999", data={"body": body}
+            )
+            assert hidden.status_code == missing.status_code == 404
+            assert hidden.text == missing.text
+            out_of_range = reader.post(
+                f"{prefix}/preview?source_id={1 << 63}", data={"body": body}
+            )
+            assert out_of_range.status_code == 422

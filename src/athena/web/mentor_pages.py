@@ -19,6 +19,7 @@ from athena.core import (
     notifications,
 )
 from athena.core.deps import get_conn
+from athena.core.ids import RowIdQuery
 from athena.mentor import (
     page_commands,
     page_drafts,
@@ -97,7 +98,7 @@ def page_detail(
             # that member could already see, and nothing is cached between
             # viewers, because a cache keyed on the page would serve one reader's
             # visibility to another.
-            "body_html": render_page_body(conn, page["body"], actor=user),
+            "body_html": render_page_body(conn, page["body"], actor=user, page=page),
             "comments": comment_rows,
             "page_labels": labels.labels_for_page(conn, page_id),
             "all_labels": labels.list_labels(
@@ -239,19 +240,26 @@ def _edit_form_context(
         # Identical to the saved page: not unsaved work, so offering to restore
         # it would just make an author wonder what they had forgotten.
         draft = None
+    restored_draft = draft if restored else None
     return {
         "page": page,
         "space": spaces.get_space(conn, page["space_id"]),
         # The preview starts populated rather than blank: an author opening
         # an existing page sees it as readers do before touching a key.
-        "body_html": render_page_body(conn, page["body"], actor=user),
+        "body_html": render_page_body(
+            conn,
+            restored_draft["body"] if restored_draft is not None else page["body"],
+            actor=user,
+            page=page,
+            preview=restored_draft is not None,
+        ),
         # An unsaved draft is OFFERED, never applied: the form still shows
         # the saved page, and restoring is a decision the author makes. A
         # draft that merely matches the page is not offered at all.
         "draft": draft,
         # Restoring is a read: the form renders the draft's text instead of
         # the page's. Nothing is written until the author presses Save.
-        "restored": restored and draft is not None,
+        "restored": restored_draft is not None,
         "draft_is_stale": draft is not None
         and page_drafts.is_stale(draft, page_etags.current_etag(conn, page)),
         # The baseline this editing session starts FROM. The form carries it
@@ -270,6 +278,7 @@ def _edit_form_context(
 def preview_page_body(
     request: Request,
     body: str = Form(""),
+    source_id: RowIdQuery | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Render unsaved page text exactly as the page view will render it.
@@ -288,7 +297,14 @@ def preview_page_body(
         return HTMLResponse(
             '<div class="error">Too long to preview.</div>', status_code=413
         )
-    return HTMLResponse(str(render_page_body(conn, body, actor=user)))
+    page = None
+    if source_id is not None:
+        page, err = page_visible_or_response(conn, source_id, user)
+        if err is not None:
+            return err
+    return HTMLResponse(
+        str(render_page_body(conn, body, actor=user, page=page, preview=True))
+    )
 
 
 @router.post("/mentor/pages/{page_id}/draft", dependencies=[Depends(verify_csrf)])

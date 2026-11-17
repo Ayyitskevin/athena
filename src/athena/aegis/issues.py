@@ -168,6 +168,7 @@ def create_issue(
             source_kind="issue",
             source_id=issue_id,
             body=body,
+            new_source=True,
             commit=False,
         )
         search.index_document(conn, kind="issue", source_id=issue_id, commit=False)

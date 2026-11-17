@@ -16,7 +16,7 @@ import secrets
 import sqlite3
 from typing import Any, Iterable, Iterator
 
-from athena.core import activity_chain, issue_identity, links
+from athena.core import activity_chain, issue_identity, links, portable_title_links
 from athena.core._util import atomic_write_json, utc_now_iso
 
 SCHEMA = "athena.portability.v1"
@@ -179,10 +179,13 @@ def export_bundle(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
     """Return one project or space from a single SQLite read snapshot."""
     with _read_snapshot(conn):
         if kind == "project":
-            return _project_bundle(conn, target_id)
-        if kind == "space":
-            return _space_bundle(conn, target_id)
-        raise ValueError("export kind must be 'project' or 'space'")
+            bundle = _project_bundle(conn, target_id)
+        elif kind == "space":
+            bundle = _space_bundle(conn, target_id)
+        else:
+            raise ValueError("export kind must be 'project' or 'space'")
+        portable_title_links.export(conn, bundle)
+        return bundle
 
 
 def build_import_manifest(
@@ -791,6 +794,7 @@ def _replay_project_import(
     link_count, skipped_cross_links = _insert_internal_cross_links(
         conn, bundle["cross_links"], {"issue": issue_map}
     )
+    portable_title_links.restore(conn, bundle, issue_map)
     activity_count, activity_map = _insert_activity(
         conn,
         bundle["activity"],
@@ -950,6 +954,7 @@ def _replay_space_import(
     link_count, skipped_cross_links = _insert_internal_cross_links(
         conn, bundle["cross_links"], {"page": page_map}
     )
+    portable_title_links.restore(conn, bundle, page_map)
     activity_count, activity_map = _insert_activity(
         conn,
         bundle["activity"],
@@ -1671,6 +1676,7 @@ def _validate_project_bundle(bundle: dict) -> None:
         _require_id_ref(labels, label_link["label_id"], f"label_links[{i}].label_id")
     _validate_attachment_refs(bundle["attachments"], "issue", issues, users)
     _validate_cross_links(bundle["cross_links"], {"issue": issues})
+    portable_title_links.validate(bundle)
     _validate_activity_refs(
         bundle["activity"], {"project": {root_id}, "issue": issues}, users
     )
@@ -1737,6 +1743,7 @@ def _validate_space_bundle(bundle: dict) -> None:
         _require_id_ref(labels, label_link["label_id"], f"label_links[{i}].label_id")
     _validate_attachment_refs(bundle["attachments"], "page", pages, users)
     _validate_cross_links(bundle["cross_links"], {"page": pages})
+    portable_title_links.validate(bundle)
     _validate_activity_refs(
         bundle["activity"], {"space": {root_id}, "page": pages}, users
     )

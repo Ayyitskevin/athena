@@ -461,6 +461,9 @@ def render_body(
     actor: dict | None | object = links._UNGATED,
     embed_results: list[dict] | None = None,
     show_refused_directives: bool = False,
+    source: tuple[str, int] | None = None,
+    preview: bool = False,
+    space_id: int | None = None,
 ) -> Markup:
     """Render a body (Markdown) to safe HTML with cross-references linked. A
     reference to a real target becomes an <a class="xref">title</a>; a broken one
@@ -473,6 +476,10 @@ def render_body(
     rendering (the body is never trusted raw). A token inside a code span/block is
     still linkified (the substitution runs over the rendered HTML); that edge is
     accepted in exchange for keeping one obvious render path.
+
+    A saved source supplies the binding for each bare-title token. Previews may
+    also resolve newly typed titles, preferring the source page's space. Neither
+    path writes a binding or changes the source body.
 
     `actor` is the viewer the cross-link gate runs against: a token pointing at a
     target the viewer can't see (an issue in a private project / a page in a private
@@ -529,12 +536,11 @@ def render_body(
             return f'<a href="{href}" class="xref">{label}</a>'
         return f'<span class="xref broken">{escape(match.group(0))}</span>'
 
+    # Load the saved identities at most once, only for a body with bare titles.
+    saved_titles: dict[str, int | None] | None = None
+
     def _title_link(match) -> str:
-        # [[Page Title]] — a bare wiki-link. Resolve the title to a concrete page (the
-        # source-space preference only applies at index time, not to a free-standing
-        # render), link it live, or render the literal token broken. A hit the viewer
-        # can't see is treated as a miss (broken), so a private space's page never leaks
-        # its title/existence through a title link — the same gate the typed refs use.
+        nonlocal saved_titles
         # This pass runs over already-escaped HTML, so a title like "Q&A" arrives here as
         # "Q&amp;A". Undo the entity escaping so the lookup key matches the raw title the
         # index recorded (the token grammar already excludes <>, so & is the only entity
@@ -546,8 +552,21 @@ def render_body(
         # it.
         if links._is_reserved_ref(inner):
             return match.group(0)
-        ref = links.resolve_title_ref(conn, inner)
-        if ref["exists"] and links._visible_ref(conn, actor, "page", ref["id"]):
+        if source is not None and saved_titles is None:
+            saved_titles = links.source_title_targets(conn, *source)
+        key = links.title_key(inner)
+        ref: dict | None
+        if saved_titles is None or (preview and key not in saved_titles):
+            # A standalone preview or newly typed token has no saved identity.
+            ref = links.resolve_title_ref(conn, inner, space_id=space_id)
+        else:
+            target_id = saved_titles.get(key)
+            ref = (
+                links.resolve_ref(conn, "page", target_id)
+                if target_id is not None
+                else None
+            )
+        if ref and ref["exists"] and links._visible_ref(conn, actor, "page", ref["id"]):
             href = _HREF["page"].format(ref["id"])
             label = escape(ref["title"])
             return f'<a href="{href}" class="xref">{label}</a>'
@@ -594,7 +613,12 @@ MAX_PREVIEW_CHARS = 200_000
 
 
 def render_page_body(
-    conn: sqlite3.Connection, text: str | None, *, actor: dict | None
+    conn: sqlite3.Connection,
+    text: str | None,
+    *,
+    actor: dict | None,
+    page: dict | None = None,
+    preview: bool = False,
 ) -> Markup:
     """A Mentor page body, exactly as the page view renders it.
 
@@ -605,12 +629,20 @@ def render_page_body(
         conn,
         text,
         actor=actor,
+        source=("page", page["id"]) if page is not None else None,
+        space_id=page["space_id"] if page is not None else None,
+        preview=preview,
         embed_results=embed_data.resolve_body(conn, text, actor=actor),
     )
 
 
 def render_issue_body(
-    conn: sqlite3.Connection, text: str | None, *, actor: dict | None
+    conn: sqlite3.Connection,
+    text: str | None,
+    *,
+    actor: dict | None,
+    issue_id: int | None = None,
+    preview: bool = False,
 ) -> Markup:
     """An issue body, exactly as the issue view renders it.
 
@@ -620,4 +652,10 @@ def render_issue_body(
     something the issue page will not is the drift this pairing exists to
     prevent. When issue embeds ship, both surfaces gain them from this one line.
     """
-    return render_body(conn, text, actor=actor)
+    return render_body(
+        conn,
+        text,
+        actor=actor,
+        source=("issue", issue_id) if issue_id is not None else None,
+        preview=preview,
+    )

@@ -126,7 +126,9 @@ def render_issue_detail(
 
     context = {
         "issue": issue,
-        "body_html": render_issue_body(conn, issue["body"], actor=user),
+        "body_html": render_issue_body(
+            conn, issue["body"], actor=user, issue_id=issue_id
+        ),
         # "Referenced by" hides sources in projects/spaces the viewer can't see.
         "backlinks": links.backlinks(conn, "issue", issue_id, actor=user),
         # Typed dependencies, gated like the backlinks: a blocks/relates edge to an

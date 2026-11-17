@@ -100,7 +100,7 @@
                work exactly as before; the preview simply stays empty. #}
             <div class="editor-split">
                 <textarea id="body" name="body" rows="12" placeholder="Write the page..."
-                          hx-post="/mentor/pages/preview"
+                          hx-post="/mentor/pages/preview?source_id={{ page.id }}"
                           hx-trigger="keyup changed delay:300ms"
                           hx-target="#body-preview"
                           hx-include="closest form"

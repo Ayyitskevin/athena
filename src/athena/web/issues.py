@@ -34,6 +34,7 @@ from athena.core import (
     users,
 )
 from athena.core.deps import get_conn
+from athena.core.ids import RowIdQuery
 from athena.web.browsing import (
     attach_labels,
     int_or_none,
@@ -402,12 +403,19 @@ def _issue_edit_context(
         # Identical to the saved issue: not unsaved work, so offering to restore
         # it would just make an author wonder what they had forgotten.
         draft = None
+    restored_draft = draft if restored else None
     return {
         "issue": issue,
-        "body_html": render_issue_body(conn, issue["body"] or "", actor=user),
+        "body_html": render_issue_body(
+            conn,
+            restored_draft["body"] if restored_draft is not None else issue["body"],
+            actor=user,
+            issue_id=issue["id"],
+            preview=restored_draft is not None,
+        ),
         "issue_etag": issue_etags.current_etag(conn, issue),
         "draft": draft,
-        "restored": restored and draft is not None,
+        "restored": restored_draft is not None,
         "draft_is_stale": draft is not None
         and issue_drafts.is_stale(draft, issue_etags.current_etag(conn, issue)),
         "notice": notice,
@@ -626,6 +634,7 @@ def discard_issue_draft(
 def preview_issue_body(
     request: Request,
     body: str = Form(""),
+    source_id: RowIdQuery | None = None,
     conn: sqlite3.Connection = Depends(get_conn),
 ):
     """Render unsaved issue text exactly as the issue view will render it.
@@ -647,7 +656,13 @@ def preview_issue_body(
         return HTMLResponse(
             '<div class="error">Too long to preview.</div>', status_code=413
         )
-    return HTMLResponse(str(render_issue_body(conn, body, actor=user)))
+    if source_id is not None:
+        _, err = issue_visible_or_404(conn, source_id, user)
+        if err is not None:
+            return err
+    return HTMLResponse(
+        str(render_issue_body(conn, body, actor=user, issue_id=source_id, preview=True))
+    )
 
 
 @router.get("/aegis/issues/{issue_id}/graph", response_class=HTMLResponse)
