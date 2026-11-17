@@ -67,9 +67,20 @@ workflow engine. See [WORKFLOW_GATES.md](WORKFLOW_GATES.md).
 
 The accountable conductor may see these slices in its own ready lane because
 assignment makes it eligible. That is not an instruction to claim the workers'
-work. Workers claim their own slices. `claim_next_ready` is a best-effort client
-helper, not dispatch, an atomic server reservation or a one-lease-per-account
-quota; concurrent calls can claim different issues. Serialize it per account.
+work. Workers claim their own slices. `claim_next_ready(project_id=...)` atomically
+selects eligible ready work and acquires one lease. Omit `project_id` to include
+all eligible projects and backlog. Any active lease held by that account blocks
+queue pickup, even on another project; ordinary direct claims still allow several
+possessions. `limit` (1–5, default 1) bounds candidate attempts, never acquisitions.
+The empty outcomes are `already_holding`, `nothing_ready`, or
+`candidates_conflicted` (replacing the old client-only `lost_race`).
+
+Choose an `idempotency_key` before a retryable pickup and preserve its credential,
+arguments and run lineage. Success and empty outcomes both replay as historical
+receipts; a replay never renews or reacquires. Read current full work context before
+work and explicitly resume an open handoff. A new poll uses a new key; an uncertain
+outcome needs reconciliation first. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md)
+for finite receipt retention and fail-closed retry boundaries.
 
 ## Work, then review the exact artifact
 

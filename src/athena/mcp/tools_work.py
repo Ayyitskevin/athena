@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from athena.aegis import lease_commands
 from athena.mcp.server import (
+    ClaimNextLeaseSeconds,
+    ClaimNextLimit,
     ClaimYieldNote,
     HandoffAttemptedWork,
     HandoffBlockingQuestion,
@@ -170,23 +172,30 @@ def register_work_tools(tool, mutation_tool, client) -> None:
             idempotency_key=idempotency_key,
         )
 
-    # A write with shared guidance but no retry key or if_match: it reads the
-    # fresh root ETag itself; already_holding is a snapshot precheck.
     @mutation_tool
-    def claim_next_ready(limit: int = 1, lease_seconds: int | None = None) -> dict:
-        """Claim the next issue in your ready lane (my_desk work.ready) through
-        the ordinary claim, against the issue's current revision. Ready = visible,
-        to-do or doing, no live lease, no blocker that is not done, and yours to
-        claim; delegated-to-you first, then priority, then oldest. `limit` (1-5)
-        is how many candidates to try in order if others win them first. Returns
-        claimed=true with lease (incl. generation), issue_etag and
-        work_context_etag, plus previous_lease/open_handoff labels; or
-        claimed=false with reason already_holding, nothing_ready, or lost_race
-        (per-candidate attempts listed). Read the work context next; an
-        open_handoff means resume_claim_handoff after claiming. Takes no idempotency key:
-        a sequential repeat sees your held lease. Serialize calls per account;
-        overlapping calls can claim different issues. Readiness is a snapshot."""
-        return client.claim_next_ready(limit=limit, lease_seconds=lease_seconds)
+    def claim_next_ready(
+        limit: ClaimNextLimit = 1,
+        lease_seconds: ClaimNextLeaseSeconds | None = None,
+        project_id: ProjectId | None = None,
+        idempotency_key: IdempotencyKey | None = None,
+    ) -> dict:
+        """Atomically select and claim ready work: delegated first, then priority,
+        then oldest. Omit project_id for all eligible projects plus backlog.
+        Any active possession by your account prevents queue pickup; direct
+        claims may still hold several issues. limit (1-5) bounds candidates, not
+        acquisitions. Returns claimed=true with lease generation, issue/context
+        tags and previous_lease/open_handoff labels, or claimed=false with reason
+        already_holding, nothing_ready or candidates_conflicted. Read full work
+        context before work; an open handoff needs explicit resume. Responses are
+        historical receipts on replay, never renewal or reacquisition. A fresh
+        poll needs a new key; reconcile an uncertain outcome before changing keys.
+        See docs/ATOMIC_PICKUP_SPEC.md for expiry and retry boundaries."""
+        return client.claim_next_ready(
+            limit=limit,
+            lease_seconds=lease_seconds,
+            project_id=project_id,
+            idempotency_key=idempotency_key,
+        )
 
     @mutation_tool
     def yield_claim(

@@ -25,6 +25,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [OFFICE.md](OFFICE.md) | The cubicle inside the desk: one chair per agent, fenced paths, checkout hint. |
 | [WORK_CONTEXT.md](WORK_CONTEXT.md) | The bounded read packet for one issue: the issue, neighbours, blockers, runbook — prefer it over five separate reads. |
 | [PROJECT_BRIEF_SPEC.md](PROJECT_BRIEF_SPEC.md) | The compact visible project briefing: section counts, clipping, historical reports and visibility/authority limits. |
+| [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) | Atomic ready-work selection and acquisition, account-wide pickup guard, project filter and historical retry receipts. |
 | [EVIDENCE_MANIFEST.md](EVIDENCE_MANIFEST.md) | When freezing or reviewing evidence: versioned documentary bindings through existing attachments and references, never approval. |
 | [CONTINUATION.md](CONTINUATION.md) | When resuming or encountering clipped evidence: select the smallest new delta and recover exact bytes or report PARTIAL. |
 | [CAPABILITY_BASELINE.md](CAPABILITY_BASELINE.md) | Before adopting a source feature: distinguish source presence, dated observations and unknown live capability. |

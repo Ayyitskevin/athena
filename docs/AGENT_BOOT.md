@@ -121,6 +121,10 @@ normal seat, 37 with knowledge, or 35 for a conductor, before any narrower token
 scope removes more. The conductor profile adds no admin tools or permission.
 `get_project_brief(project_id=..., limit=5)` provides a bounded project snapshot;
 it does not replace desk boot or full issue work context for claims and recovery.
+`claim_next_ready(project_id=..., idempotency_key=...)` uses one atomic server
+pickup; omitted project means all eligible projects plus backlog. It refuses while
+that account holds any active lease. Its receipts may be historical on replay, so
+read current full context before work. See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md).
 
 ## Read less per issue: `brief=true`
 

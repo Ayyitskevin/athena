@@ -122,7 +122,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `attach_label` | `POST /issues/{issue_id}/labels` | Attach an existing label (by id — see list_labels) to an issue. |
 | `bulk_update_issues` | `POST /issues/bulk` | Apply the same change to MANY issues at once (one call instead of N). |
 | `claim_issue` | `POST /issues/{issue_id}/claim` | Claim or renew an issue against the exact root issue revision you … |
-| `claim_next_ready` | *(client-side)* | Claim the next issue in your ready lane (my_desk work.ready) through … |
+| `claim_next_ready` | `POST /issues/claim-next` | Atomically select and claim ready work: delegated first, then priority, … |
 | `comment_on_issue` | `POST /issues/{issue_id}/comments` | Add a comment to an issue, authored by the token's user. |
 | `complete_claim` | `POST /issues/{issue_id}/complete` | Release your lease. This does NOT close the issue; update_issue does. |
 | `complete_sprint` | `POST /sprints/{sprint_id}/complete` | Move an active sprint to completed. Athena supplies today's date when … |

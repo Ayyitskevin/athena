@@ -17,9 +17,7 @@ work query, a bounded ``work.ready`` desk lane with its own total, and
 ``claim_next_ready``, which claims through the existing claim command. These pin it.
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -478,6 +476,8 @@ def test_claim_next_ready_claims_the_top_item_and_returns_the_tags(tmp_path):
         tc, client = _mcp(app, agent)
         try:
             result = client.claim_next_ready()
+            assert result["schema"] == "athena.ready_claim.v1"
+            datetime.fromisoformat(result["observed_at"])
             assert result["claimed"] is True
             assert result["issue"]["id"] == top["id"]
             assert result["lease"]["holder_id"] == agent["user"]["id"]
@@ -505,7 +505,10 @@ def test_claim_next_ready_with_nothing_ready_refuses_cleanly(tmp_path):
         tc, client = _mcp(app, agent)
         try:
             result = client.claim_next_ready()
+            datetime.fromisoformat(result["observed_at"])
             assert result == {
+                "schema": "athena.ready_claim.v1",
+                "observed_at": result["observed_at"],
                 "claimed": False,
                 "reason": "nothing_ready",
                 "ready_total": 0,
@@ -529,121 +532,9 @@ def test_claim_next_ready_limit_is_bounded(tmp_path):
             tc.__exit__(None, None, None)
 
 
-def test_two_concurrent_claim_next_ready_calls_never_both_win(tmp_path):
-    db_file = tmp_path / "race.db"
-    setup_app = create_app(db_file)
-    with TestClient(setup_app) as c:
-        _bootstrap(c)
-        first = _agent(c, "one@e.com", "One")
-        second = _agent(c, "two@e.com", "Two")
-        only = _issue(c, "the only one")
-        for agent in (first, second):
-            _delegate(c, only["id"], agent)
-
-    barrier = threading.Barrier(2)
-
-    def compete(agent):
-        # Separate app instances on one database, like two processes.
-        app = create_app(db_file)
-        tc, client = _mcp(app, agent)
-        original = client.ready_work
-
-        def read_then_wait(**kwargs):
-            # Both read the lane before either claims: the worst interleaving.
-            lane = original(**kwargs)
-            barrier.wait(timeout=10)
-            return lane
-
-        client.ready_work = read_then_wait
-        try:
-            return client.claim_next_ready()
-        finally:
-            tc.__exit__(None, None, None)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = [
-            f.result(timeout=30)
-            for f in (pool.submit(compete, first), pool.submit(compete, second))
-        ]
-    winners = [o for o in outcomes if o["claimed"]]
-    losers = [o for o in outcomes if not o["claimed"]]
-    assert len(winners) == 1 and len(losers) == 1
-    assert losers[0]["reason"] == "lost_race"
-    assert losers[0]["attempts"][0]["issue_id"] == only["id"]
-    assert losers[0]["attempts"][0]["status"] == 409
-    conn = db.connect(db_file)
-    rows = conn.execute("SELECT issue_id, holder_id FROM issue_leases").fetchall()
-    conn.close()
-    assert len(rows) == 1
-    assert rows[0]["holder_id"] == winners[0]["lease"]["holder_id"]
-
-
-def test_an_etag_race_returns_a_clean_refusal_and_writes_no_lease(tmp_path):
-    app, db_file = _app(tmp_path)
-    with TestClient(app) as c:
-        _bootstrap(c)
-        agent = _agent(c)
-        issue = _issue(c, "edited mid-claim")
-        _delegate(c, issue["id"], agent)
-        tc, client = _mcp(app, agent)
-        original = client.get_issue
-
-        def read_then_someone_edits(ref):
-            seen = original(ref)
-            edited = c.patch(f"/issues/{ref}", json={"title": "edited"}, headers=H1)
-            assert edited.status_code == 200, edited.text
-            return seen
-
-        client.get_issue = read_then_someone_edits
-        try:
-            result = client.claim_next_ready()
-            assert result["claimed"] is False
-            assert result["reason"] == "lost_race"
-            assert result["attempts"] == [
-                {"issue_id": issue["id"], "status": 412, "outcome": "stale_revision"}
-            ]
-            conn = db.connect(db_file)
-            assert (
-                conn.execute("SELECT COUNT(*) AS n FROM issue_leases").fetchone()["n"]
-                == 0
-            )
-            conn.close()
-            # Positive control: without the edit, the same call claims it.
-            client.get_issue = original
-            assert client.claim_next_ready()["claimed"] is True
-        finally:
-            tc.__exit__(None, None, None)
-
-
-def test_claim_next_ready_tries_the_next_item_only_within_its_limit(tmp_path):
-    app, db_file = _app(tmp_path)
-    with TestClient(app) as c:
-        _bootstrap(c)
-        agent = _agent(c)
-        rival = _agent(c, "riv@e.com", "Rival")
-        top = _issue(c, "top", priority="urgent")
-        second = _issue(c, "second", priority="low")
-        for issue in (top, second):
-            for who in (agent, rival):
-                _delegate(c, issue["id"], who)
-        tc, client = _mcp(app, agent)
-        original = client.get_issue
-
-        def rival_takes_top(ref):
-            seen = original(ref)
-            if int(ref) == top["id"]:
-                _claim(c, rival, top["id"])
-            return seen
-
-        client.get_issue = rival_takes_top
-        try:
-            result = client.claim_next_ready(limit=2)
-            assert result["claimed"] is True and result["issue"]["id"] == second["id"]
-            assert result["attempts"] == [
-                {"issue_id": top["id"], "status": 409, "outcome": "lost_race"}
-            ]
-        finally:
-            tc.__exit__(None, None, None)
+# The old ready_work/get_issue interception races no longer reach the pickup
+# implementation. Single-POST/error forwarding is in test_atomic_pickup_mcp.py;
+# selection/claim concurrency is tested at the server command boundary.
 
 
 # ── the packet points at the lane ───────────────────────────────────────────

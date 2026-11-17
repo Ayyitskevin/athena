@@ -146,7 +146,6 @@ def test_every_write_tool_keeps_a_one_line_pointer_and_nothing_else():
 @pytest.mark.parametrize(
     ("name", "retry_behavior"),
     [
-        ("claim_next_ready", "already_holding"),
         ("open_my_notebook", "same page"),
         ("heartbeat_agent_run", "only once"),
     ],

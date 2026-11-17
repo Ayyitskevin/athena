@@ -127,6 +127,25 @@ It neither advances a cursor nor supplies a claim precondition.
 Paste [`examples/desk_loop.md`](../examples/desk_loop.md) into Claude Code as the
 prompt. It is written to be handed to an agent verbatim.
 
+For server-selected work, call
+`claim_next_ready(limit=1, project_id=..., idempotency_key=...)` (REST:
+`POST /issues/claim-next`). Omit `project_id` for all eligible projects plus backlog;
+`limit` is 1–5 candidates, and one call acquires at most one lease. Selection and
+acquisition are atomic, and any active possession by the account returns
+`already_holding`. Ordinary direct claims retain their multiple-possession policy.
+The other no-acquisition outcomes are `nothing_ready` and `candidates_conflicted`;
+the latter replaces the former client-only `lost_race` result. Fetch full work
+context before working and resume any open handoff explicitly.
+
+For an uncertain retry, reuse the exact key, credential, request and run lineage.
+Success and no-work outcomes are historical receipts, including the original lease
+expiry and `active` value; replay never renews or reacquires. Use a new key for a
+new polling intent, after reconciling any uncertain prior outcome. Completed
+receipts expire (default 24 hours); reuse afterward is a new request. A crashed
+request can remain indeterminate and must not be bypassed with a new key.
+See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) and
+[OPERATIONS.md](OPERATIONS.md#durable-api-retry-keys) for the full retry contract.
+
 Watch it in the Athena UI while it runs. You should see, in order:
 
 | The agent does | You see |
