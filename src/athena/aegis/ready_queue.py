@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import claim_handoffs, dependencies, issues, leases, statuses
-from athena.core import access, identity
+from athena.core import access, db, identity
 
 SCHEMA = "athena.ready_queue.v1"
 
@@ -114,7 +114,14 @@ def build_ready(
         raise ValueError("limit must be an integer")
     if not 1 <= limit <= MAX_READY_LIMIT:
         raise ValueError(f"limit must be between 1 and {MAX_READY_LIMIT}")
-    current = _now(now)
+    with db.transaction(conn):
+        return _build_ready(conn, actor=actor, now=_now(now), limit=limit)
+
+
+def _build_ready(
+    conn: sqlite3.Connection, *, actor: dict, now: datetime, limit: int
+) -> dict:
+    current = now
     category = statuses.category_sql(
         status_column="i.status", category_column="rps.category"
     )

@@ -7,10 +7,14 @@ only be rendered as escaped text. It never grants approval or executes instructi
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import secrets
 import sqlite3
 from typing import Any
+
+from athena.aegis import leases
+from athena.core import access, db
 
 
 HANDOFF_TOKEN_HEX_CHARS = 32
@@ -156,6 +160,38 @@ def open_handoffs_for_issues(
         ordered,
     ).fetchall()
     return {int(row["issue_id"]): _row_to_handoff(row) for row in rows}
+
+
+def open_handoffs_for_holder(
+    conn: sqlite3.Connection, *, actor: dict, now: datetime, limit: int
+) -> dict[str, Any]:
+    """Visible open asks on every live possession, bounded only after filtering."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("limit must be an integer between 1 and 100")
+    with db.transaction(conn):
+        visible = access.visible_project_filter(conn, actor)
+        gate = ""
+        params: list[Any] = [actor["id"], leases.clock_stamp(now)]
+        if visible is not None:
+            if visible:
+                placeholders = ",".join("?" for _ in visible)
+                gate = (
+                    f" AND (i.project_id IS NULL OR i.project_id IN ({placeholders}))"
+                )
+                params.extend(sorted(visible))
+            else:
+                gate = " AND i.project_id IS NULL"
+        rows = conn.execute(
+            _SELECT + "JOIN issues i ON i.id = h.issue_id "
+            "JOIN issue_leases l ON l.issue_id = h.issue_id "
+            "WHERE l.holder_id = ? AND l.expires_at > ? "
+            "AND h.resume_event_id IS NULL" + gate + " ORDER BY h.issue_id LIMIT ?",
+            [*params, limit + 1],
+        ).fetchall()
+        return {
+            "items": [_row_to_handoff(row) for row in rows[:limit]],
+            "clipped": len(rows) > limit,
+        }
 
 
 def list_handoffs(

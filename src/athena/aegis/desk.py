@@ -47,6 +47,7 @@ from athena.core import (
     agent_notebook,
     approvals,
     budgets,
+    db,
     desk_cursors,
     fleet_roster,
     identity,
@@ -122,6 +123,14 @@ def build_desk(
     actor: dict,
     now: datetime | None = None,
 ) -> dict:
+    """Compose every lane at one database snapshot and observation instant."""
+    with db.transaction(conn):
+        return _build_desk(
+            conn, actor=actor, now=now if now is not None else datetime.now(UTC)
+        )
+
+
+def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict:
     """This actor's desk: identity, asks, work, signals, cursor.
 
     Every lane is the owning surface's own read with this actor's visibility,
@@ -171,7 +180,7 @@ def build_desk(
     # live one — not a footnote on the same list.
     # Capture the default once: expiry must not put one possession in both
     # lanes or make the total/embedded office disagree with the held list.
-    lease_now = now if now is not None else datetime.now(UTC)
+    lease_now = now
     held = leases.active_leases_held_by(
         conn, holder_id=user_id, limit=LEASES_LIMIT, now=lease_now
     )
@@ -195,13 +204,11 @@ def build_desk(
         now=lease_now,
         limit=DELEGATIONS_LIMIT,
     )
-    # A handoff is attached to an issue, so "mine to acknowledge" is exactly
-    # "open on an issue I hold" — composed rather than re-queried. The reader
-    # returns a dict keyed by issue id; the desk presents an ordered list.
-    handoffs_by_issue = claim_handoffs.open_handoffs_for_issues(
-        conn, [lease["issue_id"] for lease in held]
+    # Filter visible asks across all live possessions before applying their own
+    # bound; the held-work display window is not the universe of handoffs.
+    handoffs = claim_handoffs.open_handoffs_for_holder(
+        conn, actor=actor, now=lease_now, limit=HANDOFFS_LIMIT
     )
-    handoffs = [handoffs_by_issue[key] for key in sorted(handoffs_by_issue)]
 
     # --- signals: what changed while I was away ------------------------------
     cursor = desk_cursors.get_cursor(conn, user_id=user_id, name=DESK_CURSOR)
@@ -248,9 +255,9 @@ def build_desk(
                 ),
             },
             "claim_handoffs": {
-                "items": handoffs[:HANDOFFS_LIMIT],
+                "items": handoffs["items"],
                 "limit": HANDOFFS_LIMIT,
-                "clipped": len(handoffs) > HANDOFFS_LIMIT,
+                "clipped": handoffs["clipped"],
                 "meaning": "context handed to you that you have not acknowledged",
             },
         },
