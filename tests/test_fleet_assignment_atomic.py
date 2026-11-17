@@ -195,7 +195,7 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
 
 
 @pytest.mark.parametrize(
-    "key,stdout,stderr,returncode,expected_status,expected_detail",
+    "key,stdout,stderr,returncode,expected_status,expected_detail,launched",
     [
         (
             b"SECKEY=fixture-private\xff",
@@ -204,6 +204,16 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
             0,
             "failed",
             "key file is not valid UTF-8",
+            False,
+        ),
+        (
+            b"SECKEY=fixture-private\x00tail",
+            b"",
+            b"",
+            0,
+            "failed",
+            "invalid buzz cli launch arguments",
+            False,
         ),
         (
             b"SECKEY=fixture",
@@ -212,6 +222,7 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
             0,
             "sent",
             "posted to command-deck",
+            True,
         ),
         (
             b"SECKEY=fixture",
@@ -220,6 +231,7 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
             1,
             "failed",
             "buzz cli failed",
+            True,
         ),
         (
             b"SECKEY=fixture",
@@ -228,10 +240,12 @@ def test_repeat_by_owner_preserves_events_and_former_assignee_loses_authority(tr
             0,
             "failed",
             "declined",
+            True,
         ),
     ],
     ids=[
         "invalid-config",
+        "invalid-launch",
         "unreadable-receipt",
         "unreadable-diagnostic",
         "explicit-refusal",
@@ -247,6 +261,7 @@ def test_unreadable_radio_input_preserves_durable_assignment(
     returncode,
     expected_status,
     expected_detail,
+    launched,
 ):
     conn, _, member, recipient, issue = transfer
     key_file = tmp_path / "radio-config"
@@ -277,7 +292,7 @@ def test_unreadable_radio_input_preserves_durable_assignment(
         result["radio"].get("permalink") is None
         and result["receipt"]["status"] == "skipped"
     )
-    assert observed.exists() == (b"\xff" not in key)
+    assert observed.exists() is launched
     with closing(db.connect(tmp_path / "transfer.db")) as reader:
         assert issues.get_issue(reader, issue["id"])["assignee_id"] == recipient["id"]
         assert (

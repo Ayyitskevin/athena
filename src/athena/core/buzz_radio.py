@@ -240,6 +240,10 @@ def send_channel_message(
             # value inside argv and never cross a shell parsing boundary.
             shell=False,
         )
+    except ValueError:
+        # The launcher rejects e.g. NUL in argv or the environment before exec.
+        # Neither the arguments nor the signing environment belong in a receipt.
+        return {"status": "failed", "detail": "invalid buzz cli launch arguments"}
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
         return {"status": "failed", "detail": type(exc).__name__}
     if getattr(completed, "returncode", 1) != 0:
