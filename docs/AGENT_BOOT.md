@@ -60,10 +60,12 @@ file's section census.
   reads or raw SQL.
 - Claim before editing: check `get_issue_lease(ref)`, then `claim_issue(...)`.
   One issue per owned work slice, claimed before files change.
-- Read one issue properly with `get_issue_work_context(ref)` — the bounded
+- Read one issue properly with `get_issue_work_context(issue_id=...)` (or
+  `ref="ATH-12"`; supply exactly one) — the bounded
   packet (issue, neighbours, blockers, runbook) — not five separate reads.
-- Tag your writes: `begin_run(run_id=...)` at the start, heartbeat while
-  working. Heartbeat records an authenticated report, not process liveness
+- Tag your writes: `athena-mcp` gives the session a run identity automatically;
+  `current_run()` shows it. The full profile also offers `begin_run(run_id=...)`
+  to switch runs. Heartbeat while working. Heartbeat records an authenticated report, not process liveness
   or lease renewal. Renew before expiry with the generation and a freshly
   reviewed issue ETag. Untagged writes are not replayable as a unit.
 - Put it down: close with the verify commands a reviewer can re-run, and
@@ -113,8 +115,8 @@ No seat profile carries `mark_notifications_read`: bulk acknowledgement is never
 a seat's move. An unknown value stops the server with a message naming the
 three; it never falls back to `full` by accident. A seat that needs a hidden
 tool for one task starts that session with `ATHENA_MCP_PROFILE=full`. The seat
-profile also names `claim_next_ready` and `wait_for_events`, which bind as soon
-as those tools are registered.
+profile also includes `claim_next_ready` and `wait_for_events`: 26 tools for a
+normal seat, or 37 with knowledge, before any narrower token scope removes more.
 
 ## Read less per issue: `brief=true`
 

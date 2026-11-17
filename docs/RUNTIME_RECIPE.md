@@ -99,9 +99,18 @@ in your Claude Code MCP settings:
 }
 ```
 
-The MCP server shows the agent **only the tools its token's scopes allow**. A
-read-only token sees no write tools at all — the tool list is itself a boundary,
-not just an error you hit later.
+The MCP server uses the token's scopes to hide tools it cannot call; the REST
+API still enforces authorization. If the startup scope probe fails, the server
+warns and presents the full tool surface, while REST refusals remain in force.
+
+For this issue-and-knowledge loop, optionally add
+`"ATHENA_MCP_PROFILE": "seat+knowledge"` to the environment above. It carries 37
+tools for this token class, including `record_run_learning`; `seat` carries 26
+for issue work. Profiles intersect scopes and never add permission. Unset means
+`full`, and an unknown profile refuses startup. See [AGENT_BOOT.md](AGENT_BOOT.md)
+for the exact sets. Both issue reads accept `issue_id=...` or `ref="ATH-12"`;
+supply exactly one. After reading the full work context, `brief=true` keeps the
+issue, issue ETag, dependencies, and warnings for a compact re-read.
 
 ## 4. Run the loop
 

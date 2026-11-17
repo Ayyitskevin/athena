@@ -446,8 +446,8 @@ def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
 # acknowledgement, so a seat under a profile cannot see the bulk tool at all
 # (the targeted `mark_notification_read` stays).
 #
-# Two names are listed ahead of their branches merging (claim_next_ready,
-# wait_for_events); until a name is registered the intersection ignores it.
+# The core loop includes claim_next_ready and wait_for_events, now registered
+# alongside the explicit claim and immediate-read operations.
 PROFILE_ENV = "ATHENA_MCP_PROFILE"
 SEAT_PROFILE: frozenset[str] = frozenset(
     {
@@ -475,7 +475,6 @@ SEAT_PROFILE: frozenset[str] = frozenset(
         "acknowledge_run_control",
         "complete_run_control",
         "decline_run_control",
-        # pending: registered by other branches, bind here when they merge
         "claim_next_ready",
         "wait_for_events",
     }

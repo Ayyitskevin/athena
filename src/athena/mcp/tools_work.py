@@ -270,8 +270,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         evaluation was attempted but did not establish met or not_met; for
         example, an integration check ran but timed out before producing a
         result. Optional verdict (PASS, PASS-WITH-NOTES, HOLD, BLOCKED),
-        findings (P1/P2/P3 counts), and usage are reported by the agent, never
-        verified or metered by Athena. Shapes, limits and the credential guard:
+        findings (P1/P2/P3 counts), and usage are reported by the agent, not
+        verified by Athena. Usage is not metered. Shapes, limits and the credential guard:
         docs/CLOSEOUT_RECIPE.md.
         """
         return client.complete_claim(

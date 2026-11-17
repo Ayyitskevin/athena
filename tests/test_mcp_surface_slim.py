@@ -480,6 +480,7 @@ def _read_arguments(board) -> dict[str, dict]:
         "query_help": {},
         "read_page_embeds": {"page_id": page_id},
         "recent_events": {},
+        "wait_for_events": {"wait": 0},
         "related_items": {"kind": "issue", "id": issue_id},
         "resolve_embeds": {"text": "nothing to resolve"},
         "search": {"query": "surface"},

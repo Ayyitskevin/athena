@@ -22,7 +22,7 @@ import pytest
 from athena.core import tokens
 from athena.mcp import server as mcp_server
 
-# The audit's core 24: the tools its real run of the loop needed.
+# The audit's core loop, including the two additions now merged on main.
 SEAT = frozenset(
     {
         "my_desk",
@@ -49,11 +49,10 @@ SEAT = frozenset(
         "acknowledge_run_control",
         "complete_run_control",
         "decline_run_control",
+        "claim_next_ready",
+        "wait_for_events",
     }
 )
-# Named in the seat profile ahead of their branches merging; until then they
-# are not registered and the intersection ignores them.
-PENDING = frozenset({"claim_next_ready", "wait_for_events"})
 # The audit's eleven for knowledge work.
 KNOWLEDGE = frozenset(
     {
@@ -92,23 +91,18 @@ def _names(scopes, profile) -> set[str]:
 
 
 def test_the_seat_profile_is_the_audits_core_set_plus_the_two_named_additions():
-    assert mcp_server.PROFILES["seat"] == SEAT | PENDING
+    assert mcp_server.PROFILES["seat"] == SEAT
     registered = set(mcp_server.TOOL_SCOPES)
     assert SEAT <= registered
-    # Both additions are still pending here; when their branches merge this
-    # line is what changes, and the surface below grows by exactly those names.
-    assert mcp_server.PROFILES["seat"] - registered <= PENDING
-    assert _names(SEAT_SCOPES, mcp_server.PROFILES["seat"]) == SEAT | (
-        PENDING & registered
-    )
+    assert _names(SEAT_SCOPES, mcp_server.PROFILES["seat"]) == SEAT
 
 
 def test_the_knowledge_profile_adds_exactly_the_audits_eleven():
-    assert mcp_server.PROFILES["seat+knowledge"] == SEAT | PENDING | KNOWLEDGE
+    assert mcp_server.PROFILES["seat+knowledge"] == SEAT | KNOWLEDGE
     registered = set(mcp_server.TOOL_SCOPES)
     assert KNOWLEDGE <= registered
     assert _names(SEAT_SCOPES, mcp_server.PROFILES["seat+knowledge"]) == (
-        SEAT | KNOWLEDGE | (PENDING & registered)
+        SEAT | KNOWLEDGE
     )
 
 
@@ -120,24 +114,21 @@ def test_the_three_profiles_are_the_whole_vocabulary():
 @pytest.mark.parametrize(
     "profile_name,scopes,expected",
     [
-        ("seat", SEAT_SCOPES, 24),
-        ("seat+knowledge", SEAT_SCOPES, 35),
-        ("seat", ADMIN, 24),
-        ("seat+knowledge", ADMIN, 35),
-        ("seat", ISSUE_ONLY, 24),
+        ("seat", SEAT_SCOPES, 26),
+        ("seat+knowledge", SEAT_SCOPES, 37),
+        ("seat", ADMIN, 26),
+        ("seat+knowledge", ADMIN, 37),
+        ("seat", ISSUE_ONLY, 26),
         # the eleven minus the three docs:write tools
-        ("seat+knowledge", ISSUE_ONLY, 32),
-        # the ten reads among the core: my_desk, list_my_delegated_work,
+        ("seat+knowledge", ISSUE_ONLY, 34),
+        # the eleven reads among the core: my_desk, list_my_delegated_work,
         # search_work, get_issue, get_issue_work_context, list_issue_comments,
-        # get_issue_lease, current_run, list_notifications, list_run_controls
-        ("seat", READ_TOKEN, 10),
+        # get_issue_lease, current_run, list_notifications, list_run_controls,
+        # wait_for_events
+        ("seat", READ_TOKEN, 11),
     ],
 )
 def test_exact_counts_per_profile_and_token_class(profile_name, scopes, expected):
-    registered_pending = PENDING & set(mcp_server.TOOL_SCOPES)
-    assert registered_pending == frozenset(), (
-        "a pending addition merged: recount this table once it is registered"
-    )
     assert len(_names(scopes, mcp_server.PROFILES[profile_name])) == expected
 
 

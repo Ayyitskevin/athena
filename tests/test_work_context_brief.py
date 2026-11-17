@@ -12,6 +12,7 @@ byte-for-byte unchanged.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 
 from fastapi.testclient import TestClient
@@ -46,6 +47,7 @@ FULL_KEYS = frozenset(
         "related",
         "recent_activity",
         "claim_handoffs",
+        "definition_of_done",
     }
 )
 BRIEF_KEYS = frozenset(
@@ -144,7 +146,28 @@ def test_the_default_packet_is_unchanged(board):
     assert set(default.json()) == FULL_KEYS
     assert "brief" not in default.json()
     assert default.json() == explicit.json()
-    assert default.headers["etag"] == work_context.context_etag(default.json())
+    # Main's full packet hashes the projection before response validation adds
+    # optional null checklist/evidence fields. Keep that existing wire contract; the
+    # opt-in brief must not silently change the default body or validator.
+    payload = default.json()
+    assert payload.pop("definition_of_done") is None
+    assert payload["recent_activity"]["items"]
+    for event in payload["recent_activity"]["items"]:
+        assert event.pop("evidence_checks") is None
+        assert event.pop("checklist_coverage") is None
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    namespace = b"issue-work-context-v1"
+    framed = (
+        b"athena-strong-etag-v1\0"
+        + len(namespace).to_bytes(8, "big")
+        + namespace
+        + len(canonical).to_bytes(8, "big")
+        + canonical
+    )
+    expected = '"sha256-' + hashlib.sha256(framed).hexdigest() + '"'
+    assert default.headers["etag"] == expected
 
 
 def test_brief_is_its_own_representation_with_its_own_validator(board):
