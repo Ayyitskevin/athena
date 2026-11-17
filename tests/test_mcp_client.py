@@ -87,6 +87,12 @@ class _RecordingClient:
 
 MUTATION_CASES = [
     (
+        "request_candidate_review",
+        "POST",
+        "/issues/7/review-requests",
+        lambda c, k: c.request_candidate_review(7, 4, 9, idempotency_key=k),
+    ),
+    (
         "claim_next_ready",
         "POST",
         "/issues/claim-next",
@@ -462,6 +468,10 @@ OPTIONAL_IF_MATCH_TOOL_NAMES = {
 }
 IF_MATCH_TOOL_NAMES = REQUIRED_IF_MATCH_TOOL_NAMES | OPTIONAL_IF_MATCH_TOOL_NAMES
 MCP_MUTATION_CASES = [
+    (
+        "request_candidate_review",
+        {"review_issue_id": 7, "candidate_id": 4, "reviewer_id": 9},
+    ),
     ("claim_next_ready", {}),
     ("start_playbook", {"page_id": 5}),
     ("create_issue", {"title": "x"}),
