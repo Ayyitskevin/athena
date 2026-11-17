@@ -145,6 +145,7 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 | `detach_label` | `DELETE /issues/{issue_id}/labels/{label_id}` | Remove a label from an issue. Returns the updated issue. |
 | `dispatch_to_icarus` | `POST /issues/{issue_id}/dispatch` | Hand an issue to the external execution fleet. |
 | `link_issues` | `POST /issues/{issue_id}/links` | Declare a dependency FROM this issue to another (by id or key, e.g. |
+| `request_candidate_review` | `POST /issues/{review_issue_id}/review-requests` | Ask a named reviewer to review an exact candidate on an existing review issue. |
 | `resume_claim_handoff` | `POST /issues/{issue_id}/claim-handoffs/{handoff_token}/resume` | Explicitly acknowledge an open claim handoff as the exact current … |
 | `set_issue_parent` | `PUT /issues/{issue_id}/parent` | Nest an issue under a parent issue (making it a sub-task), or pass no … |
 | `set_issue_placement` | `PATCH /issues/{issue_id}` | Atomically set an issue's project and sprint. Always provide BOTH … |
@@ -223,4 +224,4 @@ the bounded grammar, evidence scopes, example, and preservation limits.
 
 ---
 
-*139 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*
+*140 tools. Generated from `mcp/server.py` (`TOOL_SCOPES`), `mcp/tools_*.py` (tool bodies), and `mcp/client.py` (verb + path literals); the registration path is fail-closed, so a tool missing here cannot exist in the server either.*

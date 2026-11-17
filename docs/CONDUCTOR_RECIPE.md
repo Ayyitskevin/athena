@@ -24,8 +24,8 @@ Distinct account names alone do not prove independent review.
 Give the conductor member credentials with `read` and `issue:write`, and set
 `ATHENA_MCP_PROFILE=conductor` in its MCP server environment. This selects the 26
 `seat` tools plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`,
-`assign_issue`, `delegate_issue`, `set_issue_parent`, `list_subtasks`, and
-`link_issues`: 36 tools before scope filtering. `docs:write` is optional for this
+`assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, and
+`link_issues`: 37 tools before scope filtering. `docs:write` is optional for this
 issue-only loop; page tools remain in `seat+knowledge` or `full`. The default remains
 `full`. Profiles never grant permission, and REST still enforces access.
 
@@ -106,6 +106,20 @@ the first submission; otherwise use the current candidate ID. Add the ordinary
 results, evidence, uncertainty and honest reported verdict. One request submits
 the immutable candidate and releases the lease; there is no separate publication
 call. Keep the returned candidate ID and source completion-event ID.
+
+To request the review, use
+`request_candidate_review(review_issue_id, candidate_id, reviewer_id)`. Use an
+open, unclaimed review issue in the same project. The named reviewer must
+already be assigned or delegated to it and have access to the submission.
+The queue shows the request separately from any reported verdict.
+
+The reviewer starts from `my_desk().asks.review_requests`, opens the review
+issue's full context, and claims that issue. The request supplies the candidate's
+identity, the source issue URL and the original completion event ID. If the
+event has aged out of recent activity, use `wait_for_events` starting just
+before that event ID and confirm the returned ID before reading its evidence.
+If the target is superseded, release the old possession and ask the conductor
+for an explicit request against the replacement.
 
 The reviewer reads the source issue's **full** context and reviews that exact
 identity while holding its separate review issue. It completes that review issue
