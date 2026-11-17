@@ -329,18 +329,32 @@ def claim_issue(
         _refuse_overlapping_paths(
             conn, issue_id=issue_id, paths=declared_paths, root=root
         )
-        lease = leases.upsert_lease(
-            conn,
-            issue_id,
-            actor["id"],
-            lease_seconds,
-            generation=current_generation,
-            declared_paths=declared_paths,
-            coordination_root=root,
-            preserve_coordination_root=renewed,
-            preserve_declared_paths=preserve_paths,
-            commit=False,
-        )
+        try:
+            lease = leases.upsert_lease(
+                conn,
+                issue_id,
+                actor["id"],
+                lease_seconds,
+                generation=current_generation,
+                declared_paths=declared_paths,
+                coordination_root=root,
+                preserve_coordination_root=renewed,
+                preserve_declared_paths=preserve_paths,
+                commit=False,
+            )
+        except sqlite3.IntegrityError as exc:
+            # The writer lock excludes rivals, not time: this possession can
+            # expire after the active read. Keep the SQL resurrection guard and
+            # report its refusal just like an already-expired renewal.
+            if (
+                not renewed
+                or str(exc) != "reactivated issue lease requires a new generation"
+            ):
+                raise
+            raise IssueCommandError(
+                "lease_generation_mismatch",
+                "lease generation is stale; acquire again without a generation",
+            ) from exc
         issue_activity.record_issue_claimed(
             conn,
             actor_id=actor["id"],

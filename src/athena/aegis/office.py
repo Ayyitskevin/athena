@@ -10,7 +10,7 @@ spawn a process, or invent a git remote.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 import sqlite3
 
 from athena.aegis import (
@@ -22,7 +22,7 @@ from athena.aegis import (
     rooms,
     statuses,
 )
-from athena.core import access, fleet_roster, users
+from athena.core import access, db, fleet_roster, users
 
 FLOOR_SCHEMA = "athena.project_floor.v1"
 
@@ -57,6 +57,12 @@ def _chair_from_lease(
     actor: dict | None,
 ) -> dict:
     issue = issues.get_issue(conn, int(lease["issue_id"]))
+    if issue is not None and not access.can_see_project_or_backlog(
+        conn, actor, issue["project_id"]
+    ):
+        # Possession metadata is still the holder's, but it grants no access to
+        # current issue content after the operator revokes project visibility.
+        issue = None
     key = None if issue is None else issue.get("key")
     issue_id = int(lease["issue_id"])
     blockers = (
@@ -94,20 +100,40 @@ def build_office(
     now: datetime | None = None,
     inbox_items: list[dict] | None = None,
 ) -> dict:
+    """One snapshot, whether read alone or composed inside the desk."""
+    with db.transaction(conn):
+        return _build_office(
+            conn,
+            actor=actor,
+            now=now if now is not None else datetime.now(UTC),
+            inbox_items=inbox_items,
+        )
+
+
+def _build_office(
+    conn: sqlite3.Connection,
+    *,
+    actor: dict,
+    now: datetime,
+    inbox_items: list[dict] | None,
+) -> dict:
     """This actor's cubicle. ``inbox_items`` avoids a second delegation read
     when the desk already has them."""
     seat_slug = fleet_roster.seat_slug_for_email(actor.get("email"))
-    held = leases.leases_held_by(conn, holder_id=int(actor["id"]), limit=20, now=now)
-    active = [row for row in held if row.get("active")]
+    active = leases.active_leases_held_by(
+        conn, holder_id=int(actor["id"]), limit=1, now=now
+    )
+    active_count = leases.count_active_leases_held_by(
+        conn, holder_id=int(actor["id"]), now=now
+    )
     warnings: list[str] = []
     chair = None
-    if len(active) == 1:
+    if active:
         chair = _chair_from_lease(conn, active[0], seat_slug, actor=actor)
-    elif len(active) > 1:
+    if active_count > 1:
         warnings.append(
             "more than one active lease; sit in one chair and release the others"
         )
-        chair = _chair_from_lease(conn, active[0], seat_slug, actor=actor)
 
     # Shown, never enforced: another live lease whose fence overlaps mine, on an
     # issue I can see. The claim command's overlap check stays the only gate.
@@ -128,10 +154,10 @@ def build_office(
     return {
         "schema": SCHEMA,
         "seat_slug": seat_slug,
-        "seated": chair is not None and len(active) == 1,
+        "seated": chair is not None and active_count == 1,
         "chair": chair,
         "next_to_sit": next_to_sit,
-        "active_lease_count": len(active),
+        "active_lease_count": active_count,
         "protocol": PROTOCOL,
         "warnings": warnings,
         "fence_overlaps": fence_overlaps_list,

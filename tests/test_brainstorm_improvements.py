@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from athena.aegis import issues, lease_commands
+from athena.aegis import desk as desk_projection
 from athena.core import db, run_controls, users
 from athena.main import create_app
 from athena.mcp.client import AthenaClient
@@ -129,6 +130,15 @@ def test_bulk_help_and_scope_do_not_suggest_acknowledging_unseen_work(desk):
 def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk, monkeypatch):
     admin, client, user, _ = desk
     clock = datetime.now(UTC).replace(microsecond=0)
+
+    class DeskClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.replace(tzinfo=None) if tz is None else clock.astimezone(tz)
+
+    # The desk captures one clock for all lanes; control that public read
+    # boundary as well as the run-control creation clock below.
+    monkeypatch.setattr(desk_projection, "datetime", DeskClock)
     monkeypatch.setattr(
         run_controls,
         "_utc_now",
@@ -162,6 +172,7 @@ def test_targeted_keyed_retry_preserves_pending_control_and_cursor(desk, monkeyp
         "expires_in_seconds"
     )
     after_seconds = after["asks"]["run_controls"]["items"][0].pop("expires_in_seconds")
+    assert before_seconds == 3600
     assert after_seconds == before_seconds - 1
     assert after["asks"]["run_controls"] == before["asks"]["run_controls"]
     assert client.get_run_control(control["id"])["state"] == "requested"
