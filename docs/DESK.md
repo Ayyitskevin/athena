@@ -50,7 +50,7 @@ a half-second wake bound).
 |---|---|---|
 | `identity` | id, name, role, agent flag, paused, scopes, budget, action kinds needing approval; `notebook` (see below) | `notebook.excerpt`: the first 12 lines |
 | `asks.run_controls` | controls addressed to you that nobody has answered | 20 |
-| `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 scanned |
+| `asks.worker_kill_requests` | your workers the operator asked to stop, still unconfirmed | 50 matching workers, with exact `total`, `limit` and `clipped` |
 | `asks.review_requests` | visible current requests for you and superseded targets on review issues you still hold | 20 |
 | `asks.claim_handoffs` | context handed to you on issues you hold, unacknowledged | 20 |
 | `work.delegations` | your delegation inbox | 20, `has_more`/`next_offset` |

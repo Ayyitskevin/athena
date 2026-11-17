@@ -23,7 +23,7 @@
 <section class="panel" aria-labelledby="unanswered-kills-heading">
     <div class="panel-head">
         <h2 id="unanswered-kills-heading">
-            Told to stop <span class="chip" data-tone="danger">{{ unanswered_kills|length }}</span>
+            Told to stop <span class="chip" data-tone="danger">{{ unanswered_kills_total }}</span>
         </h2>
     </div>
     <div class="panel-body">
@@ -33,6 +33,9 @@
             heartbeat. A worker that goes quiet is <em>stale</em>, not stopped; one
             still reporting after acknowledging is not honoring the request.
         </p>
+        {% if unanswered_kills_total > unanswered_kills|length %}
+        <p>Showing {{ unanswered_kills|length }} of {{ unanswered_kills_total }} workers with unconfirmed stop requests.</p>
+        {% endif %}
         <table class="issues-table">
             <thead>
                 <tr><th>Worker</th><th>Agent</th><th>Asked</th><th>State</th><th></th></tr>

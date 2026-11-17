@@ -5,6 +5,7 @@ Split out of web/admin.py. Writes go through the same command owners the
 REST adapters use."""
 
 from __future__ import annotations
+from datetime import UTC, datetime
 from html import escape
 import json
 import sqlite3
@@ -32,6 +33,7 @@ from athena.core import (
     approvals_api,
     budget_commands,
     budgets,
+    db,
     run_replay,
     users,
     fleet_roster,
@@ -93,6 +95,13 @@ def _agents_redirect(**query: str) -> RedirectResponse:
 def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
     """The agents-cockpit page context, shared by the GET view and the inline
     onboarding POST (which re-renders the page carrying the one-time token)."""
+    with db.transaction(conn):
+        return _build_agents_context(conn, viewer, now=datetime.now(UTC), **extra)
+
+
+def _build_agents_context(
+    conn: sqlite3.Connection, viewer: dict, *, now: datetime, **extra
+) -> dict:
     agent_rows = agents.agent_admin_summaries(conn)
     reads = reported_spend.scan(conn, viewer)  # one read for every agent on the page
     for agent in agent_rows:
@@ -111,7 +120,7 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         # Where this agent says it runs. Cooperative presence only: a worker that
         # stops heartbeating reads as stale, never as a process that died.
         agent["workers"] = workers.list_workers(
-            conn, agent_id=agent["user"]["id"], limit=20
+            conn, agent_id=agent["user"]["id"], limit=20, now=now
         )
     # Pending approvals are the steer-by-exception queue: actions an agent asked to
     # take that are waiting on this human. Names are resolved here so the template
@@ -127,17 +136,14 @@ def _agents_context(conn: sqlite3.Connection, viewer: dict, **extra) -> dict:
         )
     # Workers told to stop that have not answered are the operator's live question,
     # so they are surfaced above the per-agent detail rather than buried in it.
-    unanswered_kills = [
-        worker
-        for worker in workers.list_workers(conn, limit=200)
-        if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
-    ]
+    unanswered_kills, stop_total = workers.unanswered_page(conn, limit=200, now=now)
     return {
         "agents": agent_rows,
         # The ask-and-answer ledger, one row per agent (zero-filled). Facts per
         # lane from core/answerability.py — deliberately never a score.
-        "answerability": answerability.build_answerability(conn)["agents"],
+        "answerability": answerability.build_answerability(conn, now=now)["agents"],
         "unanswered_kills": unanswered_kills,
+        "unanswered_kills_total": stop_total,
         "budget_windows": sorted(budgets.WINDOWS),
         "approval_kinds": sorted(approvals.ACTION_KINDS),
         "pending_approvals": pending,

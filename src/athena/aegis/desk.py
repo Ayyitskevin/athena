@@ -66,6 +66,7 @@ CONTROLS_LIMIT = 20
 DELEGATIONS_LIMIT = 20
 LEASES_LIMIT = 20
 HANDOFFS_LIMIT = 20
+WORKER_STOPS_LIMIT = 50
 NOTIFICATIONS_LIMIT = 10
 
 #: How far the "what changed" counter will count before it stops counting. An
@@ -150,25 +151,12 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
     )
     # Workers are an agent concept; a human actor has none, and asking the
     # registry for a human's workers would be a query with no meaning.
-    kill_requests = (
-        [
-            {
-                "worker_id": worker["id"],
-                "worker_key": worker["worker_key"],
-                "kill_state": worker["kill_state"],
-                "kill_requested_at": worker["kill_requested_at"],
-                # What the worker last REPORTED — never an observation of the
-                # process, per WORKERS.md.
-                "last_reported_at": worker["last_seen_at"],
-                "reporting_state": worker["reporting_state"],
-            }
-            for worker in workers.list_workers(
-                conn, agent_id=user_id, limit=50, now=now
-            )
-            if worker["kill_state"] in (workers.KILL_REQUESTED, workers.KILL_DEFIED)
-        ]
+    unanswered_workers, stop_total = (
+        workers.unanswered_page(
+            conn, agent_id=user_id, limit=WORKER_STOPS_LIMIT, now=now
+        )
         if is_agent
-        else []
+        else ([], 0)
     )
 
     # --- work: what I am holding -------------------------------------------
@@ -258,7 +246,20 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
                 "meaning": "asked of you and not yet answered",
             },
             "worker_kill_requests": {
-                "items": kill_requests,
+                "items": [
+                    {
+                        "worker_id": worker["id"],
+                        "worker_key": worker["worker_key"],
+                        "kill_state": worker["kill_state"],
+                        "kill_requested_at": worker["kill_requested_at"],
+                        "last_reported_at": worker["last_seen_at"],
+                        "reporting_state": worker["reporting_state"],
+                    }
+                    for worker in unanswered_workers
+                ],
+                "total": stop_total,
+                "limit": WORKER_STOPS_LIMIT,
+                "clipped": stop_total > len(unanswered_workers),
                 "meaning": (
                     "the operator asked these workers to stop; Athena cannot "
                     "signal a process, so honoring it is yours to do"
