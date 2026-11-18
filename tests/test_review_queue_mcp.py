@@ -189,6 +189,19 @@ def test_refusals_remain_errors_without_fallback(mcp, method, status):
 BAD_IDS = [False, 0, -1, MAX_SQLITE_INTEGER + 1, 1.5, "1"]
 
 
+def test_sdk_explicit_null_queue_limit_keeps_the_existing_rest_refusal():
+    def refuse(request):
+        assert list(request.url.params.multi_items()) == [("limit", "")]
+        return httpx.Response(422, json={"detail": "invalid limit"})
+
+    with httpx.Client(
+        base_url="http://athena.test", transport=httpx.MockTransport(refuse)
+    ) as http:
+        with pytest.raises(AthenaError) as caught:
+            AthenaClient(client=http).get_project_review_queue(1, limit=None)
+    assert caught.value.status_code == 422
+
+
 @pytest.mark.parametrize("cursor", [False, 1.0, "1"])
 def test_sdk_rejects_noninteger_cursor_before_serializing(cursor):
     with pytest.raises(ValueError, match="cursor must be an integer"):

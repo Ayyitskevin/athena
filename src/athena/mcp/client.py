@@ -1611,7 +1611,7 @@ class AthenaClient:
         return self._result(
             self._client.get(
                 f"/projects/{project_id}/review-queue",
-                params=self._params(limit=limit, cursor=cursor),
+                params={"limit": limit, **self._params(cursor=cursor)},
             )
         )
 
