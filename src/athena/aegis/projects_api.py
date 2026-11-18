@@ -29,7 +29,7 @@ from athena.core import (
     access,
     users,
 )
-from athena.core.ids import RowIdPath
+from athena.core.ids import RowIdPath, RowIdQuery
 from athena.aegis.project_brief_models import ProjectBrief
 from athena.aegis.review_queue_models import ProjectReviewQueue
 from athena.core.deps import get_conn
@@ -239,6 +239,7 @@ def show_project_review_queue(
     project_id: RowIdPath,
     response: Response,
     limit: int = Query(review_queue.DEFAULT_LIMIT, ge=1, le=review_queue.MAX_LIMIT),
+    cursor: RowIdQuery | None = None,
     actor: dict | None = Depends(optional_actor),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> dict:
@@ -247,7 +248,7 @@ def show_project_review_queue(
         "Vary": "Authorization, X-Athena-Actor",
     }
     packet = review_queue.build_project_review_queue(
-        conn, project_id=project_id, actor=actor, limit=limit
+        conn, project_id=project_id, actor=actor, limit=limit, cursor=cursor
     )
     if packet is None:
         raise HTTPException(status_code=404, detail="no such project", headers=headers)

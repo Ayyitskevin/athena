@@ -94,7 +94,18 @@ def test_http_rejects_unsafe_source_without_echo_release_or_audit(board, source)
 
 
 @pytest.mark.parametrize(
-    "suffix", ["?limit=0", "?limit=21", "?limit=true", "?limit=1.5"]
+    "suffix",
+    [
+        "?limit=0",
+        "?limit=21",
+        "?limit=true",
+        "?limit=1.5",
+        "?cursor=0",
+        "?cursor=-1",
+        "?cursor=true",
+        "?cursor=1.5",
+        "?cursor=9223372036854775808",
+    ],
 )
 def test_http_queue_bounds(board, suffix):
     _, path, project = board

@@ -5,7 +5,11 @@ from typing import Literal
 from pydantic import Field
 
 from athena.aegis.project_brief_models import Excerpt, Person
-from athena.aegis.review_models import CandidateIdentity, StrictReviewModel
+from athena.aegis.review_models import (
+    CandidateIdentity,
+    ReviewCandidateId,
+    StrictReviewModel,
+)
 
 
 class ReviewSourceIssue(StrictReviewModel):
@@ -112,4 +116,5 @@ class ProjectReviewQueue(StrictReviewModel):
     returned: int
     limit: int
     clipped: bool
+    next_cursor: ReviewCandidateId | None = None
     semantics: dict[str, str]

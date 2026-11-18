@@ -304,7 +304,8 @@ latest reviews. The exact ID is
 is `review_tracking.current_candidate.candidate.identity`. Bounds and clipping are explicit; brief context omits this
 section. The conductor's `get_project_review_queue(project_id, limit=5)` shows
 current visible candidates, including done issues, and their latest visible
-reported state. `reported_pass` is advisory; `reported_hold` is HOLD/BLOCKED;
+reported state. Follow `next_cursor` as `cursor` until null to read older submissions.
+`reported_pass` is advisory; `reported_hold` is HOLD/BLOCKED;
 `unknown` has no usable reported verdict. `awaiting_review` also covers an
 inaccessible latest review and exposes no hidden association. No older visible
 PASS is substituted. The queue does not replace the compact project brief or

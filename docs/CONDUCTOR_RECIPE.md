@@ -143,6 +143,17 @@ Athena does not verify correctness, independence or acceptance. Neither the queu
 nor brief context is a claim precondition. Selective project portability omits
 candidate/review associations; whole-database recovery retains them.
 
+To scan the whole queue, pass each returned `next_cursor` as `cursor` on the
+next call with the same project. Stop when it is null. A final page can still
+say `clipped` because `visible_total` counts the whole project. After an
+interruption you can resume from the last cursor, then refresh from the top to
+catch new submissions. Each page rechecks current candidates and visibility.
+
+For a structured issue inventory through the SDK or full-profile `list_issues`,
+keep the same filters and `limit` (default 50, maximum 100). Start at
+`offset=0`, advance by the number returned, and stop at a short page.
+Concurrent board edits can shift issue positions during this scan.
+
 On **HOLD**, the conductor records the concrete finding and reopens/routes the build
 slice for rework. The builder claims again, produces a new frozen candidate and
 reports its checks. The independent reviewer then reviews that new subject. Preserve

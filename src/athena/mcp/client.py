@@ -219,13 +219,20 @@ class AthenaClient:
         label: str | None = None,
         search: str | None = None,
         include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
     ) -> Any:
+        # Validate types before omitting defaults: False compares equal to 0.
+        if type(limit) is not int or type(offset) is not int:
+            raise ValueError("limit and offset must be integers")
         params = self._params(
             status=status,
             project=project,
             sprint=sprint,
             label=label,
             search=search,
+            limit=limit if limit != 50 else None,
+            offset=offset if offset != 0 else None,
         )
         if include_archived:  # only send it when set, so the default stays clean
             params["include_archived"] = True
@@ -1595,11 +1602,16 @@ class AthenaClient:
         """One project as a floor of chairs."""
         return self._result(self._client.get(f"/projects/{project_id}/floor"))
 
-    def get_project_review_queue(self, project_id: int, *, limit: int = 5) -> Any:
+    def get_project_review_queue(
+        self, project_id: int, *, limit: int = 5, cursor: int | None = None
+    ) -> Any:
         """Read current visible candidates and their exact-version review reports."""
+        if cursor is not None and type(cursor) is not int:
+            raise ValueError("cursor must be an integer")
         return self._result(
             self._client.get(
-                f"/projects/{project_id}/review-queue", params={"limit": limit}
+                f"/projects/{project_id}/review-queue",
+                params=self._params(limit=limit, cursor=cursor),
             )
         )
 

@@ -193,7 +193,7 @@ def test_queue_counts_rows_and_reviews_share_one_wal_snapshot(board, monkeypatch
     build, check = issue(conn, project), issue(conn, project, assignee=3)
     first = submit(conn, build)
     held = claim(conn, check, 3)
-    original = review_queue._rows
+    original = review_queue._candidate_page
     written_review = None
 
     def concurrent_write_after_count_and_rows(*args, **kwargs):
@@ -214,7 +214,9 @@ def test_queue_counts_rows_and_reviews_share_one_wal_snapshot(board, monkeypatch
                 writer.close()
         return result
 
-    monkeypatch.setattr(review_queue, "_rows", concurrent_write_after_count_and_rows)
+    monkeypatch.setattr(
+        review_queue, "_candidate_page", concurrent_write_after_count_and_rows
+    )
     packet = queue(conn, project)
     assert packet["visible_total"] == packet["returned"] == 1
     assert packet["items"][0]["candidate"]["candidate_id"] == first["candidate_id"]
