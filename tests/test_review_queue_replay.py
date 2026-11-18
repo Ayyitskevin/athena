@@ -259,29 +259,56 @@ def test_same_key_cannot_change_version_generation_or_run(board, mode, change):
 
 
 @pytest.mark.parametrize("mode", ["submission", "review"])
-def test_simultaneous_duplicate_key_commits_one_association(board, mode):
-    with TestClient(create_app(board["path"])) as setup_client:
-        path, body, actor_headers = prepare(setup_client, board, mode)
-    before = snapshot(board["path"])
-    barrier = threading.Barrier(2)
+@pytest.mark.parametrize("receipt", ["pending", "published"])
+def test_simultaneous_duplicate_key_commits_one_association(
+    board, mode, receipt, monkeypatch
+):
+    original_paused = threading.Event()
+    release_original = threading.Event()
+    publish = idempotency.complete
 
-    def request():
-        with TestClient(create_app(board["path"])) as client:
-            barrier.wait(timeout=15)
-            return client.post(path, json=body, headers=actor_headers)
+    def pause_original():
+        original_paused.set()
+        assert release_original.wait(timeout=30)
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(request) for _ in range(2)]
-        responses = [future.result(timeout=30) for future in futures]
-    assert checked(responses[0]) == checked(responses[1])
-    assert responses[0].content == responses[1].content
-    assert (
-        sum(
-            response.headers.get("Idempotent-Replay") == "true"
-            for response in responses
-        )
-        == 1
-    )
+    def publish_receipt(*args, **kwargs):
+        # Keep the first HTTP request open on either side of the real receipt commit.
+        if receipt == "pending":
+            pause_original()
+        result = publish(*args, **kwargs)
+        if receipt == "published":
+            pause_original()
+        return result
+
+    with (
+        TestClient(create_app(board["path"])) as owner,
+        TestClient(create_app(board["path"], idempotency_wait_seconds=0)) as caller,
+    ):
+        path, body, actor_headers = prepare(owner, board, mode)
+        before = snapshot(board["path"])
+        monkeypatch.setattr(idempotency, "complete", publish_receipt)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = pool.submit(owner.post, path, json=body, headers=actor_headers)
+            try:
+                assert original_paused.wait(timeout=30)
+                duplicate = caller.post(path, json=body, headers=actor_headers)
+            finally:
+                release_original.set()
+            original = first.result(timeout=30)
+
+        checked(original)
+        assert original.headers.get("Idempotent-Replay") is None
+        if receipt == "pending":
+            assert checked(duplicate, 409)["code"] == "idempotency_in_progress"
+            assert duplicate.headers["Retry-After"] == "1"
+            assert duplicate.headers.get("Idempotent-Replay") is None
+            committed = snapshot(board["path"])
+            duplicate = caller.post(path, json=body, headers=actor_headers)
+            assert snapshot(board["path"]) == committed
+        checked(duplicate)
+        assert duplicate.headers["Idempotent-Replay"] == "true"
+        assert duplicate.content == original.content
     after = snapshot(board["path"])
     assert after["leases"] == []
     changed_table = (
