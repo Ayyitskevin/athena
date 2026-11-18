@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 import sqlite3
 from typing import Any
 
-from athena.aegis import lease_commands, projects, review_request_projection
-from athena.aegis.project_brief import _category_sql, _excerpt, _person, _rows, _group
+from athena.aegis import lease_commands, projects, review_request_projection, statuses
+from athena.aegis.project_brief import _excerpt, _person, _rows, _group
 from athena.aegis.review_commands import latest_candidate_id
 from athena.core import access, db
 from athena.core.ids import MAX_SQLITE_INTEGER
@@ -37,7 +37,7 @@ def _candidate_columns() -> str:
         "a.created_at, a.actor_id, u.name AS actor_name, i.id AS issue_id, "
         "i.title, i.status, i.project_seq, "
         "(SELECT key FROM projects WHERE id = i.project_id) AS project_key, "
-        f"{_category_sql('i')} AS status_category"
+        f"{statuses.exact_category_sql('i')} AS status_category"
     )
 
 

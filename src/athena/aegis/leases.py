@@ -259,25 +259,33 @@ def lapsed_leases_held_by(
     """
     bounded = max(1, min(int(limit), 100))
     stamp = _clock_stamp(now)
+    # Count narrow keys in the same snapshot as the page. A missing issue
+    # must be excluded before LIMIT so it cannot displace an eligible lease.
     rows = conn.execute(
-        _HELD_SELECT + "WHERE l.holder_id = ? AND l.expires_at <= ? "
-        "ORDER BY l.claimed_at DESC, l.issue_id DESC",
-        (stamp, holder_id, stamp),
+        f"""
+        WITH page AS (
+            SELECT l.issue_id, COUNT(*) OVER () AS total
+            FROM issue_leases l
+            JOIN issues i ON i.id = l.issue_id
+            WHERE l.holder_id = ? AND l.expires_at <= ?
+            ORDER BY l.claimed_at DESC, l.issue_id DESC
+            LIMIT ?
+        )
+        SELECT held.*, page.total, ({statuses.exact_category_sql("i")}) IS 'done' AS issue_done
+        FROM page
+        JOIN ({_HELD_SELECT}) held ON held.issue_id = page.issue_id
+        JOIN issues i ON i.id = page.issue_id
+        ORDER BY held.claimed_at DESC, held.issue_id DESC
+        """,
+        (holder_id, stamp, bounded, stamp),
     ).fetchall()
     lapsed = []
     for row in rows:
-        issue = conn.execute(
-            "SELECT project_id, status FROM issues WHERE id = ?",
-            (row["issue_id"],),
-        ).fetchone()
-        if issue is None:
-            continue
         lease = _row_to_lease(row)
-        lease["issue_done"] = statuses.is_done(
-            conn, issue["project_id"], issue["status"]
-        )
+        del lease["total"]
+        lease["issue_done"] = bool(lease["issue_done"])
         lapsed.append(lease)
-    return lapsed[:bounded], len(lapsed)
+    return lapsed, rows[0]["total"] if rows else 0
 
 
 def upsert_lease(

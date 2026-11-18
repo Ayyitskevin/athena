@@ -24,27 +24,6 @@ def _excerpt(value: str, limit: int = 160) -> dict[str, Any]:
     }
 
 
-def _category_sql(alias: str) -> str:
-    """Exact category_of semantics, unlike the legacy neutral SQL fallback.
-
-    Aliases are internal constants. Defaults apply only when a project has no
-    configured rows; a missing name in a configured project stays NULL.
-    """
-    assert alias in {"i", "b"}
-    defaults = " ".join(
-        f"WHEN '{name}' THEN '{category}'"
-        for name, category in statuses.DEFAULT_STATUSES
-    )
-    return (
-        "CASE WHEN EXISTS (SELECT 1 FROM project_statuses configured "
-        f"WHERE configured.project_id = {alias}.project_id) "
-        "THEN (SELECT configured.category FROM project_statuses configured "
-        f"WHERE configured.project_id = {alias}.project_id "
-        f"AND configured.name = {alias}.status) "
-        f"ELSE CASE {alias}.status {defaults} END END"
-    )
-
-
 def _issue_columns(alias: str, prefix: str = "") -> str:
     fields = {
         "id": f"{alias}.id",
@@ -53,7 +32,7 @@ def _issue_columns(alias: str, prefix: str = "") -> str:
         "project_key": f"(SELECT key FROM projects WHERE id = {alias}.project_id)",
         "title": f"{alias}.title",
         "status": f"{alias}.status",
-        "status_category": _category_sql(alias),
+        "status_category": statuses.exact_category_sql(alias),
         "priority": f"{alias}.priority",
         "assignee_id": f"{alias}.assignee_id",
         "assignee_name": f"(SELECT name FROM users WHERE id = {alias}.assignee_id)",
@@ -152,7 +131,7 @@ def _build(
 ) -> dict[str, Any]:
     project_id = project["id"]
     root = "i.project_id = ? AND i.archived_at IS NULL"
-    is_open = f"({_category_sql('i')}) IS NOT 'done'"
+    is_open = f"({statuses.exact_category_sql('i')}) IS NOT 'done'"
     summary = conn.execute(
         "SELECT COUNT(*) AS open_issue_count, "
         "COUNT(CASE WHEN i.assignee_id IS NULL THEN 1 END) AS unassigned_open_issue_count "
@@ -188,7 +167,7 @@ def _build(
         columns=f"{_issue_columns('i')}, {_issue_columns('b', 'blocker_')}",
         base=f"FROM issues i JOIN issue_links edge ON edge.to_id = i.id AND edge.kind = 'blocks' "
         f"JOIN issues b ON b.id = edge.from_id WHERE {root} AND {is_open} "
-        f"AND ({_category_sql('b')}) IS NOT 'done' "
+        f"AND ({statuses.exact_category_sql('b')}) IS NOT 'done' "
         "AND (b.project_id IS NULL OR EXISTS (SELECT 1 FROM projects bp "
         f"WHERE bp.id = b.project_id AND ({visible})))",
         params=[project_id, *visible_params],

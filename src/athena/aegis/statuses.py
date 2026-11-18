@@ -81,6 +81,26 @@ def is_done(conn: sqlite3.Connection, project_id: int | None, name: str) -> bool
     return category_of(conn, project_id, name) == "done"
 
 
+def exact_category_sql(alias: str) -> str:
+    """Exact category_of semantics, unlike the legacy neutral SQL fallback.
+
+    Aliases are internal constants. Defaults apply only when a project has no
+    configured rows; a missing name in a configured project stays NULL.
+    """
+    assert alias in {"i", "b"}
+    defaults = " ".join(
+        f"WHEN '{name}' THEN '{category}'" for name, category in DEFAULT_STATUSES
+    )
+    return (
+        "CASE WHEN EXISTS (SELECT 1 FROM project_statuses configured "
+        f"WHERE configured.project_id = {alias}.project_id) "
+        "THEN (SELECT configured.category FROM project_statuses configured "
+        f"WHERE configured.project_id = {alias}.project_id "
+        f"AND configured.name = {alias}.status) "
+        f"ELSE CASE {alias}.status {defaults} END END"
+    )
+
+
 def category_sql(*, status_column: str, category_column: str) -> str:
     """A SQL expression resolving an issue's status to its category.
 

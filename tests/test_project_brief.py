@@ -312,7 +312,7 @@ def test_expiry_is_one_injected_clock_and_multi_claims_remain_visible(board):
 
 
 def test_status_sql_exactly_matches_owner_for_custom_unknown_and_fallback(board):
-    from athena.aegis import project_brief, statuses
+    from athena.aegis import statuses
 
     _, conn, project, _ = board
     empty = projects.create_project(conn, name="No statuses", key="EMP", created_by=1)
@@ -329,7 +329,7 @@ def test_status_sql_exactly_matches_owner_for_custom_unknown_and_fallback(board)
         for name in ("open", "done", "shipped", "unrecognized"):
             issue = _issue(conn, project_id, status=name)
             category = conn.execute(
-                f"SELECT {project_brief._category_sql('i')} FROM issues i WHERE i.id=?",
+                f"SELECT {statuses.exact_category_sql('i')} FROM issues i WHERE i.id=?",
                 (issue["id"],),
             ).fetchone()[0]
             assert category == statuses.category_of(conn, project_id, name)
