@@ -109,7 +109,8 @@ def test_completion_extensions_are_one_post_and_keep_nested_null(
 
 @pytest.mark.parametrize("mcp", [False, True])
 @pytest.mark.parametrize("limit", [1, 5, 20])
-def test_review_queue_is_one_bounded_get_and_preserves_packet(mcp, limit):
+@pytest.mark.parametrize("cursor", [None, MAX_SQLITE_INTEGER])
+def test_review_queue_is_one_bounded_get_and_preserves_packet(mcp, limit, cursor):
     requests = []
     packet = {
         "schema": "athena.project_review_queue.v1",
@@ -120,6 +121,7 @@ def test_review_queue_is_one_bounded_get_and_preserves_packet(mcp, limit):
         "returned": 1,
         "limit": limit,
         "clipped": True,
+        "next_cursor": 11,
     }
 
     def respond(request):
@@ -131,6 +133,8 @@ def test_review_queue_is_one_bounded_get_and_preserves_packet(mcp, limit):
     ) as http:
         client = AthenaClient(client=http)
         args = {"project_id": MAX_SQLITE_INTEGER}
+        if cursor is not None:
+            args["cursor"] = cursor
         if limit != 5:
             args["limit"] = limit
         assert _call(client, "get_project_review_queue", args, mcp=mcp) == packet
@@ -138,7 +142,10 @@ def test_review_queue_is_one_bounded_get_and_preserves_packet(mcp, limit):
     request = requests[0]
     assert request.method == "GET"
     assert request.url.path == f"/projects/{MAX_SQLITE_INTEGER}/review-queue"
-    assert list(request.url.params.multi_items()) == [("limit", str(limit))]
+    expected = {"limit": str(limit)}
+    if cursor is not None:
+        expected["cursor"] = str(cursor)
+    assert dict(request.url.params) == expected
     assert request.content == b""
     assert (
         "If-Match" not in request.headers and "Idempotency-Key" not in request.headers
@@ -180,6 +187,27 @@ def test_refusals_remain_errors_without_fallback(mcp, method, status):
 
 
 BAD_IDS = [False, 0, -1, MAX_SQLITE_INTEGER + 1, 1.5, "1"]
+
+
+def test_sdk_explicit_null_queue_limit_keeps_the_existing_rest_refusal():
+    def refuse(request):
+        assert list(request.url.params.multi_items()) == [("limit", "")]
+        return httpx.Response(422, json={"detail": "invalid limit"})
+
+    with httpx.Client(
+        base_url="http://athena.test", transport=httpx.MockTransport(refuse)
+    ) as http:
+        with pytest.raises(AthenaError) as caught:
+            AthenaClient(client=http).get_project_review_queue(1, limit=None)
+    assert caught.value.status_code == 422
+
+
+@pytest.mark.parametrize("cursor", [False, 1.0, "1"])
+def test_sdk_rejects_noninteger_cursor_before_serializing(cursor):
+    with pytest.raises(ValueError, match="cursor must be an integer"):
+        AthenaClient(client=object()).get_project_review_queue(1, cursor=cursor)
+
+
 BAD_SUBMISSIONS = [
     {},
     {"identity": IDENTITY},
@@ -206,6 +234,7 @@ BAD_SUBMISSIONS = [
         ],
         *[("complete_claim", {"review_candidate_id": value}) for value in BAD_IDS],
         *[("get_project_review_queue", {"project_id": value}) for value in BAD_IDS],
+        *[("get_project_review_queue", {"cursor": value}) for value in BAD_IDS],
         *[
             ("get_project_review_queue", {"limit": value})
             for value in [False, 0, -1, 21, 1.5, "5", None]
@@ -246,7 +275,7 @@ def test_queue_is_one_new_read_and_completion_keeps_its_authority():
     assert mcp_server.PROFILES["full"] is None
     schema = tools[name].inputSchema
     assert schema["required"] == ["project_id"]
-    assert set(schema["properties"]) == {"project_id", "limit"}
+    assert set(schema["properties"]) == {"project_id", "limit", "cursor"}
     assert schema["properties"]["limit"] == {
         "default": 5,
         "maximum": 20,

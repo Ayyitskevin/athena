@@ -63,7 +63,7 @@ def test_queue_materializes_and_parses_only_fixed_limit_despite_history_growth(
         )
         assert len(parses) <= 2
         assert any(
-            "ORDER BY c.id DESC, i.id LIMIT 2" in statement for statement in statements
+            "ORDER BY c.id DESC, i.id LIMIT 3" in statement for statement in statements
         )
         return len(statements)
 

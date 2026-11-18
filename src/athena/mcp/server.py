@@ -123,6 +123,8 @@ RunId = Annotated[
 
 DelegationLimit = Annotated[int, Field(ge=1, le=delegations.MAX_LIMIT)]
 DelegationOffset = Annotated[int, Field(ge=0, le=delegations.MAX_OFFSET)]
+IssueListLimit = Annotated[int, Field(strict=True, ge=1, le=100)]
+IssueListOffset = Annotated[int, Field(strict=True, ge=0, le=issues.MAX_OFFSET)]
 IssueFilterId = Annotated[
     int,
     Field(strict=True, ge=0, le=issues.MAX_SQLITE_INTEGER),

@@ -127,17 +127,47 @@ def _item(
     }
 
 
+def _candidate_page(
+    conn: sqlite3.Connection,
+    project_id: int,
+    actor: dict | None,
+    limit: int,
+    cursor: int | None,
+) -> tuple[int, list[sqlite3.Row]]:
+    base, params = _candidate_base(conn, actor)
+    base += (
+        "AND i.project_id = ? AND i.archived_at IS NULL "
+        "AND c.id = (SELECT MAX(latest.id) FROM issue_review_candidates latest "
+        "WHERE latest.issue_id = i.id)"
+    )
+    params = [*params, project_id]
+    total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
+    # A replacement above the cursor must still supersede its predecessor.
+    if cursor is not None:
+        base += " AND c.id < ?"
+        params.append(cursor)
+    rows = conn.execute(
+        f"SELECT {_candidate_columns()} {base} ORDER BY c.id DESC, i.id LIMIT ?",
+        [*params, limit + 1],
+    ).fetchall()
+    return total, rows
+
+
 def build_project_review_queue(
     conn: sqlite3.Connection,
     *,
     project_id: int,
     actor: dict | None,
     limit: int = DEFAULT_LIMIT,
+    cursor: int | None = None,
 ) -> dict | None:
     for name, value, maximum in (
         ("project_id", project_id, MAX_SQLITE_INTEGER),
         ("limit", limit, MAX_LIMIT),
+        ("cursor", cursor, MAX_SQLITE_INTEGER),
     ):
+        if name == "cursor" and value is None:
+            continue
         if (
             isinstance(value, bool)
             or not isinstance(value, int)
@@ -149,18 +179,9 @@ def build_project_review_queue(
         if project is None or not access.can_see_project(conn, actor, project_id):
             return None
         now = datetime.now(UTC)
-        base, params = _candidate_base(conn, actor)
-        total, rows = _rows(
-            conn,
-            columns=_candidate_columns(),
-            base=base + "AND i.project_id = ? AND i.archived_at IS NULL "
-            "AND c.id = (SELECT MAX(latest.id) FROM issue_review_candidates latest WHERE latest.issue_id = i.id)",
-            params=[*params, project_id],
-            order="c.id DESC, i.id",
-            limit=limit,
-        )
+        total, rows = _candidate_page(conn, project_id, actor, limit, cursor)
         items = []
-        for row in rows:
+        for row in rows[:limit]:
             item = _item(conn, row, actor)
             requests = review_request_projection.visible_requests(
                 conn,
@@ -182,6 +203,9 @@ def build_project_review_queue(
                 "name": _excerpt(project["name"]),
             },
             **_group(total, items, limit),
+            "next_cursor": rows[limit - 1]["candidate_id"]
+            if len(rows) > limit
+            else None,
             "semantics": {
                 "snapshot": "current_visible_snapshot",
                 "review_states": "advisory actor reports, not verification or acceptance",

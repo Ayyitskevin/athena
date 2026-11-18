@@ -824,6 +824,22 @@ def test_list_issues_forwards_sprint_only_when_explicit():
     assert transport.calls.pop() == ("GET", "/issues", {"params": {}})
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"limit": None},
+        {"limit": 50.0},
+        {"offset": False},
+        {"offset": "0"},
+    ],
+)
+def test_issue_list_invalid_sdk_types_cannot_disappear_as_defaults(params):
+    transport = _RecordingClient()
+    with pytest.raises(ValueError, match="limit and offset"):
+        AthenaClient(client=transport).list_issues(**params)
+    assert transport.calls == []
+
+
 def test_sprint_lifecycle_client_matches_rest_contract():
     # WHY: MCP must express REST's omitted-vs-null date semantics without sending
     # an editable state field or accidental request bodies on transitions.
@@ -1649,13 +1665,22 @@ def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
             expected[title] = actor_kind
         ath.create_issue(title="outside sprint", project_id=project["id"])
 
-        result = asyncio.run(
-            build_server(ath).call_tool("list_issues", {"sprint": sprint["id"]})
-        )
+        server = build_server(ath)
+        filters = {"sprint": sprint["id"]}
+        result = asyncio.run(server.call_tool("list_issues", filters))
         rows = [json.loads(content.text) for content in result]
         assert {
             issue["title"]: issue["assignee_is_agent"] for issue in rows
         } == expected
+        pages = []
+        for offset in (0, 2):
+            page = asyncio.run(
+                server.call_tool(
+                    "list_issues", {**filters, "limit": 2, "offset": offset}
+                )
+            )
+            pages.extend(json.loads(content.text) for content in page)
+        assert pages == rows
     finally:
         tc.__exit__(None, None, None)
 
@@ -1996,17 +2021,17 @@ def test_list_issues_mcp_tool_forwards_strict_sprint_ids(sprint):
 
 
 @pytest.mark.parametrize(
-    "invalid_sprint",
+    "invalid",
     [
-        True,
-        False,
-        "7",
-        7.0,
-        -1,
-        issues.MAX_SQLITE_INTEGER + 1,
+        *[
+            {"sprint": value}
+            for value in (True, False, "7", 7.0, -1, issues.MAX_SQLITE_INTEGER + 1)
+        ],
+        *[{"limit": value} for value in (False, "5", 1.0, 0, 101)],
+        *[{"offset": value} for value in (False, "0", 0.0, -1, issues.MAX_OFFSET + 1)],
     ],
 )
-def test_list_issues_mcp_rejects_invalid_sprint_before_dispatch(invalid_sprint):
+def test_list_issues_mcp_rejects_invalid_filter_or_page_before_dispatch(invalid):
     import asyncio
 
     from mcp.server.fastmcp.exceptions import ToolError
@@ -2020,7 +2045,7 @@ def test_list_issues_mcp_rejects_invalid_sprint_before_dispatch(invalid_sprint):
         asyncio.run(
             server.call_tool(
                 "list_issues",
-                {"sprint": invalid_sprint},
+                invalid,
             )
         )
     assert client.calls == []

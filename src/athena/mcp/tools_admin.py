@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from athena.aegis.review_models import ReviewCandidateId
 from athena.mcp.server import (
     DispatchIssueId,
     DispatchLimit,
@@ -267,17 +268,21 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
 
     @tool
     def get_project_review_queue(
-        project_id: ProjectId, limit: ProjectReviewQueueLimit = 5
+        project_id: ProjectId,
+        limit: ProjectReviewQueueLimit = 5,
+        cursor: ReviewCandidateId | None = None,
     ) -> dict:
         """Read current visible project candidates with their exact-version reports.
-        limit is 1..20; visible_total and clipped disclose the bounded queue.
+        Follow next_cursor as cursor until null to read older submissions (1..20
+        per page). Each call checks current visibility. Restart from the top to
+        see new submissions. visible_total and clipped describe the whole queue.
         A replacement, including identical bytes, never inherits an older PASS.
         awaiting_review can also mean the latest review is not visible; unknown
         means the visible latest report has no usable verdict. Reports are advisory,
         not acceptance, independent verification or merge authority. This read changes
         no state and supplies no claim ETag. Workers read full get_issue_work_context
         for the exact candidate and bounded history. See docs/CONDUCTOR_RECIPE.md."""
-        return client.get_project_review_queue(project_id, limit=limit)
+        return client.get_project_review_queue(project_id, limit=limit, cursor=cursor)
 
     @mutation_tool
     def advance_desk_cursor(after_id: int) -> dict:
