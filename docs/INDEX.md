@@ -53,6 +53,7 @@ When a one-liner and the document disagree, the document wins — fix the line.
 | [EDITING.md](EDITING.md) | Editing and leaving: drafts, versions, and never losing a keystroke. |
 | [EMBEDS.md](EMBEDS.md) | Live embeds — a fenced block on a page renders real issues at view time. |
 | [GRAPH.md](GRAPH.md) | The link graph behind `[[wikilinks]]` and `[[ATH-12]]` refs, and what reads it. |
+| [OUTGOING_LINKS_SPEC.md](OUTGOING_LINKS_SPEC.md) | How a reader's outgoing links are resolved, ordered and measured. |
 | [PLAYBOOKS.md](PLAYBOOKS.md) | Docs that *start* work: a page that files the issues it describes. |
 | [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) | Watches and notifications: subscribing your inbox to a target. |
 | [PLANNING.md](PLANNING.md) | The timeline and live rollups drawing sprints and typed dependencies together. |

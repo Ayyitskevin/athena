@@ -29,6 +29,7 @@ from collections.abc import Iterable, Mapping
 import json
 import re
 import sqlite3
+from typing import cast
 
 from athena.core import access
 
@@ -36,10 +37,8 @@ from athena.core import access
 # tests). Distinct from actor=None, a real anonymous viewer who sees only public refs.
 _UNGATED = object()
 
-# The two linkable kinds and the table each lives in. This map is the only place
-# the resolver's knowledge of "what is linkable" lives; both tables happen to use
-# a `title` column. Values are fixed literals, never caller input, so building a
-# query string from them is safe.
+# The two linkable kinds and their tables. Values are fixed literals, so the
+# single-reference reader can use them as SQL identifiers.
 _TABLE = {"issue": "issues", "page": "pages"}
 
 # How many digits an id reference may carry. A SQLite rowid tops out at
@@ -419,17 +418,52 @@ def outgoing_links(
     stably (kind, then id) so renders are deterministic. `actor` drops references to
     targets the viewer can't see (a private project's issue / a private space's
     page); _UNGATED is no gate."""
+    visibility = ""
+    params: list = [source_kind, source_id]
+    if actor is not _UNGATED:
+        reader = cast("dict | None", actor)
+        project_access, project_params = access.project_visibility_clause(reader)
+        space_access, space_params = access.space_visibility_clause(reader)
+        visibility = f"""
+          AND CASE link.target_kind
+            WHEN 'issue' THEN issue.id IS NOT NULL AND (
+                issue.project_id IS NULL OR EXISTS (
+                    SELECT 1 FROM projects project
+                    WHERE project.id = issue.project_id AND {project_access}))
+            WHEN 'page' THEN EXISTS (
+                SELECT 1 FROM spaces space
+                WHERE space.id = page.space_id AND {space_access})
+            ELSE 1 END
+        """
+        params.extend(project_params)
+        params.extend(space_params)
+
     rows = conn.execute(
-        "SELECT target_kind, target_id FROM links "
-        "WHERE source_kind = ? AND source_id = ? "
-        "ORDER BY target_kind, target_id",
-        (source_kind, source_id),
-    ).fetchall()
-    return [
-        _resolve(conn, r["target_kind"], r["target_id"])
-        for r in rows
-        if _visible_ref(conn, actor, r["target_kind"], r["target_id"])
-    ]
+        f"""
+        SELECT link.target_kind, link.target_id, COALESCE(issue.title, page.title) AS title,
+               (issue.id IS NOT NULL OR page.id IS NOT NULL) AS present
+        FROM links link
+        LEFT JOIN issues issue ON link.target_kind = 'issue' AND issue.id = link.target_id
+        LEFT JOIN pages page ON link.target_kind = 'page' AND page.id = link.target_id
+        WHERE link.source_kind = ? AND link.source_id = ? {visibility}
+        ORDER BY link.target_kind, link.target_id
+        """,
+        params,
+    )
+    result = []
+    for row in rows:
+        kind = row["target_kind"]
+        if kind not in _TABLE:
+            raise KeyError(kind)  # A corrupt index entry is not a broken reference.
+        result.append(
+            {
+                "kind": kind,
+                "id": row["target_id"],
+                "title": row["title"],
+                "exists": bool(row["present"]),
+            }
+        )
+    return result
 
 
 def backlinks(
