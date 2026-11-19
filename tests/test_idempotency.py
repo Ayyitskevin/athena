@@ -372,7 +372,7 @@ def test_expired_owner_is_never_taken_over_but_may_still_finalize(tmp_path):
 
 def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypatch):
     app = create_app(tmp_path / "concurrent.db", idempotency_wait_seconds=2)
-    entered = threading.Event()
+    owner_started_or_done = threading.Event()
     release = threading.Event()
     waiter_seen = threading.Event()
     lock = threading.Lock()
@@ -382,8 +382,8 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
     def probe():
         with lock:
             calls["count"] += 1
-        entered.set()
-        assert release.wait(timeout=5)
+        owner_started_or_done.set()
+        assert release.wait(timeout=30), "duplicate did not observe the owner"
         return JSONResponse(
             {"result": "once"},
             status_code=201,
@@ -400,6 +400,7 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
         result = real_claim(*args, **kwargs)
         if result.kind == "in_progress":
             waiter_seen.set()
+            release.set()
         return result
 
     monkeypatch.setattr(idempotency, "claim_or_read", observe_claim)
@@ -407,23 +408,32 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
     with TestClient(app) as client:
         _bootstrap(client)
         headers = {"Idempotency-Key": "one-flight", **H1}
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=1) as pool:
             owner_future = pool.submit(
                 client.post,
                 "/automation/idempotency-probe",
                 headers=headers,
             )
-            assert entered.wait(timeout=2)
-            waiter_future = pool.submit(
-                client.post,
-                "/automation/idempotency-probe",
-                headers=headers,
-            )
-            assert waiter_seen.wait(timeout=2)
-            release.set()
-            owner_response = owner_future.result(timeout=5)
-            waiter_response = waiter_future.result(timeout=5)
+            # A dispatch failure must wake us even if the handler never ran.
+            owner_future.add_done_callback(lambda _: owner_started_or_done.set())
+            try:
+                # CI startup may be slow. The duplicate's replay budget starts separately.
+                assert owner_started_or_done.wait(timeout=15), (
+                    "owner did not enter the handler"
+                )
+                if owner_future.done():
+                    early = owner_future.result()
+                    raise AssertionError(
+                        f"owner returned HTTP {early.status_code} before the duplicate"
+                    )
+                waiter_response = client.post(
+                    "/automation/idempotency-probe", headers=headers
+                )
+            finally:
+                release.set()  # Unblock the owner if the test exits before the duplicate claim.
+            owner_response = owner_future.result(timeout=15)
 
+    assert waiter_seen.is_set(), "duplicate never observed the in-progress claim"
     assert owner_response.status_code == 201
     assert waiter_response.status_code == 201
     assert owner_response.json() == waiter_response.json() == {"result": "once"}
