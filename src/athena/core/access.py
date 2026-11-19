@@ -417,6 +417,20 @@ def project_visibility_clause(
     )
 
 
+def space_visibility_clause(
+    actor: dict | None, *, alias: str = "space"
+) -> tuple[str, list]:
+    """SQL read permission for an existing space, as in can_see_space."""
+    if _is_admin(actor):
+        return "1 = 1", []
+    return _container_access_clause(
+        alias,
+        actor,
+        membership_table="space_members",
+        container_id_column="space_id",
+    )
+
+
 def _event_project_scope_clause(
     event_alias: str, actor: dict | None
 ) -> tuple[str, list]:
