@@ -10,10 +10,10 @@ to the target before asking for its backlinks.
 - Match the target by kind and ID. Return each indexed source once, ordered
   by source kind and then ascending numeric source ID. Issues and pages can
   share an ID. An empty list is valid.
-- Return the source's kind, ID, current title and boolean `exists`. Look up
-  the source's current project or space on every read, including after a
-  rename, move or membership change. An archived source retains its usual
-  read permissions.
+- Return the source's kind, ID, current title and boolean `exists`. A rename,
+  an issue's move into or out of a project, and a change in container
+  membership take effect on the next read. Moving a page within its space
+  preserves its access rules. An archived source retains its usual permissions.
 - Any reader can see public sources and shared backlog issues. Private
   sources are visible to the container creator, its members and admins.
   Reader-facing lists omit missing sources. Internal callers that omit the
