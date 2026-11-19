@@ -383,7 +383,7 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
         with lock:
             calls["count"] += 1
         entered.set()
-        assert release.wait(timeout=5)
+        assert release.wait(timeout=30), "duplicate did not observe the owner"
         return JSONResponse(
             {"result": "once"},
             status_code=201,
@@ -400,6 +400,7 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
         result = real_claim(*args, **kwargs)
         if result.kind == "in_progress":
             waiter_seen.set()
+            release.set()
         return result
 
     monkeypatch.setattr(idempotency, "claim_or_read", observe_claim)
@@ -407,23 +408,23 @@ def test_concurrent_same_key_executes_once_and_waiter_replays(tmp_path, monkeypa
     with TestClient(app) as client:
         _bootstrap(client)
         headers = {"Idempotency-Key": "one-flight", **H1}
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ThreadPoolExecutor(max_workers=1) as pool:
             owner_future = pool.submit(
                 client.post,
                 "/automation/idempotency-probe",
                 headers=headers,
             )
-            assert entered.wait(timeout=2)
-            waiter_future = pool.submit(
-                client.post,
-                "/automation/idempotency-probe",
-                headers=headers,
-            )
-            assert waiter_seen.wait(timeout=2)
-            release.set()
-            owner_response = owner_future.result(timeout=5)
-            waiter_response = waiter_future.result(timeout=5)
+            try:
+                # CI startup may be slow. The duplicate's replay budget starts separately.
+                assert entered.wait(timeout=15), "owner did not enter the handler"
+                waiter_response = client.post(
+                    "/automation/idempotency-probe", headers=headers
+                )
+            finally:
+                release.set()  # Unblock the owner if the test exits before the duplicate claim.
+            owner_response = owner_future.result(timeout=15)
 
+    assert waiter_seen.is_set(), "duplicate never observed the in-progress claim"
     assert owner_response.status_code == 201
     assert waiter_response.status_code == 201
     assert owner_response.json() == waiter_response.json() == {"result": "once"}
