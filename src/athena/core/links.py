@@ -13,9 +13,8 @@ and this module:
 
 It lives in core/ because it is the one place that deliberately knows about BOTH
 issues and pages (the whole point of the shared core). It does NOT import the
-aegis/mentor modules — it reads the `issues`/`pages` tables directly via a fixed
-internal table map — so there is no dependency cycle (aegis/mentor import core,
-never the reverse).
+aegis/mentor modules — it reads the `issues`/`pages` tables directly, so there
+is no dependency cycle (aegis/mentor import core, never the reverse).
 
 References resolve LAZILY: a row may point at a target that doesn't exist (a typo,
 or a thing created later). Existence is checked at read time, so a broken ref is
@@ -396,8 +395,7 @@ def resolve_ref(conn: sqlite3.Connection, kind: str, target_id: int) -> dict:
 
 
 def _visible_ref(conn: sqlite3.Connection, actor, kind: str, ref_id: int) -> bool:
-    """Whether the actor may see this (kind, id) reference — the per-ref visibility
-    gate the link lists apply. _UNGATED waves everything through (internal callers)."""
+    """Whether the inline renderer may show this single reference to the actor."""
     if actor is _UNGATED:
         return True
     if kind == "issue":
@@ -407,25 +405,33 @@ def _visible_ref(conn: sqlite3.Connection, actor, kind: str, ref_id: int) -> boo
     return True
 
 
-def outgoing_links(
+def _read_linked_refs(
     conn: sqlite3.Connection,
-    source_kind: str,
-    source_id: int,
+    kind: str,
+    item_id: int,
+    actor: dict | None | object,
     *,
-    actor: dict | None | object = _UNGATED,
+    incoming: bool,
 ) -> list[dict]:
-    """What this source references, each resolved to title + existence. Ordered
-    stably (kind, then id) so renders are deterministic. `actor` drops references to
-    targets the viewer can't see (a private project's issue / a private space's
-    page); _UNGATED is no gate."""
+    """Resolve the other end of each edge in one statement, including its visibility."""
+    if incoming:
+        edges = (
+            "SELECT source_kind AS kind, source_id AS id FROM links "
+            "WHERE target_kind = ? AND target_id = ?"
+        )
+    else:
+        edges = (
+            "SELECT target_kind AS kind, target_id AS id FROM links "
+            "WHERE source_kind = ? AND source_id = ?"
+        )
     visibility = ""
-    params: list = [source_kind, source_id]
+    params: list = [kind, item_id]
     if actor is not _UNGATED:
         reader = cast("dict | None", actor)
         project_access, project_params = access.project_visibility_clause(reader)
         space_access, space_params = access.space_visibility_clause(reader)
         visibility = f"""
-          AND CASE link.target_kind
+          WHERE CASE ref.kind
             WHEN 'issue' THEN issue.id IS NOT NULL AND (
                 issue.project_id IS NULL OR EXISTS (
                     SELECT 1 FROM projects project
@@ -440,30 +446,45 @@ def outgoing_links(
 
     rows = conn.execute(
         f"""
-        SELECT link.target_kind, link.target_id, COALESCE(issue.title, page.title) AS title,
+        SELECT ref.kind, ref.id, COALESCE(issue.title, page.title) AS title,
                (issue.id IS NOT NULL OR page.id IS NOT NULL) AS present
-        FROM links link
-        LEFT JOIN issues issue ON link.target_kind = 'issue' AND issue.id = link.target_id
-        LEFT JOIN pages page ON link.target_kind = 'page' AND page.id = link.target_id
-        WHERE link.source_kind = ? AND link.source_id = ? {visibility}
-        ORDER BY link.target_kind, link.target_id
+        FROM ({edges}) AS ref
+        LEFT JOIN issues issue ON ref.kind = 'issue' AND issue.id = ref.id
+        LEFT JOIN pages page ON ref.kind = 'page' AND page.id = ref.id
+        {visibility}
+        ORDER BY ref.kind, ref.id
         """,
         params,
     )
     result = []
     for row in rows:
-        kind = row["target_kind"]
-        if kind not in _TABLE:
-            raise KeyError(kind)  # A corrupt index entry is not a broken reference.
+        ref_kind = row["kind"]
+        if ref_kind not in _TABLE:
+            raise KeyError(ref_kind)  # A corrupt index entry is not a broken reference.
         result.append(
             {
-                "kind": kind,
-                "id": row["target_id"],
+                "kind": ref_kind,
+                "id": row["id"],
                 "title": row["title"],
                 "exists": bool(row["present"]),
             }
         )
     return result
+
+
+def outgoing_links(
+    conn: sqlite3.Connection,
+    source_kind: str,
+    source_id: int,
+    *,
+    actor: dict | None | object = _UNGATED,
+) -> list[dict]:
+    """Targets referenced by this source, ordered by kind and ID.
+
+    Pass the reader to filter private and missing targets. Internal callers
+    that omit the actor also receive broken references.
+    """
+    return _read_linked_refs(conn, source_kind, source_id, actor, incoming=False)
 
 
 def backlinks(
@@ -479,14 +500,4 @@ def backlinks(
     live; the `exists` flag is still honored for robustness. `actor` drops sources
     the viewer can't see — so a private project's issue linking to a public page
     never reveals itself in that page's "Referenced by"; _UNGATED is no gate."""
-    rows = conn.execute(
-        "SELECT source_kind, source_id FROM links "
-        "WHERE target_kind = ? AND target_id = ? "
-        "ORDER BY source_kind, source_id",
-        (target_kind, target_id),
-    ).fetchall()
-    return [
-        _resolve(conn, r["source_kind"], r["source_id"])
-        for r in rows
-        if _visible_ref(conn, actor, r["source_kind"], r["source_id"])
-    ]
+    return _read_linked_refs(conn, target_kind, target_id, actor, incoming=True)
