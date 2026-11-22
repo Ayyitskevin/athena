@@ -51,6 +51,7 @@ from athena.core import (
     tokens,
 )
 from athena.mcp.client import AthenaClient, AthenaError
+from athena.mcp import results
 from athena.mcp.results import ListResult, ListShape, ObjectShape
 from athena.workflows import workspace_search
 
@@ -223,6 +224,11 @@ DigestWindowMinutes = Annotated[
 MuteUntil = Annotated[str, Field(max_length=notifications.MAX_MUTE_UNTIL_CHARS)]
 # Where a list starts: the offset a truncated list's `next` names.
 ListOffset = Annotated[int, Field(strict=True, ge=0)]
+# Where a body is read from: the offset a `_truncated` entry's `next` names.
+BodyOffset = Annotated[int, Field(strict=True, ge=0)]
+# A comment body read through a list: at most what one budgeted answer holds.
+MAX_COMMENT_CHARS = 12_000
+CommentChars = Annotated[int, Field(strict=True, ge=1, le=MAX_COMMENT_CHARS)]
 
 # What every session reads once, instead of the same paragraph on every write
 # tool. The MCP handshake carries it as the server's instructions; each write
@@ -248,7 +254,8 @@ SERVER_INSTRUCTIONS = (
     "Results: every tool answers one JSON object. A list is {items, count, "
     "truncated, next}; when truncated is true, repeat the call with the "
     "arguments in next. A call with nothing to return answers {found: false} "
-    "or {applied: true}.\n\n"
+    "or {applied: true}. An answer cut to its size budget names each cut under "
+    "_truncated, with the tool call that reads the rest.\n\n"
     "Leases: claim_issue acquires a free or expired lease. Calling it again "
     "while you hold the issue is a renewal and needs your current generation "
     "(the 428 names it). complete_claim releases the lease and does NOT close "
@@ -584,6 +591,178 @@ def tool_annotations(name: str) -> ToolAnnotations:
     )
 
 
+# --- response budgets -----------------------------------------------------------
+#
+# Every tool in the `seat`, `seat+knowledge` and `conductor` profiles answers
+# within DEFAULT_RESPONSE_BUDGET characters of the JSON text a client receives.
+# A list over budget keeps the rows that fit and says `truncated` with the `next`
+# arguments; an object's long text or nested list is cut with a `_truncated`
+# entry naming the call that reads the rest (athena.mcp.results). A larger budget
+# is declared here only, one commented line per tool, and reviewed like a scope.
+# tests/test_mcp_response_budget.py calls every budgeted tool against a seeded
+# large-content workspace and fails on any answer above its budget.
+DEFAULT_RESPONSE_BUDGET = 16_000
+RESPONSE_BUDGET_EXCEPTIONS: dict[str, int] = {
+    # The one packet read before work: the issue, its twenty newest comments and
+    # recent activity in one answer. On the budget test's issue (sixty comments),
+    # 16,000 leaves the description 938 characters beside twenty comment excerpts
+    # and three events; 32,000 leaves it 16,936. The rest is one get_issue away.
+    "get_issue_work_context": 32_000,
+}
+BUDGETED_PROFILES = ("seat", "seat+knowledge", "conductor")
+
+
+def response_budget(name: str) -> int | None:
+    """The tool's response budget in characters, or None for a tool no budgeted
+    profile carries (the full surface answers as the REST route does)."""
+    if not any(name in (PROFILES[profile] or ()) for profile in BUDGETED_PROFILES):
+        return None
+    return RESPONSE_BUDGET_EXCEPTIONS.get(name, DEFAULT_RESPONSE_BUDGET)
+
+
+def _issue_reader(issue_id: int, offset: int) -> dict[str, Any]:
+    return {
+        "tool": "get_issue",
+        "arguments": {"issue_id": issue_id, "body_offset": offset},
+    }
+
+
+def _page_reader(page_id: int, offset: int) -> dict[str, Any]:
+    return {
+        "tool": "get_page",
+        "arguments": {"page_id": page_id, "body_offset": offset},
+    }
+
+
+def _is_issue(value: Any) -> bool:
+    return isinstance(value, dict) and {"id", "title", "body", "priority"} <= set(value)
+
+
+def _is_page(value: Any) -> bool:
+    return isinstance(value, dict) and {"id", "title", "body", "space_id"} <= set(value)
+
+
+def _budget_cuts(
+    name: str, result: dict[str, Any], arguments: Mapping[str, Any]
+) -> list[results.Cut]:
+    """Where an object answer may be cut to its budget, and what reads on.
+
+    The long texts are an issue's or a page's body (the rest is read by
+    body_offset) and the work-context packet's description and comments; the
+    long lists are the packet's activity, the desk's delegation lane, the
+    delegation inbox and the event feed, each continued by its own paging."""
+    base = int(arguments.get("body_offset") or 0)
+    if _is_issue(result):
+        start = base if name == "get_issue" else 0
+        return [
+            results.Cut(
+                ("body",), lambda kept: _issue_reader(result["id"], start + kept)
+            )
+        ]
+    if _is_page(result):
+        start = base if name == "get_page" else 0
+        return [
+            results.Cut(
+                ("body",), lambda kept: _page_reader(result["id"], start + kept)
+            )
+        ]
+    if name == "get_issue_work_context" and isinstance(result.get("issue"), dict):
+        return _work_context_cuts(result)
+    if name == "my_desk":
+        return [
+            results.Cut(
+                ("work", "delegations", "items"),
+                lambda kept: {
+                    "tool": "list_my_delegated_work",
+                    "arguments": {"offset": kept},
+                },
+                _mark_desk_delegations_cut,
+            )
+        ]
+    if name == "list_my_delegated_work":
+        offset = int(arguments.get("offset") or 0)
+        return [
+            results.Cut(
+                ("items",),
+                lambda kept: {"tool": name, "arguments": {"offset": offset + kept}},
+                lambda fitted, kept: fitted.update(
+                    has_more=True, next_offset=offset + kept
+                ),
+            )
+        ]
+    if name == "wait_for_events" and isinstance(result.get("events"), list):
+        events = result["events"]
+        return [
+            results.Cut(
+                ("events",),
+                lambda kept: {
+                    "tool": name,
+                    "arguments": {"after": events[kept - 1]["id"]},
+                },
+                lambda fitted, kept: fitted.update(
+                    has_more=True, next_after=events[kept - 1]["id"]
+                ),
+            )
+        ]
+    return []
+
+
+def _work_context_cuts(packet: dict[str, Any]) -> list[results.Cut]:
+    """The packet gives up its oldest activity first, then its comments' text
+    (each down to an excerpt), and its description last: that is the task."""
+    issue_id = packet["issue"]["id"]
+    comments = packet.get("comments") or {}
+    first_shown = int(comments.get("visible_total") or 0) - len(
+        comments.get("items") or []
+    )
+
+    def activity_clipped(fitted: dict[str, Any], kept: int) -> None:
+        fitted["recent_activity"]["clipped"] = True
+
+    def comments_cut(fitted: dict[str, Any], kept: int) -> None:
+        for item in fitted["comments"]["items"]:
+            body = item["body"]
+            body["truncated"] = len(body["text"]) < body["total_chars"]
+
+    def description_cut(fitted: dict[str, Any], kept: int) -> None:
+        fitted["issue"]["description"]["truncated"] = True
+
+    return [
+        results.Cut(
+            ("recent_activity", "items"),
+            lambda kept: {
+                "tool": "wait_for_events",
+                "arguments": {"kind": "issue", "target": issue_id, "wait": 0},
+            },
+            activity_clipped,
+            floor=3,
+        ),
+        results.Cut(
+            ("comments", "items"),
+            lambda kept: {
+                "tool": "list_issue_comments",
+                "arguments": {
+                    "issue_id": issue_id,
+                    "offset": max(first_shown, 0),
+                    "include_body": True,
+                },
+            },
+            comments_cut,
+            each=("body", "text"),
+            floor=results.EXCERPT_CHARS,
+        ),
+        results.Cut(
+            ("issue", "description", "text"),
+            lambda kept: _issue_reader(issue_id, kept),
+            description_cut,
+        ),
+    ]
+
+
+def _mark_desk_delegations_cut(fitted: dict[str, Any], kept: int) -> None:
+    fitted["work"]["delegations"].update(has_more=True, next_offset=kept)
+
+
 def _tool_visible(required: str, scopes: frozenset[str] | None) -> bool:
     """Whether a tool with this requirement belongs in this session's surface.
 
@@ -824,8 +1003,11 @@ def build_server(
         return None
 
     def _add(function, annotations: ToolAnnotations, doc: str | None = None):
+        name = function.__name__
         shaped = _one_object(
-            preserve_athena_errors(function), read_only=is_read_only(function.__name__)
+            preserve_athena_errors(function),
+            read_only=is_read_only(name),
+            budget=response_budget(name),
         )
         if doc is not None:
             shaped.__doc__ = doc
@@ -871,14 +1053,16 @@ _NOTHING_READ = {"found": False}
 _NOTHING_WRITTEN = {"applied": True}
 
 
-def _one_object(function, *, read_only: bool):
+def _one_object(function, *, read_only: bool, budget: int | None = None):
     """Wrap a tool so it answers exactly one JSON object of its declared shape.
 
     A tool declares ``ListResult`` for a list and ``dict`` otherwise; anything
     else (a bare ``list``, say) raises at build time. The wrapper's signature
     carries the shape FastMCP turns into the output schema. A REST call with no
     body answers ``{"found": false}`` from a read and ``{"applied": true}``
-    from a write, never nothing."""
+    from a write, never nothing. With a ``budget``, the list helpers keep the
+    answer within it while the tool runs, and an object answer is cut where
+    ``_budget_cuts`` allows."""
     signature = inspect.signature(function, eval_str=True)
     declared = signature.return_annotation
     if declared is ListResult:
@@ -891,19 +1075,24 @@ def _one_object(function, *, read_only: bool):
             "one object: ListResult for a list (results.listing), dict otherwise"
         )
 
+    name = function.__name__
+
     @wraps(function)
     def shaped(*args, **kwargs):
-        result = function(*args, **kwargs)
-        if result is None and shape is ObjectShape:
-            return dict(_NOTHING_READ if read_only else _NOTHING_WRITTEN)
-        if not isinstance(result, dict) or (
-            shape is ListShape and set(result) != _LIST_KEYS
-        ):
-            raise TypeError(
-                f"{function.__name__} answered {type(result).__name__}, "
-                "not its declared result shape"
-            )
-        return result
+        with results.budget(budget):
+            result = function(*args, **kwargs)
+            if result is None and shape is ObjectShape:
+                return dict(_NOTHING_READ if read_only else _NOTHING_WRITTEN)
+            if not isinstance(result, dict) or (
+                shape is ListShape and set(result) != _LIST_KEYS
+            ):
+                raise TypeError(
+                    f"{name} answered {type(result).__name__}, "
+                    "not its declared result shape"
+                )
+            if shape is ObjectShape and budget is not None:
+                return results.fit_object(result, _budget_cuts(name, result, kwargs))
+            return result
 
     shaped.__signature__ = signature.replace(  # type: ignore[attr-defined]
         return_annotation=shape

@@ -8,6 +8,7 @@ from typing import Literal
 
 from athena.aegis.review_models import ReviewCandidateId
 from athena.core import dispatch, run_controls, security_events
+from athena.mcp import results
 from athena.mcp.results import ListResult, listing, window
 from athena.mcp.server import (
     DispatchIssueId,
@@ -254,7 +255,10 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         `identity.notebook` needs `full`; editing it, `seat+knowledge`.
 
         RESERVES NOTHING: seeing work here does not claim it."""
-        return client.my_desk()
+        desk = client.my_desk()
+        for item in desk.get("work", {}).get("delegations", {}).get("items", []):
+            item["issue"] = results.summary(item["issue"])
+        return desk
 
     @tool
     def my_office() -> dict:

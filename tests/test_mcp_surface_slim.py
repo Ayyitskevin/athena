@@ -632,7 +632,7 @@ def test_an_issue_read_needs_exactly_one_of_ref_and_issue_id(board):
 def test_the_issue_read_schemas_offer_both_names_and_require_neither():
     tools = _tools(None)
     expected = {
-        "get_issue": {"ref", "issue_id"},
+        "get_issue": {"ref", "issue_id", "body_offset"},
         "get_issue_work_context": {"ref", "issue_id", "brief"},
     }
     for name, properties in expected.items():

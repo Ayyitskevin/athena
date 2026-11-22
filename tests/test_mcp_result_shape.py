@@ -98,8 +98,11 @@ def test_a_list_is_one_object_with_its_four_keys(app_client):
     assert [row["title"] for row in whole["items"]] == [
         row["title"] for row in page["items"] + tail["items"]
     ]
-    # The rows are the REST rows, unchanged.
-    assert whole["items"] == app_client.get("/issues").json()
+    # The rows are the REST rows as summaries: everything but the body (A6).
+    rest = app_client.get("/issues").json()
+    assert whole["items"] == [
+        {key: value for key, value in row.items() if key != "body"} for row in rest
+    ]
 
 
 def test_an_empty_list_is_the_same_object_with_no_items(app_client):

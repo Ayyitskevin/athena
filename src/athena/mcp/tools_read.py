@@ -7,13 +7,17 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis import fleet_attention, fleet_metrics, fleet_work, issue_narrative
+from athena.mcp import results
 from athena.mcp.results import ListResult, listing, paged, window
 from athena.mcp.server import (
+    MAX_COMMENT_CHARS,
     AttentionLimit,
     AttentionWindowHours,
     AutomationScheduleAt,
     AutomationScheduleInterval,
     AutomationTriggerType,
+    BodyOffset,
+    CommentChars,
     DelegationLimit,
     DelegationOffset,
     DigestWindowMinutes,
@@ -55,6 +59,39 @@ def _issue_ref(ref: str | None, issue_id: int | None) -> str:
     if (ref is None) == (issue_id is None):
         raise ValueError("pass exactly one of ref or issue_id")
     return ref if ref is not None else str(issue_id)
+
+
+def _comment_row(
+    row: dict, position: int, issue_id: int, include_body: bool, max_chars: int
+) -> dict:
+    """A comment as a list row: an excerpt by default, or its body up to
+    ``max_chars``, marked when cut and naming the call that reads more of it."""
+    body = row.get("body") or ""
+    if not include_body:
+        shaped = results.summary(row)
+        shaped["excerpt"] = body[: results.EXCERPT_CHARS]
+        shaped["body_chars"] = len(body)
+        return shaped
+    if len(body) <= max_chars:
+        return row
+    more = (
+        {
+            "tool": "list_issue_comments",
+            "arguments": {
+                "issue_id": issue_id,
+                "offset": position,
+                "include_body": True,
+                "max_chars": MAX_COMMENT_CHARS,
+            },
+        }
+        if max_chars < MAX_COMMENT_CHARS
+        else None
+    )
+    return {
+        **row,
+        "body": body[:max_chars],
+        results.TRUNCATED_KEY: {"body": {"total_chars": len(body), "next": more}},
+    }
 
 
 def register_read_tools(tool, mutation_tool, client) -> None:
@@ -120,7 +157,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
             offset=offset,
         )
-        return paged(rows, limit=limit, offset=offset)
+        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
     @tool
     def search_work(q: str, limit: int = 50, offset: int = 0) -> ListResult:
@@ -143,7 +180,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         never an empty result — so a typo is visible instead of looking like "no
         work". The `full` profile has the vocabulary as data."""
         rows = client.search_work(q, limit=limit, offset=offset)
-        return paged(rows, limit=limit, offset=offset)
+        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
     @tool
     def count_work(q: str) -> dict:
@@ -294,16 +331,19 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         offset: DelegationOffset = 0,
     ) -> dict:
         """List issues delegated to the authenticated contributor. By default this
-        excludes archived and done-category work. Results include instructions,
-        accountable assignee, delegation attribution, and visible open blockers.
+        excludes archived and done-category work. Results include each issue (its
+        body via get_issue), accountable assignee, delegation attribution, and visible open blockers.
         Use has_more and next_offset to page through bounded results.
         This is pickup context only: it does not claim work or report liveness, and
         the absence of a visible blocker is not an "unblocked" guarantee."""
-        return client.list_my_delegated_work(
+        inbox = client.list_my_delegated_work(
             include_closed=include_closed,
             limit=limit,
             offset=offset,
         )
+        for item in inbox.get("items", []):
+            item["issue"] = results.summary(item["issue"])
+        return inbox
 
     @tool
     def get_fleet_active_work(
@@ -325,12 +365,18 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def get_issue(ref: str | None = None, issue_id: int | None = None) -> dict:
+    def get_issue(
+        ref: str | None = None,
+        issue_id: int | None = None,
+        body_offset: BodyOffset = 0,
+    ) -> dict:
         """Get one issue by issue_id (the number every write tool takes) or by
         ref: a numeric id as text ('12') or a project key ('ATH-12'). Pass one of
         the two. The response includes the server's opaque ETag as _etag; copy it
-        exactly into if_match on a guarded update."""
-        return client.get_issue(_issue_ref(ref, issue_id))
+        exactly into if_match on a guarded update. A long body is cut to the
+        response budget; body_offset reads on from there."""
+        issue = client.get_issue(_issue_ref(ref, issue_id))
+        return results.from_offset(issue, "body", body_offset)
 
     @tool
     def get_issue_work_context(
@@ -400,10 +446,23 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_issue_comments(issue_id: int) -> ListResult:
+    def list_issue_comments(
+        issue_id: int,
+        offset: ListOffset = 0,
+        include_body: bool = False,
+        max_chars: CommentChars = 4_000,
+    ) -> ListResult:
         """Read one issue's comment thread, oldest first — the discussion a
-        delegated agent needs before acting. Write replies with comment_on_issue."""
-        return listing(client.list_issue_comments(issue_id))
+        delegated agent needs before acting. Write replies with comment_on_issue.
+        Rows carry an excerpt; include_body=true gives each body up to max_chars."""
+        rows = client.list_issue_comments(issue_id)
+        return results.sliced(
+            [
+                _comment_row(row, position, issue_id, include_body, max_chars)
+                for position, row in enumerate(rows)
+            ],
+            offset=offset,
+        )
 
     @tool
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:

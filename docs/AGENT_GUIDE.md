@@ -13,6 +13,19 @@ Every refusal (any 4xx or 5xx JSON body) carries a `code` beside its `detail`, f
 one registry. Branch on `code`, never on the `detail` text. Over MCP a refused call
 returns that same object with `isError` true, and `next` names the call that resolves
 it where one exists. The codes are listed in [AGENT_API.md](AGENT_API.md#refusal-codes).
+A failure that never reached Athena (a bad argument, say) is the same object, with
+`status_code` null and an MCP-side code such as `invalid_arguments`.
+
+Every MCP tool answers one JSON object. A list is `{items, count, truncated, next}`:
+when `truncated` is true, call again with the arguments in `next` added, and stop when
+it is false. List and search rows are summaries without bodies; read a body with the
+row's own tool (`get_issue`, `get_page`), or a comment's with
+`list_issue_comments(include_body=true)`. In the `seat`, `seat+knowledge` and
+`conductor` profiles every answer fits a budget of 16,000 characters
+(`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
+`truncated`, an object by `_truncated`, which names each cut field with its whole size
+and `next`, the tool and arguments that read the rest (for a body, `body_offset`).
+Never write back a body you read cut: read the rest first.
 
 ## 1. Orient with the desk
 

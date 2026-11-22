@@ -8,6 +8,7 @@ from pydantic import SkipValidation, ValidationError
 
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
+from athena.mcp import results
 from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
     ClaimNextLeaseSeconds,
@@ -23,6 +24,7 @@ from athena.mcp.server import (
     HandoffToken,
     IdempotencyKey,
     LeaseGeneration,
+    ListOffset,
     PermanentDeleteConfirmation,
     ProjectId,
     SprintId,
@@ -438,9 +440,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_subtasks(issue_id: int) -> ListResult:
+    def list_subtasks(issue_id: int, offset: ListOffset = 0) -> ListResult:
         """List the direct child issues (sub-tasks) nested under this issue."""
-        return listing(client.list_subtasks(issue_id))
+        rows = client.list_subtasks(issue_id)
+        return results.sliced([results.summary(row) for row in rows], offset=offset)
 
     # --- dependencies (blocks / relates) ------------------------------------
 
@@ -590,9 +593,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     # --- labels -------------------------------------------------------------
 
     @tool
-    def list_labels() -> ListResult:
+    def list_labels(offset: ListOffset = 0) -> ListResult:
         """List the shared label vocabulary (id, name, color)."""
-        return listing(client.list_labels())
+        return results.sliced(client.list_labels(), offset=offset)
 
     @mutation_tool
     def create_label(
@@ -622,9 +625,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     # --- projects & users ---------------------------------------------------
 
     @tool
-    def list_projects() -> ListResult:
+    def list_projects(offset: ListOffset = 0) -> ListResult:
         """List Aegis projects (id, key, name)."""
-        return listing(client.list_projects())
+        return results.sliced(client.list_projects(), offset=offset)
 
     @tool
     def list_users() -> ListResult:
