@@ -1,16 +1,17 @@
 # Agentic use: review findings and improvement specification
 
 Date: 2026-11-21. Review baseline: `99a0286ba12c7b9250348a61819827ce943f01b9`.
-Status: **decisions accepted; Waves 0, 0b and 1 built.** On 2026-11-22 the
+Status: **decisions accepted; Waves 0, 0b, 1 and 2 built.** On 2026-11-22 the
 owner accepted all fifteen decisions as recommended and authorized Wave 0, then,
-once it had merged, Wave 0b and Wave 1. See
+once each had merged, Wave 0b, Wave 1 and Wave 2. See
 [the decision record](../decisions/2026-11-22-agentic-use-decisions.md). Wave 0
 landed in PR #466 and its results are under "Wave 0 results" below. Wave 0b
 (A2, under D3) landed in PR #467; its rule is recorded in
 [its own decision record](../decisions/2026-11-22-ready-rule-awaiting-decision.md).
-Wave 1 (A4 to A10, A15b, A16 and A17) is built in PR #468 and its results are
-under "Wave 1 results" below. Waves 2 to 4 are not built; they remain proposals
-for when to build, not whether the design holds.
+Wave 1 (A4 to A10, A15b, A16 and A17) landed in PR #468 and its results are
+under "Wave 1 results" below. Wave 2 (B2 to B5, B6a and B7 to B10) is built in
+PR #469 and its results are under "Wave 2 results". Waves 3 and 4 are not
+built; they remain proposals for when to build, not whether the design holds.
 Several requirements change or extend an earlier accepted decision; each says
 so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
@@ -214,6 +215,79 @@ Found and not fixed:
   rewriting its stored expiry, as the existing lease tests do.
 - `src/athena/field_guide/07_watching.md` and `docs/DESK.md` still name tools
   no seat profile carries; `examples/desk_loop.md` is not executed.
+
+### Wave 2 results
+
+Measured on the Wave 2 head in the same 4-CPU, 15 GB container. Wave 2 is B2
+to B5, B6a and B7 to B10, in PR #469. B8 landed as three commits, one per
+part. The build order differed from the table's so that `scripts/gate.py` and
+`AGENTS.md` each changed once.
+
+| Measure | Baseline | After Wave 2 |
+|---|---|---|
+| Test evidence available below the full suite | None supported | `scripts/gate.sh --profile changed`. A one-line change to a command module ran 570 of 5,589 tests in 88 seconds *(lead)*; a document, 111 tests in 35 seconds, and `core/activity.py`, 4,692 tests in 711 seconds *(build agent, not re-run)* (B2). |
+| Modules the write-ownership check covers | Matched by name; `aegis/api.py`, `mentor/api.py` and `main.py` unchecked | Every module that builds a router or registers routes, handlers or middleware (B5). |
+| A committing call inside `db.transaction` | Undetected | A gate stage and CI step fail on it, and `db.transaction` raises at run time. It found one bug, in `dependencies.remove_link` (B5). |
+| Places edited to add an MCP tool | Five tables in `server.py`, the tool, its client method, the generated doc | The tool with its declaration, its client method, the generated doc. The tool list an agent sees is byte-identical across 24 surfaces (B8). |
+| Hand-kept inventories | The index omitted 5 documents and 2 directories; `OPERATIONS.md` had no row for 21 of 56 settings; two "None known" debtor rows were wrong | The index is asserted, and the settings and debtor tables are generated (B6a). |
+| OpenAPI document for agents | One document, 393 operations, browser routes included | `/openapi-agent.json`: 220 operations, with the bearer scheme, `Idempotency-Key` on 99, `If-Match` on 7, the run headers on all 118 writes, and a shared refusal body (B7). |
+| Coverage floors | 92.60 line, 82.30 branch, 90.30 combined; unchanged since July and 1.5 to 3.3 points under the measurement | 93.86, 85.31, 91.90; the check fails when a measurement is more than half a point above its floor (B9). |
+| `time.sleep` in the tests | 3 | 0, held by a test (B9). |
+| Test files that redeclare `_bootstrap` | 99 | 93, held by a ratchet; `tests/support.py` is the shared start (B9). |
+| A fresh checkout to a working environment | By hand, from memory | `scripts/bootstrap.sh`: 17 seconds in a fresh shallow clone here, 839 commits fetched, `.venv` verified against the pinned constraints (B3). |
+
+The product gate passes on the head that holds all nine requirements
+(`edb55cd`): eleven stages, 5,771 tests in about 23 minutes, peak memory
+1.59 GiB. Coverage is 94.11% line, 85.56% branch and 92.15% combined, against
+the raised floors. Hosted CI passed on the same head under those floors. Wave 2
+added 322 tests. The suite is about five minutes slower than at the end of
+Wave 1.
+
+What the new checks found, fixed in this wave:
+
+- `dependencies.remove_link` always committed, so an unlink refused after the
+  delete removed the link and wrote no event. A refused unlink now leaves the
+  link in place.
+- Four writes in `main.py` sat outside any command. Three moved behind
+  commands unchanged; the startup migration is allow-listed by name.
+- The "None known" debtor rows for sprints and API tokens were wrong: every
+  sprint command and both token commands take a bare actor id.
+
+Found and not fixed:
+
+- **The changed profile has a blind spot.** Imports are not followed through
+  `athena.main`, because 289 of 360 test files import it. A test that reaches
+  changed code only through the app is selected by a 17-entry map that matches
+  test files by name, so a differently named test can be missed. A change to
+  any of 15 core modules that reach `athena.middleware` runs the full suite.
+  Recording per-test coverage contexts in one scheduled CI job would make the
+  map exact.
+- **42 commands take a bare actor id and 23 writes sit outside a command.**
+  They are now listed in `COMMAND_MIGRATION.md`; none is paid down.
+- **Writers that take no `commit` parameter still commit unconditionally**
+  (`issues.update_status`, `notifications.mark_read` and others). None is
+  called inside a transaction, and the run-time guard would catch one that
+  was. `start_sprint` and `update_page` open `BEGIN IMMEDIATE` by hand, outside
+  both checks.
+- **The agent OpenAPI document leaves out what could not be derived:** the
+  token scope each operation needs, and per-route 404, 428 and scope-denial
+  statuses, which fall under a `default` response. Its first request costs two
+  to three seconds per process. `docs/AGENT_API.md` still calls
+  `/openapi.json` the full REST reference.
+- **Eight setting reads are checked, not routed through the registry**, in
+  `mcp/server.py` and the seat doctor, because importing the server's config
+  there would make them fail on unrelated settings. `DISPATCH.md` and
+  `WORKERS.md` keep hand-written tables of the same variables, and `examples/`
+  and the `Dockerfile` are not scanned.
+- **The `imported_at_guards.toml` files are not package data**, so the guard
+  checker works from a checkout only.
+- **The fallback rules in `AGENTS.md` were written without sight of the
+  machine-level handbook they stand in for.** They restate this repository's
+  rules and the owner's standing instructions; the owner should check them
+  against the handbook.
+- `AGENTS.md` grew from 10.9 KB to 17.6 KB over the wave, and it is re-read
+  every session.
+- Dated documents under `docs/` still quote the old coverage floors.
 
 ## Priorities
 
