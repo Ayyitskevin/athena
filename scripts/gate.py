@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import difflib
 import importlib.util
+import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -27,6 +29,14 @@ WORKERS_VARIABLE = "ATHENA_COVERAGE_WORKERS"  # read by scripts/coverage.sh
 # What pytest-xdist prints when a worker process dies mid-test (e.g. OOM-killed).
 WORKER_LOST_MARKERS = ("node down: Not properly terminated", "crashed while running")
 MEMORY_SAMPLE_SECONDS = 0.5
+JSON_SCHEMA = "athena-gate-receipt/1"
+# pytest's closing summary ("12 passed, 1 skipped in 3.4s"), with or without the
+# "=" rule around it, and the coverage lines scripts/check_coverage.py prints.
+_TEST_SUMMARY = re.compile(r"^=*\s*((?:\d+ [a-z]+(?:, )?)+) in [\d.]+s\b")
+_TEST_COUNT = re.compile(r"(\d+) ([a-z]+)")
+_COVERAGE_LINE = re.compile(
+    r"^(Line|Branch|Combined) coverage: (\d+)/(\d+) = ([\d.]+)% \(floor ([\d.]+)%\)"
+)
 PROFILES = ("quick", "product", "changed")
 DEFAULT_BASE = "origin/main"
 CHANGED_PATHS_SHOWN = 10  # The receipt lists this many changed paths, then a count.
@@ -62,6 +72,8 @@ class StageOutcome:
 
     passed: bool
     receipt: tuple[str, ...] = ()
+    facts: tuple[str, ...] = ()  # Output lines the JSON receipt reads numbers from.
+    memory: dict[str, object] | None = None  # Peak memory, for the JSON receipt.
 
 
 @dataclass(frozen=True)
@@ -70,6 +82,7 @@ class MeasuredRun:
     peak_tree_bytes: int | None  # None where /proc is unavailable.
     peak_process_bytes: int | None
     worker_lost: bool
+    facts: tuple[str, ...] = ()  # Test-summary and coverage lines it printed.
 
 
 PYTHON = sys.executable
@@ -230,7 +243,17 @@ def _run_stage(stage: Stage) -> bool | StageOutcome:
     env["ATHENA_PYTHON"] = PYTHON
     if stage.measure_memory:
         run = _run_measured(stage.command, env)
-        return StageOutcome(run.returncode == 0, _memory_receipt(stage.name, run))
+        return StageOutcome(
+            run.returncode == 0,
+            _memory_receipt(stage.name, run),
+            run.facts,
+            {
+                "tree_bytes": run.peak_tree_bytes,
+                "largest_process_bytes": run.peak_process_bytes,
+                "sample_seconds": MEMORY_SAMPLE_SECONDS,
+                "worker_lost": run.worker_lost,
+            },
+        )
     return subprocess.run(stage.command, cwd=ROOT, env=env, check=False).returncode == 0
 
 
@@ -270,6 +293,7 @@ def _run_measured(
     measurable = Path("/proc/self/statm").exists()
     peak_tree = peak_process = 0
     worker_lost = False
+    facts: list[str] = []
     done = threading.Event()
     with subprocess.Popen(
         command,
@@ -299,6 +323,8 @@ def _run_measured(
                 sys.stdout.flush()
                 if any(marker in line for marker in WORKER_LOST_MARKERS):
                     worker_lost = True
+                if _TEST_SUMMARY.match(line) or _COVERAGE_LINE.match(line):
+                    facts.append(line.rstrip("\n"))
             returncode = process.wait()
         finally:
             done.set()
@@ -309,6 +335,7 @@ def _run_measured(
         peak_tree if measurable else None,
         peak_process if measurable else None,
         worker_lost,
+        tuple(facts),
     )
 
 
@@ -414,8 +441,13 @@ def _selection_receipt(selection: Selection) -> list[str]:
 
 
 def run_profile(
-    profile: str, runner=_run_stage, *, selection: Selection | None = None
+    profile: str,
+    runner=_run_stage,
+    *,
+    selection: Selection | None = None,
+    record: dict[str, object] | None = None,
 ) -> int:
+    """Run a profile and print its receipt; fill ``record`` for the JSON receipt."""
     if profile not in PROFILES:
         raise ValueError(f"Unknown profile: {profile}")
     inventory = STAGES
@@ -437,53 +469,149 @@ def run_profile(
     failed: str | None = None
     attempted: list[str] = []
     receipt: list[str] = []
+    results: dict[str, dict[str, object]] = {}
+    facts: list[str] = []
+    memory: dict[str, object] = {}
     for stage in selected:
         print(
             f"==> {stage.name}: {stage.summary or ' '.join(stage.command)}", flush=True
         )
+        started = time.monotonic()
         try:
             outcome = runner(stage)
         except OSError as error:
             print(f"UNAVAILABLE: {stage.name}: {error}", flush=True)
+            results[stage.name] = {
+                "result": "unavailable",
+                "seconds": round(time.monotonic() - started, 3),
+                "detail": str(error),
+            }
             failed = stage.name
             break
         if isinstance(outcome, StageOutcome):
             passed = outcome.passed
             receipt.extend(outcome.receipt)
+            facts.extend(outcome.facts)
+            if outcome.memory is not None:
+                memory[stage.name] = outcome.memory
         else:
             passed = bool(outcome)
+        results[stage.name] = {
+            "result": "passed" if passed else "failed",
+            "seconds": round(time.monotonic() - started, 3),
+        }
         attempted.append(stage.name)
         if not passed:
             failed = stage.name
             print(f"FAILED: {stage.name}", flush=True)
             break
         ran.append(stage.name)
-    print("STAGES RUN: " + (", ".join(attempted) if attempted else "none"))
-    print("STAGES PASSED: " + (", ".join(ran) if ran else "none"))
-    for stage in inventory:
-        if stage.name not in attempted:
-            print(f"NOT RUN: {stage.name}")
-    print(
+    closing: list[str] = []
+
+    def emit(line: str) -> None:
+        print(line)
+        closing.append(line)
+
+    emit("STAGES RUN: " + (", ".join(attempted) if attempted else "none"))
+    emit("STAGES PASSED: " + (", ".join(ran) if ran else "none"))
+    not_run = [stage.name for stage in inventory if stage.name not in attempted]
+    for name in not_run:
+        emit(f"NOT RUN: {name}")
+    emit(
         "CI-ONLY JOBS NOT RUN: container, audit (release-candidate supply-chain evidence)"
     )
     for line in receipt:
-        print(line)
+        emit(line)
     if selection is not None and profile == "changed":
         for line in _selection_receipt(selection):
-            print(line)
+            emit(line)
     if failed:
-        print(f"GATE FAILED: {failed}")
-        return 1
-    if profile == "product":
-        print("PRODUCT GATE PASS (local product stages only; CI-only jobs not run)")
+        emit(f"GATE FAILED: {failed}")
+    elif profile == "product":
+        emit("PRODUCT GATE PASS (local product stages only; CI-only jobs not run)")
     elif profile == "changed":
-        print(
+        emit(
             "CHANGED PROFILE PASS (PARTIAL; selected tests only, without coverage "
             "floors; not product evidence)"
         )
     else:
-        print("QUICK PROFILE PASS (PARTIAL; product and CI checks not all run)")
-    return 0
+        emit("QUICK PROFILE PASS (PARTIAL; product and CI checks not all run)")
+    if record is not None:
+        record.update(
+            {
+                "stages": [
+                    {"name": stage.name, **results.get(stage.name, _NOT_RUN)}
+                    for stage in inventory
+                ],
+                "stages_run": attempted,
+                "stages_passed": ran,
+                "not_run": not_run,
+                "ci_only_jobs_not_run": list(CI_ONLY_JOBS),
+                "tests": _test_counts(facts),
+                "coverage": _coverage(facts),
+                "peak_memory": memory,
+                "selection": None if selection is None else _selection_json(selection),
+                "failed_stage": failed,
+                "partial": profile != "product",
+                "passed": failed is None,
+                "exit_code": 1 if failed else 0,
+                "verdict": closing[-1],
+                "receipt": closing,
+            }
+        )
+    return 1 if failed else 0
+
+
+_NOT_RUN: dict[str, object] = {"result": "not_run", "seconds": None}
+CI_ONLY_JOBS = ("container", "audit")
+
+
+def _test_counts(facts: list[str]) -> dict[str, int] | None:
+    """pytest's last closing summary, as counts by outcome."""
+    for line in reversed(facts):
+        summary = _TEST_SUMMARY.match(line)
+        if summary:
+            return {
+                outcome: int(number)
+                for number, outcome in _TEST_COUNT.findall(summary.group(1))
+            }
+    return None
+
+
+def _coverage(facts: list[str]) -> dict[str, dict[str, object]] | None:
+    found: dict[str, dict[str, object]] = {}
+    for line in facts:
+        measured = _COVERAGE_LINE.match(line)
+        if measured:
+            kind, covered, total, percent, floor = measured.groups()
+            found[kind.lower()] = {
+                "covered": int(covered),
+                "total": int(total),
+                "percent": float(percent),
+                "floor": float(floor),
+            }
+    return found or None
+
+
+def _selection_json(selection: Selection) -> dict[str, object]:
+    diff, plan = selection.diff, selection.plan
+    return {
+        "requested_base": diff.requested_base,
+        "base": diff.base,
+        "merge_base": diff.merge_base,
+        "base_note": diff.note,
+        "changed_paths": list(plan.changed),
+        "test_files": list(plan.test_files),
+        "test_files_total": plan.total_test_files,
+        "tests_selected": selection.tests_selected,
+        "tests_total": selection.tests_total,
+        "by_rule": dict(plan.by_rule),
+        "full_suite": list(plan.full_suite),
+        "explanations": list(plan.explanations),
+        "rule": CHANGED_RULE,
+        "coverage_floors": False,
+        "seconds": round(selection.seconds, 3),
+    }
 
 
 def _start_count(files: tuple[str, ...]) -> Callable[[], tuple[int | None, int | None]]:
@@ -538,16 +666,31 @@ def _print_selection(selection: Selection) -> None:
         print(f"SELECTION PATH: {line}")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=PROFILES, default="product")
-    parser.add_argument(
-        "--base",
-        help=f"changed profile only: the ref to diff against (default {DEFAULT_BASE})",
+def _refuse(message: str, inventory: list[str], record: dict[str, object]) -> int:
+    """Fail before any stage runs: every stage is reported as not run."""
+    print(f"GATE FAILED: {message}")
+    for name in inventory:
+        print(f"NOT RUN: {name}")
+    record.update(
+        {
+            "stages": [{"name": name, **_NOT_RUN} for name in inventory],
+            "stages_run": [],
+            "stages_passed": [],
+            "not_run": inventory,
+            "failed_stage": None,
+            "passed": False,
+            "exit_code": 1,
+            "verdict": f"GATE FAILED: {message}",
+            "receipt": [
+                f"GATE FAILED: {message}",
+                *(f"NOT RUN: {name}" for name in inventory),
+            ],
+        }
     )
-    args = parser.parse_args()
-    if args.base is not None and args.profile != "changed":
-        parser.error("--base applies only to --profile changed")
+    return 1
+
+
+def _gate(args: argparse.Namespace, record: dict[str, object]) -> int:
     commit = subprocess.run(
         ("git", "rev-parse", "HEAD"),
         cwd=ROOT,
@@ -567,6 +710,22 @@ def main() -> int:
     print(f"COMMIT: {commit} (worktree {'dirty' if dirty else 'clean'})")
     print(f"PYTHON: {sys.executable} ({sys.version.split()[0]})")
     print(f"PROFILE: {args.profile}")
+    record.update(
+        {
+            "schema": JSON_SCHEMA,
+            "profile": args.profile,
+            "commit": commit,
+            "dirty": dirty,
+            "python": {"executable": sys.executable, "version": sys.version.split()[0]},
+            "import": None,
+            "partial": args.profile != "product",
+            "ci_only_jobs_not_run": list(CI_ONLY_JOBS),
+            "tests": None,
+            "coverage": None,
+            "peak_memory": {},
+            "selection": None,
+        }
+    )
     inventory = [stage.name for stage in STAGES]
     if args.profile == "changed":
         inventory.append(SELECTED_TESTS)
@@ -575,27 +734,49 @@ def main() -> int:
 
         source = Path(athena.__file__).resolve()
         print(f"IMPORT: {source}")
+        record["import"] = str(source)
         if not source.is_relative_to((ROOT / "src/athena").resolve()):
-            print("GATE FAILED: Athena import is outside this checkout")
-            for name in inventory:
-                print(f"NOT RUN: {name}")
-            return 1
+            return _refuse("Athena import is outside this checkout", inventory, record)
     except (ImportError, TypeError) as error:
-        print(f"GATE FAILED: cannot identify Athena import: {error}")
-        for name in inventory:
-            print(f"NOT RUN: {name}")
-        return 1
+        return _refuse(f"cannot identify Athena import: {error}", inventory, record)
+    # Only a JSON receipt needs the record; without one the call is unchanged.
+    extra = {} if args.json is None else {"record": record}
     if args.profile != "changed":
-        return run_profile(args.profile)
+        return run_profile(args.profile, **extra)
     try:
         selection = select_changed(args.base)
     except select_tests.SelectionError as error:
-        print(f"GATE FAILED: {error}")
-        for name in inventory:
-            print(f"NOT RUN: {name}")
-        return 1
+        return _refuse(str(error), inventory, record)
     _print_selection(selection)
-    return run_profile(args.profile, selection=selection)
+    return run_profile(args.profile, selection=selection, **extra)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=PROFILES, default="product")
+    parser.add_argument(
+        "--base",
+        help=f"changed profile only: the ref to diff against (default {DEFAULT_BASE})",
+    )
+    parser.add_argument(
+        "--json",
+        metavar="PATH",
+        help="also write the receipt as JSON to PATH (relative to the checkout root)",
+    )
+    args = parser.parse_args()
+    if args.base is not None and args.profile != "changed":
+        parser.error("--base applies only to --profile changed")
+    if args.json == "-":
+        parser.error(
+            "--json needs a file path: standard output carries the human receipt"
+        )
+    if args.json is not None and not (ROOT / args.json).parent.is_dir():
+        parser.error(f"--json: no directory for {args.json}")
+    record: dict[str, object] = {}
+    code = _gate(args, record)
+    if args.json is not None:
+        (ROOT / args.json).write_text(json.dumps(record, indent=2) + "\n")
+    return code
 
 
 if __name__ == "__main__":

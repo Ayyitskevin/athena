@@ -148,7 +148,9 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
    tests selected from your diff (see CONTRIBUTING.md); the product profile stays
    the condition of done. The product profile does not run CI's container
    or release-candidate audit jobs; obtain those separately. If the gate changes, change
-   AGENTS.md, CONTRIBUTING.md and the script together.
+   AGENTS.md, CONTRIBUTING.md, the script and `.github/pull_request_template.md`
+   together. The template asks for the gate receipt (profile, commit and closing
+   lines, or the file `scripts/gate.sh --json <path>` writes) as the PR's evidence.
    At the default four test workers the product gate needs about
    1.5 GiB (1.40 GiB measured on 2026-11-22) of memory. On a
    smaller machine set `ATHENA_COVERAGE_WORKERS` to fewer; the receipt says when a

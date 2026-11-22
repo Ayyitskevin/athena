@@ -34,6 +34,18 @@ The wrapper requires this checkout's executable `.venv/bin/python`, as created
 below, and refuses with a setup pointer if it is missing or broken. It does not
 require activating the environment.
 
+`--json <path>` also writes the receipt as JSON (a path relative to the
+checkout root, or absolute; standard output keeps the human receipt). Schema
+`athena-gate-receipt/1` carries the profile, commit, `dirty`, Python and import
+path, each stage's `result` (`passed`, `failed`, `unavailable` or `not_run`)
+and `seconds`, the `stages_run`, `stages_passed` and `not_run` lists, `tests`
+(pytest's closing counts) and `coverage` (line, branch and combined
+covered/total/percent/floor) when a test stage ran, `peak_memory`, for the
+changed profile its `selection`, `partial`, `passed`, `exit_code`, the
+`verdict` line, and `receipt`, the printed closing lines verbatim. The pull
+request template asks for this receipt, or its closing lines, as the PR's
+verification evidence.
+
 ### The inner loop: `--profile changed`
 
 `scripts/gate.sh --profile changed [--base <ref>]` runs the quick stages, the
@@ -377,7 +389,7 @@ login, and starts Athena. It refuses to overwrite an existing path.
 3. Add tests that explain the invariant being protected.
 4. Run the complete required local gate above.
 5. Open a pull request using the repository template. State the user-visible
-   outcome, boundaries, verification, and any AI assistance.
+   outcome, boundaries, verification (the gate receipt), and any AI assistance.
 
 Never push directly to `main`. Do not rewrite another contributor's branch or
 hide unrelated work in a formatting or dependency update.
