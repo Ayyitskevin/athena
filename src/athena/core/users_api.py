@@ -31,7 +31,11 @@ from athena.core.identity import (
     bootstrap_optional_actor,
     require_admin,
 )
-from athena.mcp.config import claude_mcp_config
+from athena.mcp.config import (
+    athena_mcp_command,
+    claude_mcp_config,
+    seat_profile_for,
+)
 
 router = APIRouter(prefix="/users", tags=["core"])
 
@@ -358,6 +362,8 @@ def onboard_agent(
         "mcp_config": claude_mcp_config(
             base_url=str(request.base_url).rstrip("/"),
             token=result["token"]["token"],
+            profile=seat_profile_for(result["token"]["scopes"]),
+            command=athena_mcp_command(),
         ),
     }
 

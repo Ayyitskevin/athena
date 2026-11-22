@@ -211,6 +211,10 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         """START HERE. Your desk: who you are, what is asked of you, what you
         are holding, and what changed since you last looked.
 
+        Profiles (ATHENA_MCP_PROFILE): `seat`, `seat+knowledge` (adds pages),
+        `conductor` (adds assignment and delegation), `full` (all your token
+        allows). Ask the operator to widen yours.
+
         Replaces the whoami + delegations + controls + notifications + budget
         round trip with one bounded read. Lanes: `identity` (role, scopes,
         budget, action kinds needing approval), `asks` (open run controls

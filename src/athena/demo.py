@@ -39,7 +39,11 @@ from athena.core import (
     users,
     worker_commands,
 )
-from athena.mcp.config import claude_mcp_config
+from athena.mcp.config import (
+    athena_mcp_command,
+    claude_mcp_config,
+    seat_profile_for,
+)
 from athena.mentor import page_commands, space_commands
 
 DEMO_EMAIL = "operator@athena.local"
@@ -578,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
             claude_mcp_config(
                 base_url=f"http://127.0.0.1:{args.port}",
                 token=seeded["agent_token"],
+                profile=seat_profile_for(seeded["agent_scopes"]),
+                command=athena_mcp_command(),
             ),
             indent=2,
         )
