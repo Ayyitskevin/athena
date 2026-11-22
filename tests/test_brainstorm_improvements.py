@@ -61,10 +61,9 @@ def test_targeted_ack_preserves_unshown_and_racing_arrival(desk, arrival):
     server = build_server(client, scopes={"read", "issue:write"})
     before = client.my_desk()
     assert before["signals"]["unread_notifications"] == 18
-    shown = [
-        json.loads(item.text)
-        for item in call(server, "list_notifications", unread=True, limit=10)
-    ]
+    shown = json.loads(
+        call(server, "list_notifications", unread=True, limit=10)[0][0].text
+    )["items"]
     assert len(shown) == 10
     if arrival:
         notify(admin, user, issue, "arrived after read")

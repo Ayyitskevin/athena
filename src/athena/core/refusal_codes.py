@@ -10,6 +10,11 @@ Shared codes cover the common answers (``not_found``, ``forbidden``,
 differently: a held claim, a stale ETag, a lease generation, a cursor ahead,
 approval, budget, and the idempotency states.
 
+A few failures never reach Athena: bad tool arguments, or a check the MCP client
+makes itself. They have codes too, so every failed tool call is one object with a
+``code``; they are ``McpRefusalCode`` entries, which carry no HTTP status because
+no HTTP answer exists. A REST route may not answer with one.
+
 Standard library only, so ``athena.mcp`` can import it without the web stack.
 ``scripts/check_refusal_codes.py`` reads this file to refuse an unregistered
 code anywhere in the source, and ``scripts/generate_agent_api.py`` renders it
@@ -40,6 +45,16 @@ class RefusalCode:
 
     code: str
     statuses: tuple[int, ...]
+    meaning: str
+    next: NextCall | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class McpRefusalCode:
+    """A failure the MCP layer answers itself, before or instead of an HTTP
+    answer: it has no status, by construction."""
+
+    code: str
     meaning: str
     next: NextCall | None = None
 
@@ -393,8 +408,50 @@ _ENTRIES: tuple[RefusalCode, ...] = (
 )
 
 
-def _index(entries: tuple[RefusalCode, ...]) -> Mapping[str, RefusalCode]:
-    by_code: dict[str, RefusalCode] = {}
+_MCP_ENTRIES: tuple[McpRefusalCode, ...] = (
+    McpRefusalCode(
+        code="invalid_arguments",
+        meaning=(
+            "The tool's arguments failed its own checks, so no request was sent; "
+            "the detail names each argument and the rule it broke."
+        ),
+    ),
+    McpRefusalCode(
+        code="unknown_tool",
+        meaning="No tool of that name is registered in this session's profile.",
+    ),
+    McpRefusalCode(
+        code="coordination_root_unconfirmed",
+        meaning=(
+            "The claim's answer did not confirm the coordination root you sent; "
+            "the claim may already exist. Read the lease before acting."
+        ),
+        next=NextCall(
+            tool="get_issue_lease",
+            hint="issue_id; do not retry the claim without its root",
+        ),
+    ),
+    McpRefusalCode(
+        code="athena_no_response",
+        meaning=(
+            "Athena did not answer (refused, reset or timed out); whether a write "
+            "applied is unknown. Read the target's state before retrying."
+        ),
+    ),
+    McpRefusalCode(
+        code="tool_failed",
+        meaning=(
+            "The tool failed inside the MCP server after any request it made; "
+            "the detail says how. Read the target's state before retrying."
+        ),
+    ),
+)
+
+
+def _index[Entry: (RefusalCode, McpRefusalCode)](
+    entries: tuple[Entry, ...],
+) -> Mapping[str, Entry]:
+    by_code: dict[str, Entry] = {}
     for entry in entries:
         if entry.code in by_code:
             raise ValueError(f"refusal code registered twice: {entry.code}")
@@ -402,8 +459,11 @@ def _index(entries: tuple[RefusalCode, ...]) -> Mapping[str, RefusalCode]:
     return MappingProxyType(by_code)
 
 
-#: Every registered code, by name.
+#: Every registered code a REST route may answer with, by name.
 REFUSAL_CODES: Mapping[str, RefusalCode] = _index(_ENTRIES)
+
+#: The codes only the MCP layer answers with: no HTTP status exists for them.
+MCP_REFUSAL_CODES: Mapping[str, McpRefusalCode] = _index(_MCP_ENTRIES)
 
 #: The code an error that names none answers with: FastAPI's own 404 and 405,
 #: and any framework refusal raised outside Athena's code. Athena's own call
@@ -438,7 +498,9 @@ def code_for_status(status_code: int) -> str:
 
 def next_call(code: str | None) -> dict[str, str] | None:
     """The resolving MCP call for a code, or None when the registry names none."""
-    entry = REFUSAL_CODES.get(code) if code is not None else None
+    if code is None:
+        return None
+    entry = REFUSAL_CODES.get(code) or MCP_REFUSAL_CODES.get(code)
     if entry is None or entry.next is None:
         return None
     return entry.next.public()

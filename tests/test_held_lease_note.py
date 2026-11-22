@@ -151,7 +151,7 @@ def test_own_row_note_crosses_real_chain_without_releasing(subject, surface, exp
                     },
                 )
             )
-            body = json.loads(result[0].text)
+            body = json.loads(result[0][0].text)
     note = body["held_lease"]
     assert set(note) == {"generation", "expires_at", "active", "message"}
     assert note["generation"] == claim["generation"]

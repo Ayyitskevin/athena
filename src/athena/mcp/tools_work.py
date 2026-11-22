@@ -8,6 +8,7 @@ from pydantic import SkipValidation, ValidationError
 
 from athena.aegis import lease_commands
 from athena.aegis.review_models import CandidateSubmission, ReviewCandidateId
+from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
     ClaimNextLeaseSeconds,
     ClaimNextLimit,
@@ -138,12 +139,14 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         issue_id: int,
         agent_user_id: int,
         idempotency_key: IdempotencyKey | None = None,
-    ) -> list:
+    ) -> ListResult:
         """Delegate an issue to an agent user. The human assignee remains accountable;
         the agent is added as a contributor and a delegated audit event is recorded.
         Use list_users to resolve agent user ids."""
-        return client.delegate_issue(
-            issue_id, agent_user_id, idempotency_key=idempotency_key
+        return listing(
+            client.delegate_issue(
+                issue_id, agent_user_id, idempotency_key=idempotency_key
+            )
         )
 
     @mutation_tool
@@ -164,8 +167,8 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     @tool
     def get_issue_lease(issue_id: int) -> dict | None:
         """Who holds the exclusive claim on this issue right now — {holder_id, holder_name,
-        claimed_at, expires_at, generation, active, open_claim_handoff}, or null if
-        unclaimed. Check it BEFORE claim_issue so two agents don't work the same issue;
+        claimed_at, expires_at, generation, active, open_claim_handoff}, or {found:
+        false} if unclaimed. Check it BEFORE claim_issue so two agents don't work the same issue;
         active=false is an expired, reclaimable lease (the last holder is still shown)."""
         return client.get_issue_lease(issue_id)
 
@@ -358,17 +361,19 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         issue_id: int,
         generation: LeaseGeneration | None = None,
         idempotency_key: IdempotencyKey | None = None,
-    ) -> list:
+    ) -> ListResult:
         """Decline an issue delegated to you (decline) — remove yourself from its
         contributor set so the work is visibly refused, not silently dropped, and an
         operator can re-route it. If you hold an active lease, pass its exact
         generation so decline releases only that possession. Returns the remaining
         contributors; an empty list is success (nobody else is attached), not a
         failure."""
-        return client.decline_delegation(
-            issue_id,
-            generation=generation,
-            idempotency_key=idempotency_key,
+        return listing(
+            client.decline_delegation(
+                issue_id,
+                generation=generation,
+                idempotency_key=idempotency_key,
+            )
         )
 
     @mutation_tool
@@ -433,9 +438,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_subtasks(issue_id: int) -> list:
+    def list_subtasks(issue_id: int) -> ListResult:
         """List the direct child issues (sub-tasks) nested under this issue."""
-        return client.list_subtasks(issue_id)
+        return listing(client.list_subtasks(issue_id))
 
     # --- dependencies (blocks / relates) ------------------------------------
 
@@ -475,10 +480,10 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     # --- sprints ------------------------------------------------------------
 
     @tool
-    def list_sprints(project_id: ProjectId, state: str | None = None) -> list:
+    def list_sprints(project_id: ProjectId, state: str | None = None) -> ListResult:
         """List a project's sprints, optionally filtered by state
         (planned/active/completed)."""
-        return client.list_sprints(project_id, state=state)
+        return listing(client.list_sprints(project_id, state=state))
 
     @tool
     def get_sprint(sprint_id: SprintId) -> dict:
@@ -585,9 +590,9 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     # --- labels -------------------------------------------------------------
 
     @tool
-    def list_labels() -> list:
+    def list_labels() -> ListResult:
         """List the shared label vocabulary (id, name, color)."""
-        return client.list_labels()
+        return listing(client.list_labels())
 
     @mutation_tool
     def create_label(
@@ -617,11 +622,11 @@ def register_work_tools(tool, mutation_tool, client) -> None:
     # --- projects & users ---------------------------------------------------
 
     @tool
-    def list_projects() -> list:
+    def list_projects() -> ListResult:
         """List Aegis projects (id, key, name)."""
-        return client.list_projects()
+        return listing(client.list_projects())
 
     @tool
-    def list_users() -> list:
+    def list_users() -> ListResult:
         """List users (id, name, role) — useful for resolving an assignee."""
-        return client.list_users()
+        return listing(client.list_users())

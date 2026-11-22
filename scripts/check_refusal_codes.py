@@ -20,6 +20,11 @@ route table cannot list them; this pass reads the source instead and fails on:
 
 Rules 1 and 2 cover the whole package. Rules 3 to 5 skip ``web/`` (browser
 adapters answer in HTML) and ``mcp/`` (an HTTP client, not a REST route).
+
+MCP-side codes (``McpRefusalCode`` entries: failures that never reach Athena)
+have no HTTP status, so they are kept apart: a ``code=`` literal under ``mcp/``
+must name a registered code of either kind, and one in a REST module that names
+an MCP-side code is refused, because no HTTP answer may carry it.
 A dynamic code (``code=CODE_BY_KIND[exc.kind]``) passes rule 2, and its table
 is held by rules 3 and 4. A code passed through a variable is out of reach,
 like any computed value; the request-level sweep in
@@ -55,15 +60,23 @@ class Violation:
         return f"{self.path}:{self.line}: {self.message}"
 
 
-def registered_codes(registry_source: str) -> frozenset[str]:
-    """The ``code=`` of every ``RefusalCode(...)`` in the registry module."""
+def registered_codes(
+    registry_source: str, constructor: str = "RefusalCode"
+) -> frozenset[str]:
+    """The ``code=`` of every ``RefusalCode(...)`` in the registry module, or of
+    every ``McpRefusalCode(...)`` with ``constructor="McpRefusalCode"``."""
     codes: set[str] = set()
     for node in ast.walk(ast.parse(registry_source)):
-        if isinstance(node, ast.Call) and _call_name(node) == "RefusalCode":
+        if isinstance(node, ast.Call) and _call_name(node) == constructor:
             for keyword in node.keywords:
                 if keyword.arg == "code" and _is_str(keyword.value):
                     codes.add(keyword.value.value)  # type: ignore[attr-defined]
     return frozenset(codes)
+
+
+def mcp_side_codes(registry_source: str) -> frozenset[str]:
+    """The codes only the MCP layer answers with (no HTTP status)."""
+    return registered_codes(registry_source, "McpRefusalCode")
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -118,23 +131,42 @@ def _assigned_name(node: ast.AST) -> tuple[str, ast.AST] | None:
 
 
 def check_source(
-    source: str, path: str, codes: frozenset[str], *, rest: bool = True
+    source: str,
+    path: str,
+    codes: frozenset[str],
+    *,
+    rest: bool = True,
+    mcp_codes: frozenset[str] | None = None,
 ) -> list[Violation]:
-    """Every violation in one module. ``rest`` turns on rules 3 to 5."""
+    """Every violation in one module. ``rest`` turns on rules 3 to 5. With
+    ``mcp_codes`` and ``rest`` off (the ``mcp/`` area), a ``code=`` literal may
+    also name an MCP-side code; with ``rest`` on, naming one is refused."""
     tree = ast.parse(source)
     found: list[Violation] = []
+    mcp_side = mcp_codes or frozenset()
 
-    def unknown(node: ast.AST, where: str) -> None:
+    def unknown(node: ast.AST, where: str, allowed: frozenset[str] = codes) -> None:
         for literal in _str_literals(node):
-            if literal.value not in codes:
+            if literal.value in allowed:
+                continue
+            if literal.value in mcp_side:
                 found.append(
                     Violation(
                         path,
                         literal.lineno,
-                        f"{where} names {literal.value!r}, which "
-                        "core/refusal_codes.py does not register",
+                        f"{where} names {literal.value!r}, an MCP-side code with "
+                        "no HTTP status; a REST answer may not carry it",
                     )
                 )
+                continue
+            found.append(
+                Violation(
+                    path,
+                    literal.lineno,
+                    f"{where} names {literal.value!r}, which "
+                    "core/refusal_codes.py does not register",
+                )
+            )
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -155,6 +187,12 @@ def check_source(
                 found.append(Violation(path, node.lineno, "Refusal(...) without code="))
             for value in code_args:
                 unknown(value, "code=")
+        elif name == "McpRefusalCode":
+            continue  # the registry's own definitions, not an answer
+        elif not rest and mcp_codes is not None:
+            for keyword in node.keywords:
+                if keyword.arg == "code" and _is_str(keyword.value):
+                    unknown(keyword.value, "code=", codes | mcp_codes)
         elif rest:
             for keyword in node.keywords:
                 if keyword.arg == "code" and _is_str(keyword.value):
@@ -264,17 +302,27 @@ def check_source(
 
 
 def check(root: Path = PACKAGE_ROOT) -> list[Violation]:
-    codes = registered_codes(REGISTRY_PATH.read_text())
+    registry = REGISTRY_PATH.read_text()
+    codes = registered_codes(registry)
     if not codes:
         return [Violation(str(REGISTRY_PATH), 1, "the registry declares no codes")]
-    found: list[Violation] = []
+    mcp_codes = mcp_side_codes(registry)
+    found = [
+        Violation(str(REGISTRY_PATH), 1, f"{code!r} is registered as both kinds")
+        for code in sorted(codes & mcp_codes)
+    ]
     for path in sorted(root.rglob("*.py")):
         if path == REFUSAL_MODULE:
             continue  # defines Refusal on top of HTTPException
         relative = path.relative_to(root)
-        rest = relative.parts[0] not in _NON_REST_AREAS
+        area = relative.parts[0]
+        rest = area not in _NON_REST_AREAS
         found += check_source(
-            path.read_text(), str(path.relative_to(root.parent)), codes, rest=rest
+            path.read_text(),
+            str(path.relative_to(root.parent)),
+            codes,
+            rest=rest,
+            mcp_codes=mcp_codes if (rest or area == "mcp") else None,
         )
     return found
 

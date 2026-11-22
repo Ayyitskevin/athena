@@ -771,7 +771,7 @@ def test_mcp_admin_tool_calls_the_real_rest_projection(tmp_path):
                 {"agent_id": seeded["agent_id"], "limit": 10},
             )
         )
-        payload = json.loads(result[0].text)
+        payload = json.loads(result[0][0].text)
         assert payload["schema"] == "athena.fleet_active_work.v1"
         assert payload["items"][0]["holder"]["id"] == seeded["agent_id"]
 

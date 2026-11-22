@@ -4,6 +4,7 @@ Registered by mcp.server.build_server."""
 
 from __future__ import annotations
 
+from athena.mcp.results import ListResult, listing
 from athena.mcp.server import (
     IdempotencyKey,
 )
@@ -13,9 +14,9 @@ def register_page_tools(tool, mutation_tool, client) -> None:
     # --- pages (Mentor) -----------------------------------------------------
 
     @tool
-    def list_spaces() -> list:
+    def list_spaces() -> ListResult:
         """List Mentor spaces (id, key, name)."""
-        return client.list_spaces()
+        return listing(client.list_spaces())
 
     # A write with shared guidance; find-or-create needs no idempotency key.
     @mutation_tool
@@ -30,10 +31,10 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         return client.open_my_notebook()
 
     @tool
-    def list_pages(space_id: int, include_archived: bool = False) -> list:
+    def list_pages(space_id: int, include_archived: bool = False) -> ListResult:
         """List the pages in a space. Archived (soft-deleted) pages are hidden by
         default; pass include_archived=true to see them."""
-        return client.list_pages(space_id, include_archived=include_archived)
+        return listing(client.list_pages(space_id, include_archived=include_archived))
 
     @tool
     def get_page(page_id: int) -> dict:
@@ -43,37 +44,37 @@ def register_page_tools(tool, mutation_tool, client) -> None:
         return client.get_page(page_id)
 
     @tool
-    def find_pages_by_title(title: str, space_id: int | None = None) -> list:
+    def find_pages_by_title(title: str, space_id: int | None = None) -> ListResult:
         """Find Mentor pages by their TITLE instead of a numeric id — the address you can
         recall without a lookup (numeric ids are exactly what an agent is worst at).
         Returns every exact, case-insensitive title match: [] if none, one for the common
         case, or several when a title is reused across spaces (pass space_id to narrow to
         one). Archived pages, and pages in spaces you can't see, are omitted. Use it to
         turn a remembered title into a page id for get_page / update_page."""
-        return client.find_pages_by_title(title, space_id=space_id)
+        return listing(client.find_pages_by_title(title, space_id=space_id))
 
     @tool
-    def page_backlinks(page_id: int) -> list:
+    def page_backlinks(page_id: int) -> ListResult:
         """What references this page — the INCOMING edges of the knowledge graph. Each
         item is {kind, id, title, exists}: another issue or page whose body cross-links
         here. Results the caller may not see (private space/project) are hidden. Use it
         to find what depends on a doc before editing it."""
-        return client.page_backlinks(page_id)
+        return listing(client.page_backlinks(page_id))
 
     @tool
-    def page_outgoing_links(page_id: int) -> list:
+    def page_outgoing_links(page_id: int) -> ListResult:
         """What this page references — the OUTGOING edges of the knowledge graph (the
         [[issue:N]]/[[page:N]] cross-links in its body). Each item is {kind, id, title,
         exists}; exists=false marks a broken link (target deleted or never created).
         Use it to walk from a doc to the things it points at."""
-        return client.page_outgoing_links(page_id)
+        return listing(client.page_outgoing_links(page_id))
 
     @tool
-    def list_page_versions(page_id: int) -> list:
+    def list_page_versions(page_id: int) -> ListResult:
         """The page's superseded revisions, newest first (the live page is NOT one of
         them — get it with get_page). Each is {id, page_id, version, title, body,
         edited_by, created_at}. Pair with restore_page_version to roll back."""
-        return client.list_page_versions(page_id)
+        return listing(client.list_page_versions(page_id))
 
     @tool
     def get_page_version(page_id: int, version: int) -> dict:

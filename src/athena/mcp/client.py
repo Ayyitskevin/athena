@@ -240,10 +240,20 @@ class AthenaClient:
 
     # --- search -------------------------------------------------------------
 
-    def search(self, query: str, *, kind: str | None = None, limit: int = 20) -> Any:
+    def search(
+        self,
+        query: str,
+        *,
+        kind: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Any:
         return self._result(
             self._client.get(
-                "/search", params=self._params(q=query, kind=kind, limit=limit)
+                "/search",
+                params=self._params(
+                    q=query, kind=kind, limit=limit, offset=offset or None
+                ),
             )
         )
 

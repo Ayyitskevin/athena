@@ -745,12 +745,20 @@ def test_a_gated_write_over_mcp_says_it_was_not_applied(world):
     assert client.get(f"/issues/{mine['id']}").json()["status"] != "done"
 
 
-def test_a_failure_before_any_request_keeps_the_sdk_error(world):
-    # Bad arguments never reach Athena, so there is no REST body to hand over.
+def test_a_failure_before_any_request_is_one_object_with_an_mcp_side_code(world):
+    # Bad arguments never reach Athena, so there is no REST body to hand over:
+    # the failure is still one object, with a code that has no HTTP status (A4).
     server = mcp_server.build_server(AthenaClient(client=world["client"]))
     result = _wire_call(server, "get_issue", {"ref": 5})
     assert result.isError is True
-    assert "validation error" in result.content[0].text
+    failure = _one_object(result)
+    assert failure == {
+        "detail": "invalid arguments: ref: Input should be a valid string",
+        "code": "invalid_arguments",
+        "status_code": None,
+    }
+    assert failure["code"] in refusal_codes.MCP_REFUSAL_CODES
+    assert failure["code"] not in REFUSAL_CODES
 
 
 def test_the_fallbacks_for_a_status_or_code_outside_the_registry():
@@ -780,3 +788,73 @@ def test_the_handlers_keep_fastapis_shape_at_the_edges():
         refusals._request_validation(None, ValueError("other"))
     coded = refusals._request_validation(None, RequestValidationError([]))
     assert json.loads(coded.body) == {"detail": [], "code": "validation_error"}
+
+
+# --- MCP-side codes (A4) --------------------------------------------------------
+
+
+def test_mcp_side_codes_have_no_http_status_and_never_collide():
+    # A failure that never reached Athena has no HTTP answer: its entry has no
+    # status field at all, and no REST code shares its name.
+    assert set(refusal_codes.MCP_REFUSAL_CODES) == {
+        "invalid_arguments",
+        "unknown_tool",
+        "coordination_root_unconfirmed",
+        "athena_no_response",
+        "tool_failed",
+    }
+    assert not set(refusal_codes.MCP_REFUSAL_CODES) & set(REFUSAL_CODES)
+    for code, entry in refusal_codes.MCP_REFUSAL_CODES.items():
+        assert entry.code == code
+        assert not hasattr(entry, "statuses"), code
+        assert entry.meaning.strip() and "\n" not in entry.meaning, code
+        if entry.next is not None:
+            assert entry.next.tool in mcp_server.SEAT_PROFILE, code
+    assert refusal_codes.next_call("coordination_root_unconfirmed") == {
+        "tool": "get_issue_lease",
+        "hint": "issue_id; do not retry the claim without its root",
+    }
+
+
+def test_the_static_check_reads_the_mcp_side_codes_apart():
+    checker = _load_checker()
+    registry = checker.REGISTRY_PATH.read_text()
+    assert checker.mcp_side_codes(registry) == set(refusal_codes.MCP_REFUSAL_CODES)
+    assert checker.registered_codes(registry) == set(REFUSAL_CODES)
+
+
+def test_the_static_check_keeps_mcp_side_codes_out_of_rest_answers():
+    checker = _load_checker()
+    registry = checker.REGISTRY_PATH.read_text()
+    codes = checker.registered_codes(registry)
+    mcp_codes = checker.mcp_side_codes(registry)
+    rest = "def route():\n    raise Refusal(422, 'bad', code='invalid_arguments')\n"
+    found = checker.check_source(rest, "route.py", codes, mcp_codes=mcp_codes)
+    assert [v.message for v in found] == [
+        "code= names 'invalid_arguments', an MCP-side code with no HTTP status; "
+        "a REST answer may not carry it"
+    ]
+    # Under mcp/, a code= literal may name either kind, and nothing else.
+    client = (
+        "def f():\n"
+        "    raise AthenaError('x', code='coordination_root_unconfirmed')\n"
+        "def g():\n"
+        "    raise AthenaError('x', code='not_found')\n"
+    )
+    assert (
+        checker.check_source(
+            client, "mcp/client.py", codes, rest=False, mcp_codes=mcp_codes
+        )
+        == []
+    )
+    typo = "def f():\n    raise AthenaError('x', code='root_unconfirmed')\n"
+    assert checker.check_source(
+        typo, "mcp/client.py", codes, rest=False, mcp_codes=mcp_codes
+    )
+
+
+def test_the_reference_lists_mcp_side_codes_with_no_status():
+    text = (REPO / "docs" / "AGENT_API.md").read_text()
+    section = text.split("### MCP-side codes\n", 1)[1]
+    for code in refusal_codes.MCP_REFUSAL_CODES:
+        assert f"| `{code}` | none |" in section, code

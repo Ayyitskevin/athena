@@ -175,7 +175,7 @@ def test_server_begin_run_and_current_run_tools(tmp_path):
     # call_tool returns a content list; the tool's dict rides as JSON text.
     import json
 
-    payload = json.loads(state[0].text)
+    payload = json.loads(state[0][0].text)
     assert payload["run_id"] == "tool-run" and payload["parent_run_id"] == "goal-run"
 
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis import fleet_attention, fleet_metrics, fleet_work, issue_narrative
+from athena.mcp.results import ListResult, listing, paged, window
 from athena.mcp.server import (
     AttentionLimit,
     AttentionWindowHours,
@@ -27,6 +28,7 @@ from athena.mcp.server import (
     IssueHistoryLimit,
     IssueListLimit,
     IssueListOffset,
+    ListOffset,
     MuteUntil,
     NotificationLimit,
     NotificationPriority,
@@ -38,6 +40,12 @@ from athena.mcp.server import (
     WatchTargetId,
     WorkspaceSearchLimit,
 )
+
+# The page size the search tool asks /search for, and the inbox's REST cap.
+SEARCH_LIMIT = 20
+NOTIFICATION_LIST_CAP = 200
+# /activity/runs reconstructs from at most this many recent events.
+ACTIVITY_RUNS_EVENT_CAP = 500
 
 
 def _issue_ref(ref: str | None, issue_id: int | None) -> str:
@@ -53,10 +61,13 @@ def register_read_tools(tool, mutation_tool, client) -> None:
     # --- search & read ------------------------------------------------------
 
     @tool
-    def search(query: str, kind: str | None = None) -> list:
+    def search(
+        query: str, kind: str | None = None, offset: ListOffset = 0
+    ) -> ListResult:
         """Full-text search across Aegis issues and Mentor pages. Optionally narrow
         to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
-        return client.search(query, kind=kind)
+        hits = client.search(query, kind=kind, limit=SEARCH_LIMIT, offset=offset)
+        return paged(hits, limit=SEARCH_LIMIT, offset=offset)
 
     @tool
     def search_workspace(
@@ -89,7 +100,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         include_archived: bool = False,
         limit: IssueListLimit = 50,
         offset: IssueListOffset = 0,
-    ) -> list:
+    ) -> ListResult:
         """List Aegis issues, optionally filtered by a project-configured status,
         project (id or 'none' for the backlog), sprint id, label name, or a text
         substring. Omit sprint to include every sprint (there is no unsprinted-only
@@ -99,7 +110,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         open/in_progress/done; other projects may define different status names.
         Keep filters fixed and advance offset by the number returned. A short page
         ends the scan. Changes to the board can shift rows between calls."""
-        return client.list_issues(
+        rows = client.list_issues(
             status=status,
             project=project,
             sprint=sprint,
@@ -109,9 +120,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
             offset=offset,
         )
+        return paged(rows, limit=limit, offset=offset)
 
     @tool
-    def search_work(q: str, limit: int = 50, offset: int = 0) -> list:
+    def search_work(q: str, limit: int = 50, offset: int = 0) -> ListResult:
         """Find issues with a work query — the precise way to ask for work.
 
         The grammar is GitHub-shaped: space-separated `field:value` atoms, joined
@@ -130,7 +142,8 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         query says `is:archived`. An unknown field is an error naming the field,
         never an empty result — so a typo is visible instead of looking like "no
         work". The `full` profile has the vocabulary as data."""
-        return client.search_work(q, limit=limit, offset=offset)
+        rows = client.search_work(q, limit=limit, offset=offset)
+        return paged(rows, limit=limit, offset=offset)
 
     @tool
     def count_work(q: str) -> dict:
@@ -139,7 +152,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.count_work(q)
 
     @tool
-    def read_page_embeds(page_id: int) -> list:
+    def read_page_embeds(page_id: int) -> ListResult:
         """Resolve a Mentor page's live embeds to DATA, as you.
 
         A page can carry ```athena blocks that show real work — an issue list, a
@@ -152,16 +165,16 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         `kind` and either its data or an `error` saying why that block did not
         render. Nothing here is stored on the page: the page holds the directive,
         the data is resolved per reader."""
-        return client.page_embeds(page_id)
+        return listing(client.page_embeds(page_id))
 
     @tool
-    def resolve_embeds(text: str) -> list:
+    def resolve_embeds(text: str) -> ListResult:
         """Resolve embed directives in arbitrary text, as you.
 
         The same resolver read_page_embeds uses. Useful before saving a page: see
         what your ```athena blocks will actually show — including which ones will
         render an error — without writing them first."""
-        return client.resolve_embeds(text)
+        return listing(client.resolve_embeds(text))
 
     @tool
     def embed_help() -> dict:
@@ -387,10 +400,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_issue_comments(issue_id: int) -> list:
+    def list_issue_comments(issue_id: int) -> ListResult:
         """Read one issue's comment thread, oldest first — the discussion a
         delegated agent needs before acting. Write replies with comment_on_issue."""
-        return client.list_issue_comments(issue_id)
+        return listing(client.list_issue_comments(issue_id))
 
     @tool
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
@@ -491,13 +504,20 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return {**client.whoami(), "run": client.current_run()}
 
     @tool
-    def list_notifications(unread: bool = False, limit: int = 50) -> list:
+    def list_notifications(
+        unread: bool = False, limit: int = 50, offset: ListOffset = 0
+    ) -> ListResult:
         """Read YOUR notification inbox — mentions, watched-issue changes, and
         work delegated to you land here. Pass unread=true for just the unseen.
         Each row's target_state describes that row: "completed_by_you" means you
         completed a claim on the target at or after this row's event; "archived" and
         "closed" describe the target; null means none of these applies."""
-        return client.list_notifications(unread=unread, limit=limit)
+        return window(
+            lambda rows: client.list_notifications(unread=unread, limit=rows),
+            limit=limit,
+            offset=offset,
+            cap=NOTIFICATION_LIST_CAP,
+        )
 
     @tool
     def list_priority_notifications(
@@ -653,10 +673,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.get_agent_run_health(agent_id=agent_id)
 
     @tool
-    def list_automation_rules() -> list:
+    def list_automation_rules() -> ListResult:
         """List every admin-only automation rule with its event or schedule
         configuration, progress, failure health, and enabled state."""
-        return client.list_automation_rules()
+        return listing(client.list_automation_rules())
 
     @tool
     def get_automation_rule(rule_id: int) -> dict:
@@ -721,29 +741,40 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_automation_failures() -> list:
+    def list_automation_failures() -> ListResult:
         """Read the admin-only exception list of automation rules whose actions have
         failed. Failure counts are cumulative; inspect the rule before intervening."""
-        return client.list_automation_failures()
+        return listing(client.list_automation_failures())
 
     @tool
     def list_activity_runs(
         actor_id: int, gap_seconds: int = 1800, limit: int = 200
-    ) -> list:
+    ) -> ListResult:
         """Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run
         ids are authoritative; untagged work falls back to a time-gap heuristic."""
-        return client.list_activity_runs(
+        runs = client.list_activity_runs(
             actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
         )
+        # Only the oldest run can be clipped by the event window; widening the
+        # window is how this route continues.
+        if not any(run.get("partial") for run in runs):
+            return listing(runs)
+        wider = min(limit * 2, ACTIVITY_RUNS_EVENT_CAP)
+        if wider == limit:
+            return {"items": runs, "count": len(runs), "truncated": True, "next": None}
+        return listing(runs, truncated=True, next={"limit": wider})
 
     @tool
     def list_run_events(
         run_id: str, before_id: int | None = None, limit: int = 100
-    ) -> list:
+    ) -> ListResult:
         """Replay one run: exactly the activity events tagged with this run id,
         newest first (page older history with before_id). Use it to review what
         a run — yours or another agent's — actually did."""
-        return client.list_run_events(run_id, before_id=before_id, limit=limit)
+        events = client.list_run_events(run_id, before_id=before_id, limit=limit)
+        if len(events) < limit or not events:
+            return listing(events)
+        return listing(events, truncated=True, next={"before_id": events[-1]["id"]})
 
     @tool
     def get_run_lineage(run_id: str) -> dict:

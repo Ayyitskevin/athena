@@ -73,7 +73,7 @@ def _visible(scope_map: dict[str, str], scopes) -> set[str]:
 
 def _call(server, name: str, **arguments):
     result = asyncio.run(server.call_tool(name, arguments))
-    return json.loads(result[0].text)
+    return json.loads(result[0][0].text)
 
 
 def _athena_error(exc: BaseException) -> dict | None:

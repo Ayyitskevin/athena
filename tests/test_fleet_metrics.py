@@ -1075,8 +1075,8 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
                 {"start": "2026-06-01", "end": "2026-06-10"},
             )
         )
-        assert len(through_mcp) == 1
-        assert json.loads(through_mcp[0].text) == rest
+        assert len(through_mcp[0]) == 1
+        assert json.loads(through_mcp[0][0].text) == rest
         paused_token = client.post(
             "/tokens",
             json={"name": "paused-metrics", "scopes": ["read"]},
@@ -1485,7 +1485,7 @@ def test_mcp_metrics_rejects_non_strict_numbers_before_dispatch():
             },
         )
     )
-    assert json.loads(valid[0].text) == {"ok": True}
+    assert json.loads(valid[0][0].text) == {"ok": True}
     assert recording.calls == [
         {
             "start": "2026-01-01",

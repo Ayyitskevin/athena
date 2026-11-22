@@ -7,10 +7,13 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis.review_models import ReviewCandidateId
+from athena.core import dispatch, run_controls, security_events
+from athena.mcp.results import ListResult, listing, window
 from athena.mcp.server import (
     DispatchIssueId,
     DispatchLimit,
     IdempotencyKey,
+    ListOffset,
     ProjectBriefLimit,
     ProjectId,
     ProjectReviewQueueLimit,
@@ -23,6 +26,10 @@ from athena.mcp.server import (
     RunControlTtl,
     RunId,
 )
+
+# The REST caps of the routes that page only by limit.
+WORKER_LIST_CAP = 500
+APPROVAL_LIST_CAP = 200
 
 
 def register_admin_tools(tool, mutation_tool, client) -> None:
@@ -110,13 +117,19 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         work_item_id: DispatchIssueId | None = None,
         state: str | None = None,
         limit: DispatchLimit = 50,
-    ) -> list:
+        offset: ListOffset = 0,
+    ) -> ListResult:
         """What Athena has handed to the executor, newest first. Filter by
         work_item_id or by state ('pending_delivery', 'accepted', 'undeliverable',
         'completed', 'failed'). Each state is what Athena was told, not what is
         happening on the far side."""
-        return client.list_dispatches(
-            work_item_id=work_item_id, state=state, limit=limit
+        return window(
+            lambda rows: client.list_dispatches(
+                work_item_id=work_item_id, state=state, limit=rows
+            ),
+            limit=limit,
+            offset=offset,
+            cap=dispatch.MAX_LIST_LIMIT,
         )
 
     @mutation_tool
@@ -155,7 +168,7 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
     @tool
     def get_issue_runbook(issue_id: int) -> dict | None:
         """The issue's runbook page — accumulated learnings from earlier runs — or
-        null when nobody has recorded one yet. Read it before starting work, and
+        {found: false} when nobody has recorded one yet. Read it before starting work, and
         add to it with `record_run_learning` when you finish."""
         return client.get_issue_runbook(issue_id)
 
@@ -164,7 +177,8 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         verb: str | None = None,
         since: str | None = None,
         limit: int = 50,
-    ) -> list:
+        offset: ListOffset = 0,
+    ) -> ListResult:
         """Recent boundary REFUSALS — someone probing where they may not go.
 
         Covers failed logins, revoked tokens still being presented, scope denials,
@@ -172,7 +186,14 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         was hit. Narrow with verb ('login_failed', 'revoked_token_used',
         'scope_denied', 'paused_account_refused') and since ('YYYY-MM-DD
         HH:MM:SS'). Requires an admin token."""
-        return client.list_security_events(verb=verb, since=since, limit=limit)
+        return window(
+            lambda rows: client.list_security_events(
+                verb=verb, since=since, limit=rows
+            ),
+            limit=limit,
+            offset=offset,
+            cap=security_events.MAX_LIST_LIMIT,
+        )
 
     @mutation_tool
     def start_playbook(
@@ -374,12 +395,19 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_workers(agent_id: int | None = None, limit: int = 100) -> list:
+    def list_workers(
+        agent_id: int | None = None, limit: int = 100, offset: ListOffset = 0
+    ) -> ListResult:
         """The worker registry — which agent processes are reporting, on what node,
         with what capabilities, and which were asked to stop. Admins see the whole
         fleet; anyone else sees only their own workers. `reporting_state` is
         cooperative presence, not process liveness."""
-        return client.list_workers(agent_id=agent_id, limit=limit)
+        return window(
+            lambda rows: client.list_workers(agent_id=agent_id, limit=rows),
+            limit=limit,
+            offset=offset,
+            cap=WORKER_LIST_CAP,
+        )
 
     @mutation_tool
     def request_worker_kill(
@@ -438,14 +466,22 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         run_id: str | None = None,
         state: RunControlStateFilter | None = None,
         limit: RunControlListLimit = 50,
-    ) -> list:
+        offset: ListOffset = 0,
+    ) -> ListResult:
         """Run controls — operator requests on live runs and how their agents
         answered. Admins see everything; anyone else sees only controls addressed
         to them. state='open' is YOUR inbox: unsettled, not yet expired — poll it
         while you work and answer what you find. `state` reports what was
         actually said; 'expired' means the clock ran out, never that anything
         stopped."""
-        return client.list_run_controls(run_id=run_id, state=state, limit=limit)
+        return window(
+            lambda rows: client.list_run_controls(
+                run_id=run_id, state=state, limit=rows
+            ),
+            limit=limit,
+            offset=offset,
+            cap=run_controls.MAX_LIST_LIMIT,
+        )
 
     @tool
     def get_run_control(control_id: RunControlId) -> dict:
@@ -523,11 +559,18 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         return client.undo_action(event_id, idempotency_key=idempotency_key)
 
     @tool
-    def list_approvals(state: str | None = None, limit: int = 100) -> list:
+    def list_approvals(
+        state: str | None = None, limit: int = 100, offset: ListOffset = 0
+    ) -> ListResult:
         """The operator's approval queue — actions an agent asked to take that are
         waiting on a human decision. Pass state='pending' for just the open ones.
         Requires an admin token."""
-        return client.list_approvals(state=state, limit=limit)
+        return window(
+            lambda rows: client.list_approvals(state=state, limit=rows),
+            limit=limit,
+            offset=offset,
+            cap=APPROVAL_LIST_CAP,
+        )
 
     @mutation_tool
     def decide_approval(
@@ -556,19 +599,21 @@ def register_admin_tools(tool, mutation_tool, client) -> None:
         user_id: int,
         action_kind: str,
         idempotency_key: IdempotencyKey | None = None,
-    ) -> list:
+    ) -> ListResult:
         """Admin: require operator approval before this user may take an action
         kind ('issue.close' or 'dispatch.request'). Gating is opt-in — an ungated
         user is unaffected. Returns the user's gated kinds."""
-        return client.set_approval_policy(
-            user_id, action_kind=action_kind, idempotency_key=idempotency_key
+        return listing(
+            client.set_approval_policy(
+                user_id, action_kind=action_kind, idempotency_key=idempotency_key
+            )
         )
 
     @tool
     def get_agent_budget(user_id: int) -> dict | None:
         """Read a user's durable action budget — how many metered writes it may
-        make per fixed window, how many it has used, and how many remain — or null
-        when that user is unbudgeted (the default, meaning unlimited). Admin for
+        make per fixed window, how many it has used, and how many remain — or
+        {found: false} when that user is unbudgeted (the default, meaning unlimited). Admin for
         anyone else; any actor may read its own. `whoami` carries yours already."""
         return client.get_agent_budget(user_id)
 

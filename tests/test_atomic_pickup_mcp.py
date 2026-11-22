@@ -75,7 +75,7 @@ def test_pickup_is_one_post_with_explicit_arguments_and_run(
                 scopes=frozenset({"issue:write"}),
                 profile=mcp_server.PROFILES["seat"],
             )
-            content = asyncio.run(server.call_tool("claim_next_ready", arguments))
+            content, _ = asyncio.run(server.call_tool("claim_next_ready", arguments))
             result = json.loads(content[0].text)
         else:
             result = client.claim_next_ready(**arguments)

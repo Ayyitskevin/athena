@@ -28,7 +28,7 @@ def _call(client, method, arguments, *, mcp):
         scopes=frozenset({"read", "issue:write"}),
         profile=mcp_server.PROFILES["conductor"],
     )
-    return json.loads(asyncio.run(server.call_tool(method, arguments))[0].text)
+    return json.loads(asyncio.run(server.call_tool(method, arguments))[0][0].text)
 
 
 @pytest.mark.parametrize("mcp", [False, True])
