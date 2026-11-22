@@ -490,8 +490,8 @@ def project_delete(
 ):
     """Delete a project from the edit page. Creator-only (401/403/404). Refused
     with 409 if the project still owns issues OR sprints — we don't cascade or
-    detach, so those must be emptied first (the same block-don't-cascade rule the
-    REST API's delete enforces at aegis/api.py:delete_project)."""
+    detach, so those must be emptied first. The refusal is
+    ``project_commands.delete_project``'s, the same one the REST twin maps."""
     user = getattr(request.state, "user", None)
     if user is None:
         return HTMLResponse(
@@ -501,20 +501,18 @@ def project_delete(
     _, err = _authorize_project_write(conn, project_id, user)
     if err is not None:
         return err
-    if issues.count_issues_in_project(conn, project_id) > 0:
-        return HTMLResponse(
-            '<div class="error">Reassign or delete this project\'s issues first.</div>',
-            status_code=409,
+    # The command refuses (inside its transaction) while the project owns issues or
+    # sprints; this adapter only maps that kind to a status, like its REST twin.
+    try:
+        project_commands.delete_project(
+            conn, actor_id=user["id"], project_id=project_id
         )
-    # sprints.project_id is NOT NULL with no ON DELETE, so a project owning any sprint
-    # would trip the FK on the bare DELETE and 500 (undeletable from the UI). Refuse
-    # cleanly, matching the REST twin — the web delete had drifted from it.
-    if sprints.list_sprints(conn, project_id=project_id):
+    except project_commands.ProjectLifecycleCommandError as exc:
+        detail = exc.detail[:1].upper() + exc.detail[1:]
         return HTMLResponse(
-            '<div class="error">Delete this project\'s sprints first.</div>',
-            status_code=409,
+            f'<div class="error">{html.escape(detail)}.</div>',
+            status_code=_PROJECT_LIFECYCLE_WEB_STATUS[exc.kind],
         )
-    project_commands.delete_project(conn, actor_id=user["id"], project_id=project_id)
     return RedirectResponse("/aegis/projects", status_code=303)
 
 
@@ -622,6 +620,9 @@ def project_set_visibility(
             pass
     return RedirectResponse(f"/aegis/projects/{project_id}/access", status_code=303)
 
+
+# Adapter-owned translation of ProjectLifecycleCommandError kinds.
+_PROJECT_LIFECYCLE_WEB_STATUS = {"conflict": 409}
 
 _PROJECT_POLICY_WEB_STATUS = {
     "not_found": 404,

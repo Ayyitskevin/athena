@@ -14,13 +14,11 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, StrictBool
 from athena.aegis import (
-    issues,
     project_commands,
     project_etags,
     project_brief,
     projects,
     review_queue,
-    sprints,
     status_commands,
     statuses,
     timeline,
@@ -376,21 +374,18 @@ def delete_project(
 ) -> None:
     # Creator only (404 if missing, 403 if not permitted).
     _project_for_write(conn, project_id, actor)
-    # Refuse rather than cascade/detach: a project that still owns issues must be
-    # emptied first (reassign or delete those issues). 409, mirroring the Mentor
-    # page-delete-on-children rule — a delete must not silently move data.
-    if issues.count_issues_in_project(conn, project_id) > 0:
-        raise HTTPException(
-            status_code=409, detail="reassign or delete its issues first"
+    # The command owns the delete, its atomic 'deleted_project' event (which
+    # outlives the vanished container), AND the block-don't-cascade refusal while
+    # the project owns issues or sprints — checked inside its transaction, so a
+    # concurrent issue create is a 409 here rather than a 500 and a phantom event.
+    try:
+        project_commands.delete_project(
+            conn, actor_id=actor["id"], project_id=project_id
         )
-    # sprints.project_id is NOT NULL with no ON DELETE, so a project that owns any
-    # sprint would fail the bare DELETE at the FK and surface as a 500 — permanently
-    # undeletable. Refuse cleanly (409), same block-don't-cascade rule as issues.
-    if sprints.list_sprints(conn, project_id=project_id):
-        raise HTTPException(status_code=409, detail="delete its sprints first")
-    # The command owns the delete AND its atomic 'deleted_project' event, which
-    # outlives the vanished container so the trail keeps who removed it.
-    project_commands.delete_project(conn, actor_id=actor["id"], project_id=project_id)
+    except project_commands.ProjectLifecycleCommandError as exc:
+        raise HTTPException(
+            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        ) from exc
 
 
 def _project_for_privacy(

@@ -24,10 +24,17 @@ from athena.core import activity
 
 
 def record_project_created(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, key: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    name: str,
+    key: str,
+    commit: bool = True,
 ) -> None:
     """A project (workspace container) was created — the trail's first record that
-    it exists and who made it. Detail carries the name and issue-key prefix."""
+    it exists and who made it. Detail carries the name and issue-key prefix.
+    ``commit=False`` lets the command own the transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -35,14 +42,21 @@ def record_project_created(
         target_kind="project",
         target_id=project_id,
         detail=f"{name} ({key})",
+        commit=commit,
     )
 
 
 def record_project_edited(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, changes: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    changes: str,
+    commit: bool = True,
 ) -> None:
     """A project's name/key/description was edited. Detail summarizes what changed
-    so a rename (ATH -> OPS) is legible in the feed."""
+    so a rename (ATH -> OPS) is legible in the feed. ``commit=False`` lets the
+    command own the transaction."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -50,14 +64,23 @@ def record_project_edited(
         target_kind="project",
         target_id=project_id,
         detail=changes,
+        commit=commit,
     )
 
 
 def record_project_deleted(
-    conn: sqlite3.Connection, *, actor_id: int, project_id: int, name: str, key: str
+    conn: sqlite3.Connection,
+    *,
+    actor_id: int,
+    project_id: int,
+    name: str,
+    key: str,
+    commit: bool = True,
 ) -> None:
     """A project was deleted. The event OUTLIVES its target (activity.target_id has
-    no FK), so the detail preserves the name/key the vanished container had."""
+    no FK), so the detail preserves the name/key the vanished container had.
+    ``commit=False`` lets the command own the transaction, so a delete that fails
+    leaves no event claiming it happened."""
     activity.record(
         conn,
         actor_id=actor_id,
@@ -65,6 +88,7 @@ def record_project_deleted(
         target_kind="project",
         target_id=project_id,
         detail=f"{name} ({key})",
+        commit=commit,
     )
 
 
