@@ -108,6 +108,7 @@ def test_every_route_has_an_explicit_auth_or_non_actor_boundary(tmp_path, closed
     app = _seeded_app(tmp_path, "route_inventory.db")
     intentional_non_actor_boundaries = {
         (frozenset({"GET", "HEAD"}), "/openapi.json"),
+        (frozenset({"GET", "HEAD"}), "/openapi-agent.json"),
         (frozenset({"GET"}), "/healthz"),
         (frozenset({"GET"}), "/readyz"),
         (frozenset({"GET"}), "/version"),
@@ -264,6 +265,7 @@ def test_framework_html_docs_require_a_browser_session(tmp_path, closed):
         assert client.get("/healthz").status_code == 200
         assert client.get("/readyz").status_code == 200
         assert client.get("/openapi.json").status_code == 200
+        assert client.get("/openapi-agent.json").status_code == 200
 
         signed_in = client.post(
             "/login",

@@ -107,6 +107,8 @@ from athena.web import mentor_spaces as web_mentor_spaces
 from athena.web import projects as web_projects
 from athena.web import work_context as web_work_context
 from athena.web import init_templates, palette as web_palette, router as web_router
+from athena import middleware as athena_middleware
+from athena.agent_openapi import AGENT_OPENAPI_URL, Transport, build_agent_openapi
 from athena.middleware import (
     SECURITY_HEADERS,
     DeploymentBoundaryMiddleware,
@@ -125,6 +127,19 @@ from athena.middleware import (
 
 
 _logger = logging.getLogger("athena")
+
+# The middleware facts the agent OpenAPI document declares (agent_openapi.py),
+# wired here so that module never imports the middleware itself.
+AGENT_TRANSPORT = Transport(
+    browser_session=_require_browser_session,
+    idempotency_key_accepted=athena_middleware.idempotency_key_accepted,
+    max_idempotency_key_bytes=athena_middleware._MAX_IDEMPOTENCY_KEY_BYTES,
+    run_headers=(
+        athena_middleware.RUN_HEADER,
+        athena_middleware.PARENT_RUN_HEADER,
+        athena_middleware.FORK_FROM_EVENT_HEADER,
+    ),
+)
 
 
 def _configure_logging() -> None:
@@ -874,6 +889,22 @@ def create_app(
     app.include_router(mentor_api.spaces_router)
     app.include_router(mentor_api.pages_router)
     app.include_router(mentor_api.notebook_router)
+
+    # The agent-facing OpenAPI document (agent_openapi.py): the operations an
+    # agent's token can call, with the headers and refusal body the middleware
+    # and handlers enforce. Registered exactly as FastAPI registers
+    # /openapi.json — a plain route, GET and HEAD, no dependency — so it has the
+    # same access rule: public product metadata. Built once, on first request,
+    # from the finished app; /openapi.json itself is left untouched.
+    agent_document: dict | None = None
+
+    def agent_openapi(request: Request) -> JSONResponse:
+        nonlocal agent_document
+        if agent_document is None:
+            agent_document = build_agent_openapi(app, AGENT_TRANSPORT)
+        return JSONResponse(agent_document)
+
+    app.add_route(AGENT_OPENAPI_URL, agent_openapi, include_in_schema=False)
 
     # Framework-generated browser HTML follows the same session-only policy as
     # Athena web routes. The machine-readable OpenAPI document remains public

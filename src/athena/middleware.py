@@ -430,6 +430,13 @@ def _declared_parked_ms(scope) -> float:
     return float(value)
 
 
+# The run headers RunContextMiddleware reads on every HTTP request, lower-cased as
+# ASGI delivers them. Every activity event the request records carries them.
+RUN_HEADER = b"x-athena-run"
+PARENT_RUN_HEADER = b"x-athena-parent-run"
+FORK_FROM_EVENT_HEADER = b"x-athena-fork-from-event"
+
+
 class RunContextMiddleware:
     """Capture run headers into the request-scoped run context, so every activity
     event recorded while handling this request is stamped with that run metadata.
@@ -456,11 +463,11 @@ class RunContextMiddleware:
             # decodes the ?run_id= / ?parent_run_id= query params used to replay and
             # walk lineage — so a run id stored from a header matches when filtered
             # back. latin-1 here would make a non-ASCII id round-trip as mojibake.
-            if lname == b"x-athena-run":
+            if lname == RUN_HEADER:
                 run_raw = value.decode("utf-8", "replace")
-            elif lname == b"x-athena-parent-run":
+            elif lname == PARENT_RUN_HEADER:
                 parent_raw = value.decode("utf-8", "replace")
-            elif lname == b"x-athena-fork-from-event":
+            elif lname == FORK_FROM_EVENT_HEADER:
                 forked_from_raw = value.decode("utf-8", "replace")
         # The run id comes straight from an untrusted client header, so a
         # server-reserved namespace (e.g. the automation engine's firing ids) is
@@ -515,9 +522,9 @@ _FINGERPRINT_HEADERS = (
     b"content-type",
     b"if-match",
     b"if-unmodified-since",
-    b"x-athena-fork-from-event",
-    b"x-athena-parent-run",
-    b"x-athena-run",
+    FORK_FROM_EVENT_HEADER,
+    PARENT_RUN_HEADER,
+    RUN_HEADER,
 )
 _REPLAYABLE_RESPONSE_HEADERS = frozenset(
     {
@@ -532,6 +539,24 @@ _REPLAYABLE_RESPONSE_HEADERS = frozenset(
 _MAX_IDEMPOTENCY_KEY_BYTES = 255
 _MAX_STORED_HEADER_COUNT = 64
 _MAX_STORED_HEADERS_BYTES = 16 * 1024
+
+
+def idempotency_key_accepted(method: str, path: str) -> bool:
+    """Whether ``IdempotencyMiddleware`` takes an ``Idempotency-Key`` on this
+    method and route path (a template such as ``/issues/{issue_id}`` works too:
+    the API roots and the signed-inbound prefixes carry no parameters).
+
+    The same four facts the middleware decides by, in one place for readers
+    that must describe the contract (the agent OpenAPI document): a mutating
+    method, not a signed machine callback, under an opted-in API root, and not
+    a request that creates a one-time secret. ``tests/test_agent_openapi.py``
+    holds this against the middleware's real answers."""
+    return (
+        method in _IDEMPOTENT_METHODS
+        and not _is_signed_inbound(method, path)
+        and IdempotencyMiddleware._is_api_path(path)
+        and not (method == "POST" and path in _SECRET_CREATE_PATHS)
+    )
 
 
 class _IdempotencyCaptureError(RuntimeError):

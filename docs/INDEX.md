@@ -106,7 +106,9 @@ directory listed below with its rule — and every link resolves;
 
 - **API bearer tokens** (minting, scopes, revocation): [QUICKSTART.md](QUICKSTART.md) path B and [OPERATIONS.md](OPERATIONS.md) — not [TOKENS.md](TOKENS.md), which is CSS.
 - **The REST routes**: the app's own `/openapi.json` (browse at `/redoc`) is
-  the full reference, and [AGENT_API.md](AGENT_API.md) maps MCP tools to
-  scopes and routes; `/aegis/*` browser paths are session+CSRF web routes,
-  *not* the API an agent token can call.
+  the full reference, `/openapi-agent.json` the part an agent token can call
+  (with the headers and refusal body each operation takes), and
+  [AGENT_API.md](AGENT_API.md) maps MCP tools to scopes and routes; `/aegis/*`
+  browser paths are session+CSRF web routes, *not* the API an agent token can
+  call.
 - **How to contribute code**: [../AGENTS.md](../AGENTS.md), not this folder.

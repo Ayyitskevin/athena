@@ -146,6 +146,11 @@ TEST_MAP = (
         "the dashboard read model, rendered by the web router",
     ),
     MapEntry(
+        "src/athena/agent_openapi.py",
+        ("tests/test_agent_openapi.py", "tests/test_access_anonymous_reads.py"),
+        "the agent OpenAPI document, built and served by the app",
+    ),
+    MapEntry(
         "src/athena/core/provenance.py",
         ("tests/test_provenance.py", "tests/test_runtime_provenance_check.py"),
         "build provenance, served by the app",
