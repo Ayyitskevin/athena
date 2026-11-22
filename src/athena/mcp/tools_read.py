@@ -7,12 +7,17 @@ from __future__ import annotations
 from typing import Literal
 
 from athena.aegis import fleet_attention, fleet_metrics, fleet_work, issue_narrative
+from athena.mcp import results
+from athena.mcp.results import ListResult, listing, paged, window
 from athena.mcp.server import (
+    MAX_COMMENT_CHARS,
     AttentionLimit,
     AttentionWindowHours,
     AutomationScheduleAt,
     AutomationScheduleInterval,
     AutomationTriggerType,
+    BodyOffset,
+    CommentChars,
     DelegationLimit,
     DelegationOffset,
     DigestWindowMinutes,
@@ -27,6 +32,7 @@ from athena.mcp.server import (
     IssueHistoryLimit,
     IssueListLimit,
     IssueListOffset,
+    ListOffset,
     MuteUntil,
     NotificationLimit,
     NotificationPriority,
@@ -39,6 +45,12 @@ from athena.mcp.server import (
     WorkspaceSearchLimit,
 )
 
+# The page size the search tool asks /search for, and the inbox's REST cap.
+SEARCH_LIMIT = 20
+NOTIFICATION_LIST_CAP = 200
+# /activity/runs reconstructs from at most this many recent events.
+ACTIVITY_RUNS_EVENT_CAP = 500
+
 
 def _issue_ref(ref: str | None, issue_id: int | None) -> str:
     """One issue, named either way: `issue_id` (the number every write tool
@@ -49,14 +61,50 @@ def _issue_ref(ref: str | None, issue_id: int | None) -> str:
     return ref if ref is not None else str(issue_id)
 
 
+def _comment_row(
+    row: dict, position: int, issue_id: int, include_body: bool, max_chars: int
+) -> dict:
+    """A comment as a list row: an excerpt by default, or its body up to
+    ``max_chars``, marked when cut and naming the call that reads more of it."""
+    body = row.get("body") or ""
+    if not include_body:
+        shaped = results.summary(row)
+        shaped["excerpt"] = body[: results.EXCERPT_CHARS]
+        shaped["body_chars"] = len(body)
+        return shaped
+    if len(body) <= max_chars:
+        return row
+    more = (
+        {
+            "tool": "list_issue_comments",
+            "arguments": {
+                "issue_id": issue_id,
+                "offset": position,
+                "include_body": True,
+                "max_chars": MAX_COMMENT_CHARS,
+            },
+        }
+        if max_chars < MAX_COMMENT_CHARS
+        else None
+    )
+    return {
+        **row,
+        "body": body[:max_chars],
+        results.TRUNCATED_KEY: {"body": {"total_chars": len(body), "next": more}},
+    }
+
+
 def register_read_tools(tool, mutation_tool, client) -> None:
     # --- search & read ------------------------------------------------------
 
     @tool
-    def search(query: str, kind: str | None = None) -> list:
+    def search(
+        query: str, kind: str | None = None, offset: ListOffset = 0
+    ) -> ListResult:
         """Full-text search across Aegis issues and Mentor pages. Optionally narrow
         to kind='issue' or kind='page'. Returns ranked hits with title + snippet."""
-        return client.search(query, kind=kind)
+        hits = client.search(query, kind=kind, limit=SEARCH_LIMIT, offset=offset)
+        return paged(hits, limit=SEARCH_LIMIT, offset=offset)
 
     @tool
     def search_workspace(
@@ -89,7 +137,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         include_archived: bool = False,
         limit: IssueListLimit = 50,
         offset: IssueListOffset = 0,
-    ) -> list:
+    ) -> ListResult:
         """List Aegis issues, optionally filtered by a project-configured status,
         project (id or 'none' for the backlog), sprint id, label name, or a text
         substring. Omit sprint to include every sprint (there is no unsprinted-only
@@ -99,7 +147,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         open/in_progress/done; other projects may define different status names.
         Keep filters fixed and advance offset by the number returned. A short page
         ends the scan. Changes to the board can shift rows between calls."""
-        return client.list_issues(
+        rows = client.list_issues(
             status=status,
             project=project,
             sprint=sprint,
@@ -109,9 +157,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
             limit=limit,
             offset=offset,
         )
+        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
     @tool
-    def search_work(q: str, limit: int = 50, offset: int = 0) -> list:
+    def search_work(q: str, limit: int = 50, offset: int = 0) -> ListResult:
         """Find issues with a work query — the precise way to ask for work.
 
         The grammar is GitHub-shaped: space-separated `field:value` atoms, joined
@@ -129,8 +178,9 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         `@me` is the token's own actor. Archived issues are excluded unless the
         query says `is:archived`. An unknown field is an error naming the field,
         never an empty result — so a typo is visible instead of looking like "no
-        work". Call query_help() for the vocabulary as data."""
-        return client.search_work(q, limit=limit, offset=offset)
+        work". The `full` profile has the vocabulary as data."""
+        rows = client.search_work(q, limit=limit, offset=offset)
+        return paged([results.summary(row) for row in rows], limit=limit, offset=offset)
 
     @tool
     def count_work(q: str) -> dict:
@@ -139,7 +189,7 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.count_work(q)
 
     @tool
-    def read_page_embeds(page_id: int) -> list:
+    def read_page_embeds(page_id: int) -> ListResult:
         """Resolve a Mentor page's live embeds to DATA, as you.
 
         A page can carry ```athena blocks that show real work — an issue list, a
@@ -152,16 +202,16 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         `kind` and either its data or an `error` saying why that block did not
         render. Nothing here is stored on the page: the page holds the directive,
         the data is resolved per reader."""
-        return client.page_embeds(page_id)
+        return listing(client.page_embeds(page_id))
 
     @tool
-    def resolve_embeds(text: str) -> list:
+    def resolve_embeds(text: str) -> ListResult:
         """Resolve embed directives in arbitrary text, as you.
 
         The same resolver read_page_embeds uses. Useful before saving a page: see
         what your ```athena blocks will actually show — including which ones will
         render an error — without writing them first."""
-        return client.resolve_embeds(text)
+        return listing(client.resolve_embeds(text))
 
     @tool
     def embed_help() -> dict:
@@ -281,16 +331,19 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         offset: DelegationOffset = 0,
     ) -> dict:
         """List issues delegated to the authenticated contributor. By default this
-        excludes archived and done-category work. Results include instructions,
-        accountable assignee, delegation attribution, and visible open blockers.
+        excludes archived and done-category work. Results include each issue (its
+        body via get_issue), accountable assignee, delegation attribution, and visible open blockers.
         Use has_more and next_offset to page through bounded results.
         This is pickup context only: it does not claim work or report liveness, and
         the absence of a visible blocker is not an "unblocked" guarantee."""
-        return client.list_my_delegated_work(
+        inbox = client.list_my_delegated_work(
             include_closed=include_closed,
             limit=limit,
             offset=offset,
         )
+        for item in inbox.get("items", []):
+            item["issue"] = results.summary(item["issue"])
+        return inbox
 
     @tool
     def get_fleet_active_work(
@@ -312,12 +365,18 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def get_issue(ref: str | None = None, issue_id: int | None = None) -> dict:
+    def get_issue(
+        ref: str | None = None,
+        issue_id: int | None = None,
+        body_offset: BodyOffset = 0,
+    ) -> dict:
         """Get one issue by issue_id (the number every write tool takes) or by
         ref: a numeric id as text ('12') or a project key ('ATH-12'). Pass one of
         the two. The response includes the server's opaque ETag as _etag; copy it
-        exactly into if_match on a guarded update."""
-        return client.get_issue(_issue_ref(ref, issue_id))
+        exactly into if_match on a guarded update. A long body is cut to the
+        response budget; body_offset reads on from there."""
+        issue = client.get_issue(_issue_ref(ref, issue_id))
+        return results.from_offset(issue, "body", body_offset)
 
     @tool
     def get_issue_work_context(
@@ -387,10 +446,23 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_issue_comments(issue_id: int) -> list:
+    def list_issue_comments(
+        issue_id: int,
+        offset: ListOffset = 0,
+        include_body: bool = False,
+        max_chars: CommentChars = 4_000,
+    ) -> ListResult:
         """Read one issue's comment thread, oldest first — the discussion a
-        delegated agent needs before acting. Write replies with comment_on_issue."""
-        return client.list_issue_comments(issue_id)
+        delegated agent needs before acting. Write replies with comment_on_issue.
+        Rows carry an excerpt; include_body=true gives each body up to max_chars."""
+        rows = client.list_issue_comments(issue_id)
+        return results.sliced(
+            [
+                _comment_row(row, position, issue_id, include_body, max_chars)
+                for position, row in enumerate(rows)
+            ],
+            offset=offset,
+        )
 
     @tool
     def get_issue_state(issue_id: int, as_of_event_id: int | None = None) -> dict:
@@ -450,21 +522,21 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         verb: str | None = None,
         limit: EventLimit = 50,
     ) -> dict:
-        """`recent_events` that parks instead of returning empty: the server holds the
-        request up to `wait` seconds (0 to 25; 0 is exactly `recent_events`) and
-        answers as soon as an event you may read lands after `after`.
+        """The event feed after `after`, in ascending id order, parked instead of
+        empty: the server holds the request up to `wait` seconds (0 to 25; 0
+        answers at once) and answers as soon as an event you may read lands.
 
-        Use it in place of a sleep loop: call with your last processed id, act on
-        what comes back, call again. The result is the `recent_events` shape plus
-        `wait` = {requested_seconds, elapsed_seconds, outcome}. `outcome` is
-        `event` (a visible batch arrived), `timeout` (nothing visible in time; the
-        batch is empty and next_after is your own cursor) or `capacity` (every
-        parking place on the server was taken, so this is the immediate answer:
-        back off a little before waiting again). It never errors for a full server.
+        Use it in place of a sleep loop, from your last processed id. Returns
+        {events, next_after, has_more, wait = {requested_seconds,
+        elapsed_seconds, outcome}}; `outcome` is `event` (a visible batch
+        arrived), `timeout` (nothing visible in time; the batch is empty and
+        next_after is your own cursor) or `capacity` (every parking place was
+        taken, so this is the immediate answer, never an error: back off a
+        little before waiting again). An event you may not read neither
+        appears nor wakes you.
 
-        Visibility is the immediate read's: an event you may not read neither
-        appears nor wakes you. The same filter caveat as `recent_events` applies:
-        a filtered read cannot justify advancing the desk cursor.
+        A filtered read can omit events, so its next_after cannot justify
+        advancing the desk cursor.
         """
         return client.wait_for_events(
             after=after,
@@ -491,13 +563,20 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return {**client.whoami(), "run": client.current_run()}
 
     @tool
-    def list_notifications(unread: bool = False, limit: int = 50) -> list:
+    def list_notifications(
+        unread: bool = False, limit: int = 50, offset: ListOffset = 0
+    ) -> ListResult:
         """Read YOUR notification inbox — mentions, watched-issue changes, and
         work delegated to you land here. Pass unread=true for just the unseen.
         Each row's target_state describes that row: "completed_by_you" means you
         completed a claim on the target at or after this row's event; "archived" and
         "closed" describe the target; null means none of these applies."""
-        return client.list_notifications(unread=unread, limit=limit)
+        return window(
+            lambda rows: client.list_notifications(unread=unread, limit=rows),
+            limit=limit,
+            offset=offset,
+            cap=NOTIFICATION_LIST_CAP,
+        )
 
     @tool
     def list_priority_notifications(
@@ -653,10 +732,10 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         return client.get_agent_run_health(agent_id=agent_id)
 
     @tool
-    def list_automation_rules() -> list:
+    def list_automation_rules() -> ListResult:
         """List every admin-only automation rule with its event or schedule
         configuration, progress, failure health, and enabled state."""
-        return client.list_automation_rules()
+        return listing(client.list_automation_rules())
 
     @tool
     def get_automation_rule(rule_id: int) -> dict:
@@ -721,29 +800,40 @@ def register_read_tools(tool, mutation_tool, client) -> None:
         )
 
     @tool
-    def list_automation_failures() -> list:
+    def list_automation_failures() -> ListResult:
         """Read the admin-only exception list of automation rules whose actions have
         failed. Failure counts are cumulative; inspect the rule before intervening."""
-        return client.list_automation_failures()
+        return listing(client.list_automation_failures())
 
     @tool
     def list_activity_runs(
         actor_id: int, gap_seconds: int = 1800, limit: int = 200
-    ) -> list:
+    ) -> ListResult:
         """Reconstruct one actor's recent activity into runs. Explicit X-Athena-Run
         ids are authoritative; untagged work falls back to a time-gap heuristic."""
-        return client.list_activity_runs(
+        runs = client.list_activity_runs(
             actor_id=actor_id, gap_seconds=gap_seconds, limit=limit
         )
+        # Only the oldest run can be clipped by the event window; widening the
+        # window is how this route continues.
+        if not any(run.get("partial") for run in runs):
+            return listing(runs)
+        wider = min(limit * 2, ACTIVITY_RUNS_EVENT_CAP)
+        if wider == limit:
+            return {"items": runs, "count": len(runs), "truncated": True, "next": None}
+        return listing(runs, truncated=True, next={"limit": wider})
 
     @tool
     def list_run_events(
         run_id: str, before_id: int | None = None, limit: int = 100
-    ) -> list:
+    ) -> ListResult:
         """Replay one run: exactly the activity events tagged with this run id,
         newest first (page older history with before_id). Use it to review what
         a run — yours or another agent's — actually did."""
-        return client.list_run_events(run_id, before_id=before_id, limit=limit)
+        events = client.list_run_events(run_id, before_id=before_id, limit=limit)
+        if len(events) < limit or not events:
+            return listing(events)
+        return listing(events, truncated=True, next={"before_id": events[-1]["id"]})
 
     @tool
     def get_run_lineage(run_id: str) -> dict:

@@ -1457,12 +1457,12 @@ def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
         first = asyncio.run(server.call_tool("create_sprint", create_args))
         replay = asyncio.run(server.call_tool("create_sprint", create_args))
         assert replay == first
-        sprint = json.loads(first[0].text)
+        sprint = json.loads(first[0][0].text)
         assert sprint["state"] == "planned"
         assert [row["id"] for row in ath.list_sprints(project["id"])] == [sprint["id"]]
 
         read = asyncio.run(server.call_tool("get_sprint", {"sprint_id": sprint["id"]}))
-        assert json.loads(read[0].text)["name"] == "Cycle 1"
+        assert json.loads(read[0][0].text)["name"] == "Cycle 1"
 
         updated = asyncio.run(
             server.call_tool(
@@ -1477,7 +1477,7 @@ def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
                 },
             )
         )
-        updated_sprint = json.loads(updated[0].text)
+        updated_sprint = json.loads(updated[0][0].text)
         assert updated_sprint["name"] == "Cycle One"
         assert updated_sprint["goal"] == ""
         assert updated_sprint["start_date"] is None
@@ -1492,7 +1492,7 @@ def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
                 },
             )
         )
-        started_sprint = json.loads(started[0].text)
+        started_sprint = json.loads(started[0][0].text)
         assert started_sprint["state"] == "active"
         assert started_sprint["start_date"] is not None
 
@@ -1505,7 +1505,7 @@ def test_sprint_lifecycle_through_mcp_is_audited_and_idempotent(tmp_path):
                 },
             )
         )
-        completed_sprint = json.loads(completed[0].text)
+        completed_sprint = json.loads(completed[0][0].text)
         assert completed_sprint["state"] == "completed"
         assert completed_sprint["end_date"] is not None
 
@@ -1570,7 +1570,7 @@ def test_mcp_sprint_conflicts_preserve_state_and_structured_errors(tmp_path):
                     },
                 )
             )
-            return json.loads(result[0].text)
+            return json.loads(result[0][0].text)
 
         active = create("Active", "create-active")
         waiting = create("Waiting", "create-waiting")
@@ -1668,7 +1668,7 @@ def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
         server = build_server(ath)
         filters = {"sprint": sprint["id"]}
         result = asyncio.run(server.call_tool("list_issues", filters))
-        rows = [json.loads(content.text) for content in result]
+        rows = json.loads(result[0][0].text)["items"]
         assert {
             issue["title"]: issue["assignee_is_agent"] for issue in rows
         } == expected
@@ -1679,7 +1679,7 @@ def test_list_issues_mcp_sprint_filter_returns_actor_kinds(tmp_path):
                     "list_issues", {**filters, "limit": 2, "offset": offset}
                 )
             )
-            pages.extend(json.loads(content.text) for content in page)
+            pages.extend(json.loads(page[0][0].text)["items"])
         assert pages == rows
     finally:
         tc.__exit__(None, None, None)
@@ -1714,7 +1714,7 @@ def test_client_replays_one_logical_mutation_and_surfaces_mismatch(tmp_path):
         with pytest.raises(AthenaError) as invalid:
             ath.create_issue(title="invalid key", idempotency_key="")
         assert invalid.value.status_code == 400
-        assert invalid.value.code is None
+        assert invalid.value.code == "idempotency_key_invalid"
         assert "1-255 visible ASCII" in invalid.value.detail
     finally:
         tc.__exit__(None, None, None)
@@ -1750,7 +1750,7 @@ def test_error_surfaces_status_and_detail(tmp_path):
         assert error.status_code == 404
         assert error.method == "GET"
         assert error.path == "/issues/99999"
-        assert error.code is None
+        assert error.code == "not_found"
         assert error.retry_after is None
     finally:
         tc.__exit__(None, None, None)
@@ -2517,11 +2517,11 @@ def test_mcp_server_registers_tools_and_calls_through(tmp_path):
             )
         finally:
             tc.headers["Authorization"] = admin_authorization
-        assert heartbeat[0].text
+        assert heartbeat[0][0].text
         mcp_health_result = asyncio.run(
             server.call_tool("get_agent_run_health", {"agent_id": agent["id"]})
         )
-        mcp_health = json.loads(mcp_health_result[0].text)
+        mcp_health = json.loads(mcp_health_result[0][0].text)
         assert mcp_health["latest_checkins"][0]["run_id"] == "mcp-run"
         assert mcp_health["totals"]["latest_reporting_recently_count"] == 1
         health = ath.get_agent_run_health(agent_id=agent["id"])

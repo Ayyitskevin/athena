@@ -13,13 +13,15 @@ from __future__ import annotations
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.core import approval_commands, approvals, users
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, require_admin
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/approvals", tags=["core"])
 
@@ -30,6 +32,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -48,12 +57,12 @@ class ApprovalOut(BaseModel):
     created_at: str
 
 
-class ApprovalDecision(BaseModel):
+class ApprovalDecision(RequestBody):
     decision: Literal["approve", "reject"]
     note: str | None = None
 
 
-class ApprovalPolicyUpdate(BaseModel):
+class ApprovalPolicyUpdate(RequestBody):
     action_kind: str
 
 
@@ -73,7 +82,9 @@ def decide_for_actor(
     account, and never the requester, decides); callers cannot reproduce either.
     """
     if actor is None:
-        raise HTTPException(status_code=401, detail="authentication required")
+        raise Refusal(
+            status_code=401, detail="authentication required", code="unauthenticated"
+        )
     actor = require_admin(actor)
     try:
         decided = approval_commands.decide(
@@ -84,8 +95,10 @@ def decide_for_actor(
             note=note,
         )
     except approval_commands.ApprovalDecisionError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     return decided.public()
 
@@ -120,7 +133,9 @@ def show(
     response.headers["Cache-Control"] = "private, no-store"
     request = approvals.get_request(conn, request_id)
     if request is None:
-        raise HTTPException(status_code=404, detail="no such approval request")
+        raise Refusal(
+            status_code=404, detail="no such approval request", code="not_found"
+        )
     return request.public()
 
 
@@ -156,7 +171,7 @@ def read_policy(
 ) -> list[str]:
     """Which action kinds require approval for this user (empty = ungated)."""
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     return approvals.gated_kinds(conn, user_id)
 
 
@@ -170,7 +185,7 @@ def set_policy(
     """Gate an action kind for a user. Idempotent; the vocabulary is closed, so an
     unknown action kind is a 422 rather than a silently inert policy."""
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     try:
         approval_commands.set_policy(
             conn,
@@ -179,11 +194,15 @@ def set_policy(
             action_kind=payload.action_kind,
         )
     except approval_commands.ApprovalDecisionError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
     return approvals.gated_kinds(conn, user_id)
 
 
@@ -197,7 +216,7 @@ def clear_policy(
     """Ungate an action kind for a user. Idempotent. An account cannot ungate
     itself: that is a 403 from the command, whatever the caller's role."""
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     try:
         approval_commands.clear_policy(
             conn,
@@ -206,7 +225,9 @@ def clear_policy(
             action_kind=action_kind,
         )
     except approval_commands.ApprovalDecisionError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     return approvals.gated_kinds(conn, user_id)

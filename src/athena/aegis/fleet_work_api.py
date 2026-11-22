@@ -8,9 +8,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
 from athena.aegis import fleet_work
 from athena.core import identity, tokens
 from athena.core.deps import get_conn
+from athena.core.refusals import Refusal, code_of
 
 
 router = APIRouter(prefix="/fleet", tags=["aegis"])
@@ -114,6 +117,7 @@ class OpenClaimHandoffOut(_StrictModel):
     yielded: ClaimHandoffEventOut
     resumed: None
     advisory_untrusted: Literal[True]
+    authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
 
 
 AttentionReason = Literal[
@@ -215,16 +219,18 @@ def _active_work_admin(
     except HTTPException as exc:
         headers = dict(exc.headers or {})
         headers.update(_PRIVATE_HEADERS)
-        raise HTTPException(
+        raise Refusal(
             status_code=exc.status_code,
             detail=exc.detail,
             headers=headers,
+            code=code_of(exc),
         ) from exc
     if not identity.is_admin(actor):
-        raise HTTPException(
+        raise Refusal(
             status_code=403,
             detail="admin role required",
             headers=_PRIVATE_HEADERS,
+            code="forbidden",
         )
     if not identity.token_has_scope(actor, tokens.ADMIN_SCOPE):
         raise identity.ScopeDenied(
@@ -239,10 +245,11 @@ def _query_from_request(request: Request) -> tuple[int | None, int, str | None]:
     try:
         return fleet_work.parse_query_pairs(list(request.query_params.multi_items()))
     except fleet_work.ActiveWorkQueryError as exc:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail=exc.detail,
             headers=_PRIVATE_HEADERS,
+            code="validation_error",
         ) from exc
 
 

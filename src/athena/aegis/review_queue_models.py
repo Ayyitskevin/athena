@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import Field
 
 from athena.aegis.project_brief_models import Excerpt, Person
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
 from athena.aegis.review_models import (
     CandidateIdentity,
     ReviewCandidateId,
@@ -19,6 +21,7 @@ class ReviewSourceIssue(StrictReviewModel):
     status: Excerpt
     status_category: Literal["todo", "doing", "done"] | None
     work_context_url: str
+    authored_by: AuthoredBy | None = authorship.field(authorship.ISSUE_DESCRIPTION)
 
 
 class ReviewIssue(StrictReviewModel):
@@ -26,6 +29,7 @@ class ReviewIssue(StrictReviewModel):
     key: str | None
     title: Excerpt
     work_context_url: str
+    authored_by: AuthoredBy | None = authorship.field(authorship.ISSUE_DESCRIPTION)
 
 
 class SubmittedCandidate(StrictReviewModel):

@@ -67,6 +67,7 @@ from athena.core import (
     notifications_api,
     provenance,
     rate_limits,
+    refusals,
     run_context,
     run_controls_api,
     search_api,
@@ -433,20 +434,30 @@ def create_app(
     aegis_issue_undo.register()
     mentor_page_undo.register()
 
+    # Every JSON refusal carries a registered `code` beside its unchanged
+    # `detail` (core/refusal_codes.py owns the codes): the HTTPException and
+    # validation handlers, and a JSON 500 for an unhandled exception. The
+    # handlers below are registered on narrower types, so they take precedence
+    # and name their own codes.
+    refusals.install(app)
+
     # A tagged write that tries to continue ANOTHER actor's run is refused deep
     # in activity.record (transport-neutral, transaction-rolled-back); this maps
     # the refusal to the same 403 shape every authorization failure uses.
     def _run_binding_conflict(request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, activity.RunBindingError):
             raise exc
-        return JSONResponse(status_code=403, content={"detail": str(exc)})
+        return JSONResponse(
+            status_code=403,
+            content={"detail": str(exc), "code": activity.RUN_BINDING_CONFLICT_CODE},
+        )
 
     app.add_exception_handler(activity.RunBindingError, _run_binding_conflict)
 
     # A scope denial is a probe worth remembering: put it on the trail (its own
     # connection — the request's is dependency-scoped), then answer exactly as
     # the plain 403 always did. Registered on the subclass, so every other
-    # HTTPException keeps FastAPI's default handling.
+    # HTTPException keeps the shared refusal handling.
     def _record_scope_denial(request: Request, exc: Exception) -> JSONResponse:
         if not isinstance(exc, identity.ScopeDenied):
             raise exc
@@ -470,7 +481,7 @@ def create_app(
                 _logger.exception("could not record scope denial")
         return JSONResponse(
             status_code=403,
-            content={"detail": exc.detail},
+            content={"detail": exc.detail, "code": exc.code},
             headers=exc.headers,
         )
 
@@ -916,7 +927,8 @@ def create_app(
                 conn.close()
         except (OSError, sqlite3.Error, db.MigrationIntegrityError):
             return JSONResponse(
-                {"status": "error", "database": "unavailable"}, status_code=503
+                {"status": "error", "database": "unavailable", "code": "unavailable"},
+                status_code=503,
             )
         return {"status": "ok", "database": "ok"}
 

@@ -35,7 +35,10 @@ def test_anonymous_reads_are_ip_rate_limited(tmp_path):
 
         limited = client.get(_ANON_READ)
         assert limited.status_code == 429
-        assert limited.json() == {"detail": "anonymous rate limit exceeded"}
+        assert limited.json() == {
+            "detail": "anonymous rate limit exceeded",
+            "code": "rate_limited",
+        }
         assert 1 <= int(limited.headers["retry-after"]) <= 60
         assert limited.headers["x-ratelimit-limit"] == "2"
         assert limited.headers["x-ratelimit-remaining"] == "0"

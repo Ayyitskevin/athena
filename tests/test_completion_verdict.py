@@ -269,7 +269,7 @@ def test_mcp_accepts_and_refuses_the_same_way_as_rest(tmp_path):
                 },
             )
         )
-        assert json.loads(result[0].text)["released"] is True
+        assert json.loads(result[0][0].text)["released"] is True
         detail = _events(client, issue["id"])[0]["detail"]
         assert json.loads(detail.split("; reported_completion_v1 ", 1)[1]) == {
             "verdict": "HOLD",

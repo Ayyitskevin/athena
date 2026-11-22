@@ -14,7 +14,7 @@ remaining issue mutations can move command-by-command without a flag day.
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
+from typing import Any, Literal
 
 from athena.aegis import (
     contributors as contributors_data,
@@ -60,7 +60,10 @@ class IssueCommandError(Exception):
 
     Adapters translate ``kind`` into their own status vocabulary (REST uses 422
     for invalid input while an HTML form uses 400) without reimplementing the
-    business rule that produced ``detail``.
+    business rule that produced ``detail``. ``extra`` holds structured fields a
+    machine reader needs beside the prose (the problems of a completion report,
+    the status names a project offers); a JSON adapter writes them beside
+    ``detail``.
     """
 
     def __init__(
@@ -70,12 +73,14 @@ class IssueCommandError(Exception):
         *,
         current_etag: str | None = None,
         code: str | None = None,
+        extra: dict[str, Any] | None = None,
     ):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
         self.current_etag = current_etag
         self.code = code
+        self.extra = extra
 
 
 class _UnsetType:
@@ -89,6 +94,24 @@ UNSET = _UnsetType()
 AUTOMATION_ACTOR_EMAIL = "automation@athena.system"
 BLOCKED_CLOSE_POLICY_ERROR_CODE = "blocked_issue_close_policy"
 BLOCKED_CLOSE_POLICY_ERROR_DETAIL = "blocked issue close policy denied this update"
+
+
+#: The structured field a refused status carries: the names the project offers.
+VALID_STATUSES_FIELD = "valid_statuses"
+
+
+def _unknown_status(
+    conn: sqlite3.Connection, project_id: int | None
+) -> IssueCommandError:
+    """The refusal for a status the issue's (final) project does not offer. It
+    lists the names that project does offer, so the caller can correct the call
+    without another read. Raised only after the project's visibility is settled,
+    so it never names the statuses of a project the caller cannot see."""
+    return IssueCommandError(
+        "invalid",
+        "no such status for this project",
+        extra={VALID_STATUSES_FIELD: statuses.status_names(conn, project_id)},
+    )
 
 
 def _require_issue_writer(actor: dict | None) -> dict:
@@ -239,7 +262,7 @@ def create_issue(
         if status is None:
             status = statuses.first_status(conn, project_id)
         elif not statuses.is_valid(conn, project_id, status):
-            raise IssueCommandError("invalid", "no such status for this project")
+            raise _unknown_status(conn, project_id)
         issue = issues.create_issue(
             conn,
             title=title,
@@ -590,7 +613,7 @@ def _update_issue(
         if status_value is not None and not statuses.is_valid(
             conn, final_project_id, status_value
         ):
-            raise IssueCommandError("invalid", "no such status for this project")
+            raise _unknown_status(conn, final_project_id)
         # Authorization and ordinary payload validation intentionally happen
         # before the precondition result is disclosed. The current representation
         # and comparison are both inside this BEGIN IMMEDIATE transaction, so two

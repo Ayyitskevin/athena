@@ -8,6 +8,9 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
+from athena.core.notifications_api import NOTIFICATION_AUTHOR
 from athena.aegis import notification_priority
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
@@ -49,6 +52,7 @@ class PriorityNotificationOut(BaseModel):
     delivery_state: DeliveryState
     digest_bucket: str | None = None
     source: PriorityNotificationSourceOut
+    authored_by: AuthoredBy | None = authorship.field(NOTIFICATION_AUTHOR)
 
 
 class PriorityInboxOut(BaseModel):

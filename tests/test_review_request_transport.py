@@ -44,7 +44,7 @@ def test_conductor_requests_one_exact_review_with_retry_key_and_run():
                 },
             )
         )
-    assert json.loads(response[0].text) == receipt
+    assert json.loads(response[0][0].text) == receipt
     assert len(calls) == 1
     req = calls[0]
     assert (req.method, req.url.path) == ("POST", "/issues/12/review-requests")

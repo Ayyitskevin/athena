@@ -210,7 +210,7 @@ def test_mcp_create_issue_returns_the_same_field(tmp_path):
                 {"title": "Login page crash when submitting", "project_id": pid},
             )
         )
-        body = json.loads(result[0].text)
+        body = json.loads(result[0][0].text)
         assert [row["id"] for row in body["similar_open"]] == [dup["id"]]
         description = next(
             t.description

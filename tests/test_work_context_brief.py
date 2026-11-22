@@ -229,7 +229,7 @@ def test_the_mcp_tool_returns_the_brief_packet_over_the_real_app(board):
             "get_issue_work_context", {"issue_id": board["issue"]["id"], "brief": True}
         )
     )
-    packet = json.loads(result[0].text)
+    packet = json.loads(result[0][0].text)
     assert set(packet) == BRIEF_KEYS | {"_etag"}
     assert packet["issue"]["id"] == board["issue"]["id"]
     description = next(

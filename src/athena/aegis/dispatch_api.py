@@ -22,7 +22,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from athena import config
@@ -30,6 +30,7 @@ from athena.aegis import icarus_commands
 from athena.core import dispatch, identity, tokens, webhooks
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["aegis"])
 
@@ -40,6 +41,14 @@ _STATUS_BY_KIND: dict[str, int] = {
     "invalid": 422,
     "conflict": 409,
     "unavailable": 503,
+}
+_CODE_BY_KIND: dict[str, str] = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "unavailable": "unavailable",
 }
 
 
@@ -121,8 +130,12 @@ _CALLBACK_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def _refuse(exc: icarus_commands.IcarusCommandError) -> HTTPException:
-    return HTTPException(status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail)
+def _refuse(exc: icarus_commands.IcarusCommandError) -> Refusal:
+    return Refusal(
+        status_code=_STATUS_BY_KIND[exc.kind],
+        detail=exc.detail,
+        code=_CODE_BY_KIND[exc.kind],
+    )
 
 
 async def _verified_callback(
@@ -131,17 +144,25 @@ async def _verified_callback(
 ) -> CallbackIn:
     """Authenticate the raw bounded body before parsing it or opening SQLite."""
     if not config.icarus_configured():
-        raise HTTPException(status_code=503, detail="no execution fleet is configured")
+        raise Refusal(
+            status_code=503,
+            detail="no execution fleet is configured",
+            code="unavailable",
+        )
     body = await request.body()
     if not webhooks.verify(config.ICARUS_SECRET, body, x_athena_signature):
-        raise HTTPException(status_code=401, detail="invalid signature")
+        raise Refusal(
+            status_code=401, detail="invalid signature", code="unauthenticated"
+        )
     try:
         return CallbackIn.model_validate_json(body)
     except ValidationError as exc:
         # Authentication succeeded, so validation may now be distinguished from
         # auth failure. Keep the detail generic: malformed Unicode from an
         # authenticated but buggy peer must not be echoed through the response.
-        raise HTTPException(status_code=422, detail="invalid callback payload") from exc
+        raise Refusal(
+            status_code=422, detail="invalid callback payload", code="validation_error"
+        ) from exc
 
 
 def _dispatch_reader(actor: dict = Depends(current_actor)) -> dict:
@@ -186,7 +207,7 @@ def create_dispatch(
 @router.get("/dispatches", response_model=list[DispatchOut])
 def index(
     work_item_id: int | None = Query(None, ge=1, le=dispatch.MAX_SQLITE_INTEGER),
-    state: str | None = Query(None),
+    state: str | None = Query(None, description=f"one of {', '.join(dispatch.STATES)}"),
     limit: int = Query(50, ge=1, le=dispatch.MAX_LIST_LIMIT),
     actor: dict = Depends(_dispatch_reader),
     conn: sqlite3.Connection = Depends(get_conn),
@@ -201,7 +222,9 @@ def index(
             limit=limit,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
 
 
 @router.get("/dispatches/{dispatch_id}", response_model=DispatchOut)
@@ -212,7 +235,7 @@ def show(
 ) -> dict:
     record = dispatch.get_visible_dispatch(conn, dispatch_id, actor=actor)
     if record is None:
-        raise HTTPException(status_code=404, detail="no such dispatch")
+        raise Refusal(status_code=404, detail="no such dispatch", code="not_found")
     return record
 
 

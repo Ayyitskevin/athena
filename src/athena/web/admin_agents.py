@@ -41,7 +41,11 @@ from athena.core import (
     workers,
 )
 from athena.core.deps import get_conn
-from athena.mcp.config import claude_mcp_config
+from athena.mcp.config import (
+    athena_mcp_command,
+    claude_mcp_config,
+    seat_profile_for,
+)
 from athena.web import live
 from athena.web.csrf import verify_csrf
 from athena.web.router import get_templates
@@ -382,6 +386,8 @@ def onboard_agent(
             claude_mcp_config(
                 base_url=str(request.base_url).rstrip("/"),
                 token=result["token"]["token"],
+                profile=seat_profile_for(result["token"]["scopes"]),
+                command=athena_mcp_command(),
             ),
             indent=2,
         ),

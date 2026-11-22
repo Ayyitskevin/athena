@@ -105,7 +105,10 @@ def test_bootstrap_is_disabled_when_the_token_is_unconfigured(tmp_path, monkeypa
             json={"email": "attacker@e.com", "name": "Attacker"},
         )
     assert response.status_code == 401
-    assert response.json() == {"detail": "authentication required"}
+    assert response.json() == {
+        "detail": "authentication required",
+        "code": "unauthenticated",
+    }
 
     conn = db.connect(tmp_path / "disabled.db")
     try:
@@ -147,7 +150,8 @@ def test_supported_launcher_bootstrap_requires_a_persistent_admin_password(
 
     assert refused.status_code == 422
     assert refused.json() == {
-        "detail": "athena-serve bootstrap requires an administrator password"
+        "detail": "athena-serve bootstrap requires an administrator password",
+        "code": "validation_error",
     }
     assert whitespace_refused.status_code == 422
     assert whitespace_refused.json() == refused.json()
@@ -203,7 +207,8 @@ def test_bootstrap_rejects_a_password_outside_the_supported_envelope(
     assert response.status_code == 422
     assert "x" * (passwords.MAX_PASSWORD_BYTES + 1) not in response.text
     assert response.json() == {
-        "detail": f"password must be at most {passwords.MAX_PASSWORD_BYTES} UTF-8 bytes"
+        "detail": f"password must be at most {passwords.MAX_PASSWORD_BYTES} UTF-8 bytes",
+        "code": "validation_error",
     }
     conn = db.connect(tmp_path / "oversized-password.db")
     try:
@@ -233,7 +238,8 @@ def test_bootstrap_rejects_a_password_the_browser_input_cannot_reproduce(
     assert response.status_code == 422
     assert secret not in response.text
     assert response.json() == {
-        "detail": "password must not contain carriage returns or line feeds"
+        "detail": "password must not contain carriage returns or line feeds",
+        "code": "validation_error",
     }
     conn = db.connect(db_path)
     try:
@@ -295,7 +301,11 @@ def test_bootstrap_missing_and_wrong_tokens_share_the_normal_401(tmp_path):
         correct = client.post("/users", json=body, headers=BOOTSTRAP_HEADERS)
 
     assert missing.status_code == wrong.status_code == 401
-    assert missing.json() == wrong.json() == {"detail": "authentication required"}
+    assert (
+        missing.json()
+        == wrong.json()
+        == {"detail": "authentication required", "code": "unauthenticated"}
+    )
     assert correct.status_code == 201
     assert correct.json()["role"] == users.ADMIN_ROLE
 
@@ -327,7 +337,10 @@ def test_bootstrap_duplicate_headers_fail_closed_in_either_order(tmp_path):
 
     for response in (correct_first, wrong_first):
         assert response.status_code == 401
-        assert response.json() == {"detail": "authentication required"}
+        assert response.json() == {
+            "detail": "authentication required",
+            "code": "unauthenticated",
+        }
     conn = db.connect(tmp_path / "duplicate-header.db")
     try:
         assert users.count_users(conn) == 0
@@ -363,7 +376,7 @@ def test_bootstrap_idempotency_rejection_does_not_reveal_state_or_token(tmp_path
             for headers in (keyed, wrong, correct)
         ]
 
-    expected = {"detail": "authentication required"}
+    expected = {"detail": "authentication required", "code": "unauthenticated"}
     for response in [*empty_responses, *populated_responses]:
         assert response.status_code == 401
         assert response.json() == expected
@@ -430,7 +443,10 @@ def test_bootstrap_credential_guesses_use_the_anonymous_rate_limit(tmp_path):
 
     assert wrong.status_code == 401
     assert bounded.status_code == 429
-    assert bounded.json() == {"detail": "anonymous rate limit exceeded"}
+    assert bounded.json() == {
+        "detail": "anonymous rate limit exceeded",
+        "code": "rate_limited",
+    }
     conn = db.connect(tmp_path / "bootstrap-rate-limit.db")
     try:
         assert users.count_users(conn) == 0
@@ -483,7 +499,10 @@ def test_bootstrap_token_grants_nothing_after_the_first_user(tmp_path):
             headers=BOOTSTRAP_HEADERS,
         )
     assert response.status_code == 401
-    assert response.json() == {"detail": "authentication required"}
+    assert response.json() == {
+        "detail": "authentication required",
+        "code": "unauthenticated",
+    }
 
 
 def test_first_user_bootstrap_works_with_header_off(tmp_path, monkeypatch):

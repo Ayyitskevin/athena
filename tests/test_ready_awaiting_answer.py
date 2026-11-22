@@ -486,7 +486,7 @@ def test_the_mcp_tool_serves_the_untouched_issue_after_a_completion(setup):
         )
 
         def call(name, arguments):
-            content = asyncio.run(server.call_tool(name, arguments))
+            content, _ = asyncio.run(server.call_tool(name, arguments))
             return json.loads(content[0].text)
 
         taken = call("claim_next_ready", {})

@@ -15,6 +15,7 @@ from athena.aegis import (
     claim_handoffs,
     completion_evidence,
     definition_of_done,
+    issue_activity,
     issue_etags,
     issues,
     lease_commands,
@@ -25,6 +26,7 @@ from athena.aegis import (
 from athena.core import (
     access,
     activity,
+    authorship,
     db,
     etag,
     fleet_roster,
@@ -550,6 +552,49 @@ def _recent_activity(
     }
 
 
+def _mark_authors(
+    conn: sqlite3.Connection, payload: dict[str, Any], actor: dict | None
+) -> None:
+    """Give every object here that holds another account's words its
+    ``authored_by`` (core/authorship.py): the issue and each issue or page it
+    names (by their current text), each comment (its author), each event (its
+    actor; null when imported) and the checklist page. Claim handoffs carry
+    theirs from claim_handoffs. Looked up in one batch per kind, as ``actor``
+    may see them."""
+    hierarchy, dependencies = payload["hierarchy"], payload["dependencies"]
+    related_issues = [
+        *([hierarchy["parent"]] if hierarchy["parent"] is not None else []),
+        *hierarchy["children"]["items"],
+        *(item for group in dependencies.values() for item in group["items"]),
+    ]
+    references = [
+        *payload["references"]["outgoing"]["items"],
+        *payload["references"]["backlinks"]["items"],
+        *payload["related"]["items"],
+    ]
+    checklist = payload.get("definition_of_done")
+    issue_ids = [payload["issue"]["id"], *(item["id"] for item in related_issues)]
+    issue_ids += [item["id"] for item in references if item["kind"] == "issue"]
+    page_ids = [item["id"] for item in references if item["kind"] == "page"]
+    if checklist is not None:
+        page_ids.append(checklist["page_id"])
+    issue_authors = issue_activity.issue_text_authors(conn, issue_ids, actor=actor)
+    page_authors = authorship.page_authors(conn, page_ids)
+    payload["issue"][authorship.KEY] = issue_authors[payload["issue"]["id"]]
+    for item in related_issues:
+        item[authorship.KEY] = issue_authors[item["id"]]
+    authorship.stamp_references(references, issues=issue_authors, pages=page_authors)
+    if checklist is not None:
+        checklist[authorship.KEY] = page_authors[checklist["page_id"]]
+    authorship.stamp(conn, payload["comments"]["items"], id_key="author_id")
+    authorship.stamp(
+        conn,
+        payload["recent_activity"]["items"],
+        id_key="actor_id",
+        imported_key="imported_at",
+    )
+
+
 def _has_clipping(value: Any) -> bool:
     if isinstance(value, dict):
         if value.get("clipped") is True or value.get("truncated") is True:
@@ -640,6 +685,13 @@ def build_work_context(
                 "created_at": public_issue["created_at"],
                 "archived_at": public_issue["archived_at"],
                 "labels": public_issue["labels"],
+                # The statuses this issue may be set to: its project's ordered
+                # menu (the built-in set for a backlog issue). update_issue
+                # refuses any other name and lists these in valid_statuses.
+                "project_statuses": [
+                    {"name": row["name"], "category": row["category"]}
+                    for row in statuses.list_statuses(conn, issue["project_id"])
+                ],
             },
             "issue_etag": issue_etag,
             "seat_slug": fleet_roster.seat_slug_for_email(
@@ -706,6 +758,7 @@ def build_work_context(
         checklist = definition_of_done.checklist(conn, issue["project_id"], actor=actor)
         if checklist is not None:
             payload["definition_of_done"] = checklist
+        _mark_authors(conn, payload, actor)
 
         warnings: list[str] = []
         if issue["archived_at"] is not None:

@@ -16,12 +16,13 @@ from __future__ import annotations
 import sqlite3
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema
 
 from athena.core import run_control_commands, run_controls
 from athena.core.deps import get_conn
 from athena.core.identity import current_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/run-controls", tags=["core"])
 
@@ -158,9 +159,11 @@ class RunControlCreatedOut(RunControlOut):
     replayed: bool
 
 
-def _refuse(exc: run_control_commands.RunControlCommandError) -> HTTPException:
-    return HTTPException(
-        status_code=run_control_commands.STATUS_BY_KIND[exc.kind], detail=exc.detail
+def _refuse(exc: run_control_commands.RunControlCommandError) -> Refusal:
+    return Refusal(
+        status_code=run_control_commands.STATUS_BY_KIND[exc.kind],
+        detail=exc.detail,
+        code=run_control_commands.CODE_BY_KIND[exc.kind],
     )
 
 

@@ -586,7 +586,8 @@ def test_issue_events_keep_every_event_time_project_scope(tmp_path):
         denied = client.get(f"/issues/{issue_id}/state", headers=H_OUTSIDER)
         assert denied.status_code == 403
         assert denied.json() == {
-            "detail": "complete issue history is not available to this actor"
+            "detail": "complete issue history is not available to this actor",
+            "code": "forbidden",
         }
         assert (
             client.get(f"/issues/{issue_id}/state", headers=H_CREATOR).status_code

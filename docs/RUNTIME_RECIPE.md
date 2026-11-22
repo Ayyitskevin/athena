@@ -75,7 +75,7 @@ An agent works what it is *given*. Create an issue and delegate it:
 curl -sS -X POST http://127.0.0.1:8000/issues \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -d '{"title": "Tidy the release checklist", "body": "Trim the stale steps.",
-       "project_id": 1, "priority": "medium"}'
+       "priority": "medium"}'
 
 # then delegate it to the agent (Admin → Issue → Delegate, or the API)
 curl -sS -X POST http://127.0.0.1:8000/issues/1/delegate \
@@ -96,10 +96,11 @@ in your Claude Code MCP settings:
 {
   "mcpServers": {
     "athena": {
-      "command": "athena-mcp",
+      "command": "/home/you/athena/.venv/bin/athena-mcp",
       "env": {
         "ATHENA_BASE_URL": "http://127.0.0.1:8000",
-        "ATHENA_TOKEN": "ath_your_token_here"
+        "ATHENA_TOKEN": "ath_your_token_here",
+        "ATHENA_MCP_PROFILE": "seat+knowledge"
       }
     }
   }
@@ -107,17 +108,23 @@ in your Claude Code MCP settings:
 ```
 
 The MCP server uses the token's scopes to hide tools it cannot call; the REST
-API still enforces authorization. If the startup scope probe fails, the server
-warns and presents the full tool surface, while REST refusals remain in force.
+API still enforces authorization. If Athena rejects the token at startup (401,
+or 403 for a paused or removed account), `athena-mcp` exits with a message
+naming the cause instead of starting. If Athena cannot be reached or answers
+with a server error, the server warns and presents the full tool surface, while
+REST refusals remain in force.
 
-For this issue-and-knowledge loop, optionally add
-`"ATHENA_MCP_PROFILE": "seat+knowledge"` to the environment above. It carries 37
-tools for this token class, including `record_run_learning`; `seat` carries 26
-for issue work. Profiles intersect scopes and never add permission. Unset means
-`full`, and an unknown profile refuses startup. See [AGENT_BOOT.md](AGENT_BOOT.md)
-for the exact sets. Both issue reads accept `issue_id=...` or `ref="ATH-12"`;
-supply exactly one. After reading the full work context, `brief=true` keeps the
-issue, issue ETag, dependencies, and warnings for a compact re-read.
+`command` is the absolute path of the `athena-mcp` script installed beside the
+Python that runs Athena, so the client needs no activated venv; the path above
+is a placeholder for yours. `ATHENA_MCP_PROFILE` is chosen from the token's
+scopes: `seat+knowledge` for a token with `docs:write`, as here (37 tools for
+this token class, including `record_run_learning`), and `seat` otherwise (26
+tools for issue work). Profiles intersect scopes and never add permission. An
+unset profile still means `full`, and an unknown profile refuses startup. See
+[AGENT_BOOT.md](AGENT_BOOT.md) for the exact sets. Both issue reads accept
+`issue_id=...` or `ref="ATH-12"`; supply exactly one. After reading the full
+work context, `brief=true` keeps the issue, issue ETag, dependencies, and
+warnings for a compact re-read.
 
 For a conductor coordinating architect, builder and reviewer accounts, use the
 37-tool `conductor` profile and [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md).

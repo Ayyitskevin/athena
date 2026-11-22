@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from athena.aegis import issue_commands, issues
 from athena.core import access
+from athena.core.refusals import Refusal
 
 _ISSUE_COMMAND_STATUS = {
     "unauthorized": 401,
@@ -31,6 +32,20 @@ _ISSUE_COMMAND_STATUS = {
     "invalid_lease_generation": 422,
     "lease_generation_mismatch": 409,
 }
+_ISSUE_COMMAND_CODE = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "precondition_required": "precondition_required",
+    "invalid_precondition": "invalid_if_match",
+    "precondition_too_large": "if_match_too_large",
+    "precondition_failed": "precondition_failed",
+    "lease_generation_required": "lease_generation_required",
+    "invalid_lease_generation": "invalid_lease_generation",
+    "lease_generation_mismatch": "lease_generation_mismatch",
+}
 
 
 def issue_command_status(exc: issue_commands.IssueCommandError) -> int:
@@ -42,11 +57,24 @@ def issue_command_status(exc: issue_commands.IssueCommandError) -> int:
     return _ISSUE_COMMAND_STATUS[exc.kind]
 
 
+def issue_command_code(exc: issue_commands.IssueCommandError) -> str:
+    """The refusal code this command rejection answers with.
+
+    A rejection that names its own code (a held claim, the blocked-close
+    policy) keeps it; otherwise the kind's code, beside its status above."""
+    return exc.code or _ISSUE_COMMAND_CODE[exc.kind]
+
+
 def issue_command_http_error(
     exc: issue_commands.IssueCommandError,
-) -> HTTPException:
+) -> Refusal:
     """Translate a framework-free command rejection at the REST boundary."""
-    return HTTPException(status_code=issue_command_status(exc), detail=exc.detail)
+    return Refusal(
+        status_code=issue_command_status(exc),
+        detail=exc.detail,
+        code=issue_command_code(exc),
+        extra=exc.extra,
+    )
 
 
 _PRECONDITION_HTTP = {
@@ -155,6 +183,14 @@ PROJECT_POLICY_STATUS = {
     "precondition_too_large": 431,
     "precondition_failed": 412,
 }
+PROJECT_POLICY_CODE = {
+    "not_found": "not_found",
+    "forbidden": "forbidden",
+    "precondition_required": "precondition_required",
+    "invalid_precondition": "invalid_if_match",
+    "precondition_too_large": "if_match_too_large",
+    "precondition_failed": "precondition_failed",
+}
 
 
 def issue_for_read(conn: sqlite3.Connection, issue_id: int, actor: dict | None) -> dict:
@@ -167,5 +203,5 @@ def issue_for_read(conn: sqlite3.Connection, issue_id: int, actor: dict | None) 
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     return issue

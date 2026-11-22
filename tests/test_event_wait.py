@@ -366,7 +366,7 @@ def test_the_mcp_tool_is_the_rest_call_and_keeps_its_bounds(feed):
 
     def call(name: str, **arguments):
         result = asyncio.run(server.call_tool(name, arguments))
-        return json.loads(result[0].text)
+        return json.loads(result[0][0].text)
 
     immediate = call("wait_for_events", after=baseline, wait=0)
     assert immediate == call("recent_events", after=baseline)

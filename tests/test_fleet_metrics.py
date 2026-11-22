@@ -1075,8 +1075,8 @@ def test_rest_web_tokens_mcp_client_and_private_headers_share_contract(tmp_path)
                 {"start": "2026-06-01", "end": "2026-06-10"},
             )
         )
-        assert len(through_mcp) == 1
-        assert json.loads(through_mcp[0].text) == rest
+        assert len(through_mcp[0]) == 1
+        assert json.loads(through_mcp[0][0].text) == rest
         paused_token = client.post(
             "/tokens",
             json={"name": "paused-metrics", "scopes": ["read"]},
@@ -1196,7 +1196,11 @@ def test_hidden_and_missing_project_filters_are_identical(tmp_path):
         hidden = client.get(base + str(private["id"]), headers=outsider)
         missing = client.get(base + "999999", headers=outsider)
         assert hidden.status_code == missing.status_code == 404
-        assert hidden.json() == missing.json() == {"detail": "no such project"}
+        assert (
+            hidden.json()
+            == missing.json()
+            == {"detail": "no such project", "code": "not_found"}
+        )
         assert hidden.headers["cache-control"] == "private, no-store"
 
 
@@ -1481,7 +1485,7 @@ def test_mcp_metrics_rejects_non_strict_numbers_before_dispatch():
             },
         )
     )
-    assert json.loads(valid[0].text) == {"ok": True}
+    assert json.loads(valid[0][0].text) == {"ok": True}
     assert recording.calls == [
         {
             "start": "2026-01-01",

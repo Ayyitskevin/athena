@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from athena.core import answerability
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/fleet/answerability", tags=["core"])
 
@@ -67,5 +68,5 @@ def answerability_ledger(
     # intelligence, same bar as /security and /activity/chain.
     ledger = answerability.build_answerability(conn, agent_id=agent_id)
     if agent_id is not None and not ledger["agents"]:
-        raise HTTPException(status_code=404, detail="no such agent")
+        raise Refusal(status_code=404, detail="no such agent", code="not_found")
     return ledger

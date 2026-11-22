@@ -349,12 +349,20 @@ def test_callback_authentication_precedes_json_parsing_and_database(tmp_path):
         )
 
         assert unsigned.status_code == wrong.status_code == 401
-        assert unsigned.json() == wrong.json() == {"detail": "invalid signature"}
+        assert (
+            unsigned.json()
+            == wrong.json()
+            == {"detail": "invalid signature", "code": "unauthenticated"}
+        )
         assert authenticated.status_code == 422
-        assert authenticated.json() == {"detail": "invalid callback payload"}
+        assert authenticated.json() == {
+            "detail": "invalid callback payload",
+            "code": "validation_error",
+        }
         assert authenticated_invalid_utf8.status_code == 422
         assert authenticated_invalid_utf8.json() == {
-            "detail": "invalid callback payload"
+            "detail": "invalid callback payload",
+            "code": "validation_error",
         }
         assert non_ascii.status_code == 401
 
@@ -407,7 +415,10 @@ def test_bad_callback_headers_cannot_trigger_pre_hmac_sqlite(tmp_path, monkeypat
                 },
             )
         assert refused.status_code == 401
-        assert refused.json() == {"detail": "invalid signature"}
+        assert refused.json() == {
+            "detail": "invalid signature",
+            "code": "unauthenticated",
+        }
 
 
 def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
@@ -436,7 +447,10 @@ def test_callback_attempts_charge_the_anonymous_perimeter_limit(tmp_path):
         limited = c.post("/callbacks/icarus", content=b"{", headers=headers)
 
     assert limited.status_code == 429
-    assert limited.json() == {"detail": "anonymous rate limit exceeded"}
+    assert limited.json() == {
+        "detail": "anonymous rate limit exceeded",
+        "code": "rate_limited",
+    }
     assert 1 <= int(limited.headers["retry-after"]) <= 60
     assert limited.headers["x-ratelimit-limit"] == "2"
     assert limited.headers["x-ratelimit-remaining"] == "0"
@@ -597,7 +611,8 @@ def test_evidence_is_immutable_and_callback_replays_are_audited_once(tmp_path):
         )
         assert conflict.status_code == 409
         assert conflict.json() == {
-            "detail": "evidence_ref is immutable for this dispatch"
+            "detail": "evidence_ref is immutable for this dispatch",
+            "code": "conflict",
         }
 
         terminal = {
@@ -1326,7 +1341,7 @@ def test_dispatch_reads_cannot_bypass_private_issue_visibility(tmp_path, monkeyp
         assert (
             hidden_response.json()
             == missing_response.json()
-            == {"detail": "no such dispatch"}
+            == {"detail": "no such dispatch", "code": "not_found"}
         )
         assert c.get(f"/dispatches/{hidden_record['id']}").status_code == 401
         assert c.get("/dispatches", headers=_bearer(worker)).status_code == 200

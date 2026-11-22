@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from athena.core.request_models import RequestBody
 from athena.aegis import projects, sprint_commands, sprints
 from athena.core import access
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor, optional_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["aegis"])
 
@@ -29,6 +31,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 
@@ -43,14 +52,14 @@ class SprintOut(BaseModel):
     created_at: str
 
 
-class SprintCreate(BaseModel):
+class SprintCreate(RequestBody):
     name: str
     goal: str = ""
     start_date: str | None = None
     end_date: str | None = None
 
 
-class SprintEdit(BaseModel):
+class SprintEdit(RequestBody):
     # Partial edit; only fields actually sent are written (exclude_unset). A date may
     # be sent as null to clear it. State is not edited here — it moves via start/complete.
     name: str | None = None
@@ -72,10 +81,12 @@ def _project_for_sprint_write(
     still gets the honest 403; they already know it exists.)"""
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     if project["created_by"] != actor["id"]:
-        raise HTTPException(
-            status_code=403, detail="only the project creator may manage its sprints"
+        raise Refusal(
+            status_code=403,
+            detail="only the project creator may manage its sprints",
+            code="forbidden",
         )
     return project
 
@@ -85,7 +96,7 @@ def _sprint_for_write(conn: sqlite3.Connection, sprint_id: int, actor: dict) -> 
     creator)."""
     sprint = sprints.get_sprint(conn, sprint_id)
     if sprint is None:
-        raise HTTPException(status_code=404, detail="no such sprint")
+        raise Refusal(status_code=404, detail="no such sprint", code="not_found")
     _project_for_sprint_write(conn, sprint["project_id"], actor)
     return sprint
 
@@ -100,10 +111,12 @@ def list_project_sprints(
     # Reading a project's sprints is open, like listing its issues — but a private
     # project the caller can't see is a 404, indistinguishable from a missing one.
     if not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     if state is not None and state not in sprints.STATES:
-        raise HTTPException(
-            status_code=422, detail=f"state must be one of: {', '.join(sprints.STATES)}"
+        raise Refusal(
+            status_code=422,
+            detail=f"state must be one of: {', '.join(sprints.STATES)}",
+            code="validation_error",
         )
     return sprints.list_sprints(conn, project_id=project_id, state=state)
 
@@ -120,7 +133,9 @@ def create_sprint(
     _project_for_sprint_write(conn, project_id, actor)
     name = payload.name.strip()
     if not name:
-        raise HTTPException(status_code=422, detail="sprint name is required")
+        raise Refusal(
+            status_code=422, detail="sprint name is required", code="validation_error"
+        )
     # The command owns the row and its atomic 'sprint_created' event.
     return sprint_commands.create_sprint(
         conn,
@@ -143,7 +158,7 @@ def show_sprint(
     # A sprint in a private project the caller can't see is a 404 — gated by its
     # project, so neither the sprint nor the project's existence leaks.
     if sprint is None or not access.can_see_project(conn, actor, sprint["project_id"]):
-        raise HTTPException(status_code=404, detail="no such sprint")
+        raise Refusal(status_code=404, detail="no such sprint", code="not_found")
     return sprint
 
 
@@ -157,19 +172,27 @@ def update_sprint(
     _sprint_for_write(conn, sprint_id, actor)
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     if "name" in fields:
         name = (fields["name"] or "").strip()
         if not name:
-            raise HTTPException(status_code=422, detail="sprint name cannot be empty")
+            raise Refusal(
+                status_code=422,
+                detail="sprint name cannot be empty",
+                code="validation_error",
+            )
         fields["name"] = name
     try:
         return sprint_commands.update_sprint(
             conn, actor_id=actor["id"], sprint_id=sprint_id, fields=fields
         )
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -185,10 +208,12 @@ def start_sprint(
             conn, actor_id=actor["id"], sprint_id=sprint_id
         )
     except sprints.SprintStateError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise Refusal(status_code=409, detail=str(exc), code="conflict") from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -204,10 +229,12 @@ def complete_sprint(
             conn, actor_id=actor["id"], sprint_id=sprint_id
         )
     except sprints.SprintStateError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise Refusal(status_code=409, detail=str(exc), code="conflict") from exc
     except sprint_commands.SprintCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -221,8 +248,10 @@ def delete_sprint(
     # Refuse rather than detach: a sprint that still holds issues must be emptied
     # first (move them to the backlog or another sprint), mirroring project delete.
     if sprints.count_issues_in_sprint(conn, sprint_id) > 0:
-        raise HTTPException(
-            status_code=409, detail="move its issues out of the sprint first"
+        raise Refusal(
+            status_code=409,
+            detail="move its issues out of the sprint first",
+            code="conflict",
         )
     # The command owns the delete and its atomic 'sprint_deleted' event.
     sprint_commands.delete_sprint(conn, actor_id=actor["id"], sprint_id=sprint_id)

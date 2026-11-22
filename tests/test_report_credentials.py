@@ -357,7 +357,7 @@ def test_api_mcp_and_web_error_translation_never_echo_or_log_refused_text(
         response = client.post(f"/issues/{issue['id']}/{operation}", json=payload)
         assert response.status_code == 422
         detail = f"{field}[0] contains Athena token; remove the credential and retry"
-        assert response.json() == {"detail": detail}
+        assert response.json() == {"detail": detail, "code": "validation_error"}
         server = build_server(AthenaClient(client=client))
         with pytest.raises(ToolError) as caught:
             asyncio.run(

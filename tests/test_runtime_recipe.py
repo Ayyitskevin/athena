@@ -16,13 +16,18 @@ registered route, and every relative link must resolve.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
 import pytest
 
 from athena.main import create_app
-from athena.mcp.config import claude_mcp_config
+from athena.mcp.config import (
+    MCP_COMMAND,
+    athena_mcp_command,
+    claude_mcp_config,
+    seat_profile_for,
+)
 from athena.mcp.server import TOOL_SCOPES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -90,14 +95,32 @@ def test_the_printed_mcp_config_parses_and_matches_what_athena_emits():
     ]
     assert blocks, "the recipe no longer shows an MCP config block"
     parsed = [json.loads(block) for block in blocks]
-    reference = claude_mcp_config(base_url="http://127.0.0.1:8000", token="x")
+    # The profile Athena prints follows the token's scopes, so the reference is
+    # built from the scopes the recipe's own onboarding request mints.
+    minted = re.search(r'"scopes":\s*(\[[^\]]*\])', RECIPE.read_text())
+    assert minted, "the recipe no longer shows the onboarding scopes"
+    reference = claude_mcp_config(
+        base_url="http://127.0.0.1:8000",
+        token="x",
+        profile=seat_profile_for(json.loads(minted.group(1))),
+        command=athena_mcp_command(),
+    )
     for config in parsed:
         assert set(config) == set(reference)
         server = config["mcpServers"]["athena"]
         expected = reference["mcpServers"]["athena"]
-        assert server["command"] == expected["command"]
+        # The command is machine-specific; the recipe shows a placeholder of the
+        # same kind: an absolute path to the same script.
+        assert PurePosixPath(server["command"]).is_absolute()
+        assert PurePosixPath(server["command"]).name == MCP_COMMAND
+        assert Path(expected["command"]).name == MCP_COMMAND
         assert set(server["env"]) == set(expected["env"])
         assert server["env"]["ATHENA_BASE_URL"] == "http://127.0.0.1:8000"
+        assert (
+            server["env"]["ATHENA_MCP_PROFILE"]
+            == expected["env"]["ATHENA_MCP_PROFILE"]
+            == "seat+knowledge"
+        )
 
 
 def test_every_curled_endpoint_is_a_real_route(tmp_path):

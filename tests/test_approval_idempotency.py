@@ -268,7 +268,7 @@ def test_mcp_update_issue_retried_under_its_key_applies_after_approval(tmp_path)
         }
 
         def call():
-            content = asyncio.run(mcp.call_tool("update_issue", arguments))
+            content, _ = asyncio.run(mcp.call_tool("update_issue", arguments))
             return json.loads(content[0].text)
 
         asked = call()

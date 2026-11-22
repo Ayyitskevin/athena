@@ -189,7 +189,10 @@ class DeploymentBoundaryMiddleware:
             return
         await _send_json_response(
             send,
-            {"detail": "request rejected by deployment boundary"},
+            {
+                "detail": "request rejected by deployment boundary",
+                "code": "deployment_boundary",
+            },
             status_code=421 if server_allowed else 503,
             extra_headers={"Cache-Control": "private, no-store"},
         )
@@ -223,7 +226,7 @@ class SignedInboundRateLimitMiddleware:
             return
         await _send_json_response(
             send,
-            {"detail": "anonymous rate limit exceeded"},
+            {"detail": "anonymous rate limit exceeded", "code": "rate_limited"},
             status_code=429,
             extra_headers={
                 "Cache-Control": "private, no-store",
@@ -259,12 +262,16 @@ class RequestBodyLimitMiddleware:
                 content_length = int(value.decode("ascii"))
             except ValueError:
                 await _send_json_response(
-                    send, {"detail": "invalid content-length"}, status_code=400
+                    send,
+                    {"detail": "invalid content-length", "code": "bad_request"},
+                    status_code=400,
                 )
                 return
             if content_length > self.max_bytes:
                 await _send_json_response(
-                    send, {"detail": "request body too large"}, status_code=413
+                    send,
+                    {"detail": "request body too large", "code": "payload_too_large"},
+                    status_code=413,
                 )
                 return
             break
@@ -278,7 +285,12 @@ class RequestBodyLimitMiddleware:
                 consumed += len(message.get("body", b""))
                 if consumed > self.max_bytes:
                     await _send_json_response(
-                        send, {"detail": "request body too large"}, status_code=413
+                        send,
+                        {
+                            "detail": "request body too large",
+                            "code": "payload_too_large",
+                        },
+                        status_code=413,
                     )
                     return
                 if not message.get("more_body", False):
@@ -802,14 +814,20 @@ class IdempotencyMiddleware:
         if not self._is_api_path(path) and not is_secret_create:
             await _send_json_response(
                 send,
-                {"detail": "Idempotency-Key is not supported for this endpoint"},
+                {
+                    "detail": "Idempotency-Key is not supported for this endpoint",
+                    "code": "idempotency_key_unsupported",
+                },
                 status_code=400,
             )
             return
         if len(key_values) != 1:
             await _send_json_response(
                 send,
-                {"detail": "exactly one Idempotency-Key header is required"},
+                {
+                    "detail": "exactly one Idempotency-Key header is required",
+                    "code": "idempotency_key_invalid",
+                },
                 status_code=400,
             )
             return
@@ -821,7 +839,12 @@ class IdempotencyMiddleware:
         ):
             await _send_json_response(
                 send,
-                {"detail": ("Idempotency-Key must be 1-255 visible ASCII characters")},
+                {
+                    "detail": (
+                        "Idempotency-Key must be 1-255 visible ASCII characters"
+                    ),
+                    "code": "idempotency_key_invalid",
+                },
                 status_code=400,
             )
             return
@@ -833,7 +856,8 @@ class IdempotencyMiddleware:
                     "detail": (
                         "Idempotency-Key is not supported for endpoints that "
                         "return a one-time secret"
-                    )
+                    ),
+                    "code": "idempotency_key_unsupported",
                 },
                 status_code=400,
             )
@@ -845,7 +869,7 @@ class IdempotencyMiddleware:
         ):
             await _send_json_response(
                 send,
-                {"detail": "ambiguous authentication headers"},
+                {"detail": "ambiguous authentication headers", "code": "bad_request"},
                 status_code=400,
             )
             return
@@ -856,7 +880,7 @@ class IdempotencyMiddleware:
             _logger.exception("could not authenticate idempotent request")
             await _send_json_response(
                 send,
-                {"detail": "idempotency service unavailable"},
+                {"detail": "idempotency service unavailable", "code": "unavailable"},
                 status_code=503,
                 extra_headers={"Retry-After": "1"},
             )
@@ -888,7 +912,7 @@ class IdempotencyMiddleware:
                 if not decision.allowed:
                     await _send_json_response(
                         send,
-                        {"detail": "token rate limit exceeded"},
+                        {"detail": "token rate limit exceeded", "code": "rate_limited"},
                         status_code=429,
                         extra_headers={
                             "Retry-After": str(decision.retry_after_seconds),
@@ -923,7 +947,10 @@ class IdempotencyMiddleware:
                 _logger.exception("could not claim idempotency key")
                 await _send_json_response(
                     send,
-                    {"detail": "idempotency service unavailable"},
+                    {
+                        "detail": "idempotency service unavailable",
+                        "code": "unavailable",
+                    },
                     status_code=503,
                     extra_headers={"Retry-After": "1"},
                 )

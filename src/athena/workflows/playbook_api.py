@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 from athena.core.deps import get_conn
 from athena.core.identity import issue_write_actor
 from athena.core.ids import MAX_SQLITE_INTEGER, RowIdPath
 from athena.workflows import playbook_commands
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/pages", tags=["workflows"])
 
@@ -59,7 +60,8 @@ def start_playbook(
             title=body.title,
         )
     except playbook_commands.PlaybookCommandError as exc:
-        raise HTTPException(
+        raise Refusal(
             status_code=playbook_commands.STATUS_BY_KIND.get(exc.kind, 400),
             detail=exc.detail,
+            code=playbook_commands.CODE_BY_KIND.get(exc.kind, "bad_request"),
         ) from exc

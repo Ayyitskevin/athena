@@ -44,7 +44,10 @@ def test_bearer_token_is_limited_after_configured_requests(tmp_path):
         limited = client.get("/users/me", headers=_auth(raw))
 
         assert limited.status_code == 429
-        assert limited.json() == {"detail": "token rate limit exceeded"}
+        assert limited.json() == {
+            "detail": "token rate limit exceeded",
+            "code": "rate_limited",
+        }
         assert 1 <= int(limited.headers["retry-after"]) <= 60
         assert limited.headers["x-ratelimit-limit"] == "2"
         assert limited.headers["x-ratelimit-remaining"] == "0"

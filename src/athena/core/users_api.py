@@ -11,9 +11,10 @@ import secrets
 import sqlite3
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 
+from athena.core.request_models import RequestBody
 from athena import config
 from athena.core import (
     agent_commands,
@@ -31,7 +32,12 @@ from athena.core.identity import (
     bootstrap_optional_actor,
     require_admin,
 )
-from athena.mcp.config import claude_mcp_config
+from athena.mcp.config import (
+    athena_mcp_command,
+    claude_mcp_config,
+    seat_profile_for,
+)
+from athena.core.refusals import Refusal
 
 router = APIRouter(prefix="/users", tags=["core"])
 
@@ -42,6 +48,13 @@ STATUS_BY_KIND: dict[str, int] = {
     "conflict": 409,
     "forbidden": 403,
     "unauthorized": 401,
+}
+CODE_BY_KIND: dict[str, str] = {
+    "not_found": "not_found",
+    "invalid": "validation_error",
+    "conflict": "conflict",
+    "forbidden": "forbidden",
+    "unauthorized": "unauthenticated",
 }
 
 Role = Literal["admin", "member", "viewer"]
@@ -55,13 +68,22 @@ _USER_COMMAND_STATUS = {
     "conflict": 409,
     "invalid": 422,
 }
+_USER_COMMAND_CODE = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "bad_request": "bad_request",
+    "not_found": "not_found",
+    "conflict": "conflict",
+    "invalid": "validation_error",
+}
 
 
-def _user_command_http(exc: user_commands.UserCommandError) -> HTTPException:
+def _user_command_http(exc: user_commands.UserCommandError) -> Refusal:
     """Translate the command's transport-neutral refusal into REST semantics."""
-    return HTTPException(
+    return Refusal(
         status_code=_USER_COMMAND_STATUS[exc.kind],
         detail=exc.detail,
+        code=_USER_COMMAND_CODE[exc.kind],
     )
 
 
@@ -107,7 +129,7 @@ class UserPasswordReset(BaseModel):
     password: str
 
 
-class BudgetUpdate(BaseModel):
+class BudgetUpdate(RequestBody):
     window: Literal["hour", "day"]
     action_limit: int
 
@@ -135,7 +157,7 @@ class UserOut(BaseModel):
     removed_at: str | None = None
 
 
-class UserPausedUpdate(BaseModel):
+class UserPausedUpdate(RequestBody):
     paused: bool
 
 
@@ -158,7 +180,7 @@ class RemoveOut(BaseModel):
     revoked_token_count: int
 
 
-class AgentOnboard(BaseModel):
+class AgentOnboard(RequestBody):
     name: str
     # REQUIRED: an agent's first credential must say what it may do — the same
     # least-privilege rule as POST /tokens (no omitted-scopes fail-open).
@@ -218,9 +240,10 @@ def create(
         # before reading bootstrap state, rather than silently ignoring its promise
         # or revealing whether the database is empty. Use the canonical anonymous
         # refusal so an invalid/revoked actor remains indistinguishable too.
-        raise HTTPException(
+        raise Refusal(
             status_code=401,
             detail="authentication required",
+            code="unauthenticated",
         )
     existing = users.count_users(conn)
     is_bootstrap = existing == 0
@@ -236,17 +259,26 @@ def create(
             # Same refusal as every anonymous post-bootstrap attempt: do not reveal
             # whether the database is empty or a bootstrap credential is configured.
             # Duplicate or proxy-coalesced credential headers fail the same way.
-            raise HTTPException(status_code=401, detail="authentication required")
+            raise Refusal(
+                status_code=401,
+                detail="authentication required",
+                code="unauthenticated",
+            )
         if config.BOOTSTRAP_PASSWORD_REQUIRED and (
             not payload.password or not payload.password.strip()
         ):
-            raise HTTPException(
+            raise Refusal(
                 status_code=422,
                 detail="athena-serve bootstrap requires an administrator password",
+                code="validation_error",
             )
     else:
         if actor is None:
-            raise HTTPException(status_code=401, detail="authentication required")
+            raise Refusal(
+                status_code=401,
+                detail="authentication required",
+                code="unauthenticated",
+            )
         require_admin(actor)
     # The command owns the insert AND the atomic 'created_user' audit event, so a new
     # actor entering the system is never a silent write. Bootstrap eligibility is
@@ -275,9 +307,13 @@ def create(
         raise _user_command_http(exc) from exc
     except sqlite3.IntegrityError:
         # email collides with an existing user — reject at the boundary.
-        raise HTTPException(status_code=400, detail="email already in use")
+        raise Refusal(
+            status_code=400, detail="email already in use", code="bad_request"
+        )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
 
 
 @router.get("", response_model=list[UserOut])
@@ -349,8 +385,10 @@ def onboard_agent(
             token_name=payload.token_name,
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     return {
         "user": result["user"],
@@ -358,6 +396,8 @@ def onboard_agent(
         "mcp_config": claude_mcp_config(
             base_url=str(request.base_url).rstrip("/"),
             token=result["token"]["token"],
+            profile=seat_profile_for(result["token"]["scopes"]),
+            command=athena_mcp_command(),
         ),
     }
 
@@ -372,7 +412,7 @@ def show(
         require_admin(actor)
     user = users.get_user(conn, user_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     return user
 
 
@@ -452,7 +492,7 @@ def read_budget(
     if actor["id"] != user_id:
         require_admin(actor)
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     budget = budgets.observed(conn, user_id)
     return None if budget is None else budget.public()
 
@@ -473,7 +513,7 @@ def set_budget(
     without gifting a fresh window. `action_limit: 0` is legitimate and freezes
     metered writes while leaving reads working."""
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     try:
         budget = budget_commands.set_budget(
             conn,
@@ -483,11 +523,15 @@ def set_budget(
             action_limit=payload.action_limit,
         )
     except budget_commands.BudgetCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
     return budget.public()
 
 
@@ -501,12 +545,14 @@ def clear_budget(
     `agent_budget_cleared` audit event. Idempotent: clearing an unbudgeted user
     is a 204 that records nothing. No account clears its own budget: a 403."""
     if users.get_user(conn, user_id) is None:
-        raise HTTPException(status_code=404, detail="no such user")
+        raise Refusal(status_code=404, detail="no such user", code="not_found")
     try:
         budget_commands.clear_budget(conn, actor_id=actor["id"], target_user_id=user_id)
     except budget_commands.BudgetCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -525,8 +571,10 @@ def update_paused(
             conn, actor=actor, target_user_id=user_id, paused=payload.paused
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -545,8 +593,10 @@ def revoke_user_tokens(
             conn, actor=actor, target_user_id=user_id
         )
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -561,8 +611,10 @@ def offboard(
     try:
         return agent_commands.offboard_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -578,8 +630,10 @@ def remove(
     try:
         return agent_commands.remove_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -594,6 +648,8 @@ def restore(
     try:
         return agent_commands.restore_user(conn, actor=actor, target_user_id=user_id)
     except agent_commands.AgentCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc

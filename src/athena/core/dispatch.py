@@ -40,6 +40,9 @@ UNDELIVERABLE = "undeliverable"
 COMPLETED = "completed"
 FAILED = "failed"
 TERMINAL_STATES = (COMPLETED, FAILED)
+#: Every state a dispatch can be in (the table's CHECK constraint holds the
+#: same five), and so every value the list's ``state`` filter accepts.
+STATES = (PENDING_DELIVERY, ACCEPTED, UNDELIVERABLE, COMPLETED, FAILED)
 
 VERB_REQUESTED = "dispatch_requested"
 VERB_ACCEPTED = "dispatch_accepted"
@@ -197,6 +200,8 @@ def list_dispatches(
         type(work_item_id) is not int or not 1 <= work_item_id <= MAX_SQLITE_INTEGER
     ):
         raise ValueError(f"work_item_id must be between 1 and {MAX_SQLITE_INTEGER}")
+    if state is not None and state not in STATES:
+        raise ValueError(f"state must be one of: {', '.join(STATES)}")
     visibility, visibility_params = _visibility_clause(actor)
     clauses = [visibility]
     params: list[object] = [*visibility_params]

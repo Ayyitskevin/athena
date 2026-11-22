@@ -6,7 +6,6 @@ from __future__ import annotations
 import sqlite3
 from fastapi import (
     Depends,
-    HTTPException,
     Query,
     Request,
     Response,
@@ -34,14 +33,17 @@ from athena.core.deps import get_conn
 from athena.core.identity import is_admin, issue_write_actor, optional_actor
 
 from athena.aegis.api import (
+    CODE_BY_KIND,
     STATUS_BY_KIND,
     projects_router,
 )
 from athena.aegis.rest_support import (
+    PROJECT_POLICY_CODE,
     PROJECT_POLICY_PRECONDITION_HTTP,
     PROJECT_POLICY_STATUS,
     if_match_values,
 )
+from athena.core.refusals import Refusal
 
 
 class ProjectCreate(BaseModel):
@@ -118,9 +120,10 @@ def _validate_key(key: str) -> str:
     itself lives in projects.normalize_key so the web form enforces it identically."""
     normalized = projects.normalize_key(key)
     if normalized is None:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail="key must start with a letter and be 1–10 letters/digits",
+            code="validation_error",
         )
     return normalized
 
@@ -149,8 +152,10 @@ def _project_policy_error_response(
             content={"detail": exc.detail, "code": code},
             headers=headers,
         )
-    raise HTTPException(
-        status_code=PROJECT_POLICY_STATUS[exc.kind], detail=exc.detail
+    raise Refusal(
+        status_code=PROJECT_POLICY_STATUS[exc.kind],
+        detail=exc.detail,
+        code=PROJECT_POLICY_CODE[exc.kind],
     ) from exc
 
 
@@ -174,12 +179,16 @@ def create_project(
     # Any authenticated actor may create a project (like creating a label).
     name = payload.name.strip()
     if not name:
-        raise HTTPException(status_code=422, detail="project name is required")
+        raise Refusal(
+            status_code=422, detail="project name is required", code="validation_error"
+        )
     key = _validate_key(payload.key)
     if projects.get_project_by_name(conn, name) is not None:
-        raise HTTPException(status_code=409, detail="project already exists")
+        raise Refusal(status_code=409, detail="project already exists", code="conflict")
     if projects.get_project_by_key(conn, key) is not None:
-        raise HTTPException(status_code=409, detail="project key already in use")
+        raise Refusal(
+            status_code=409, detail="project key already in use", code="conflict"
+        )
     # The command owns the insert, its default statuses, AND the atomic
     # 'created_project' audit event — a workspace container never appears silently.
     return project_commands.create_project(
@@ -203,7 +212,7 @@ def show_project(
     # one, so visibility never leaks through existence — the gate its Mentor twin
     # show_space already applied.
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return _tagged_project(project, response)
 
 
@@ -227,7 +236,9 @@ def show_project_brief(
         conn, project_id=project_id, actor=actor, limit=limit
     )
     if packet is None:
-        raise HTTPException(status_code=404, detail="no such project", headers=headers)
+        raise Refusal(
+            status_code=404, detail="no such project", headers=headers, code="not_found"
+        )
     response.headers.update(headers)
     return packet
 
@@ -249,7 +260,9 @@ def show_project_review_queue(
         conn, project_id=project_id, actor=actor, limit=limit, cursor=cursor
     )
     if packet is None:
-        raise HTTPException(status_code=404, detail="no such project", headers=headers)
+        raise Refusal(
+            status_code=404, detail="no such project", headers=headers, code="not_found"
+        )
     response.headers.update(headers)
     return packet
 
@@ -266,7 +279,7 @@ def project_floor(
 
     floor = office.build_floor(conn, project_id=project_id, actor=actor, room_slug=room)
     if floor is None:
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return floor
 
 
@@ -306,7 +319,7 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
     Same order as _project_for_privacy and the web's _authorize_project_write."""
     project = projects.get_project(conn, project_id)
     if project is None:
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     reason = access.container_write_reason(
         conn,
         actor,
@@ -315,10 +328,12 @@ def _project_for_write(conn: sqlite3.Connection, project_id: int, actor: dict) -
         created_by=project["created_by"],
     )
     if reason == "not_visible":
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     if reason == "not_owner":
-        raise HTTPException(
-            status_code=403, detail="only the project creator may modify it"
+        raise Refusal(
+            status_code=403,
+            detail="only the project creator may modify it",
+            code="forbidden",
         )
     return project
 
@@ -334,24 +349,34 @@ def update_project(
     _project_for_write(conn, project_id, actor)
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
-        raise HTTPException(status_code=422, detail="no fields to update")
+        raise Refusal(
+            status_code=422, detail="no fields to update", code="validation_error"
+        )
     name = payload.name.strip() if payload.name is not None else None
     if name is not None:
         if not name:
-            raise HTTPException(status_code=422, detail="project name cannot be empty")
+            raise Refusal(
+                status_code=422,
+                detail="project name cannot be empty",
+                code="validation_error",
+            )
         # A rename onto another project's name is the same collision create guards
         # against (409). Renaming to your own current name is fine (NOCASE match
         # on yourself), so only block when the match is a DIFFERENT project.
         clash = projects.get_project_by_name(conn, name)
         if clash is not None and clash["id"] != project_id:
-            raise HTTPException(status_code=409, detail="project already exists")
+            raise Refusal(
+                status_code=409, detail="project already exists", code="conflict"
+            )
     key = _validate_key(payload.key) if payload.key is not None else None
     if key is not None:
         # Same collision logic as name: a key already held by ANOTHER project is a
         # 409; re-saving your own current key (NOCASE self-match) is fine.
         clash = projects.get_project_by_key(conn, key)
         if clash is not None and clash["id"] != project_id:
-            raise HTTPException(status_code=409, detail="project key already in use")
+            raise Refusal(
+                status_code=409, detail="project key already in use", code="conflict"
+            )
     # The command owns the edit AND its atomic 'edited_project' audit event.
     updated = project_commands.update_project(
         conn,
@@ -362,7 +387,7 @@ def update_project(
         description=payload.description,
     )
     if updated is None:
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return updated
 
 
@@ -383,8 +408,10 @@ def delete_project(
             conn, actor_id=actor["id"], project_id=project_id
         )
     except project_commands.ProjectLifecycleCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -402,11 +429,12 @@ def _project_for_privacy(
     it but isn't the creator/admin still gets the honest 403."""
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     if project["created_by"] != actor["id"] and not is_admin(actor):
-        raise HTTPException(
+        raise Refusal(
             status_code=403,
             detail="only the project creator or an admin may manage access",
+            code="forbidden",
         )
     return project
 
@@ -422,8 +450,10 @@ def set_project_visibility(
     project = _project_for_privacy(conn, project_id, actor)
     visibility = payload.visibility.strip().lower()
     if visibility not in ("public", "private"):
-        raise HTTPException(
-            status_code=422, detail="visibility must be 'public' or 'private'"
+        raise Refusal(
+            status_code=422,
+            detail="visibility must be 'public' or 'private'",
+            code="validation_error",
         )
     # Setting it to what it already is is a no-op — no write, no audit event.
     if visibility == project["visibility"]:
@@ -435,8 +465,10 @@ def set_project_visibility(
             conn, actor_id=actor["id"], project_id=project_id, visibility=visibility
         )
     except project_commands.ProjectAccessCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -451,7 +483,7 @@ def list_project_members(
     # never reveals that the project (or its members) exist.
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return access.list_project_members(conn, project_id)
 
 
@@ -469,7 +501,7 @@ def add_project_member(
     _project_for_privacy(conn, project_id, actor)
     member = users.get_user(conn, payload.user_id)
     if member is None:
-        raise HTTPException(status_code=422, detail="no such user")
+        raise Refusal(status_code=422, detail="no such user", code="validation_error")
     # The command owns the grant and its atomic audit event.
     project_commands.add_project_member(
         conn,
@@ -504,7 +536,7 @@ def remove_project_member(
         user_id=user_id,
         member_name=member["name"] if member else str(user_id),
     ):
-        raise HTTPException(status_code=404, detail="user is not a member")
+        raise Refusal(status_code=404, detail="user is not a member", code="not_found")
     return access.list_project_members(conn, project_id)
 
 
@@ -521,7 +553,7 @@ def project_timeline(
     # A project the caller cannot see is the same 404 a missing one gives.
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return timeline.project_timeline(
         conn,
         project_id=project_id,
@@ -542,7 +574,7 @@ def list_project_statuses(
     # vocabulary doesn't leak.
     project = projects.get_project(conn, project_id)
     if project is None or not access.can_see_project(conn, actor, project_id):
-        raise HTTPException(status_code=404, detail="no such project")
+        raise Refusal(status_code=404, detail="no such project", code="not_found")
     return statuses.list_statuses(conn, project_id)
 
 
@@ -567,8 +599,10 @@ def add_project_status(
             category=payload.category,
         )
     except status_commands.StatusCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -584,6 +618,8 @@ def remove_project_status(
             conn, actor=actor, project_id=project_id, name=name
         )
     except status_commands.StatusCommandError as exc:
-        raise HTTPException(
-            status_code=STATUS_BY_KIND[exc.kind], detail=str(exc)
+        raise Refusal(
+            status_code=STATUS_BY_KIND[exc.kind],
+            detail=str(exc),
+            code=CODE_BY_KIND[exc.kind],
         ) from exc

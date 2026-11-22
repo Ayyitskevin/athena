@@ -1382,7 +1382,10 @@ The narrow token also buys a smaller session: at startup the server asks
 use**, so a read-scoped agent carries the read surface instead of dozens of
 mutation tools whose only possible answer is 403. This is presentation, not
 authorization — the REST layer stays the boundary — which is why an unreachable
-Athena at startup fails *open* to the full surface rather than guessing.
+or failing Athena at startup fails *open* to the full surface rather than
+guessing. A token Athena rejects (401, or 403 for a paused or removed account)
+is different: `athena-mcp` exits non-zero with a message naming the cause,
+because every tool would fail the same way.
 `ATHENA_MCP_ALL_TOOLS=1` skips the probe and presents everything, for harnesses
 and for inspecting the catalogue with a narrow token.
 

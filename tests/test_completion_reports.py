@@ -336,7 +336,7 @@ def test_render_replay_export_and_mcp_preserve_report_without_executing_refs(tmp
                 {"issue_id": issue["id"], "generation": generation, **hostile},
             )
         )
-        body = json.loads(result[0].text)
+        body = json.loads(result[0][0].text)
         assert body["released"] is True
         detail = _completion_events(client, issue["id"])[0]["detail"]
         for url in (
@@ -500,7 +500,7 @@ def test_mcp_and_rest_use_the_same_report_refusal_and_keep_the_claim(tmp_path):
                 {"issue_id": issue["id"], "generation": generation, **REPORT},
             )
         )
-        assert json.loads(accepted[0].text)["released"] is True
+        assert json.loads(accepted[0][0].text)["released"] is True
     finally:
         client.__exit__(None, None, None)
 

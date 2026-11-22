@@ -374,7 +374,10 @@ def test_a_delivery_burst_is_rate_limited(tmp_path):
             )
         limited = _deliver(c, "gh", "push", _push("ATH-1 x"), source["secret"])
         assert limited.status_code == 429
-        assert limited.json() == {"detail": "anonymous rate limit exceeded"}
+        assert limited.json() == {
+            "detail": "anonymous rate limit exceeded",
+            "code": "rate_limited",
+        }
         assert 1 <= int(limited.headers["retry-after"]) <= 60
 
 

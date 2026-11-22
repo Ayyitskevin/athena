@@ -168,7 +168,7 @@ reports into metering or change budget enforcement.
 
 ### What `complete_claim` tells you
 
-Releasing a claim does not close the issue: `update_issue(status=...)` (REST
+Releasing a claim does not close the issue: `update_issue(issue_id, status=...)` (REST
 `PATCH /issues/{id}`) is the separate, deliberate second write. The 200 body
 repeats `issue_status` and `issue_still_open`, and `lapsed` says whether the row
 you cleared had already expired. A lapsed row of your own is cleared under the

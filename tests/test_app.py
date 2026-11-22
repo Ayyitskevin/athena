@@ -163,7 +163,8 @@ def test_deployment_boundary_rejects_socket_before_body_or_database_work(tmp_pat
 
     assert status == 503
     assert json.loads(response_body) == {
-        "detail": "request rejected by deployment boundary"
+        "detail": "request rejected by deployment boundary",
+        "code": "deployment_boundary",
     }
     assert received == []
     assert not db_path.exists()
@@ -191,7 +192,8 @@ def test_deployment_boundary_rejects_socket_port_before_body_or_database_work(tm
 
     assert status == 503
     assert json.loads(response_body) == {
-        "detail": "request rejected by deployment boundary"
+        "detail": "request rejected by deployment boundary",
+        "code": "deployment_boundary",
     }
     assert received == []
     assert not db_path.exists()
@@ -222,7 +224,8 @@ def test_supported_deployment_boundary_requires_the_exact_preflighted_listener(
 
     assert status == 503
     assert json.loads(response_body) == {
-        "detail": "request rejected by deployment boundary"
+        "detail": "request rejected by deployment boundary",
+        "code": "deployment_boundary",
     }
     assert received == []
     assert not db_path.exists()
@@ -253,7 +256,8 @@ def test_deployment_boundary_rejects_host_before_body_or_database_work(tmp_path)
 
     assert status == 421
     assert json.loads(response_body) == {
-        "detail": "request rejected by deployment boundary"
+        "detail": "request rejected by deployment boundary",
+        "code": "deployment_boundary",
     }
     assert received == []
     assert not db_path.exists()
@@ -313,7 +317,11 @@ def test_readyz_fails_when_schema_is_missing(tmp_path):
 
         response = client.get("/readyz")
     assert response.status_code == 503
-    assert response.json() == {"status": "error", "database": "unavailable"}
+    assert response.json() == {
+        "status": "error",
+        "database": "unavailable",
+        "code": "unavailable",
+    }
 
 
 def test_security_headers_are_attached(tmp_path):
@@ -342,7 +350,10 @@ def test_request_body_limit_rejects_large_payload(tmp_path):
             json={"email": "kevin@example.com", "name": "K" * 100, "password": "pw"},
         )
     assert response.status_code == 413
-    assert response.json() == {"detail": "request body too large"}
+    assert response.json() == {
+        "detail": "request body too large",
+        "code": "payload_too_large",
+    }
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
@@ -388,7 +399,10 @@ def test_request_body_limit_counts_streamed_payload_without_content_length(tmp_p
         )
 
     assert status == 413
-    assert json.loads(response_body) == {"detail": "request body too large"}
+    assert json.loads(response_body) == {
+        "detail": "request body too large",
+        "code": "payload_too_large",
+    }
 
 
 def test_startup_migrates_the_database(tmp_path):

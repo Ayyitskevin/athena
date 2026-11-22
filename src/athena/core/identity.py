@@ -31,6 +31,7 @@ from fastapi import Depends, Header, HTTPException, Request
 from athena import config
 from athena.core import rate_limits, security_events, tokens, users
 from athena.core.deps import get_conn
+from athena.core.refusals import Refusal
 
 ACTOR_HEADER = "X-Athena-Actor"
 _BEARER_PREFIX = "bearer "
@@ -64,7 +65,11 @@ def current_actor(
                     target_id=revoked["id"],
                     detail="revoked bearer token presented",
                 )
-            raise HTTPException(status_code=401, detail="invalid or revoked token")
+            raise Refusal(
+                status_code=401,
+                detail="invalid or revoked token",
+                code="unauthenticated",
+            )
         _enforce_token_rate_limit(request, actor)
         # Bearer requests are bounded by the per-token limiter above, so the
         # paused-refusal recording is already flood-bounded here.
@@ -76,19 +81,25 @@ def current_actor(
         try:
             actor_id = int(x_athena_actor)
         except ValueError:
-            raise HTTPException(
-                status_code=401, detail=f"{ACTOR_HEADER} must be an integer user id"
+            raise Refusal(
+                status_code=401,
+                detail=f"{ACTOR_HEADER} must be an integer user id",
+                code="unauthenticated",
             )
         actor = users.get_user(conn, actor_id)
         if actor is None:
-            raise HTTPException(status_code=401, detail="unknown actor")
+            raise Refusal(
+                status_code=401, detail="unknown actor", code="unauthenticated"
+            )
         # The header path carries no token, so nothing bounds it — gate the
         # paused-refusal recording behind the anon limiter (non-raising) so a
         # paused claimed id can't flood the trail. The 403 is unchanged either way.
         _refuse_paused(request, conn, actor, bounded=False)
         return actor
 
-    raise HTTPException(status_code=401, detail="authentication required")
+    raise Refusal(
+        status_code=401, detail="authentication required", code="unauthenticated"
+    )
 
 
 def _refuse_paused(
@@ -115,7 +126,9 @@ def _refuse_paused(
                 target_kind="user",
                 target_id=actor["id"],
             )
-        raise HTTPException(status_code=403, detail="account is removed")
+        raise Refusal(
+            status_code=403, detail="account is removed", code="account_paused"
+        )
     if not actor.get("paused_at"):
         return
     if bounded or _anon_rate_allows(request):
@@ -126,7 +139,7 @@ def _refuse_paused(
             target_kind="user",
             target_id=actor["id"],
         )
-    raise HTTPException(status_code=403, detail="account is paused")
+    raise Refusal(status_code=403, detail="account is paused", code="account_paused")
 
 
 def _anonymous_reads_allowed() -> bool:
@@ -175,7 +188,9 @@ def optional_actor(
     """
     actor = _resolve_optional_actor(request, authorization, x_athena_actor, conn)
     if actor is None and not _anonymous_reads_allowed():
-        raise HTTPException(status_code=401, detail="authentication required")
+        raise Refusal(
+            status_code=401, detail="authentication required", code="unauthenticated"
+        )
     return actor
 
 
@@ -223,7 +238,7 @@ def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
     decision = limiter.check(int(token_id))
     if decision.allowed:
         return
-    raise HTTPException(
+    raise Refusal(
         status_code=429,
         detail="token rate limit exceeded",
         headers={
@@ -231,6 +246,7 @@ def _enforce_token_rate_limit(request: Request, actor: dict) -> None:
             "X-RateLimit-Limit": str(decision.limit),
             "X-RateLimit-Remaining": str(decision.remaining),
         },
+        code="rate_limited",
     )
 
 
@@ -271,7 +287,7 @@ def enforce_anon_rate_limit(request: Request) -> None:
     decision = limiter.check(_client_ip(request))
     if decision.allowed:
         return
-    raise HTTPException(
+    raise Refusal(
         status_code=429,
         detail="anonymous rate limit exceeded",
         headers={
@@ -279,6 +295,7 @@ def enforce_anon_rate_limit(request: Request) -> None:
             "X-RateLimit-Limit": str(decision.limit),
             "X-RateLimit-Remaining": str(decision.remaining),
         },
+        code="rate_limited",
     )
 
 
@@ -303,11 +320,12 @@ def token_has_scope(actor: dict | None, scope: str) -> bool:
     return tokens.ADMIN_SCOPE in scopes or scope in scopes
 
 
-class ScopeDenied(HTTPException):
+class ScopeDenied(Refusal):
     """A 403 that also names WHO hit WHICH scope boundary, so the app-level
     handler (main.py) can put the probe on the activity trail while returning
-    exactly the same response a plain HTTPException produced. An agent that
-    keeps walking into its scope wall is a story the operator should see."""
+    exactly the same response a plain refusal produces, under its own code. An
+    agent that keeps walking into its scope wall is a story the operator should
+    see."""
 
     def __init__(
         self,
@@ -320,6 +338,7 @@ class ScopeDenied(HTTPException):
             status_code=403,
             detail=f"token scope required: {scope}",
             headers=headers,
+            code="scope_denied",
         )
         self.actor_id = actor.get("id") if actor else None
         self.scope = scope
@@ -333,13 +352,15 @@ def require_token_scope(actor: dict, scope: str) -> dict:
 
 def require_admin(actor: dict) -> dict:
     if not is_admin(actor):
-        raise HTTPException(status_code=403, detail="admin role required")
+        raise Refusal(status_code=403, detail="admin role required", code="forbidden")
     return require_token_scope(actor, tokens.ADMIN_SCOPE)
 
 
 def require_write_role(actor: dict) -> dict:
     if not can_write(actor):
-        raise HTTPException(status_code=403, detail="viewer role is read-only")
+        raise Refusal(
+            status_code=403, detail="viewer role is read-only", code="forbidden"
+        )
     return actor
 
 

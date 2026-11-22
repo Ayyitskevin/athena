@@ -37,6 +37,7 @@ import sqlite3
 from athena.aegis import (
     claim_handoffs,
     delegations,
+    issue_activity,
     leases,
     office,
     ready_queue,
@@ -47,6 +48,7 @@ from athena.aegis import (
 from athena.core import (
     agent_notebook,
     approvals,
+    authorship,
     budgets,
     db,
     desk_cursors,
@@ -208,7 +210,7 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
     after_id = None if cursor is None else int(cursor["after_id"])
     since_count, since_capped = _events_since(conn, actor=actor, after_id=after_id)
 
-    return {
+    desk = {
         "schema": SCHEMA,
         "identity": {
             "id": user_id,
@@ -372,3 +374,50 @@ def _build_desk(conn: sqlite3.Connection, *, actor: dict, now: datetime) -> dict
         ),
         "cursor": cursor,
     }
+    _mark_authors(conn, desk, actor)
+    return desk
+
+
+def _mark_authors(conn: sqlite3.Connection, desk: dict, actor: dict) -> None:
+    """Give every desk object that holds another account's words its
+    ``authored_by`` (core/authorship.py), as this actor may see it: each issue
+    a lane names (its title, and a delegated issue's body), each blocking
+    question and run control (its asker), and the notebook (its current
+    version's editor). Claim handoffs and notifications carry theirs from their
+    own reads."""
+    work, office_lane = desk["work"], desk["office"]
+    waiting = work["waiting_on_operator"]
+    issue_refs: list[dict] = []
+    for item in work["delegations"]["items"]:
+        issue_refs.append(item["issue"])
+        issue_refs.extend(item.get("visible_open_blockers") or [])
+    issue_refs.extend(item["issue"] for item in work["ready"]["items"])
+    issue_refs.extend(item["issue"] for item in waiting["items"] if "issue" in item)
+    issue_refs.extend(item["issue"] for item in waiting["not_offered"]["items"])
+    issue_refs.extend(item["issue"] for item in work["waiting_on"]["items"])
+    for overlap in office_lane["fence_overlaps"]:
+        issue_refs.extend((overlap["your_issue"], overlap["issue"]))
+    seats = [office_lane[key] for key in ("chair", "next_to_sit") if office_lane[key]]
+    if office_lane["chair"]:
+        issue_refs.extend(office_lane["chair"]["blocked_by"])
+    authors = issue_activity.issue_text_authors(
+        conn,
+        [ref["id"] for ref in issue_refs] + [seat["issue_id"] for seat in seats],
+        actor=actor,
+    )
+    for ref in issue_refs:
+        ref[authorship.KEY] = authors[ref["id"]]
+    for seat in seats:
+        seat[authorship.KEY] = authors[seat["issue_id"]]
+    questions = [item for item in waiting["items"] if item["kind"] == "question"]
+    askers = authorship.accounts(conn, (item["asked_by"]["id"] for item in questions))
+    for item in questions:
+        item[authorship.KEY] = askers.get(item["asked_by"]["id"])
+    # An open control's payload is its requester's; nobody has settled it, so
+    # its result_summary is still empty.
+    authorship.stamp(conn, desk["asks"]["run_controls"]["items"], id_key="requested_by")
+    notebook = desk["identity"]["notebook"]
+    if notebook is not None:
+        notebook[authorship.KEY] = authorship.page_authors(conn, [notebook["page_id"]])[
+            notebook["page_id"]
+        ]

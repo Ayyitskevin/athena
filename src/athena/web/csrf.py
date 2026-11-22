@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import Form, Header, HTTPException, Request
+from fastapi import Form, Header, Request
+
+from athena.core.refusals import Refusal
 
 
 def verify_csrf(
@@ -50,4 +52,6 @@ def verify_csrf(
     if supplied is None or not secrets.compare_digest(
         supplied, expected.encode("ascii")
     ):
-        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+        raise Refusal(
+            status_code=403, detail="CSRF token missing or invalid", code="forbidden"
+        )

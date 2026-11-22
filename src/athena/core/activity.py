@@ -72,6 +72,10 @@ _UNGATED = object()
 _AUTO_ISSUE_PROJECTS = object()
 
 
+#: The stable refusal code main.py answers a RunBindingError with.
+RUN_BINDING_CONFLICT_CODE = "run_binding_conflict"
+
+
 class RunBindingError(Exception):
     """A tagged write tried to continue a run id already bound to a DIFFERENT
     actor. Transport-neutral (main.py maps it to a 403); raised inside the

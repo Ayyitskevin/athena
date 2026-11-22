@@ -123,7 +123,8 @@ def test_an_ordinary_rewind_is_still_refused_as_before(tmp_path):
         rewind = client.post("/desk/cursor", json={"after_id": 1}, headers=bearer)
         assert rewind.status_code == 409
         assert rewind.json() == {
-            "detail": f"cursor is already at {visible}; a cursor may not move backward"
+            "detail": f"cursor is already at {visible}; a cursor may not move backward",
+            "code": "conflict",
         }
 
 

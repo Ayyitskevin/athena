@@ -13,6 +13,9 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
+from athena.core.request_models import RequestBody
 from athena.aegis import (
     claim_handoffs,
     contributors,
@@ -47,6 +50,7 @@ from athena.aegis.rest_support import (
     issue_command_http_error,
     issue_for_read,
 )
+from athena.core.refusals import Refusal
 
 
 @router.post(
@@ -91,6 +95,8 @@ class ClaimHandoffEventOut(BaseModel):
 class ClaimHandoffResumeEventOut(ClaimHandoffEventOut):
     lease_generation: str
     note: str | None
+    # The resume note is the resuming account's words.
+    authored_by: AuthoredBy | None = authorship.field()
 
 
 class ClaimHandoffOut(BaseModel):
@@ -108,6 +114,7 @@ class ClaimHandoffOut(BaseModel):
     yielded: ClaimHandoffEventOut
     resumed: ClaimHandoffResumeEventOut | None
     advisory_untrusted: Literal[True]
+    authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
 
 
 class LeaseOut(BaseModel):
@@ -126,7 +133,7 @@ class LeaseOut(BaseModel):
     open_claim_handoff: ClaimHandoffOut | None = None
 
 
-class ClaimIn(BaseModel):
+class ClaimIn(RequestBody):
     # How long the lease should hold before it must be renewed. Omitted → the server
     # default. Bounded by the command to [MIN, MAX] lease seconds.
     lease_seconds: int | None = None
@@ -238,10 +245,11 @@ def claim_next_ready(
 ) -> dict | JSONResponse:
     """Select and acquire current ready work atomically for this account."""
     if "if-match" in request.headers:
-        raise HTTPException(
+        raise Refusal(
             status_code=422,
             detail="If-Match is not supported for ready pickup; use an explicit issue claim",
             headers=PRIVATE_LEASE_HEADERS,
+            code="validation_error",
         )
     response.headers.update(PRIVATE_LEASE_HEADERS)
     payload = payload or ReadyClaimIn()
@@ -301,7 +309,7 @@ class DeclineDelegationIn(BaseModel):
     generation: str | None = None
 
 
-class ContributorAdd(BaseModel):
+class ContributorAdd(RequestBody):
     user_id: int
 
 
@@ -393,7 +401,7 @@ def get_issue_lease(
     if issue is None or not access.can_see_project_or_backlog(
         conn, actor, issue["project_id"]
     ):
-        raise HTTPException(status_code=404, detail="no such issue")
+        raise Refusal(status_code=404, detail="no such issue", code="not_found")
     response.headers.update(PRIVATE_LEASE_HEADERS)
     lease = leases.get_lease(conn, issue_id)
     if lease is not None:

@@ -38,6 +38,15 @@ def encode_evidence(evidence: list[str]) -> str:
     return json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
 
 
+def _author(
+    account_id: int, is_agent: object, imported_at: str | None
+) -> dict[str, Any] | None:
+    """``authored_by`` (core/authorship.py) from columns the row already joins."""
+    if imported_at is not None:
+        return None
+    return {"id": account_id, "is_agent": bool(is_agent)}
+
+
 def _row_to_handoff(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "handoff_token": row["handoff_token"],
@@ -58,6 +67,11 @@ def _row_to_handoff(row: sqlite3.Row) -> dict[str, Any]:
             "created_at": row["yielded_at"],
             "run_id": row["yield_run_id"],
         },
+        # The note, attempted work, evidence, question and instructions are the
+        # yielding account's words; the resume note is the resumer's (below).
+        "authored_by": _author(
+            row["yielded_by_id"], row["yielded_by_is_agent"], row["yield_imported_at"]
+        ),
         "resumed": None
         if row["resume_event_id"] is None
         else {
@@ -68,6 +82,11 @@ def _row_to_handoff(row: sqlite3.Row) -> dict[str, Any]:
             "run_id": row["resume_run_id"],
             "lease_generation": row["resume_lease_generation"],
             "note": row["resume_note"],
+            "authored_by": _author(
+                row["resumed_by_id"],
+                row["resumed_by_is_agent"],
+                row["resume_imported_at"],
+            ),
         },
         "advisory_untrusted": True,
     }
@@ -77,10 +96,14 @@ _SELECT = (
     "SELECT h.*, "
     "yield_event.actor_id AS yielded_by_id, "
     "yield_actor.name AS yielded_by_name, "
+    "yield_actor.is_agent AS yielded_by_is_agent, "
+    "yield_event.imported_at AS yield_imported_at, "
     "yield_event.created_at AS yielded_at, "
     "yield_event.run_id AS yield_run_id, "
     "resume_event.actor_id AS resumed_by_id, "
     "resume_actor.name AS resumed_by_name, "
+    "resume_actor.is_agent AS resumed_by_is_agent, "
+    "resume_event.imported_at AS resume_imported_at, "
     "resume_event.created_at AS resumed_at, "
     "resume_event.run_id AS resume_run_id "
     "FROM issue_claim_handoffs h "

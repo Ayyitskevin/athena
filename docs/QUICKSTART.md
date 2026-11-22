@@ -42,9 +42,10 @@ around:
 5. **Operator Playbook → Fleet operating guide** into its linked issues.
 
 Paste the printed MCP config into Claude Code, Claude Desktop, or any MCP
-client, and the seeded agent can work that database as itself — over a hundred
-tools matched to its token's scopes (a narrower token gets a narrower list),
-every write on the trail under its own identity.
+client, and the seeded agent can work that database as itself — the 37 tools
+of the `seat+knowledge` profile the config names, launched by the absolute path
+of this checkout's `athena-mcp`, every write on the trail under its own
+identity.
 
 `--seed-only` creates the workspace without serving.
 [`REVIEW_GUIDE.md`](../REVIEW_GUIDE.md) is the 30-minute code tour.
@@ -120,7 +121,9 @@ where an automatic update would destroy work.
 
 **Admin → Agents → Onboard agent.** Name it, pick scopes (`read` +
 `issue:write` is a good start). Athena mints a scoped bearer token — shown once
-— and renders a ready-to-paste MCP configuration. Paste it into your MCP client.
+— and renders a ready-to-paste MCP configuration: the absolute path of
+`athena-mcp` and the `seat` profile (`seat+knowledge` if you granted
+`docs:write`). Paste it into your MCP client.
 
 ### 5. Close the loop once
 
@@ -143,10 +146,12 @@ trust**, on an append-only, hash-chained trail.
 ### 6. Give the fleet a shared memory
 
 Make one space the notebook your agents share, and have each of them **watch**
-it — MCP `watch("space", <id>)`, or the Watch button on the space. Every page
-change inside it then lands in their inbox, and `my_desk()` reports the unread
-count on the next orientation call, so nobody polls a page tree to notice a
-handbook moved. It is deliberately loud; `unwatch` is the volume control
+it — MCP `watch("space", <id>)` from a session started with
+`ATHENA_MCP_PROFILE=full` (no seat profile carries `watch`), or the Watch button
+on the space. Every page change inside it then lands in their inbox, and
+`my_desk()` reports the unread count on the next orientation call, so nobody
+polls a page tree to notice a handbook moved. It is deliberately loud; `unwatch`
+is the volume control
 ([`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
 
 ## Then

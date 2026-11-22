@@ -19,7 +19,7 @@ VISIBLE = ["root", "child", "human", "page", "imported", "blank", "native_forge"
 
 def _mcp(server, **arguments):
     result = asyncio.run(server.call_tool("recent_events", arguments))
-    return json.loads(result[0].text)
+    return json.loads(result[0][0].text)
 
 
 def _record(conn, actor, kind, target, verb, *, run=None, parent=None, imported=None):

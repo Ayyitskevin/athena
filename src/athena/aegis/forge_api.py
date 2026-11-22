@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel
 
 from athena.aegis import forge
@@ -32,6 +32,7 @@ from athena.core import event_source_commands, event_sources, forge_events
 from athena.core.ids import RowIdPath
 from athena.core.deps import get_conn
 from athena.core.identity import admin_actor, optional_actor
+from athena.core.refusals import Refusal
 
 router = APIRouter(tags=["forge"])
 
@@ -64,6 +65,13 @@ _STATUS_BY_KIND = {
     "not_found": 404,
     "conflict": 409,
 }
+_CODE_BY_KIND = {
+    "unauthorized": "unauthenticated",
+    "forbidden": "forbidden",
+    "invalid": "validation_error",
+    "not_found": "not_found",
+    "conflict": "conflict",
+}
 
 
 @router.get("/event-sources")
@@ -90,16 +98,22 @@ def create_event_source(
     name = payload.name.strip()
     host = payload.host.strip().lower()
     if not name:
-        raise HTTPException(status_code=422, detail="source name is required")
+        raise Refusal(
+            status_code=422, detail="source name is required", code="validation_error"
+        )
     if not host:
-        raise HTTPException(status_code=422, detail="source host is required")
+        raise Refusal(
+            status_code=422, detail="source host is required", code="validation_error"
+        )
     try:
         return event_source_commands.register_source(
             conn, actor=actor, name=name, kind=payload.kind, host=host
         )
     except event_source_commands.EventSourceCommandError as exc:
-        raise HTTPException(
-            status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=_STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=_CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -116,8 +130,10 @@ def set_event_source_enabled(
             conn, actor=actor, source_id=source_id, enabled=payload.enabled
         )
     except event_source_commands.EventSourceCommandError as exc:
-        raise HTTPException(
-            status_code=_STATUS_BY_KIND[exc.kind], detail=exc.detail
+        raise Refusal(
+            status_code=_STATUS_BY_KIND[exc.kind],
+            detail=exc.detail,
+            code=_CODE_BY_KIND[exc.kind],
         ) from exc
 
 
@@ -131,7 +147,7 @@ def delete_event_source(
     authentic when recorded, and revoking a credential is not a reason to rewrite
     the trail."""
     if not event_source_commands.delete_source(conn, actor=actor, source_id=source_id):
-        raise HTTPException(status_code=404, detail="no such event source")
+        raise Refusal(status_code=404, detail="no such event source", code="not_found")
 
 
 @router.get("/forge/help")
@@ -166,10 +182,14 @@ async def receive_forge_event(
     # it, and refusing early keeps an oversized body out of memory.
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > forge_events.MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail="payload too large")
+        raise Refusal(
+            status_code=413, detail="payload too large", code="payload_too_large"
+        )
     body = await request.body()
     if len(body) > forge_events.MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail="payload too large")
+        raise Refusal(
+            status_code=413, detail="payload too large", code="payload_too_large"
+        )
 
     # An unknown source and a bad signature are the SAME refusal. Answering "no
     # such source" would turn this route into a directory of the workspace's
@@ -181,25 +201,37 @@ async def receive_forge_event(
         conn, source["id"] if source is not None else 0, body, x_hub_signature_256
     )
     if source is None or not verified:
-        raise HTTPException(status_code=401, detail="invalid signature")
+        raise Refusal(
+            status_code=401, detail="invalid signature", code="unauthenticated"
+        )
     if not source["enabled"]:
         # Authenticated, but the operator has switched this channel off. 403 (not
         # 401) because the credential is good — the answer is "not right now".
-        raise HTTPException(status_code=403, detail="event source is paused")
+        raise Refusal(
+            status_code=403, detail="event source is paused", code="forbidden"
+        )
 
     # Authenticated. Only now does untrusted input reach a parser.
     try:
         payload = json.loads(body)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="payload is not JSON") from exc
+        raise Refusal(
+            status_code=400, detail="payload is not JSON", code="bad_request"
+        ) from exc
 
     parser = forge_events.PARSERS.get(source["kind"])
     if parser is None:  # unreachable: kind is closed at registration
-        raise HTTPException(status_code=500, detail="no parser for this source kind")
+        raise Refusal(
+            status_code=500,
+            detail="no parser for this source kind",
+            code="internal_error",
+        )
     try:
         facts = parser(x_github_event or "", payload)
     except forge_events.ForgeEventError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise Refusal(
+            status_code=422, detail=str(exc), code="validation_error"
+        ) from exc
 
     result = forge.land_delivery(conn, source=source, facts=facts)
     return {

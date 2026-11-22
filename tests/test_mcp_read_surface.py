@@ -60,7 +60,7 @@ def test_whoami_tool_merges_identity_with_the_current_run(tmp_path):
     try:
         server = build_server(agent)
         result = asyncio.run(server.call_tool("whoami", {}))
-        payload = json.loads(result[0].text)
+        payload = json.loads(result[0][0].text)
         assert payload["email"] == "sol@e.com"
         assert payload["scopes"] == ["read", "issue:write"]
         assert payload["run"]["run_id"] == "sol-session"

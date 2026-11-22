@@ -40,7 +40,7 @@ def test_project_brief_is_one_get_with_the_requested_section_limit(
                 scopes=frozenset({"read"}),
                 profile=mcp_server.PROFILES["conductor"],
             )
-            content = asyncio.run(
+            content, _ = asyncio.run(
                 server.call_tool("get_project_brief", {"project_id": 7, **arguments})
             )
             result = json.loads(content[0].text)

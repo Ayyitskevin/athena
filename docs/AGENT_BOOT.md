@@ -21,8 +21,10 @@ the block sends every session into a wall — **wire first, adopt second.**
    `docs:write` if it edits Mentor pages) — see
    [QUICKSTART.md](QUICKSTART.md) path B and [OPERATIONS.md](OPERATIONS.md).
 2. Configure the runtime per [RUNTIME_RECIPE.md](RUNTIME_RECIPE.md) — for MCP
-   harnesses, the `athena-mcp` server with `ATHENA_BASE_URL` and
-   `ATHENA_TOKEN`; for plain-HTTP agents, the same two values in the
+   harnesses, the config Athena prints (`athena-demo`, onboarding): the
+   absolute path of `athena-mcp` with `ATHENA_BASE_URL`, `ATHENA_TOKEN` and
+   `ATHENA_MCP_PROFILE` (`seat`, or `seat+knowledge` for a token with
+   `docs:write`); for plain-HTTP agents, the first two values in the
    environment.
 3. **Prove the wiring** (this is the seat's smoke test; re-run it after any
    token rotation or deploy move):
@@ -37,6 +39,8 @@ athena-seat-doctor --expect-scopes read,issue:write
 curl -sf -H "Authorization: Bearer $ATHENA_TOKEN" "$ATHENA_BASE_URL/desk" | head -c 400
 
 # MCP path — ask the harness to call my_desk() and report the identity lane.
+# A rejected token stops athena-mcp at startup with a message on stderr (the
+# harness's MCP log); an unreachable Athena still starts it, unfiltered.
 ```
 
 If either fails, stop: fix the wiring, do not paste the block yet.
@@ -112,6 +116,8 @@ names a smaller set:
 | `seat+knowledge` | the above plus `search`, `get_page`, `list_pages`, `create_page`, `update_page`, `record_run_learning`, `get_issue_runbook`, `list_projects`, `attach_label`, `list_labels`, `link_issues` | a seat that also reads and writes pages |
 | `conductor` | `seat` plus `get_attention_ranking`, `get_project_floor`, `get_project_brief`, `get_project_review_queue`, `get_issue_history`, `assign_issue`, `delegate_issue`, `request_candidate_review`, `set_issue_parent`, `list_subtasks`, `link_issues` | a member agent coordinating supplied role accounts; see [CONDUCTOR_RECIPE.md](CONDUCTOR_RECIPE.md) |
 
+Every config Athena prints names `seat`, or `seat+knowledge` when the token
+carries `docs:write`; only a hand-written config falls back to `full`.
 A profile intersects the scope filter: it can hide a tool the token could use,
 never show one it could not, and the REST layer stays the boundary either way.
 No seat profile carries `mark_notifications_read`: bulk acknowledgement is never

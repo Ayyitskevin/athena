@@ -199,7 +199,11 @@ def test_hidden_and_missing_roots_are_identical_404s_on_json_and_html(tmp_path):
         )
         missing_json = client.get("/issues/999999/work-context", headers=H_OUTSIDER)
         assert hidden_json.status_code == missing_json.status_code == 404
-        assert hidden_json.json() == missing_json.json() == {"detail": "no such issue"}
+        assert (
+            hidden_json.json()
+            == missing_json.json()
+            == {"detail": "no such issue", "code": "not_found"}
+        )
         for response in (hidden_json, missing_json):
             assert response.headers["cache-control"] == "private, no-store"
             assert {"authorization", "x-athena-actor"} <= _vary(response)

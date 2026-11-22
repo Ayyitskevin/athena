@@ -822,7 +822,7 @@ def test_mcp_heartbeat_and_complete_accept_usage(tmp_path):
                 {"run_id": "run-m", "usage": {"input_tokens": 42}},
             )
         )
-        assert json.loads(beat[0].text)["run_id"] == "run-m"
+        assert json.loads(beat[0][0].text)["run_id"] == "run-m"
         assert reported_usage.from_event(_events(tmp_path, "usage_reported")[0])[
             "usage"
         ] == {"input_tokens": 42}

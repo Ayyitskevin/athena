@@ -1,15 +1,16 @@
 # Agentic use: review findings and improvement specification
 
 Date: 2026-11-21. Review baseline: `99a0286ba12c7b9250348a61819827ce943f01b9`.
-Status: **decisions accepted; Waves 0 and 0b built.** On 2026-11-22 the owner
-accepted all fifteen decisions as recommended and authorized Wave 0, then, once
-it had merged, Wave 0b and Wave 1. See
+Status: **decisions accepted; Waves 0, 0b and 1 built.** On 2026-11-22 the
+owner accepted all fifteen decisions as recommended and authorized Wave 0, then,
+once it had merged, Wave 0b and Wave 1. See
 [the decision record](../decisions/2026-11-22-agentic-use-decisions.md). Wave 0
 landed in PR #466 and its results are under "Wave 0 results" below. Wave 0b
-(A2, under D3) is built; its rule is recorded in
+(A2, under D3) landed in PR #467; its rule is recorded in
 [its own decision record](../decisions/2026-11-22-ready-rule-awaiting-decision.md).
-The later waves are not built; they remain proposals for when to build, not
-whether the design holds.
+Wave 1 (A4 to A10, A15b, A16 and A17) is built in PR #468 and its results are
+under "Wave 1 results" below. Waves 2 to 4 are not built; they remain proposals
+for when to build, not whether the design holds.
 Several requirements change or extend an earlier accepted decision; each says
 so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
@@ -148,6 +149,71 @@ Three things Wave 0 found and did not fix:
   pre-check returns 500. It writes nothing.
 - Trails written before C2 may hold a `deleted_project` event for a project
   that still exists. No repair is proposed.
+
+### Wave 1 results
+
+Measured on the Wave 1 head in the same 4-CPU, 15 GB container. Wave 1 is A4
+to A10, A15b, A16 and A17, one commit each, in PR #468.
+
+| Measure | Baseline | After Wave 1 |
+|---|---|---|
+| Reproduced loop defects with no recovery by the agent | 3 | 0, now held by `tests/test_contract_agent.py` (A16). Switching the A2 rule off makes it fail. |
+| Tool text loaded by the printed MCP config | 114 tools, 102,836 bytes | `seat`: 26 tools, 36,618 bytes. `seat+knowledge`: 37 tools, 45,623 bytes (A7). |
+| Largest default read | 161,000 characters (`search_work`); 203,000 (`list_pages`) | 16,000 for every tool in the three seat profiles; one declared exception, `get_issue_work_context` at 32,000 (A6). |
+| Refusals that carry a machine code | 401, 403, 404 and most 409 carried none | Every 4xx and 5xx JSON body: 43 REST codes, 11 naming a `next` call, plus 5 MCP-side codes. A source check fails on a refusal without one (A5). |
+| Tools with a declared result shape | 8 of 114 | All 140: one JSON object per call, an output schema, and read-only, destructive and idempotent hints (A4). |
+| Entry-document examples executed in the gate | 0 | All: 33 fenced blocks in five documents; 14 run as requests, 14 checked against a real response or config, 5 excluded with a reason. Of 45 inline tool calls, 11 are run and 34 checked against the tool's schema and profile (A15b). |
+
+The `seat` tool list is larger than the 32,793 bytes measured at the baseline
+because each tool now carries hints, an output schema and the report's closed
+sets. The full surface on a member token grew for the same reason, from
+102,836 to 114,486 bytes; a printed config no longer loads it.
+
+The product gate passes on the head that holds all ten requirements
+(`8ab2c59`): 5,449 tests in about 18 minutes, peak memory 1.42 GiB. Coverage
+is 94.04% line, 85.36% branch and 92.06% combined, against floors of 92.60,
+82.30 and 90.30. Wave 1 added 174 tests.
+
+What executing the contract found, all fixed in this wave:
+
+- Five wrong examples in the entry documents (A15b): the runtime recipe's
+  issue named a project that does not exist on a fresh instance, so its next
+  step returned 404; `QUICKSTART.md` told a seat to call `watch`, which no
+  seat profile carries; two tool calls omitted a required `issue_id`; and the
+  guide's 428 example showed a stale `detail`.
+- Thirteen seat tools answered above 16,000 characters on a workspace with one
+  large issue and one large page, including `get_issue`, `my_desk` and
+  `update_issue` (A6).
+
+Found and not fixed:
+
+- JSON refusals raised by the cockpit's own routes under `web/` carry no
+  registered code. The source check does not cover them.
+- The response budget counts the text as sent, which the MCP library
+  pretty-prints; about 30% of each budget is whitespace.
+- Six list routes take a limit and no offset. MCP pages them by over-fetching
+  up to the route's cap and says `truncated` with no `next` at the cap. A REST
+  cursor in D2's vocabulary would remove the cap.
+- A comment longer than 12,000 characters cannot be read whole through MCP,
+  and no REST route reads one comment.
+- An in-process `FastMCP.call_tool` still raises on failure; only the wire
+  carries the single failure object. About fifty existing tests rely on it.
+- `update_issue` is marked destructive, because an issue's title and body keep
+  no history. A client that asks before destructive calls will ask on the most
+  common seat write. Keeping a history of issue text would remove the reason.
+- Imported comments and pages name the local account the import matched,
+  because their rows carry no import marker. Marking them needs a migration.
+- `POST /issues/bulk` reports a wrong status per item without
+  `valid_statuses`.
+- `GET /issues/{ref}`, the list and search reads and the learning reads carry
+  no `authored_by`; A10 named five packets and they are outside them.
+- The desk advertises a notebook that `seat+knowledge` can edit and cannot
+  create, and `delegate_issue` tells a conductor to resolve ids with
+  `list_users`, which is admin-only. Both need a profile decision.
+- The app has no injectable clock. The contract agent lapses a lease by
+  rewriting its stored expiry, as the existing lease tests do.
+- `src/athena/field_guide/07_watching.md` and `docs/DESK.md` still name tools
+  no seat profile carries; `examples/desk_loop.md` is not executed.
 
 ## Priorities
 

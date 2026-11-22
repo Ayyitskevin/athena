@@ -550,7 +550,10 @@ def test_revoked_bearer_token_cannot_replay_completed_response(tmp_path):
         after = client.post("/issues", json={"title": "created"}, headers=keyed)
 
     assert after.status_code == 401
-    assert after.json() == {"detail": "invalid or revoked token"}
+    assert after.json() == {
+        "detail": "invalid or revoked token",
+        "code": "unauthenticated",
+    }
     assert after.headers.get("idempotent-replay") is None
 
 
@@ -577,7 +580,10 @@ def test_keyed_bearer_request_and_replay_each_consume_rate_limit_once(tmp_path):
     assert replay.status_code == 201
     assert replay.headers["idempotent-replay"] == "true"
     assert limited.status_code == 429
-    assert limited.json() == {"detail": "token rate limit exceeded"}
+    assert limited.json() == {
+        "detail": "token rate limit exceeded",
+        "code": "rate_limited",
+    }
 
 
 def test_secret_bearing_creation_routes_reject_keys_without_persisting_secret(tmp_path):
@@ -881,7 +887,8 @@ def test_key_on_non_api_endpoint_is_rejected_instead_of_silently_ignored(tmp_pat
 
     assert response.status_code == 400
     assert response.json() == {
-        "detail": "Idempotency-Key is not supported for this endpoint"
+        "detail": "Idempotency-Key is not supported for this endpoint",
+        "code": "idempotency_key_unsupported",
     }
 
 
@@ -1059,7 +1066,10 @@ def test_first_user_bootstrap_cannot_silently_ignore_key(tmp_path):
         )
 
     assert response.status_code == 401
-    assert response.json() == {"detail": "authentication required"}
+    assert response.json() == {
+        "detail": "authentication required",
+        "code": "unauthenticated",
+    }
     conn = db.connect(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
@@ -1326,7 +1336,10 @@ def test_streamed_keyed_body_is_bounded_before_claim(tmp_path):
         status, response_body = asyncio.run(_raw_streamed_keyed_request(app, body))
 
     assert status == 413
-    assert json.loads(response_body) == {"detail": "request body too large"}
+    assert json.loads(response_body) == {
+        "detail": "request body too large",
+        "code": "payload_too_large",
+    }
     conn = db.connect(db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM idempotency_keys").fetchone()[0] == 0

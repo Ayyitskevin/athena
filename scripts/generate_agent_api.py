@@ -10,7 +10,10 @@ token scope and which REST call it performs — from the code itself:
 - each tool's REST calls are read from the tool bodies in ``mcp/tools_*.py``
   (which ``AthenaClient`` methods it calls) joined to the HTTP verb + path
   literals in ``client.py``;
-- descriptions come from the registered FastMCP tools themselves.
+- descriptions come from the registered FastMCP tools themselves, and each
+  tool's hints from ``athena.mcp.server.tool_annotations``;
+- the refusal-code table comes from ``athena.core.refusal_codes``, the one
+  registry every REST refusal's ``code`` is drawn from.
 
 Usage:
     python scripts/generate_agent_api.py            # rewrite docs/AGENT_API.md
@@ -166,9 +169,24 @@ def registered_descriptions() -> dict[str, str]:
     return summaries
 
 
+def _hints(annotations) -> str:
+    """One tool's MCP annotations, as words."""
+    if annotations.readOnlyHint:
+        return "read-only"
+    words = [
+        word
+        for word, hinted in (
+            ("destructive", annotations.destructiveHint),
+            ("idempotent", annotations.idempotentHint),
+        )
+        if hinted
+    ]
+    return ", ".join(words) or "additive"
+
+
 def render() -> str:
     sys.path.insert(0, str(REPO / "src"))
-    from athena.mcp.server import TOOL_SCOPES  # noqa: PLC0415
+    from athena.mcp.server import TOOL_SCOPES, tool_annotations  # noqa: PLC0415
 
     methods = client_method_calls()
     tool_methods = tool_client_methods()
@@ -210,6 +228,13 @@ def render() -> str:
         "If the identity probe is unavailable, presentation fails open; REST",
         "enforcement remains the boundary. A tool shown as *(client-side)*",
         "composes other calls or local state instead of one fixed route.",
+        "",
+        "Every tool answers one JSON object, as one text block and as structured",
+        "content. A list is `{items, count, truncated, next}`; when `truncated` is",
+        "true, `next` holds the arguments that continue it. A call with nothing to",
+        "return answers `{found: false}` (a read) or `{applied: true}` (a write).",
+        "The Hints column is the tool's MCP annotations: *read-only*, or for a",
+        "write whether it is *destructive* and *idempotent*.",
         "",
         "## Reported claim completion",
         "",
@@ -261,7 +286,10 @@ def render() -> str:
         if not names:
             continue
         lines += [f"## {SCOPE_HEADINGS[scope]}", ""]
-        lines += ["| MCP tool | REST call(s) | Summary |", "|---|---|---|"]
+        lines += [
+            "| MCP tool | REST call(s) | Hints | Summary |",
+            "|---|---|---|---|",
+        ]
         for name in names:
             rest_calls: list[str] = []
             for m in tool_methods[name]:
@@ -272,9 +300,11 @@ def render() -> str:
                 else "*(client-side)*"
             )
             summary = descriptions[name].replace("|", "\\|")
-            lines.append(f"| `{name}` | {rest} | {summary} |")
+            hints = _hints(tool_annotations(name))
+            lines.append(f"| `{name}` | {rest} | {hints} | {summary} |")
         lines.append("")
 
+    lines += refusal_code_lines()
     lines += [
         "---",
         "",
@@ -285,6 +315,61 @@ def render() -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def refusal_code_lines() -> list[str]:
+    """The reference table of refusal codes, one row per registry entry."""
+    sys.path.insert(0, str(REPO / "src"))
+    from athena.core.refusal_codes import (  # noqa: PLC0415
+        MCP_REFUSAL_CODES,
+        REFUSAL_CODES,
+    )
+
+    lines = [
+        "## Refusal codes",
+        "",
+        "Every 4xx and 5xx JSON body from a REST route carries a top-level `code`",
+        "from this registry (`core/refusal_codes.py`), beside an unchanged",
+        "`detail`. Branch on `code`, never on the `detail` text. Over MCP a",
+        "refused call returns the same object with `isError` true, plus",
+        "`status_code` and, where this table names one, `next`: the tool call",
+        "that resolves it. A 202 `approval_required` is not an error: it comes",
+        "back with `isError` false, `applied: false` and `next`.",
+        "",
+        "| Code | Status | Meaning | Next |",
+        "|---|---|---|---|",
+    ]
+    for entry in REFUSAL_CODES.values():
+        statuses = ", ".join(str(status) for status in entry.statuses)
+        meaning = entry.meaning.replace("|", "\\|")
+        follow = (
+            f"`{entry.next.tool}`: {entry.next.hint}".replace("|", "\\|")
+            if entry.next is not None
+            else ""
+        )
+        lines.append(f"| `{entry.code}` | {statuses} | {meaning} | {follow} |")
+    lines += [
+        "",
+        "### MCP-side codes",
+        "",
+        "These failures never got an HTTP answer from Athena: bad tool arguments,",
+        "a check the MCP client makes itself, or no response at all. No REST route",
+        "answers with them. A tool call that fails this way is the same one object,",
+        "with `isError` true and `status_code` null.",
+        "",
+        "| Code | Status | Meaning | Next |",
+        "|---|---|---|---|",
+    ]
+    for mcp_entry in MCP_REFUSAL_CODES.values():
+        meaning = mcp_entry.meaning.replace("|", "\\|")
+        follow = (
+            f"`{mcp_entry.next.tool}`: {mcp_entry.next.hint}".replace("|", "\\|")
+            if mcp_entry.next is not None
+            else ""
+        )
+        lines.append(f"| `{mcp_entry.code}` | none | {meaning} | {follow} |")
+    lines.append("")
+    return lines
 
 
 def main() -> int:

@@ -19,10 +19,29 @@ import sqlite3
 from typing import TypedDict
 
 from athena.aegis import issues, projects, sprints
-from athena.core import activity, db, labels, notifications, users
+from athena.core import activity, authorship, db, labels, notifications, users
 
 _INFER_PROJECT = object()
 COMPLETION_REPORT_MARKER = "; reported_completion_v1 "
+#: The events that write an issue's title and body: its creation and its edits
+#: (every title or body change goes through the edit command, which records
+#: ``issue_edited``; an edit has no undo). The newest names the current text's
+#: author.
+ISSUE_TEXT_VERBS = ("created", "issue_edited")
+
+
+def issue_text_authors(
+    conn: sqlite3.Connection, issue_ids: Collection[int], *, actor: dict | None
+) -> dict[int, authorship.Author | None]:
+    """``authored_by`` for each issue's current title and body, as ``actor`` may
+    see it: see :func:`athena.core.authorship.latest_text_authors`."""
+    return authorship.latest_text_authors(
+        conn,
+        target_kind="issue",
+        verbs=ISSUE_TEXT_VERBS,
+        ids=issue_ids,
+        actor=actor,
+    )
 
 
 def _project_scope_key(conn: sqlite3.Connection, project_id: int | None) -> str | None:
