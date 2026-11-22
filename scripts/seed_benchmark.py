@@ -76,12 +76,16 @@ def seed(
     db.migrate(conn)
 
     admin = users.create_user(
-        conn, email="admin@example.test", name="Admin", role="admin"
+        conn, email="admin@example.test", name="Admin", role="admin", commit=True
     )
-    owner = users.create_user(conn, email="owner@example.test", name="Owner")
-    member = users.create_user(conn, email="member@example.test", name="Member")
+    owner = users.create_user(
+        conn, email="owner@example.test", name="Owner", commit=True
+    )
+    member = users.create_user(
+        conn, email="member@example.test", name="Member", commit=True
+    )
     agent = users.create_user(
-        conn, email="agent@example.test", name="Agent", is_agent=True
+        conn, email="agent@example.test", name="Agent", is_agent=True, commit=True
     )
 
     projects: list[dict] = []
@@ -92,6 +96,7 @@ def seed(
             name=f"{'Private' if private else 'Public'} {i}",
             key=f"{'PRV' if private else 'PUB'}{i}",
             created_by=owner["id"],
+            commit=True,
         )
         if private:
             conn.execute(
@@ -108,6 +113,7 @@ def seed(
             key=f"{'RS' if private else 'PS'}{i}",
             name=f"Space {i}",
             created_by=owner["id"],
+            commit=True,
         )
         if private:
             conn.execute(

@@ -35,6 +35,7 @@ the committed tables no longer match the code.
 
 from __future__ import annotations
 
+import argparse
 import ast
 import importlib.util
 from pathlib import Path
@@ -154,4 +155,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # --help answers without doing the work (tests/test_scripts_runnable.py).
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 if the document drifted, write nothing",
+    )
+    parser.parse_args()
     raise SystemExit(main())

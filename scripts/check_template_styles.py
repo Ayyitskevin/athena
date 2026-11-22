@@ -25,6 +25,7 @@ allowlisted but now styled): the list must shrink the moment it can.
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -165,4 +166,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # --help answers without doing the work (tests/test_scripts_runnable.py).
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.parse_args()
     sys.exit(main())

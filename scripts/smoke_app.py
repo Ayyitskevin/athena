@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from http.cookiejar import CookieJar
 import json
 import os
@@ -318,4 +319,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # --help answers without doing the work (tests/test_scripts_runnable.py).
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.parse_args()
     raise SystemExit(main())
