@@ -1,10 +1,12 @@
 # Agentic use: review findings and improvement specification
 
 Date: 2026-11-21. Review baseline: `99a0286ba12c7b9250348a61819827ce943f01b9`.
-Status: **decisions accepted; Wave 0 authorized.** On 2026-11-22 the owner
-accepted all fifteen decisions as recommended and authorized Wave 0 only. See
-[the decision record](../decisions/2026-11-22-agentic-use-decisions.md). The
-later waves remain proposals for when to build, not whether the design holds.
+Status: **decisions accepted; Wave 0 built.** On 2026-11-22 the owner accepted
+all fifteen decisions as recommended and authorized Wave 0 only. See
+[the decision record](../decisions/2026-11-22-agentic-use-decisions.md). Wave 0
+landed in PR #466 and its results are under "Wave 0 results" below. Wave 0b
+and the later waves are not built; they remain proposals for when to build,
+not whether the design holds.
 Several requirements change or extend an earlier accepted decision; each says
 so and names the decision it relies on under "Decisions for the owner".
 Evidence: [reports/repo-review-2026-11-21.md](reports/repo-review-2026-11-21.md).
@@ -119,6 +121,30 @@ for the wave named. A row with no number yet says how the number is to be set.
 | Calls for one reviewed change by a conductor | About 37 (reviewer's count, not re-run) | Re-measure first; then the count less the calls C9 removes | 3 |
 | Cockpit-only capabilities | 4 groups (ARCH-4, ARCH-5) | 0, or each on a declared exception list | 4 |
 | Commits that name an Athena issue | 13 of 804; none since August | Every agent branch, if D9 is accepted | 4 |
+
+### Wave 0 results
+
+Re-measured on the Wave 0 head in the same 4-CPU, 15 GB container.
+
+| Measure | Baseline | After Wave 0 |
+|---|---|---|
+| Reproduced loop defects with no recovery by the agent | 3 | 1. MCP-1 and LOOP-2 are fixed (A1, A3). LOOP-1 remains; it is A2, in Wave 0b. |
+| Written guarantees false by execution | 4 | 0. Each original reproduction was re-run against the fixed code and is refused (C1, C2, C3, A1). |
+| Product gate in a 4-CPU, 15 GB container | Workers killed for memory after about 16 minutes | Passes in about 15 minutes: 5,259 tests, peak 1.41 GiB (B1). |
+| Apps left alive after a 20-test run | About one per test | One, the module-level app, held by `tests/test_suite_memory.py`. |
+
+Coverage on that head is 93.83% line, 84.98% branch and 91.81% combined,
+against floors of 92.60, 82.30 and 90.30.
+
+Three things Wave 0 found and did not fix:
+
+- A bulk close by a gated agent needs one approval per issue and answers 202
+  for the whole call. Retries under one key now make progress and write no
+  duplicate event, so A1 did not make it worse, but the shape is poor.
+- A project create or rename whose name or key collides after the route's
+  pre-check returns 500. It writes nothing.
+- Trails written before C2 may hold a `deleted_project` event for a project
+  that still exists. No repair is proposed.
 
 ## Priorities
 
