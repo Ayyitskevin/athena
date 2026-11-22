@@ -10,13 +10,30 @@ rollup counted imported rows while the docs claimed otherwise) are what
 happens when that rule is enforced by hand.
 
 The check is greppable by design. Every SQL read of the ``activity`` table in
-``src/athena`` must appear below — either as GUARDED (the reader's function
+``src/athena`` must be declared — either as GUARDED (the reader's function
 carries the guard, verified by pattern) or as EXEMPT (a general reader, with
-the reason imported rows are safe there). A new reader that appears in neither
-list fails the build; an entry that no longer matches a live reader fails as
-stale. docs/FORGE.md's guard table is pinned to MECHANISMS by
-tests/test_imported_at_guards.py, so the doc cannot claim a guard the code
-does not carry — the exact H-0.4 failure.
+the reason imported rows are safe there). A new reader that is declared in
+neither way fails the build; an exemption that no longer matches a live reader
+fails as stale.
+
+The declarations live beside the code they describe: one
+``imported_at_guards.toml`` per package (``src/athena/aegis/``,
+``src/athena/core/``), holding the entries of the modules in that directory and
+below it, up to the next directory that has a file of its own. Its header says
+what each kind of entry means. A data file rather than a declaration inside
+each module, for two reasons: a find-and-replace that removes a guard from a
+module (``native_only=True`` to ``False``) would rewrite a pattern declared in
+the same file and pass; and a migration's text is checksummed once applied, so
+its guard cannot be declared inside it. The checker reads the files with the
+standard library, imports nothing from Athena, and fails on an entry declared
+in the wrong package's file, naming a module or an exempt function that does
+not exist, or naming a mechanism row that MECHANISM_ROWS does not have.
+
+``MECHANISMS``, ``EXTRA_GUARDED`` and ``EXEMPT_READERS`` remain importable from
+this script as read-only views gathered from the files. docs/FORGE.md's guard
+table is pinned to MECHANISM_ROWS (and so to MECHANISMS) by
+tests/test_imported_at_guards.py, so the doc cannot claim a guard the code does
+not carry — the exact H-0.4 failure.
 """
 
 from __future__ import annotations
@@ -24,13 +41,15 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
-from typing import Iterable
+import tomllib
+from typing import Any, Iterable
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "athena"
+GUARD_FILE = "imported_at_guards.toml"
 
 # Case-sensitive on purpose: the codebase writes SQL keywords uppercase, and
 # matching case keeps prose ("events from activity") out of the net. The word
@@ -38,453 +57,30 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "athena"
 # from matching.
 _ACTIVITY_READ_RE = re.compile(r"\bFROM\s+activity\b|\bJOIN\s+activity\b")
 
-# The native-only mechanisms, in the order docs/FORGE.md's guard table lists
-# them. Each assertion is (path under src/athena, function or None for a
-# whole-file check, pattern that must appear). The guard column is the
-# substring FORGE.md's table cell must contain; the pin test compares labels
-# exactly so the table cannot grow or rename a row without touching this list.
-MECHANISMS: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...] = (
-    (
-        "Undo",
-        "undo_imported_event",
-        (("core/undo.py", "undo", r'event\["imported_at"\] is not None'),),
-    ),
-    (
-        "Lifecycle facts (0055)",
-        "imported_at IS NULL",
-        (
-            (
-                "core/migrations/0055_issue_lifecycle_facts.sql",
-                None,
-                r"imported_at IS NULL",
-            ),
-        ),
-    ),
-    (
-        "Claim handoffs (0058)",
-        "imported_at IS NULL",
-        (
-            (
-                "core/migrations/0058_issue_claim_handoffs.sql",
-                None,
-                r"imported_at IS NULL",
-            ),
-        ),
-    ),
-    (
-        "Exact-version candidates and reviews (0082)",
-        "imported_at IS NULL",
-        (
-            (
-                "core/migrations/0082_issue_review_candidates.sql",
-                None,
-                r"imported_at IS NULL",
-            ),
-        ),
-    ),
-    (
-        "Assignee facts (0068)",
-        "imported_at IS NULL",
-        (
-            (
-                "core/migrations/0068_issue_assignee_facts.sql",
-                None,
-                r"imported_at IS NULL",
-            ),
-        ),
-    ),
-    (
-        "Fleet metrics",
-        "imported_at IS NULL",
-        (
-            (
-                "aegis/fleet_metrics.py",
-                "_load_visible_lifecycle",
-                r"imported_at IS NULL",
-            ),
-            # The evidence query deliberately SELECTs imported rows so coverage
-            # can count them as excluded; the drop happens row-by-row here.
-            (
-                "aegis/fleet_metrics.py",
-                "build_fleet_metrics",
-                r'row\["imported_at"\] is not None',
-            ),
-        ),
-    ),
-    (
-        "Attention rollup, security refusal counters",
-        "imported_at IS NULL",
-        (
-            ("aegis/fleet_attention.py", "build_attention", r"imported_at IS NULL"),
-            ("core/security_events.py", "list_failures", r"imported_at IS NULL"),
-            ("core/security_events.py", "failure_counts", r"imported_at IS NULL"),
-        ),
-    ),
-    (
-        "Automation scan",
-        "imported_at IS NULL",
-        (
-            # The scan opts into native-only at the call site (H-0.3); the
-            # guard itself lives in list_events' native_only branch.
-            ("aegis/automation.py", "process_pending", r"native_only=True"),
-            ("core/activity.py", "list_events", r"imported_at IS NULL"),
-        ),
-    ),
+# The rows of docs/FORGE.md's native-only guard table, in its order: (label,
+# guard). The guard column is the substring FORGE.md's table cell must contain;
+# the pin test compares labels exactly so the table cannot grow or rename a row
+# without touching this list. Each row's assertions — which module carries the
+# guard, and where — are [[mechanism]] entries in the guard files, and a row
+# with none fails the check.
+MECHANISM_ROWS: tuple[tuple[str, str], ...] = (
+    ("Undo", "undo_imported_event"),
+    ("Lifecycle facts (0055)", "imported_at IS NULL"),
+    ("Claim handoffs (0058)", "imported_at IS NULL"),
+    ("Exact-version candidates and reviews (0082)", "imported_at IS NULL"),
+    ("Assignee facts (0068)", "imported_at IS NULL"),
+    ("Fleet metrics", "imported_at IS NULL"),
+    ("Attention rollup, security refusal counters", "imported_at IS NULL"),
+    ("Automation scan", "imported_at IS NULL"),
 )
 
-# Guarded readers that are not named in FORGE.md's table: native-only
-# projections that already carry the filter. (path, function, pattern, why).
-EXTRA_GUARDED: tuple[tuple[str, str, str, str], ...] = (
-    (
-        "aegis/review_commands.py",
-        "latest_visible_request",
-        r"a\.imported_at IS NULL",
-        "request binding requires the canonical native request event",
-    ),
-    (
-        "aegis/review_request_projection.py",
-        "visible_requests",
-        r"a\.imported_at IS NULL",
-        "requests, submissions, successors and canonical fulfillment require visible native evidence",
-    ),
-    (
-        "aegis/review_commands.py",
-        "visible_candidate",
-        r"a\.imported_at IS NULL",
-        "candidate submission and review authority requires native source evidence",
-    ),
-    (
-        "aegis/review_queue.py",
-        "_candidate_base",
-        r"a\.imported_at IS NULL",
-        "candidate queue and history project only native completion evidence",
-    ),
-    (
-        "aegis/review_queue.py",
-        "_latest_review",
-        r"a\.imported_at IS NULL",
-        "linked review verdicts come from the exact native completion, never imported prose",
-    ),
-    (
-        "aegis/project_brief.py",
-        "_build",
-        r"a\.imported_at IS NULL",
-        "latest completion summaries must come from native events; handoff "
-        "yield provenance joins typed rows whose 0058 insertion trigger "
-        "already excludes imported events",
-    ),
-    (
-        "core/notifications.py",
-        "notify_watchers",
-        r'if event is not None and event\["imported_at"\] is not None:\s+return\b',
-        "generic watcher fan-out is native-only; explicit mentions remain "
-        "a separate path with their existing deduplication",
-    ),
-    (
-        "aegis/fleet_work.py",
-        "build_active_work",
-        r"imported_at IS NULL",
-        "the live-issue claim join is a native-only projection of who holds "
-        "the work; foreign history must not look like a live claim",
-    ),
-    (
-        "aegis/automation.py",
-        "_schedule_target_query",
-        r"AND a\.imported_at IS NULL",
-        "the inactive_for schedule condition measures NATIVE inactivity: a "
-        "forge delivery or import bundle is foreign history and must not "
-        "reset the clock on work it never touched (the schedule twin of the "
-        "event scan's native_only guard)",
-    ),
-    (
-        "core/activity.py",
-        "reversed_counts_by_actor",
-        r"original\.imported_at IS NULL",
-        "the answerability ledger counts corrections to NATIVE work: undo "
-        "itself refuses imported events, so a reversed-imported row cannot "
-        "exist — the guard keeps the count honest even if that ever changed",
-    ),
-    (
-        "aegis/fleet_attention.py",
-        "_collect_budget_exhaustions",
-        r"imported_at IS NULL",
-        "the ranked attention queue's budget-exhaustion signal is a "
-        "native-only read; foreign history must not look like a live ceiling hit",
-    ),
-    (
-        "aegis/work_progress.py",
-        "last_work_at",
-        r'"imported_at IS NULL"',
-        "last recorded work is a native-only read: a back-dated import bundle "
-        "must not make old work look new or stale work look fresh",
-    ),
-    (
-        "aegis/work_progress.py",
-        "last_work_sql",
-        r'"wa\.imported_at IS NULL"',
-        "the shared last-work subquery (idle: atoms, sort:idle-desc, delegation "
-        "pickup) measures native work; foreign history must not hide an idle "
-        "item by resetting its last-work time",
-    ),
-    (
-        "aegis/work_progress.py",
-        "_stale_in_progress",
-        r"AND a\.imported_at IS NULL",
-        "the stale lane's grouped pass measures native work; foreign history must "
-        "not hide an idle item by resetting its last-work time",
-    ),
-    (
-        "aegis/work_progress.py",
-        "unclaimed_delegations",
-        r"AND da\.imported_at IS NULL",
-        "a delegate's claim is a native act; an imported claimed row must not "
-        "make a hand-off look picked up",
-    ),
-    (
-        "aegis/run_state.py",
-        "_facts",
-        r"a\.imported_at IS NULL",
-        "a run's derived state reads only its native work, claim acts and yields; "
-        "imported history must not make a run look active, complete or waiting",
-    ),
-    (
-        "aegis/run_state.py",
-        "open_questions",
-        r"ye\.imported_at IS NULL",
-        "an open question is a native yield; an imported row must not put a "
-        "question in front of the operator",
-    ),
-    (
-        "aegis/operator_since.py",
-        "_events_after",
-        r"a\.imported_at IS NULL",
-        "'since you last looked' counts native changes; a back-dated import must "
-        "not read as new work arriving",
-    ),
-    (
-        "aegis/operator_since.py",
-        "_stalled",
-        r"a\.imported_at IS NULL",
-        "newly stalled measures native work; imported history must not move an "
-        "issue across the stale threshold",
-    ),
-    (
-        "aegis/ready_queue.py",
-        "awaiting_answer_sql",
-        r"(?s)rqs\.imported_at IS NULL.*rqa\.imported_at IS NULL",
-        "the ready rule's settlement and its answer are both native acts: an "
-        "imported claim_completed must not hold work back from an account, and "
-        "an imported comment must not hand it back",
-    ),
-    (
-        "aegis/ready_queue.py",
-        "_latest_settlements",
-        r"s\.imported_at IS NULL",
-        "the not-offered lane reads back the same native settlement the ready "
-        "rule chose; foreign history must not supply its reason",
-    ),
-    (
-        "aegis/notification_state.py",
-        "annotate_inbox",
-        r"AND c\.imported_at IS NULL",
-        "the inbox target-state annotation reads the reader's own completions; "
-        "an imported claim_completed is foreign history and must not mark the "
-        "reader as having completed the target",
-    ),
-)
-
-# General readers allowed to see imported rows, each with the reason that is
-# safe. "<module>" keys a module-level SQL constant. A site listed here that
-# no longer reads the activity table fails as stale.
-EXEMPT_READERS: tuple[tuple[str, str, str], ...] = (
-    (
-        "aegis/claim_handoffs.py",
-        "<module>",
-        "the projection joins activity by the handoff row's own yield/resume "
-        "event ids; handoff rows are written only by the 0058 trigger, which "
-        "already excludes imported events",
-    ),
-    (
-        "aegis/automation.py",
-        "_already_fired",
-        "run-scoped existence check; imported rows carry NULL run coordinates "
-        "(activity.record enforces), so foreign history can never satisfy "
-        "run_id = ?",
-    ),
-    (
-        "aegis/fleet_metrics.py",
-        "_evidence_statement",
-        "the evidence query deliberately SELECTs imported rows so coverage can "
-        "report them as excluded_imported_events; build_fleet_metrics drops "
-        "them row-by-row, asserted in MECHANISMS",
-    ),
-    (
-        "aegis/fleet_work.py",
-        "_replay_ready_run_ids",
-        "run-scoped; imported rows carry NULL run coordinates",
-    ),
-    (
-        "aegis/work_context.py",
-        "_recent_activity",
-        "the feed serves the trail as-is and SELECTs imported_at so surfaces "
-        "can label foreign rows; a labeled feed is not a native-only mechanism",
-    ),
-    (
-        "core/activity.py",
-        "<module>",
-        "_SELECT backs the general audit readers (list_activity, the event "
-        "stream); the native-only consumer applies the guard in list_events' "
-        "native_only branch, asserted in MECHANISMS",
-    ),
-    (
-        "core/activity_chain.py",
-        "<module>",
-        "_ROW_SQL feeds the hash recipe: the chain attests the WHOLE trail as "
-        "stored, and imported_at is one of the hashed facts — excluding "
-        "foreign rows would open unchained gaps an importer could hide in",
-    ),
-    (
-        "aegis/desk.py",
-        "_events_since",
-        "the desk's 'what changed since you looked' count must equal what "
-        "GET /events would hand the same reader, and that feed serves the "
-        "trail as-is (imported rows included, labeled); excluding foreign "
-        "history here would make the count disagree with the drain it exists "
-        "to size",
-    ),
-    (
-        "aegis/desk.py",
-        "latest_visible_event_id",
-        "the value a fully-drained reader would acknowledge, so it must span "
-        "exactly the rows that reader can drain — the same general-feed "
-        "population as _events_since above",
-    ),
-    (
-        "aegis/desk_commands.py",
-        "advance_cursor",
-        "the cursor's upper bound is the trail's newest row as stored, so a "
-        "reader may acknowledge any event the general feed handed it — imported "
-        "rows included, as GET /events and _events_since serve them; bounding "
-        "by native rows only would refuse an honest acknowledgement of a "
-        "foreign event",
-    ),
-    (
-        "core/activity_chain.py",
-        "status",
-        "coverage counting must see every row, imported included: "
-        "unchained_count exists precisely to report what the chain does not "
-        "claim, so filtering here would misstate the chain's own boundary",
-    ),
-    (
-        "core/activity.py",
-        "_validated_lineage",
-        "run/fork coordinates are validated by primary key for the native row "
-        "being recorded; imported rows carry NULL run coordinates, and forking "
-        "from a visible trail row is a native act with honest provenance",
-    ),
-    (
-        "core/activity.py",
-        "reversed_event_ids",
-        "reversal links are written only by undo, which refuses imported "
-        "events; this read projects the visible trail for undo badges",
-    ),
-    (
-        "core/activity.py",
-        "_child_run_ids",
-        "run-scoped; imported rows carry NULL run coordinates",
-    ),
-    (
-        "core/activity.py",
-        "can_see_complete_run",
-        "run-scoped visibility gate; imported rows carry NULL run coordinates",
-    ),
-    (
-        "core/activity.py",
-        "distinct_verbs",
-        "filter metadata over the visible trail; the trail as-is includes "
-        "foreign history",
-    ),
-    (
-        "core/activity.py",
-        "distinct_target_kinds",
-        "filter metadata over the visible trail; the trail as-is includes "
-        "foreign history",
-    ),
-    (
-        "core/activity.py",
-        "distinct_actors",
-        "filter metadata over the visible trail; the trail as-is includes "
-        "foreign history",
-    ),
-    (
-        "core/agents.py",
-        "agent_run_exists",
-        "run-scoped; imported rows carry NULL run coordinates",
-    ),
-    (
-        "core/agents.py",
-        "_child_run_count",
-        "run-scoped; imported rows carry NULL run coordinates",
-    ),
-    (
-        "core/access.py",
-        "can_see_complete_issue_history",
-        "a visibility gate over the trail the actor may see, native or not; "
-        "excluding foreign rows here would change what 'full history' means",
-    ),
-    (
-        "core/webhooks.py",
-        "current_tip",
-        "the delivery cursor spans the whole firehose; webhook subscribers to "
-        "the trail receive foreign history too, honestly marked",
-    ),
-    (
-        "core/portability.py",
-        "_activity_for_targets",
-        "export must carry foreign history (with its imported_at marker) or "
-        "the bundle would silently drop part of the trail",
-    ),
-    (
-        "core/dispatch.py",
-        "fork_run_ids",
-        "run-scoped; imported rows carry NULL run coordinates",
-    ),
-    (
-        "core/dispatch.py",
-        "digest_mismatch_recorded",
-        "run-scoped retry deduplication; imported rows carry NULL run "
-        "coordinates and cannot satisfy run_id = ?",
-    ),
-    (
-        "core/notifications.py",
-        "process_mentions",
-        "called from the native record wrappers with the id of the event just "
-        "written; the import paths (forge, portability) never pass through "
-        "them",
-    ),
-    (
-        "core/notifications.py",
-        "<module>",
-        "the inbox join is keyed by the notification row's own event id; "
-        "notification rows are created only by native fan-out, and the inbox "
-        "renders the trail as-is",
-    ),
-    (
-        "core/notifications.py",
-        "unread_count",
-        "visibility-gated count over the reader's own inbox; personal state",
-    ),
-    (
-        "core/notifications.py",
-        "mark_read",
-        "visibility subquery for the reader's own inbox; personal state",
-    ),
-    (
-        "core/notifications.py",
-        "mark_all_read",
-        "visibility subquery for the reader's own inbox; personal state",
-    ),
-)
+# What each kind of entry carries: required keys, and optional ones.
+_ENTRY_KEYS: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    "mechanism": (frozenset({"label", "module", "pattern"}), frozenset({"function"})),
+    "guarded": (frozenset({"module", "function", "pattern", "why"}), frozenset()),
+    "exempt": (frozenset({"module", "function", "why"}), frozenset()),
+}
+_MODULE_LEVEL = "<module>"
 
 
 class GuardCheckError(RuntimeError):
@@ -493,11 +89,26 @@ class GuardCheckError(RuntimeError):
 
 @dataclass(frozen=True)
 class Violation:
-    """One unguarded, unlisted, or stale activity reader."""
+    """One unguarded, unlisted, or stale activity reader, or a bad declaration."""
 
     path: Path
     line: int
     detail: str
+
+
+@dataclass(frozen=True)
+class Registry:
+    """The declarations gathered from every guard file, in the shapes the
+    checks use (paths relative to the package root)."""
+
+    # (label, guard, ((path, function or None, pattern), ...)), in row order.
+    mechanisms: tuple[tuple[str, str, tuple[tuple[str, str | None, str], ...]], ...]
+    # (path, function, pattern, why)
+    extra_guarded: tuple[tuple[str, str, str, str], ...]
+    # (path, function or "<module>", why)
+    exempt_readers: tuple[tuple[str, str, str], ...]
+    # What was wrong with the declarations themselves.
+    problems: tuple[Violation, ...]
 
 
 def _functions(tree: ast.AST) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -525,6 +136,250 @@ def _read_trees(package_root: Path) -> dict[str, tuple[Path, str, ast.AST]]:
     return modules
 
 
+def _guard_files(package_root: Path) -> list[Path]:
+    return sorted(
+        path
+        for path in package_root.rglob(GUARD_FILE)
+        if "__pycache__" not in path.parts
+    )
+
+
+def _home(package_root: Path, relative: str) -> Path | None:
+    """The guard file that holds a module's entries: the nearest one at or
+    above the module's directory, within the package root."""
+    directory = (package_root / relative).parent
+    while True:
+        candidate = directory / GUARD_FILE
+        if candidate.is_file():
+            return candidate
+        if directory == package_root or package_root not in directory.parents:
+            return None
+        directory = directory.parent
+
+
+def _entry_lines(text: str, kind: str) -> list[int]:
+    """The line of each ``[[kind]]`` header, in file order."""
+    header = f"[[{kind}]]"
+    return [
+        number
+        for number, line in enumerate(text.splitlines(), start=1)
+        if line.strip() == header
+    ]
+
+
+def _elsewhere(
+    modules: dict[str, tuple[Path, str, ast.AST]], name: str, function: str | None
+) -> list[str]:
+    """Modules that define ``function`` (or, without one, share the file name)."""
+    if function is None or function == _MODULE_LEVEL:
+        return sorted(r for r in modules if PurePosixPath(r).name == name)
+    return sorted(
+        r
+        for r, (_path, _source, tree) in modules.items()
+        if function in _functions(tree)
+    )
+
+
+def load_registry(
+    package_root: Path,
+    modules: dict[str, tuple[Path, str, ast.AST]] | None = None,
+) -> Registry:
+    """Gather every guard file under ``package_root``, checking each entry's
+    shape and home. An entry that cannot be placed is reported and left out,
+    so the reader it meant to declare also fails as undeclared."""
+    if modules is None:
+        modules = _read_trees(package_root)
+    problems: list[Violation] = []
+    assertions: dict[str, list[tuple[str, str | None, str]]] = {
+        label: [] for label, _guard in MECHANISM_ROWS
+    }
+    extra: list[tuple[str, str, str, str]] = []
+    exempt: list[tuple[str, str, str]] = []
+    seen: dict[tuple[str, str, str], Path] = {}
+
+    for guard_file in _guard_files(package_root):
+        text = guard_file.read_text(encoding="utf-8")
+        try:
+            declared = tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise GuardCheckError(f"cannot parse {guard_file}: {exc}") from exc
+        here = guard_file.parent.relative_to(package_root)
+
+        def problem(line: int, detail: str, file: Path = guard_file) -> None:
+            problems.append(Violation(file, line, detail))
+
+        unknown_kinds = sorted(set(declared) - set(_ENTRY_KEYS))
+        if unknown_kinds:
+            problem(
+                1,
+                f"unknown entry kinds {unknown_kinds}; a guard file holds "
+                f"{sorted(_ENTRY_KEYS)} entries",
+            )
+        for kind, (required, optional) in _ENTRY_KEYS.items():
+            entries = declared.get(kind, [])
+            lines = _entry_lines(text, kind)
+            if not isinstance(entries, list) or not all(
+                isinstance(entry, dict) for entry in entries
+            ):
+                problem(1, f"{kind} must be written as [[{kind}]] tables")
+                continue
+            for index, entry in enumerate(entries):
+                line = lines[index] if index < len(lines) else 1
+                keys = set(entry)
+                missing = sorted(required - keys)
+                extra_keys = sorted(keys - required - optional)
+                if missing or extra_keys:
+                    problem(
+                        line,
+                        f"[[{kind}]] entry has missing keys {missing} and "
+                        f"unknown keys {extra_keys}",
+                    )
+                    continue
+                if not all(isinstance(value, str) for value in entry.values()):
+                    problem(line, f"[[{kind}]] entry values must be strings")
+                    continue
+                module = PurePosixPath(entry["module"])
+                function: str | None = entry.get("function")
+                if module.is_absolute() or ".." in module.parts or not module.parts:
+                    problem(
+                        line,
+                        f"[[{kind}]] module {entry['module']!r} must be a path "
+                        f"relative to {guard_file.parent}",
+                    )
+                    continue
+                relative = (PurePosixPath(here.as_posix()) / module).as_posix()
+                target = package_root / relative
+                if not target.is_file():
+                    others = _elsewhere(modules, module.name, function)
+                    hint = (
+                        f"; {', '.join(others)} "
+                        f"{'defines' if function else 'exists'} there — declare "
+                        "it in that module's own guard file"
+                        if others
+                        else ""
+                    )
+                    problem(
+                        line,
+                        f"declared in the wrong home: {relative} does not exist "
+                        f"beside {guard_file.name} in {here.as_posix()}/{hint}",
+                    )
+                    continue
+                home = _home(package_root, relative)
+                if home != guard_file:
+                    problem(
+                        line,
+                        f"declared in the wrong home: {relative}'s entries "
+                        f"belong in {home}, the nearest {GUARD_FILE} above it",
+                    )
+                    continue
+                is_sql = relative.endswith(".sql")
+                if is_sql and (kind != "mechanism" or function is not None):
+                    problem(
+                        line,
+                        f"{relative}: a migration is declared only as a "
+                        "[[mechanism]] without a function (the whole file "
+                        "carries the guard)",
+                    )
+                    continue
+                if not is_sql and (not relative.endswith(".py") or function is None):
+                    problem(
+                        line,
+                        f"{relative}: a Python module's entry names the "
+                        "function that reads or guards the trail",
+                    )
+                    continue
+                if function == _MODULE_LEVEL and kind != "exempt":
+                    problem(
+                        line,
+                        f"{relative}: only an exempt entry may name {_MODULE_LEVEL}",
+                    )
+                    continue
+                if (
+                    kind == "exempt"
+                    and function != _MODULE_LEVEL
+                    and function not in _functions(modules[relative][2])
+                ):
+                    others = _elsewhere(modules, module.name, function)
+                    problem(
+                        line,
+                        f"exempt entry names {relative}::{function}, a function "
+                        f"that module does not define"
+                        + (f" (defined in {', '.join(others)})" if others else ""),
+                    )
+                    continue
+                key = (kind, relative, function or "")
+                if key in seen:
+                    problem(
+                        line,
+                        f"{relative}::{function} is declared twice as {kind} "
+                        f"(also in {seen[key]})",
+                    )
+                    continue
+                seen[key] = guard_file
+                if kind == "mechanism":
+                    if entry["label"] not in assertions:
+                        problem(
+                            line,
+                            f"mechanism {entry['label']!r} is not a row of "
+                            "MECHANISM_ROWS (docs/FORGE.md's guard table)",
+                        )
+                        continue
+                    assertions[entry["label"]].append(
+                        (relative, function, entry["pattern"])
+                    )
+                elif kind == "guarded":
+                    extra.append(
+                        (relative, entry["function"], entry["pattern"], entry["why"])
+                    )
+                else:
+                    exempt.append((relative, entry["function"], entry["why"]))
+
+    guarded_sites = {(r, f) for r, f, _p, _w in extra} | {
+        (r, f) for found in assertions.values() for r, f, _p in found if f
+    }
+    for relative, function, _why in exempt:
+        if (relative, function) in guarded_sites:
+            problems.append(
+                Violation(
+                    package_root / relative,
+                    1,
+                    f"{relative}::{function} is declared both guarded and "
+                    "exempt; it is one or the other",
+                )
+            )
+    for label, found in assertions.items():
+        if not found:
+            problems.append(
+                Violation(
+                    package_root,
+                    1,
+                    f"{label}: no [[mechanism]] entry carries this row of "
+                    "docs/FORGE.md's guard table",
+                )
+            )
+    return Registry(
+        mechanisms=tuple(
+            (label, guard, tuple(assertions[label])) for label, guard in MECHANISM_ROWS
+        ),
+        extra_guarded=tuple(extra),
+        exempt_readers=tuple(exempt),
+        problems=tuple(problems),
+    )
+
+
+def __getattr__(name: str) -> Any:
+    """MECHANISMS, EXTRA_GUARDED and EXEMPT_READERS: read-only views of the
+    repository's guard files, gathered when first asked for."""
+    views = {
+        "MECHANISMS": "mechanisms",
+        "EXTRA_GUARDED": "extra_guarded",
+        "EXEMPT_READERS": "exempt_readers",
+    }
+    if name not in views:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(load_registry(PACKAGE_ROOT), views[name])
+
+
 def _activity_read_sites(
     modules: dict[str, tuple[Path, str, ast.AST]],
 ) -> dict[tuple[str, str], list[int]]:
@@ -541,7 +396,7 @@ def _activity_read_sites(
                 continue
             if not _ACTIVITY_READ_RE.search(node.value):
                 continue
-            owner = "<module>"
+            owner = _MODULE_LEVEL
             for function in functions:
                 if function.lineno <= node.lineno <= (function.end_lineno or 0):
                     owner = function.name
@@ -551,10 +406,11 @@ def _activity_read_sites(
 
 def find_violations(package_root: Path) -> list[Violation]:
     modules = _read_trees(package_root)
-    violations: list[Violation] = []
+    registry = load_registry(package_root, modules)
+    violations: list[Violation] = list(registry.problems)
 
     # 1. Every mechanism assertion must hold in the current source.
-    for label, _guard, assertions in MECHANISMS:
+    for label, _guard, assertions in registry.mechanisms:
         for relative, function, pattern in assertions:
             path = package_root / relative
             if relative.endswith(".sql"):
@@ -606,12 +462,14 @@ def find_violations(package_root: Path) -> list[Violation]:
     # 2. Every SQL read of the activity table must be a known reader.
     sites = _activity_read_sites(modules)
     guarded_sites = {
-        (relative, function or "<module>")
-        for _label, _guard, assertions in MECHANISMS
+        (relative, function or _MODULE_LEVEL)
+        for _label, _guard, assertions in registry.mechanisms
         for relative, function, _pattern in assertions
         if relative.endswith(".py")
-    } | {(relative, function) for relative, function, _p, _w in EXTRA_GUARDED}
-    exempt_sites = {(relative, function) for relative, function, _why in EXEMPT_READERS}
+    } | {(relative, function) for relative, function, _p, _w in registry.extra_guarded}
+    exempt_sites = {
+        (relative, function) for relative, function, _why in registry.exempt_readers
+    }
 
     for (relative, function), lines in sorted(sites.items()):
         path = modules[relative][0]
@@ -631,7 +489,7 @@ def find_violations(package_root: Path) -> list[Violation]:
         )
 
     # 3. Extra guarded readers must still carry their guard.
-    for relative, function, pattern, why in EXTRA_GUARDED:
+    for relative, function, pattern, why in registry.extra_guarded:
         entry = modules.get(relative)
         path = package_root / relative
         if entry is None:
@@ -655,7 +513,7 @@ def find_violations(package_root: Path) -> list[Violation]:
             )
 
     # 4. Listed readers that no longer read the trail are stale entries.
-    for relative, function, why in sorted(EXEMPT_READERS):
+    for relative, function, why in sorted(registry.exempt_readers):
         if (relative, function) not in sites:
             path = package_root / relative
             violations.append(

@@ -135,7 +135,12 @@ command modules and the designated writers named in it,
 block that commits (a writer whose `commit` is not `False` there, or one that
 commits whatever it is passed), and `check_imported_at_guards.py` pins every
 native-only activity reader to its `imported_at IS NULL` guard (and FORGE.md's
-guard table to the checker, via `tests/test_imported_at_guards.py`).
+guard table to the checker, via `tests/test_imported_at_guards.py`). Readers are
+declared beside their code, in the `imported_at_guards.toml` of their package
+(`src/athena/aegis/`, `src/athena/core/`): a new read of the activity table adds
+a `[[guarded]]` entry (the pattern its function must carry, and why) or an
+`[[exempt]]` entry (why foreign history is safe there) to that file, whose
+header describes both.
 `scripts/coverage.sh` runs the complete test suite with
 full-source branch coverage, writes evidence outside the checkout, and enforces
 the floors configured in `pyproject.toml`. It runs `ATHENA_COVERAGE_WORKERS`

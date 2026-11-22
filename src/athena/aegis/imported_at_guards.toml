@@ -1,0 +1,305 @@
+# Every read of the activity table in athena.aegis, and how it treats
+# imported rows. scripts/check_imported_at_guards.py reads this file and every
+# other imported_at_guards.toml under src/athena, and fails the build on an
+# activity reader that no file declares. A module's entries live in the nearest
+# imported_at_guards.toml at or above its directory (this one, for the modules
+# beside it); `module` is relative to this file.
+#
+# [[mechanism]]  a native-only mechanism listed in docs/FORGE.md's guard table:
+#                `label` names its row (MECHANISM_ROWS in the checker) and
+#                `pattern` must appear in `function` (in the whole file, for a
+#                migration).
+# [[guarded]]    another native-only reader: `pattern` must appear in
+#                `function`; `why` says why foreign history must not reach it.
+# [[exempt]]     a general reader allowed to see imported rows; `why` says why
+#                that is safe. Function "<module>" is a module-level SQL
+#                constant. An exempt reader that stops reading the trail fails
+#                as stale.
+
+# --- automation.py -----------------------------------------------------------
+
+# The scan opts into native-only at the call site (H-0.3); the
+# guard itself lives in list_events' native_only branch.
+[[mechanism]]
+label = "Automation scan"
+module = "automation.py"
+function = "process_pending"
+pattern = 'native_only=True'
+
+[[guarded]]
+module = "automation.py"
+function = "_schedule_target_query"
+pattern = 'AND a\.imported_at IS NULL'
+why = """\
+    the inactive_for schedule condition measures NATIVE inactivity: a forge \
+    delivery or import bundle is foreign history and must not reset the \
+    clock on work it never touched (the schedule twin of the event scan's \
+    native_only guard)"""
+
+[[exempt]]
+module = "automation.py"
+function = "_already_fired"
+why = """\
+    run-scoped existence check; imported rows carry NULL run coordinates \
+    (activity.record enforces), so foreign history can never satisfy run_id \
+    = ?"""
+
+# --- claim_handoffs.py -------------------------------------------------------
+
+[[exempt]]
+module = "claim_handoffs.py"
+function = "<module>"
+why = """\
+    the projection joins activity by the handoff row's own yield/resume \
+    event ids; handoff rows are written only by the 0058 trigger, which \
+    already excludes imported events"""
+
+# --- desk.py -----------------------------------------------------------------
+
+[[exempt]]
+module = "desk.py"
+function = "_events_since"
+why = """\
+    the desk's 'what changed since you looked' count must equal what GET \
+    /events would hand the same reader, and that feed serves the trail as-is \
+    (imported rows included, labeled); excluding foreign history here would \
+    make the count disagree with the drain it exists to size"""
+
+[[exempt]]
+module = "desk.py"
+function = "latest_visible_event_id"
+why = """\
+    the value a fully-drained reader would acknowledge, so it must span \
+    exactly the rows that reader can drain — the same general-feed \
+    population as _events_since above"""
+
+# --- desk_commands.py --------------------------------------------------------
+
+[[exempt]]
+module = "desk_commands.py"
+function = "advance_cursor"
+why = """\
+    the cursor's upper bound is the trail's newest row as stored, so a \
+    reader may acknowledge any event the general feed handed it — imported \
+    rows included, as GET /events and _events_since serve them; bounding by \
+    native rows only would refuse an honest acknowledgement of a foreign \
+    event"""
+
+# --- fleet_attention.py ------------------------------------------------------
+
+[[mechanism]]
+label = "Attention rollup, security refusal counters"
+module = "fleet_attention.py"
+function = "build_attention"
+pattern = 'imported_at IS NULL'
+
+[[guarded]]
+module = "fleet_attention.py"
+function = "_collect_budget_exhaustions"
+pattern = 'imported_at IS NULL'
+why = """\
+    the ranked attention queue's budget-exhaustion signal is a native-only \
+    read; foreign history must not look like a live ceiling hit"""
+
+# --- fleet_metrics.py --------------------------------------------------------
+
+[[mechanism]]
+label = "Fleet metrics"
+module = "fleet_metrics.py"
+function = "_load_visible_lifecycle"
+pattern = 'imported_at IS NULL'
+
+# The evidence query deliberately SELECTs imported rows so coverage
+# can count them as excluded; the drop happens row-by-row here.
+[[mechanism]]
+label = "Fleet metrics"
+module = "fleet_metrics.py"
+function = "build_fleet_metrics"
+pattern = 'row\["imported_at"\] is not None'
+
+[[exempt]]
+module = "fleet_metrics.py"
+function = "_evidence_statement"
+why = """\
+    the evidence query deliberately SELECTs imported rows so coverage can \
+    report them as excluded_imported_events; build_fleet_metrics drops them \
+    row-by-row, asserted in MECHANISMS"""
+
+# --- fleet_work.py -----------------------------------------------------------
+
+[[guarded]]
+module = "fleet_work.py"
+function = "build_active_work"
+pattern = 'imported_at IS NULL'
+why = """\
+    the live-issue claim join is a native-only projection of who holds the \
+    work; foreign history must not look like a live claim"""
+
+[[exempt]]
+module = "fleet_work.py"
+function = "_replay_ready_run_ids"
+why = "run-scoped; imported rows carry NULL run coordinates"
+
+# --- notification_state.py ---------------------------------------------------
+
+[[guarded]]
+module = "notification_state.py"
+function = "annotate_inbox"
+pattern = 'AND c\.imported_at IS NULL'
+why = """\
+    the inbox target-state annotation reads the reader's own completions; an \
+    imported claim_completed is foreign history and must not mark the reader \
+    as having completed the target"""
+
+# --- operator_since.py -------------------------------------------------------
+
+[[guarded]]
+module = "operator_since.py"
+function = "_events_after"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    'since you last looked' counts native changes; a back-dated import must \
+    not read as new work arriving"""
+
+[[guarded]]
+module = "operator_since.py"
+function = "_stalled"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    newly stalled measures native work; imported history must not move an \
+    issue across the stale threshold"""
+
+# --- project_brief.py --------------------------------------------------------
+
+[[guarded]]
+module = "project_brief.py"
+function = "_build"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    latest completion summaries must come from native events; handoff yield \
+    provenance joins typed rows whose 0058 insertion trigger already \
+    excludes imported events"""
+
+# --- ready_queue.py ----------------------------------------------------------
+
+[[guarded]]
+module = "ready_queue.py"
+function = "awaiting_answer_sql"
+pattern = '(?s)rqs\.imported_at IS NULL.*rqa\.imported_at IS NULL'
+why = """\
+    the ready rule's settlement and its answer are both native acts: an \
+    imported claim_completed must not hold work back from an account, and an \
+    imported comment must not hand it back"""
+
+[[guarded]]
+module = "ready_queue.py"
+function = "_latest_settlements"
+pattern = 's\.imported_at IS NULL'
+why = """\
+    the not-offered lane reads back the same native settlement the ready \
+    rule chose; foreign history must not supply its reason"""
+
+# --- review_commands.py ------------------------------------------------------
+
+[[guarded]]
+module = "review_commands.py"
+function = "latest_visible_request"
+pattern = 'a\.imported_at IS NULL'
+why = "request binding requires the canonical native request event"
+
+[[guarded]]
+module = "review_commands.py"
+function = "visible_candidate"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    candidate submission and review authority requires native source \
+    evidence"""
+
+# --- review_queue.py ---------------------------------------------------------
+
+[[guarded]]
+module = "review_queue.py"
+function = "_candidate_base"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    candidate queue and history project only native completion evidence"""
+
+[[guarded]]
+module = "review_queue.py"
+function = "_latest_review"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    linked review verdicts come from the exact native completion, never \
+    imported prose"""
+
+# --- review_request_projection.py --------------------------------------------
+
+[[guarded]]
+module = "review_request_projection.py"
+function = "visible_requests"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    requests, submissions, successors and canonical fulfillment require \
+    visible native evidence"""
+
+# --- run_state.py ------------------------------------------------------------
+
+[[guarded]]
+module = "run_state.py"
+function = "_facts"
+pattern = 'a\.imported_at IS NULL'
+why = """\
+    a run's derived state reads only its native work, claim acts and yields; \
+    imported history must not make a run look active, complete or waiting"""
+
+[[guarded]]
+module = "run_state.py"
+function = "open_questions"
+pattern = 'ye\.imported_at IS NULL'
+why = """\
+    an open question is a native yield; an imported row must not put a \
+    question in front of the operator"""
+
+# --- work_context.py ---------------------------------------------------------
+
+[[exempt]]
+module = "work_context.py"
+function = "_recent_activity"
+why = """\
+    the feed serves the trail as-is and SELECTs imported_at so surfaces can \
+    label foreign rows; a labeled feed is not a native-only mechanism"""
+
+# --- work_progress.py --------------------------------------------------------
+
+[[guarded]]
+module = "work_progress.py"
+function = "last_work_at"
+pattern = '"imported_at IS NULL"'
+why = """\
+    last recorded work is a native-only read: a back-dated import bundle \
+    must not make old work look new or stale work look fresh"""
+
+[[guarded]]
+module = "work_progress.py"
+function = "last_work_sql"
+pattern = '"wa\.imported_at IS NULL"'
+why = """\
+    the shared last-work subquery (idle: atoms, sort:idle-desc, delegation \
+    pickup) measures native work; foreign history must not hide an idle item \
+    by resetting its last-work time"""
+
+[[guarded]]
+module = "work_progress.py"
+function = "_stale_in_progress"
+pattern = 'AND a\.imported_at IS NULL'
+why = """\
+    the stale lane's grouped pass measures native work; foreign history must \
+    not hide an idle item by resetting its last-work time"""
+
+[[guarded]]
+module = "work_progress.py"
+function = "unclaimed_delegations"
+pattern = 'AND da\.imported_at IS NULL'
+why = """\
+    a delegate's claim is a native act; an imported claimed row must not \
+    make a hand-off look picked up"""
