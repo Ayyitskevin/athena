@@ -8,6 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
 from athena.aegis import delegations
 from athena.core import tokens
 from athena.core.deps import get_conn
@@ -81,6 +83,7 @@ class ClaimHandoffOut(BaseModel):
     yielded: ClaimHandoffEventOut
     resumed: None
     advisory_untrusted: Literal[True]
+    authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
 
 
 DelegationWarning = Literal[

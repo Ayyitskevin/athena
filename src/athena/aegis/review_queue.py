@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 import sqlite3
 from typing import Any
 
-from athena.aegis import lease_commands, projects, review_request_projection, statuses
+from athena.aegis import (
+    issue_activity,
+    lease_commands,
+    projects,
+    review_request_projection,
+    statuses,
+)
 from athena.aegis.project_brief import _excerpt, _person, _rows, _group
 from athena.aegis.review_commands import latest_candidate_id
 from athena.core import access, db
@@ -78,6 +84,9 @@ def _latest_review(
             "key": _key(row),
             "title": _excerpt(row["title"]),
             "work_context_url": f"/issues/{row['review_issue_id']}/work-context",
+            "authored_by": issue_activity.issue_text_authors(
+                conn, [row["review_issue_id"]], actor=actor
+            )[row["review_issue_id"]],
         },
         "completion_event_id": row["completion_event_id"],
         "reported_at": row["created_at"],
@@ -110,6 +119,9 @@ def _item(
             "status": _excerpt(row["status"]),
             "status_category": row["status_category"],
             "work_context_url": f"/issues/{row['issue_id']}/work-context",
+            "authored_by": issue_activity.issue_text_authors(
+                conn, [row["issue_id"]], actor=actor
+            )[row["issue_id"]],
         },
         "candidate": {
             "candidate_id": row["candidate_id"],

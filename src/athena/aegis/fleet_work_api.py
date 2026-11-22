@@ -8,6 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
 from athena.aegis import fleet_work
 from athena.core import identity, tokens
 from athena.core.deps import get_conn
@@ -115,6 +117,7 @@ class OpenClaimHandoffOut(_StrictModel):
     yielded: ClaimHandoffEventOut
     resumed: None
     advisory_untrusted: Literal[True]
+    authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
 
 
 AttentionReason = Literal[

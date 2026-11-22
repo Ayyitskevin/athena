@@ -13,6 +13,8 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from athena.core import authorship
+from athena.core.authorship import AuthoredBy
 from athena.core.request_models import RequestBody
 from athena.aegis import (
     claim_handoffs,
@@ -93,6 +95,8 @@ class ClaimHandoffEventOut(BaseModel):
 class ClaimHandoffResumeEventOut(ClaimHandoffEventOut):
     lease_generation: str
     note: str | None
+    # The resume note is the resuming account's words.
+    authored_by: AuthoredBy | None = authorship.field()
 
 
 class ClaimHandoffOut(BaseModel):
@@ -110,6 +114,7 @@ class ClaimHandoffOut(BaseModel):
     yielded: ClaimHandoffEventOut
     resumed: ClaimHandoffResumeEventOut | None
     advisory_untrusted: Literal[True]
+    authored_by: AuthoredBy | None = authorship.field(authorship.HANDOFF_DESCRIPTION)
 
 
 class LeaseOut(BaseModel):

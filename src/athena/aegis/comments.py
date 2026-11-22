@@ -12,9 +12,18 @@ import sqlite3
 # Every read returns the author's display name alongside the row, so callers
 # never have to resolve author_id -> name themselves.
 _SELECT = (
-    "SELECT c.*, u.name AS author_name "
+    "SELECT c.*, u.name AS author_name, u.is_agent AS author_is_agent "
     "FROM comments c JOIN users u ON u.id = c.author_id"
 )
+
+
+def _comment(row: sqlite3.Row) -> dict:
+    """One comment, with ``authored_by`` (core/authorship.py): only its author
+    may edit a comment, so the author wrote its current text."""
+    comment = dict(row)
+    is_agent = comment.pop("author_is_agent")
+    comment["authored_by"] = {"id": comment["author_id"], "is_agent": bool(is_agent)}
+    return comment
 
 
 def add_comment(
@@ -43,7 +52,7 @@ def add_comment(
 
 def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict | None:
     row = conn.execute(f"{_SELECT} WHERE c.id = ?", (comment_id,)).fetchone()
-    return dict(row) if row else None
+    return _comment(row) if row else None
 
 
 def update_comment(
@@ -78,4 +87,4 @@ def list_comments(conn: sqlite3.Connection, issue_id: int) -> list[dict]:
     rows = conn.execute(
         f"{_SELECT} WHERE c.issue_id = ? ORDER BY c.id", (issue_id,)
     ).fetchall()
-    return [dict(row) for row in rows]
+    return [_comment(row) for row in rows]

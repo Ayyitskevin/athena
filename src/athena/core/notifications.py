@@ -23,7 +23,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import cast
 
-from athena.core import access, links
+from athena.core import access, authorship, links
 
 # Targets a user can watch. A watch on anything else is meaningless; the boundary
 # rejects unknown kinds. 'space' is the SHARED-MEMORY subscription: it covers the
@@ -251,7 +251,7 @@ def process_mentions(
 _INBOX_SELECT = (
     "SELECT n.id, n.event_id, n.read_at, n.created_at, "
     "a.actor_id, au.name AS actor_name, a.verb, a.target_kind, a.target_id, "
-    "a.detail, a.created_at AS event_at "
+    "a.detail, a.created_at AS event_at, a.imported_at AS event_imported_at "
     "FROM notifications n "
     "JOIN activity a ON a.id = n.event_id "
     "JOIN users au ON au.id = a.actor_id"
@@ -280,11 +280,19 @@ def list_notifications(
         if gate:
             where += f" AND {gate}"
             params.extend(gate_params)
-    rows = conn.execute(
-        f"{_INBOX_SELECT} {where} ORDER BY n.id DESC LIMIT ?",
-        (*params, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            f"{_INBOX_SELECT} {where} ORDER BY n.id DESC LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+    ]
+    # The detail is the event actor's words (a comment excerpt, a new title):
+    # each row names who wrote it, or null for an imported event.
+    authorship.stamp(conn, rows, id_key="actor_id", imported_key="event_imported_at")
+    for row in rows:
+        del row["event_imported_at"]
+    return rows
 
 
 def unread_count(
