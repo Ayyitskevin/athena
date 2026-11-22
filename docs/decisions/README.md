@@ -7,6 +7,7 @@ This index creates no runtime authority or automatic consumer.
 
 | Date | Decision | Status |
 |---|---|---|
+| 2026-11-22 | [Work awaiting an answer is not ready](2026-11-22-ready-rule-awaiting-decision.md) | Accepted, owner instruction (D3) |
 | 2026-11-22 | [Agentic-use specification: fifteen decisions accepted as recommended](2026-11-22-agentic-use-decisions.md) | Accepted, owner instruction |
 | 2026-11-17 | [Saved title links retain page identity](2026-11-17-saved-title-links.md) | Accepted after independent spec review |
 | 2026-11-17 | [Requesting an exact review](2026-11-17-review-requests.md) | Accepted after independent spec review |
@@ -16,7 +17,7 @@ This index creates no runtime authority or automatic consumer.
 | 2026-11-04 | [Preserve broken-chain recovery evidence](2026-11-04-recovery-chain.md) | Accepted, PR #421 |
 | 2026-11-04 | [Completion reports carry no authority](2026-11-04-completion-reports.md) | Accepted, PR #423 |
 | 2026-11-04 | [Refuse recognized credentials in new report writes](2026-11-04-report-credential-refusal.md) | Accepted implementation direction, maintainer request |
-| 2026-11-17 | [Atomic ready-work pickup](2026-11-17-atomic-ready-pickup.md) | Accepted implementation direction, maintainer request |
+| 2026-11-17 | [Atomic ready-work pickup](2026-11-17-atomic-ready-pickup.md) | Accepted implementation direction, maintainer request; ready predicate superseded in part, 2026-11-22 |
 
 Use a dated filename and these plain fields: **Status**, **Context**, **Decision**,
 **Consequences**, **Sources**, and **Superseded-by**. State whether the date is the

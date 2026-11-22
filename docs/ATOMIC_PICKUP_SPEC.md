@@ -71,6 +71,15 @@ Keep the exact current blocker semantics, including archived blockers and custom
 statuses. Do not silently change `category_sql` fallback behavior to `category_of`
 as part of this feature; existing readiness/query surfaces remain consistent.
 
+Amended 2026-11-22 by
+[the awaiting-answer decision](decisions/2026-11-22-ready-rule-awaiting-decision.md):
+the shared ready predicate also leaves out an issue whose newest native settlement
+is a `needs_input` yield (for every account) or the caller's own completion (for
+the caller), until a newer comment, status change, assignment change or claim by
+another account that is not Automation. Pickup selects through that predicate, so
+such an issue yields `nothing_ready` when it is the only candidate. Receipts,
+replay, the account guard and direct `claim_issue` are unchanged.
+
 Order remains delegated-to-me first, then descending priority, creation time and
 issue ID (both ascending). `project_id` optionally restricts candidates to one visible existing
 project. Omitted/null means all eligible projects plus backlog; it does not mean

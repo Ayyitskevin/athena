@@ -100,6 +100,15 @@ renews or reacquires. A new poll needs a new key, after reconciling uncertain wo
 See [ATOMIC_PICKUP_SPEC.md](ATOMIC_PICKUP_SPEC.md) for receipt expiry and the
 `already_holding`, `nothing_ready`, and `candidates_conflicted` outcomes.
 
+Pickup does not hand back work that is waiting on someone else. After you complete an
+issue, it is not offered to you again. After any account yields an issue with
+`needs_input`, it is offered to no account. Either issue becomes ready again when an
+account other than the one that completed or yielded it comments, changes its status
+or assignment, or claims it. Automation and imported history do not count. Until then
+the desk lists it under `work.waiting_on_operator.not_offered`, with the reason
+`completed_by_you` or `awaiting_answer`. A direct `claim_issue` still works. See
+[DESK.md](DESK.md#the-ready-lane).
+
 For a direct claim of an issue you chose and read, two values guard it:
 
 - **ETag (`issue_etag`)** names the version of the issue you read. Send it in the
@@ -196,7 +205,9 @@ HTTP 201.
 MCP `complete_claim(issue_id, generation, results?, unfinished?, uncertainty?, evidence?, verdict?, findings?, usage?)` ·
 REST `POST /issues/{issue_id}/complete`
 
-Completing releases your lease. It does not close the issue.
+Completing releases your lease. It does not close the issue. `claim_next_ready`
+will not offer you the issue again until another account comments on it, changes
+its status or assignment, or claims it. This holds with or without a report.
 
 ```http
 POST /issues/1/complete
@@ -279,6 +290,9 @@ Content-Type: application/json
 ```
 
 HTTP 201. The lease is removed. Assignment, status and other issue state do not change.
+After a `needs_input` yield, `claim_next_ready` offers the issue to no account,
+including yours, until another account answers: a comment, a status or assignment
+change, or a claim. A `blocked` or `capacity` yield is ready again at once.
 
 The next claimant sees the handoff in the claim response, under `open_claim_handoff`.
 They read it, then resume it explicitly. MCP `resume_claim_handoff(issue_id, handoff_token, generation, resume_note?)` ·

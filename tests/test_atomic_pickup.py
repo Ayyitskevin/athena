@@ -568,6 +568,13 @@ def test_historical_keyed_success_survives_restart_and_release_without_reacquiri
         200,
     )
     assert counts(path) == (0, 1)
+    # Completion holds the issue back from its completer until another account
+    # answers (docs/decisions/2026-11-22-ready-rule-awaiting-decision.md).
+    checked(
+        client.post(
+            f"/issues/{target['id']}/comments", json={"body": "Again"}, headers=ADMIN
+        )
+    )
     with TestClient(create_app(path)) as restarted:
         replay = pickup(restarted, agent, **headers)
         assert replay.headers["idempotent-replay"] == "true"
@@ -743,6 +750,13 @@ def test_open_handoff_survives_pickup_and_requires_explicit_resume(setup):
                 "resume_instructions": "Read operator answer",
             },
             headers=bearer(agent),
+        )
+    )
+    # A needs_input yield is offered to nobody until another account answers.
+    assert checked(pickup(client, agent), 200)["reason"] == "nothing_ready"
+    checked(
+        client.post(
+            f"/issues/{target['id']}/comments", json={"body": "Main"}, headers=ADMIN
         )
     )
     next_claim = checked(pickup(client, agent), 200)

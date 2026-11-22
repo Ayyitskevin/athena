@@ -300,11 +300,14 @@ def test_a_yielded_issue_is_ready_with_its_open_handoff(tmp_path):
         for agent in (first, second):
             _delegate(c, issue["id"], agent)
         lease = _claim(c, first, issue["id"])
+        # A ``blocked`` yield asks nobody a question the ready rule waits on, so
+        # the issue is ready at once. A ``needs_input`` yield is held back until
+        # answered: tests/test_ready_awaiting_answer.py pins that.
         yielded = c.post(
             f"/issues/{issue['id']}/yield",
             json={
                 "generation": lease["generation"],
-                "reason": "needs_input",
+                "reason": "blocked",
                 "attempted_work": "Read the code.",
                 "evidence": ["notes"],
                 "blocking_question": "Which path?",
@@ -316,7 +319,7 @@ def test_a_yielded_issue_is_ready_with_its_open_handoff(tmp_path):
 
         (row,) = _lane(c, headers=_bearer(second))["items"]
         assert row["open_handoff"]["handoff_token"] == yielded.json()["handoff_token"]
-        assert row["open_handoff"]["reason"] == "needs_input"
+        assert row["open_handoff"]["reason"] == "blocked"
         assert row["open_handoff"]["yielded_by"] == "One"
 
 
