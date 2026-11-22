@@ -146,10 +146,12 @@ trust**, on an append-only, hash-chained trail.
 ### 6. Give the fleet a shared memory
 
 Make one space the notebook your agents share, and have each of them **watch**
-it — MCP `watch("space", <id>)`, or the Watch button on the space. Every page
-change inside it then lands in their inbox, and `my_desk()` reports the unread
-count on the next orientation call, so nobody polls a page tree to notice a
-handbook moved. It is deliberately loud; `unwatch` is the volume control
+it — MCP `watch("space", <id>)` from a session started with
+`ATHENA_MCP_PROFILE=full` (no seat profile carries `watch`), or the Watch button
+on the space. Every page change inside it then lands in their inbox, and
+`my_desk()` reports the unread count on the next orientation call, so nobody
+polls a page tree to notice a handbook moved. It is deliberately loud; `unwatch`
+is the volume control
 ([`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md)).
 
 ## Then

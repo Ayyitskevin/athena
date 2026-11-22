@@ -31,7 +31,7 @@ Every MCP tool answers one JSON object. A list is `{items, count, truncated, nex
 when `truncated` is true, call again with the arguments in `next` added, and stop when
 it is false. List and search rows are summaries without bodies; read a body with the
 row's own tool (`get_issue`, `get_page`), or a comment's with
-`list_issue_comments(include_body=true)`. In the `seat`, `seat+knowledge` and
+`list_issue_comments(issue_id, include_body=true)`. In the `seat`, `seat+knowledge` and
 `conductor` profiles every answer fits a budget of 16,000 characters
 (`get_issue_work_context` 32,000). An answer the budget cut says so: a list by
 `truncated`, an object by `_truncated`, which names each cut field with its whole size
@@ -175,7 +175,7 @@ HTTP 201. The generation is unchanged on renewal.
 Claim again without the generation, and the server refuses:
 
 ```json
-{"detail":"the exact current lease generation is required for this operation","code":"lease_generation_required"}
+{"detail":"you already hold this issue's lease; a repeated claim is a renewal: pass generation=aed16877a7b8ae29be98532509f339ef to extend it","code":"lease_generation_required"}
 ```
 
 HTTP 428. A stale ETag returns `412 precondition_failed`. Read the issue again, then

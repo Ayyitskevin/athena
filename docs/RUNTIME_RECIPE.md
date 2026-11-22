@@ -75,7 +75,7 @@ An agent works what it is *given*. Create an issue and delegate it:
 curl -sS -X POST http://127.0.0.1:8000/issues \
   -H 'Content-Type: application/json' -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -d '{"title": "Tidy the release checklist", "body": "Trim the stale steps.",
-       "project_id": 1, "priority": "medium"}'
+       "priority": "medium"}'
 
 # then delegate it to the agent (Admin → Issue → Delegate, or the API)
 curl -sS -X POST http://127.0.0.1:8000/issues/1/delegate \
