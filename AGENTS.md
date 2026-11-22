@@ -113,10 +113,36 @@ Therefore:
 | **mentor** | `src/athena/mentor/` | spaces, pages, versions — knowledge module |
 | **web** | `src/athena/web/` | Jinja templates + HTMX — **thin client over the API only** |
 | **workflows** | `src/athena/workflows/` | commands that span BOTH modules (read one, write the other) — the only place that may import `aegis` and `mentor` together |
+| **mcp** | `src/athena/mcp/` | the optional `athena-mcp` server: tools declared in `tools_*.py`, calling the REST API through `client.py` — a transport, like `web/` |
+| **templates**, **static** | `src/athena/templates/`, `src/athena/static/` | the Jinja templates and vendored assets `web/` serves (read `docs/DESIGN_SYSTEM.md` first) |
+| **field_guide** | `src/athena/field_guide/` | the agent Field Guide's pages, as markdown; `guide.py` seeds them as a space |
 
 Touch your assigned area. Don't refactor a neighbor's module to make your change
 fit — flag the friction instead. If two agents must change the same file (e.g.
 `main.py` wiring), keep additions side-by-side and resolve in the PR.
+
+---
+
+## Change recipes (which files a change touches)
+
+Read the row before you write. Paths are from the checkout root; run scripts with
+`.venv/bin/python`. [CONTRIBUTING.md](CONTRIBUTING.md) has the detail behind each
+check, generator and the changed profile's selection.
+
+| Change | Edit | Then run | Tests (then `scripts/gate.sh --profile changed`) |
+|---|---|---|---|
+| MCP tool | `src/athena/mcp/tools_<area>.py` (`@tool`/`@mutation_tool` declares scope, profiles, hints, budget) and its method in `src/athena/mcp/client.py` | `scripts/generate_agent_api.py` | `tests/test_mcp_tool_declarations.py`, `tests/test_mcp_tool_scopes.py`, `tests/test_mcp_response_budget.py`, `tests/test_agent_api_doc.py` |
+| Agent-facing REST route | `src/athena/<pkg>/<name>_api.py` (refuse with `Refusal(code=...)`); a body derives from `RequestBody` in `src/athena/core/request_models.py`; a new router is included in `src/athena/main.py` | `scripts/generate_agent_api.py` if a tool calls it | `tests/test_agent_openapi.py`, `tests/test_request_bodies_closed.py`, `tests/test_refusal_codes.py`, `tests/test_write_ownership.py` |
+| Browser route | `src/athena/web/<name>.py` and `src/athena/templates/` (read `docs/DESIGN_SYSTEM.md` first); a new router is included in `src/athena/main.py` with `browser_dependencies` | — | `tests/test_agent_openapi.py`, `tests/test_template_contracts.py`, `tests/test_csp_no_unsafe_inline.py` |
+| Refusal code | `src/athena/core/refusal_codes.py` | `scripts/generate_agent_api.py` | `tests/test_refusal_codes.py` (runs `scripts/check_refusal_codes.py`), `tests/test_agent_api_doc.py` |
+| Write command | `src/athena/<pkg>/<name>_commands.py` (takes `actor`, refuses with a `kind`, passes `commit=` to writers); the route's `*STATUS_BY_KIND` and `*CODE_BY_KIND` | `scripts/generate_command_debtors.py` | `tests/test_transaction_commits.py`, `tests/test_write_ownership.py`, `tests/test_command_error_dialect.py`, `tests/test_command_debtors_doc.py` |
+| Migration | a new `src/athena/core/migrations/NNNN_<name>.sql`, next number; never edit an applied one | — | `tests/test_migration_integrity.py`, `tests/test_migrations_atomic.py` (the changed profile runs the full suite) |
+| Setting | a `Setting` in `src/athena/config.py` | `scripts/generate_settings_doc.py` | `tests/test_settings_registry.py` |
+| Activity reader | the reader, and a `[[guarded]]` or `[[exempt]]` entry in `src/athena/<pkg>/imported_at_guards.toml` | — | `tests/test_imported_at_guards.py` |
+| Free text in an agent packet | the response model carries `authored_by` (`src/athena/core/authorship.py`) or the field joins `NOT_PEER_WRITTEN` in its test | — | `tests/test_peer_text_authorship.py` |
+| Entry document | `docs/AGENT_GUIDE.md`, `docs/AGENT_BOOT.md`, `docs/RUNTIME_RECIPE.md`, `docs/QUICKSTART.md`, `docs/CLOSEOUT_RECIPE.md`; its examples run | — | `tests/test_doc_examples.py`, `tests/test_docs_index.py`, `tests/test_agent_guide.py` |
+| Changelog entry | `changelog.d/<slug>.<category>.md`, never `CHANGELOG.md` | `scripts/changelog_fragments.py check` | `tests/test_changelog_fragments.py` |
+| Test | `tests/test_<topic>.py`, starting from `tests/support.py`; no `time.sleep` | — | `tests/test_suite_conventions.py` |
 
 ---
 
@@ -187,11 +213,20 @@ src/athena/
   aegis/     work module (issues.py = SQL, issue_commands.py = audited writes,
              api.py = HTTP)
   mentor/    spaces, pages, versions — knowledge module
+  workflows/ commands that span aegis and mentor
   web/       templates + HTMX — thin client over the API
-  config.py  env-driven settings (ATHENA_DB, ...)
+  mcp/       athena-mcp: tools_*.py over client.py (REST)
+  templates/ Jinja templates the web layer renders
+  static/    vendored assets the pages load
+  field_guide/  the agent Field Guide's markdown pages
+  config.py  env-driven settings: the SETTINGS registry (ATHENA_DB, ...)
   main.py    app factory: create_app(), deployment boundary, health, wiring
+  middleware.py  request middleware the app factory installs
+  agent_openapi.py  the agent-facing OpenAPI document (/openapi-agent.json)
+  guide.py   seeds the Field Guide as a space
+  demo.py    athena-demo: a disposable, seeded review workspace
   ops.py     athena-serve and the retained operator CLIs
-tests/       pytest
+tests/       pytest; support.py is where a new test starts
 docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the design of record
 ```
 
