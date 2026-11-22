@@ -17,9 +17,11 @@ After setup, `scripts/gate.sh` defaults to the `product` profile, including the
 pinned dependency set, types, and full-suite, full-source coverage. Explicit
 `scripts/gate.sh --profile product` selects the same checks.
 `scripts/gate.sh --profile quick` opts into fast, **partial** feedback without
-the dependency, type, or coverage stages. Both profiles report the
-commit, dirty state, Python and import path, stages run and omitted, and fail at
-the first failed stage. The script refuses an Athena import from another checkout.
+the dependency, type, or coverage stages; `--profile changed`, the inner loop
+described below, adds the type check and the tests your change reaches. Every
+profile reports the commit, dirty state, Python and import path, stages run and
+omitted, and fails at the first failed stage. The script refuses an Athena
+import from another checkout.
 The product pass covers local product stages, not CI's container job or its
 release-candidate supply-chain job; obtain those results separately. CI shards
 coverage and combines evidence; `scripts/coverage.sh` runs and checks it locally.
@@ -31,6 +33,58 @@ inventory review.
 The wrapper requires this checkout's executable `.venv/bin/python`, as created
 below, and refuses with a setup pointer if it is missing or broken. It does not
 require activating the environment.
+
+### The inner loop: `--profile changed`
+
+`scripts/gate.sh --profile changed [--base <ref>]` runs the quick stages, the
+type check, and the tests selected from your change, with the same
+`ATHENA_COVERAGE_WORKERS` pytest-xdist workers as the suite. The change is every
+path that differs between the merge base with `--base` (default `origin/main`)
+and the working tree, uncommitted and untracked files included. If `origin/main`
+is missing it falls back to local `main` and says so; with neither, or with no
+merge base (a shallow clone), it runs the full suite. A `--base` that is not a
+commit fails the gate. The receipt is **partial**: it ends in
+`CHANGED PROFILE PASS (PARTIAL; ...)`, never `PRODUCT GATE PASS`, the selected
+tests run without the coverage floors (a partial run cannot meet them), and the
+dependency and coverage stages are listed as not run. It names the base and
+merge-base commit, the changed paths, how many test files and tests were
+selected out of the total, which rule selected them, and every path that forced
+the full suite. Use it while you work; the product profile is still the
+condition of done.
+
+`scripts/select_tests.py` makes the selection statically (it parses files with
+`ast` and imports nothing), in a few seconds:
+
+- **Import graph.** Python modules under `src/`, `tests/` and `scripts/` are
+  nodes; imports anywhere in a file (relative ones resolved), the parent
+  packages an import runs, and strings in tests that name an `athena` module
+  (monkeypatch targets) are edges. A changed module selects every test that
+  reaches it; a changed test selects itself; a changed test helper selects the
+  tests that import it. The graph is **not** followed through the composition
+  roots `athena.main`, `athena.web` and `athena.web.router`: nearly every test
+  builds the app, so following them would select the full suite for any change.
+- **The map.** `TEST_MAP` in the same file names the tests for what is reached
+  without an import: `*_api.py` routers and `web/` modules over HTTP, MCP
+  `tools_*.py`, templates, static assets and field-guide pages. Most entries
+  match tests by file name. It applies to the changed path and to every module
+  the graph reaches. `tests/test_select_tests.py` fails when an entry stops
+  matching real files or a router, web module or tool has no mapped test.
+- **References.** A test whose strings name the changed path, its file name or
+  a directory containing it (a path built with `/` or `Path(...)`) is selected.
+  That covers documents, fixtures and scripts tests read. A document no test
+  names selects no tests, and the receipt says so.
+- **Full suite.** `pyproject.toml`, `constraints/`, any `conftest.py`,
+  `core/db.py`, migrations, the composition roots and the gate scripts select
+  the full suite. So does a path no rule maps, and a change that reaches a
+  module only a composition root imports and the map does not name (today
+  `athena.middleware`, which every request runs). The receipt names the path
+  and the reason.
+
+The blind spot: a test that reaches changed code only through the app (it
+imports `athena.main` and nothing that imports the changed module) is selected
+only if the map names it, and the map goes by test file names. A route used as
+setup by tests named for something else is the typical miss. The product
+profile, which runs everything, is what catches it.
 
 ## Development setup
 

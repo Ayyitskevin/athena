@@ -143,7 +143,10 @@ fit — flag the friction instead. If two agents must change the same file (e.g.
    type checks, architectural checks (import contracts, write ownership, transaction
    commits, `imported_at` guards, template styles and routes) and full-suite
    coverage. Explicit `--profile quick`
-   is partial and cannot replace product evidence. The product profile does not run CI's container
+   is partial and cannot replace product evidence. Nor can `--profile changed`, the
+   inner loop: while you work, run it for the static stages, the type check and the
+   tests selected from your diff (see CONTRIBUTING.md); the product profile stays
+   the condition of done. The product profile does not run CI's container
    or release-candidate audit jobs; obtain those separately. If the gate changes, change
    AGENTS.md, CONTRIBUTING.md and the script together.
    At the default four test workers the product gate needs about
@@ -191,9 +194,12 @@ docs/        INDEX.md — one-line map of every doc · ARCHITECTURE.md — the d
 ```
 
 Run `scripts/gate.sh` for the complete local product profile (also selectable with
-`--profile product`) or `scripts/gate.sh --profile quick` for partial, fast feedback.
+`--profile product`), `scripts/gate.sh --profile changed` as the inner loop (partial:
+the tests your diff reaches, no coverage floors), or `scripts/gate.sh --profile quick`
+for the static stages alone.
 The receipt names the commit, worktree state, Python/import identity, run and omitted
-stages, and CI-only jobs. See CONTRIBUTING.md for the CI and release evidence boundaries.
+stages, and CI-only jobs; the changed profile's receipt also lists what it selected
+and why. See CONTRIBUTING.md for the CI and release evidence boundaries.
 The wrapper uses this checkout's `.venv/bin/python` without activation and refuses
 with a CONTRIBUTING.md setup pointer if that executable is unavailable. Inventory
 tests compare complete CI command lines after dropping blank and comment-only
